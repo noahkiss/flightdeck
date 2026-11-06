@@ -1,6 +1,7 @@
 # Agent groups: behaviour spec
 
-Status: draft for the owner. Part 15, stage B1 (task-5ntfv32q). Written 2026-11-06.
+Status: draft for the owner. Part 15, stage B1 (task-5ntfv32q). Written 2026-11-06; the owner's
+answers applied the same day (13).
 
 An agent group is one task worked by several agents at once: a coordinator, leads, workers and a
 reviewer, on any host and in any harness. Members are ordinary sessions. Flightdeck starts them,
@@ -25,8 +26,8 @@ Rules this spec works within:
 - **Hands-off defaults, few settings** (power-user rule). Supervision, pacing, the lock and the
   disk watch run by default.
 
-Sections that settle a question end with a **Decision** line and its reason. Questions only the
-owner can settle are in [section 13](#13-open-questions-for-the-owner).
+Sections that settle a question end with a **Decision** line and its reason. The owner's
+answers to this spec's questions (2026-11-06) are in [section 13](#13-owner-decisions).
 
 ## Contents
 
@@ -42,7 +43,7 @@ owner can settle are in [section 13](#13-open-questions-for-the-owner).
 10. [Usage pacing](#10-usage-pacing)
 11. [When a group is the wrong tool](#11-when-a-group-is-the-wrong-tool)
 12. [Shared interfaces with other parts](#12-shared-interfaces-with-other-parts)
-13. [Open questions for the owner](#13-open-questions-for-the-owner)
+13. [Owner decisions](#13-owner-decisions)
 14. [Edge cases](#14-edge-cases)
 15. [API, CLI and settings](#15-api-cli-and-settings)
 16. [Build stages and acceptance](#16-build-stages-and-acceptance)
@@ -112,7 +113,8 @@ conflicting implicit decisions.
 - **While the home hab sleeps or is offline,** the lane, new leads and reviewers on other hosts
   wait. Starts inside the envelope on a member's own host (workers, fresh sessions) go on, and
   so does supervision. A group meant to run overnight should have an always-on home: Capcom's
-  home host, or a coordinator session on an always-on host. Moving the home is Q6.
+  home host, or a coordinator session on an always-on host. The user can move a group's home
+  to another hab before a laptop sleeps (5.7).
 
 Decision: the group record lives in gff-hab, and the items live in Logbook. Reason: members,
 states and the lane queue change by the second and belong to one hab; items are durable records
@@ -154,10 +156,12 @@ as a tag.
 - **One confirmation for the whole plan.** The card shows the task, each item, each member (role,
   host, harness, model, folder or "new worktree", branch), the lane target, review on or off per
   item, and the trust rule: which new worktrees the confirmation answers the trust prompt for (4.2).
-- **The setting.** `confirm.group_plan`, a hab-side setting (`app.md` 20.5): true asks, false
-  starts at once and shows the card as a record. Default true, per owner decision 6
-  ("otherwise one confirmation per group plan"). Its level column and its scope (every plan, or
-  only a plan that touches another host) are open question Q1.
+- **The setting.** `confirm.group_plan`, a levelled hab-side setting (`app.md` 20.3, 20.5): true
+  asks, false starts at once and shows the card as a record. Safe true, Balanced true, Bypass
+  false (owner, 2026-11-06; 13 Q1). Every plan asks while it is true, a plan on one host too.
+  This is the one confirmation Balanced adds, an exception `app.md` 20.2 states ("no
+  confirmation Flightdeck adds beyond approval expiry" and this card). Reason: the card also
+  answers folder trust for every worktree the group makes (4.2).
 - **With `confirm.start_elsewhere` on and `confirm.group_plan` off**, a plan with any member on
   another host still asks, once. The plan never asks once per member.
 - **Mechanics are the confirmations of `capcom.md` 6.1 and 6.4**: kind `group`, on the home hab,
@@ -230,10 +234,10 @@ worktrees, so most starts would show the prompt.
   `trust`. All of `trust.answer`'s checks apply: it never answers blind, and a client typing in
   the pane refuses it. If the answer fails or the 10 s pass, the report goes out and the card
   shows as today.
-- **A plan that started with no confirmation** (setting off) answers the prompt only for a folder
-  that is a worktree gff-hab made of a project folder the user trusted through Flightdeck before,
-  for the same harness on the same host. gff-hab keeps those trust answers in
-  `<state>/trust.json`. Any other folder raises the trust card as today. See Q2.
+- **A plan that started with no confirmation** (setting off) gets the same cover: the hab answers
+  the trust prompt for every worktree it makes for the group, by the same rule (owner,
+  2026-11-06; 13 Q2). The cover then names no confirmation id; it names the group and its
+  `confirmation: none`. A folder outside the cover raises the trust card as today.
 - **The seed waits** in the inbox while `blocked:trust`, as today, and goes in once the agent is
   idle.
 - **A failed pre-answer** (`conflict`, `unavailable`) leaves the card for the user and tells the
@@ -241,21 +245,25 @@ worktrees, so most starts would show the prompt.
 - **Codex.** Its trust rule is not built (`app.md` 7.10: keys not checked). Stage B2 builds and
   checks it; until then a Codex member's prompt raises the card.
 
-Decision: the confirmation is the trust answer. Reason: the user saw every folder on one card;
-asking again per folder is the friction this part removes. Without a confirmation, app levels must
-not answer a harness's own prompt (`app.md` 20.2, "What Bypass never touches"), so trust carries
-only from a folder the user trusted.
+Decision: the confirmation is the trust answer; with confirmation off, the group itself is.
+Reason: the user saw every folder on one card, and asking again per folder is the friction this
+part removes. With the card off, the user chose a hands-off group (Bypass, or by hand), and the
+owner decided the hab answers trust for every group worktree all the same (13 Q2). This is an
+exception to `app.md` 20.2 "What Bypass never touches" (the harness's own prompts), limited to
+worktrees the hab made for a group, and `app.md` 7.10 states it (12.6).
 
 ### 4.3 Order of starts
 
 1. The hab picks items in plan order, up to `group.max_leads` working at once. A stacked item
    waits until the item it stacks on reaches `review` (7.2). Items beyond the cap wait as
-   `queued`; a lead whose item lands or drops frees a slot.
+   `queued`; a lead whose item lands or drops frees a slot, whether or not its session still
+   runs (7.3 step 7).
 2. On the lead's host, the hab fetches the project's remote, makes the worktree (7.1) and waits
    for its setup script to end. A setup that waits for the user's yes (`hab-logic-api.md` 3.10,
    a foreign checkout) keeps the item `queued` and shows on the card's waits line.
 3. It starts the lead and writes the claim itself: assignee the lead's session, status `doing`.
-   A hab write, not an agent write, so it lands under `logbook.approval = agents` too (Q5).
+   A hab write, not an agent write, so it lands under `logbook.approval = agents` too (owner,
+   2026-11-06; 13 Q5).
 4. Reviewers start when their item is submitted (6.2), not before: a reviewer idle for hours costs
    context and a pane.
 
@@ -276,6 +284,7 @@ so a gff-hab restart loses nothing.
 |---|---|
 | `id` | Random, 64 bits, hex |
 | `title`, `project`, `plan_record` | The task, its project, its Logbook plan record id |
+| `home`, `generation` | The home hab's device id, and a number that rises by one at each move (5.7). 1 at creation |
 | `coordinator` | Session id, name and address |
 | `inbox` | Reports for the coordinator that wait while it is not running (5.5) |
 | `state` | See 5.2 |
@@ -288,8 +297,8 @@ so a gff-hab restart loses nothing.
 | `waits` | What holds the group now: usage, disk, a lock, an open trust card, an open approval, a setup that waits for a yes |
 | `leftovers` | At the end: worktrees, branches and build folders left (7.5) |
 
-The home hab publishes a short form (id, title, state, counts, the coordinator's address) in its
-catalog's `groups` section, as rounds do (`rounds.md` 9), so every hab and client can list every
+The home hab publishes a short form (id, title, state, counts, the coordinator's address, `home`
+and `generation`) in its catalog's `groups` section, as rounds do (`rounds.md` 9), so every hab and client can list every
 group, and a round on any hab can address the coordinator (12.5).
 
 ### 5.2 Group states
@@ -330,7 +339,7 @@ session view; in gff on the status board, below the sessions.
   session.
 - **Lane:** the queue in order, the item landing now and its step.
 - **Usage:** the group's share and use (10).
-- **Actions:** pause, resume, close; per item: drop, land now (skips nothing: it only moves the
+- **Actions:** pause, resume, close, move home (5.7); per item: drop, land now (skips nothing: it only moves the
   item to the front of the queue); per member: open, compact, hand off (9.4).
 
 Members stay in the normal session list too. The list marks them with the group's title.
@@ -360,6 +369,109 @@ over channels, because channels refuse a message to an exited session (`mesh.md`
   finish their turn. A member hab that has not heard of the pause yet delivers; the next catalog
   pull (15 s) corrects it.
 - A paused group can be closed.
+
+### 5.7 Moving the home hab
+
+Owner decision, 2026-11-06 (13 Q6): a group's home hab is movable in the first build. The usual
+reason is a laptop that will sleep: the user moves the group to an always-on hab first, so the
+lane and new starts go on overnight.
+
+**Who moves it.** The user, from the card ("Move home"), `gff group move <group> --host <label>`
+or `group.move {group, host}`; and gff-hab itself when the Capcom mark moves (below). An agent
+cannot: the coordinator's tools have no move. Reason: the home decides where the lane runs and
+which hab must stay awake; that is the user's call, as moving a round is (`rounds.md` 9).
+
+**What moves.**
+
+| Moves to the new home | Stays where it is |
+|---|---|
+| The group record (5.1) with its inbox, item and member states, pause, waits, usage share and leftovers list | Members: each is a session on its own host and keeps running there |
+| The lane: its queue, and the item landing now (after the wait below) | Worktrees and branches. The new home makes its own lane worktree (7.3); the old one's lane worktree is removed after the move |
+| Publishing the group in the catalog `groups` section | The Logbook plan and tasks: they sync to every hab already |
+| Confirmations the group raises from now on (`group_amend`) | The envelope in each member's `session.create`: it names hosts and harnesses, not the home |
+| The governor consumer `group:<id>`, by id | The heavy-run lock: each host's own; the lane's checks take the new home's |
+
+**The checks.** The current home refuses the move, naming the reason, when the new hab:
+is offline or has no link from the current home; lacks the `groups` or `logbook` capability; does
+not have the project checked out (the lane needs it); is the current home (a no-op). A group in
+`confirming`, `ending`, `ended` or `dropped` does not move.
+
+**The hand-over.** The current home runs it; one writer at every step.
+
+1. **Freeze.** The record gets `moving {to, since}`. The lane takes no new item. Reports, submits
+   and verdicts that arrive go into the record as usual and move with it.
+2. **Drain the lane.** An item in `landing` before step 4 (the push of the rebased branch) stops
+   and goes back to `ready` at the front of the queue. One past step 4 finishes its land, at most
+   10 minutes; at that limit it goes back to `ready` and the new home starts it again at step 1,
+   which marks it `landed` when its saved head is already on the target (14).
+3. **Adopt.** The current home sends `group.adopt {record, generation + 1}` over its link to the
+   new hab. The new hab checks the project again, writes the record (synced, then renamed) with
+   itself as `home` and the mark `pending`, and answers. A pending copy is not published and runs
+   nothing.
+4. **Commit.** On the answer, the old home writes its copy as a tombstone, `moved {to,
+   generation}`, kept 30 days. The tombstone is the commit point. The old home then publishes
+   only the tombstone in its catalog and sends `group.adopt_commit`. The new home clears
+   `pending`, publishes the group with the new generation, starts its lane, and tells the
+   coordinator one line: "group <title> moved home to <label>". The card shows the new home.
+5. **No answer.** When the adopt gets no answer in 60 s, or a refusal, the old home clears
+   `moving`, keeps the group and says why on the card. It writes no tombstone, so a late answer
+   commits nothing.
+6. **Crashes.** The old home, at its start, sends `group.adopt_commit` again for each tombstone
+   younger than 10 minutes. The new hab keeps a pending copy until a commit arrives, or until
+   its catalog copy of the old home shows the group live (no tombstone) with `moving` cleared;
+   then it drops the copy.
+
+**How members and the coordinator re-point.**
+
+- Every hab finds a group's home by its catalog copies: the entry with the highest `generation`
+  wins; a tombstone points at its `to`. So member habs, rounds in `group` mode (12.5) and clients
+  follow a move at their next catalog pull (15 s).
+- A call that reaches the old home after the move (`group.report`, `lane.submit`,
+  `review.verdict`, a `group_status`) is forwarded over the old home's link to the new home when
+  that link is up, or refused with `moved` and the new home's label. The member's hab sends it
+  again to the new home, so the agent sees one call that succeeded. A pending copy (step 3)
+  answers `unavailable`, and the member's hab tries again after 2 s.
+- The coordinator's address does not change: it is the coordinator's own session. Reports to it
+  now come from the new home.
+- A member started later in the envelope needs nothing from the home (3.3). Its new member
+  record reaches the new home with the member hab's next report.
+
+**The sleeping laptop.**
+
+- A move needs the current home awake: it holds the only writable record. Nothing moves a group
+  off a home that is already asleep or offline; the move is refused, "<label> is offline; the
+  group moves when it is back", and the app offers to queue it: the request waits on the
+  user's devices and runs when the home is online again. The mesh has no election (`mesh.md`),
+  so no other hab may take the record over by itself.
+- **At creation.** When the coordinator's hab is not marked `always_on` (`mesh.md` 8) and an
+  always-on peer has the project, the plan's card says so in one line and offers that peer as
+  the home. The user picks; the hab never moves a group on its own, Capcom's case aside.
+- **While it sleeps,** 2.2 and 14 apply: the lane and starts that need the home wait; members on
+  other hosts work on.
+
+**A Capcom-coordinated group when the Capcom mark moves.** A group whose coordinator is Capcom
+has Capcom's home host as its home (12.1). When the mark moves (`capcom.assign`):
+
+- The old Capcom home moves each such group to the new Capcom home as part of losing the mark,
+  after its engine finished its turn (`capcom-service.md` 3.2), by the hand-over above. The new
+  Capcom thread gets one note per group, "Group <title> moved here", with the card. Capcom's
+  conversation does not move (`capcom.md` 7.3); the new Capcom reads the group with
+  `group_status`.
+- **The old home asleep during the re-assignment** (the earlier open case of 12.1): the group
+  stays home on the old hab while it sleeps. Reports and lane results for the coordinator go to
+  the address `capcom`, which resolves to the new Capcom home (`capcom-service.md` 2.4), so
+  Capcom still hears them; the lane waits, as for any sleeping home. When the old home links
+  again it drops the mark (`capcom.md` 7.3) and, in the same step, moves its Capcom groups to the
+  new home.
+- **The new Capcom home lacks the project.** The move is refused by the check above. The group
+  stays on the old home with Capcom as coordinator, and the new thread gets one note: "Group
+  <title> stays on <label>: set up the project here to move it."
+
+Decision: an explicit two-step hand-over by the current home, whose tombstone is the commit
+point, with a generation number in the catalog. Reason: the mesh has one writer per record and no
+election. The record is live in exactly one place at every step: on the old home until its
+tombstone, on the new home after the commit. The generation lets every hab and client pick that
+copy from the catalog with no extra protocol.
 
 ---
 
@@ -471,12 +583,18 @@ For each item:
    for its exit: 0 passes, any other code fails. The command is the project's own, such as one
    that watches the CI run for that commit. The project's CI must run on pushes to `group/**`
    branches; this repository's `ci.yml` runs only on pull requests and on main today and needs
-   that trigger. A project with no `lane.ci` has no CI step; the card says "no CI". See Q3.
+   that trigger. A project with no `lane.ci` has no CI step: the item lands on its local checks
+   alone, and the card says "no CI" on the item and the lane (owner, 2026-11-06; 13 Q3).
 6. **Land.** Push the commit to the target as a fast-forward. If the target moved, start again
    at step 1. After 3 tries the item goes back to the coordinator with "main keeps moving".
-7. **After the land:** mark the item `landed`, the Logbook task `done`, remove the lead's and the
-   reviewer's worktrees, and close the lead and the reviewer if they are idle (their
-   conversations stay resumable).
+7. **After the land:** mark the item `landed` and the Logbook task `done`. The lead and the
+   reviewer keep running (owner, 2026-11-06; 13 Q4): the coordinator or the user may still ask
+   them about the work, and they hold no lead slot (4.3). Their worktrees stay while their
+   sessions run, since a live session's folder must not vanish; the hab removes each worktree
+   once its session has ended and the worktree has no uncommitted changes.
+   **How they end.** At the group's end (7.5), which closes idle members; when the coordinator
+   drops them with `group_amend` (closed when idle, 14); or when the user closes them from the
+   card or the session list. Closing a member of a landed item never stalls the item.
 
 - **The lane never lands without a pass.** A review verdict of `pass` (or review off) and a
   passing check and CI step are required for every land. No setting turns this off.
@@ -501,12 +619,14 @@ lane for the whole repository and tells the coordinator, since every item would 
 
 When every item is landed or dropped, or the coordinator calls `group_close`:
 
-- The hab removes the worktrees of landed items (7.3 step 7 did most of them).
+- The hab closes idle members first (below), then removes the worktrees of landed items whose
+  sessions have ended (7.3 step 7 did those that ended earlier).
 - It lists the leftovers on the card and in one message to the coordinator: worktrees of dropped
   items (with uncommitted changes or not), branches not landed, and per-run build folders the
   project names in `flightdeck.json`. It removes nothing with uncommitted changes.
-- It closes idle members (`group.close_members`, default true). A working member is left running
-  and listed.
+- It closes idle members (`group.close_members`, default true), the leads and reviewers of
+  landed items among them. A working member is left running and listed, and its worktree with
+  it.
 - It marks the Logbook plan record `done` (or `dropped` when nothing landed).
 
 ---
@@ -620,7 +740,8 @@ cannot compact reaches the hand-off level:
 Decision: the hand-off is a note on the item's Logbook task, written by the hab from the member's
 `group_note`. Reason: the note is durable, synced to every host, and sits beside the item the
 fresh session reads anyway; no new record kind is needed. The hab writes it so that
-`logbook.approval = agents` does not turn it into a proposal the fresh session cannot read (Q5).
+`logbook.approval = agents` does not turn it into a proposal the fresh session cannot read
+(owner, 2026-11-06; 13 Q5).
 
 ### 9.4 Sibling actions
 
@@ -686,7 +807,9 @@ defines the internals. Each row is **shared**: a change on either side updates b
 - Capcom's tool list includes the coordinator's group tools of 15.2 (`capcom-service.md` 5.1).
   An event turn may not call them (`capcom-service.md` 9.4).
 - The group card links from Capcom's thread, and Capcom sums up the result there.
-- A group whose coordinator is Capcom has Capcom's home host as its home hab.
+- A group whose coordinator is Capcom has Capcom's home host as its home hab. When the Capcom
+  mark moves, the group moves with it, also when the old home slept through the re-assignment
+  (5.7).
 - Capcom has no shell. The heavy-run lock and the lane do not need one from the coordinator.
 
 ### 12.2 The usage governor (Part 14 G) — shared
@@ -727,7 +850,7 @@ on any hab reads them from its catalog copies at the start of each run.
 branch_prefix}`. The member hab answers its own pane's trust dialog only for a folder that
 matches the cover (4.2), and holds the `blocked:trust` report up to 10 s while it does. This is an
 exception `app.md` 7.10 must state: the hab answers, the user does not, because the user
-confirmed the plan.
+confirmed the plan, or turned the plan's confirmation off (`confirmation: none`, 13 Q2).
 
 ### 12.7 Worktrees (`hab-logic-api.md` 3.10, B4) — shared
 
@@ -742,18 +865,18 @@ its named successor, in order, and the sender sees them delivered to the same ad
 
 ---
 
-## 13. Open questions for the owner
+## 13. Owner decisions
 
-Settled decisions are cited above and are not repeated here.
+The owner answered this spec's open questions on 2026-11-06 (plan-xagejg31 (q)). None are open.
 
-| # | Question | Proposed default |
-|---|---|---|
-| Q1 | Is `confirm.group_plan` a levelled setting, and which plans ask? Decision 6 implies confirmation on unless turned off, but `app.md` 20.2 says Balanced adds no confirmation, and decision 6 was asked about "a group's starts on other hosts", while own-host starts never ask (`capcom.md` 6.4) | (a) Levelled: Safe true, Balanced true, Bypass false, every plan asks; `app.md` 20.2 gains this one exception. Or (b) follow `confirm.start_elsewhere`'s column, ask once per plan, only for a plan that touches another host. Proposed: (a), since the card also answers trust for every folder |
-| Q2 | With confirmation off, may the hab answer the trust prompt for a group's new worktrees? `app.md` 20.2 keeps levels away from a harness's own prompts | Only for worktrees of a folder the user trusted through Flightdeck (4.2) |
-| Q3 | A project with no `lane.ci`: may the lane land on its local checks alone? | Yes, and the card says "no CI" |
-| Q4 | Does the lane close a lead and its reviewer after a land? | Yes, when idle; the conversations stay resumable |
-| Q5 | Under `logbook.approval = agents` (Safe), agent writes become proposals (`logbook.md` 9.1). May the hab write a group's claims and hand-off notes on the members' behalf, so they land at once? | Yes: the hab writes them as the group, with the member as the source session; the confirmed plan is the user's authority. Other member writes stay proposals |
-| Q6 | May the user move a group's home hab (for a laptop that will sleep)? | Not in the first build; start the group from an always-on host instead |
+| # | Question | Decision (owner, 2026-11-06) | Where |
+|---|---|---|---|
+| Q1 | Is `confirm.group_plan` a levelled setting, and which plans ask? | Levelled: on at Safe and Balanced, off at Bypass. Every plan asks while it is on; `app.md` 20.2 gains this one exception for Balanced | 3.2, 15.3 |
+| Q2 | With confirmation off, may the hab answer the trust prompt for a group's new worktrees? | Yes, always: the hab answers trust for every worktree it makes for the group | 4.2, 12.6 |
+| Q3 | A project with no `lane.ci`: may the lane land on its local checks alone? | Yes; the card says "no CI" | 7.3 step 5 |
+| Q4 | Does the lane close a lead and its reviewer after a land? | No. They keep running; they end at the group's end, when the coordinator drops them, or when the user closes them | 7.3 step 7, 7.5 |
+| Q5 | Under `logbook.approval = agents`, may the hab write a group's claims and hand-off notes so they land at once? | Yes: the hab writes them as the group, with the member as the source session. Other member writes stay proposals | 4.3, 9.3 |
+| Q6 | May the user move a group's home hab? | Yes, in the first build, including a Capcom-coordinated group when the Capcom mark moves | 5.7, stage B9 |
 
 ---
 
@@ -764,7 +887,7 @@ Settled decisions are cited above and are not repeated here.
 | The coordinator exits | The group runs on. Reports wait in the record's inbox (5.5) and go in when it is resumed; the card shows them meanwhile |
 | The coordinator's host sleeps | The lane and the record wait. Members on other hosts keep working; their messages wait in outboxes (`mesh.md` 6.3) |
 | A member's host goes offline | The member shows stale on the card. Its item stays in its state. Nothing is restarted elsewhere |
-| A member's session is closed by the user | The item goes to `stalled`; the coordinator is told and may call `group_retry` (inside the envelope) |
+| A member's session is closed by the user | For an item not yet landed, the item goes to `stalled`; the coordinator is told and may call `group_retry` (inside the envelope). For a landed item, nothing changes but the member's state; its worktree goes once it has no uncommitted changes |
 | The user types into a member | Allowed. The member is in use, so supervision and sibling actions wait (9) |
 | A member asks a permission | An ordinary approval: card, push, answer. The group card lists it under waits |
 | Two groups on one repository on one hab | One lane serves both, in `ready` order |
@@ -772,6 +895,11 @@ Settled decisions are cited above and are not repeated here.
 | A plan edit drops a member that already runs | `group_amend` asks once; the dropped member is closed when idle |
 | gff-hab restarts mid-land | The lane starts the item again at step 1. When the saved rebased head (7.3 step 4) is already on the target, the item is marked `landed` |
 | gff-hab restarts while the plan waits for its confirmation | The confirmation is gone; the group becomes `dropped` and the coordinator is told (3.2) |
+| The user moves the home while an item is landing | Before its push the item goes back to the front of the queue; after it, the land finishes first, at most 10 minutes (5.7) |
+| The new home goes offline mid-move | No commit: the old home keeps the group after 60 s and says why on the card (5.7) |
+| The old home crashes after its tombstone | At its start it sends the commit again; until then calls get `unavailable` and are retried (5.7) |
+| A move asked while the home sleeps | Refused; the app can queue it to run when the home is back (5.7) |
+| The Capcom mark moves while a Capcom group's home sleeps | Capcom hears reports at its new home through `capcom`; the group moves when the old home links again (5.7) |
 | The home hab is offline when a lead submits | The submit waits in the member hab's outbox; the reviewer starts when the home hab is back |
 | A heavy run's CLI is killed with SIGKILL | Its connection drops; the lock goes to the next waiter |
 | Disk low while the lane's checks wait | The lane waits like any heavy run; the card shows it |
@@ -796,6 +924,8 @@ to 3.6.
 | `group.report {group, text}`, `group.note {group, item, text}` | A report to the coordinator (5.5); a note the hab writes on the item's task (9) | B3 |
 | `group.pause`, `group.resume`, `group.close {group}` | → the record | B3 |
 | `group.retry {group, member}` | Start a failed member again | B3 |
+| `group.move {group, host}` | The user's move of the home hab (5.7); from a pane route `denied` | B9 |
+| `group.adopt {record, generation}`, `group.adopt_commit {group, generation}` | Peer link only: the hand-over of 5.7 | B9 |
 | event `group.updated` | `id`, `revision`, `data` the record; host scope | B3 |
 | catalog section `groups` | The short form per group, with the coordinator's address (5.1) | B3 |
 | `lane.submit {group, item}` | From the item's lead only; starts the review | B7 |
@@ -817,7 +947,7 @@ to 3.6.
 | `review_verdict` | Reviewer | The verdict |
 | `member_compact`, `member_handoff` | Any member, the coordinator | Sibling actions |
 
-CLI: `gff group ls|show|pause|resume|close`, `gff heavy [--] <command...>`.
+CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`.
 
 ### 15.3 Settings
 
@@ -825,7 +955,7 @@ All hab-side (`app.md` 20.5), stored on every hab, unless the row says otherwise
 
 | Id | Title | Type | Default |
 |---|---|---|---|
-| `confirm.group_plan` | Confirm a group's plan before it starts | bool | true (level: Q1) |
+| `confirm.group_plan` | Confirm a group's plan before it starts | bool, levelled | Safe true, Balanced true, Bypass false (13 Q1) |
 | `group.max_leads` | Leads at once | integer 1 to 10 | 3 |
 | `group.max_workers` | Workers per lead | integer 0 to 5 | 2 |
 | `group.compact_at` | Compact members at context | percent, 0 = off | 40 |
@@ -850,15 +980,17 @@ fresh-eyes reviewer before they close.
 | # | Stage | Builds | Depends on | Task |
 |---|---|---|---|---|
 | B1 | This spec | — | Spawn verb spec | task-5ntfv32q |
-| B2 | Spawn and trust | The spawn verb's group fields; `trust_cover` and the held trust report (12.6); the Codex trust rule and its keys; the trust ledger (4.2); addresses to both sides | task-6iwat66b | task-7kzvfcna |
+| B2 | Spawn and trust | The spawn verb's group fields; `trust_cover` and the held trust report (12.6), also with `confirmation: none`; the Codex trust rule and its keys; addresses to both sides | task-6iwat66b | task-7kzvfcna |
 | B3 | Record, card, confirmation | `group.*`, the record and its file, the Logbook plan and tasks with hab-written claims and notes, the envelope in each start, `confirm.group_plan`, reports and the inbox (5.5), pause (5.6), the card in the app and gff, the catalog section | B2 | task-nz4aglbr |
 | B5 | Lock and disk | `gff heavy`, `heavy.*`, the disk fields in the catalog, the threshold and the messages | B1 | task-aagbyg89 |
 | B7 | Review | `lane_submit` up to the verdict (item states `review`, `fix`, `ready`), reviewer choice, `review_verdict`, findings on the card, fix in place on the review branch | B2, B3 | task-3eez53r6 |
 | B4 | Stacking and lane | Worktrees per lead with `fetch` (12.7), stacking, the lane from `ready` through its seven steps, back to the lead, the end of a group | B3, B7 | task-ur5zmuah |
 | B6 | Supervision | `context_pct` from Claude Code and Codex; compact, fresh session, sibling actions, the settings; the hab-started compaction and the nudge off for members (12.4); messages across a swap (12.8) | B3, task-f2fhhr6p | task-humtiqof |
 | B8 | Capcom coordinates | Group tools for Capcom, the card from its thread | Part 14 A2, B3 | task-itwl1sbg |
+| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, crashes), `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 | New task (plan-vu079jrc) |
 
-Order: B2 and B5; then B3; then B7 and B6; then B4; B8 after Part 14 A2. Usage pacing (10) lands with
+Order: B2 and B5; then B3; then B7 and B6; then B4; then B9; B8 after Part 14 A2, and B9's
+Capcom rows after B8. Usage pacing (10) lands with
 Part 14 G and wires into B3's `paused` state.
 
 ### 16.1 Acceptance: the friction table
@@ -883,12 +1015,13 @@ over OSC 7501 and hooks.
 
 | Stage | Test |
 |---|---|
-| B2 | A spawn outside a confirmed group still raises the trust card. A covered folder on the other hab is answered by that hab with no card and no push. A pre-answer that meets client input in the last second leaves the card after the hold |
-| B3 | A three-member plan raises one confirmation; nothing starts before it; with `confirm.group_plan` off it starts at once; with it off and `confirm.start_elsewhere` on, a plan with a member elsewhere asks once. A worker inside the envelope asks nothing, also with the home hab stopped; a new host asks once through `group_amend`. A restart during `confirming` drops the group and tells the coordinator. Reports to an exited coordinator wait and arrive at its resume. A user pause outlives a usage resume. A member resumes from a plain terminal. The record survives a gff-hab restart. Swift and Go tests over a fake hab: the card lists items, members and states |
+| B2 | A spawn outside a group still raises the trust card. With `confirm.group_plan` off, a covered folder is answered all the same, and a folder outside the cover raises the card. A covered folder on the other hab is answered by that hab with no card and no push. A pre-answer that meets client input in the last second leaves the card after the hold |
+| B3 | A three-member plan raises one confirmation, a plan on one host too; nothing starts before it; with `confirm.group_plan` off it starts at once; the level picker writes true at Safe and Balanced and false at Bypass; with it off and `confirm.start_elsewhere` on, a plan with a member elsewhere asks once. A worker inside the envelope asks nothing, also with the home hab stopped; a new host asks once through `group_amend`. A restart during `confirming` drops the group and tells the coordinator. Reports to an exited coordinator wait and arrive at its resume. A user pause outlives a usage resume. A member resumes from a plain terminal. The record survives a gff-hab restart. Swift and Go tests over a fake hab: the card lists items, members and states |
 | B5 | Three runs on one host take the lock in arrival order; a killed CLI releases it; a CLI that reconnects after a gff-hab restart keeps its place; a hold past the limit raises one notice |
 | B7 | The reviewer is in another harness than the lead; with only one harness, the card says "same harness"; a `fix_needed` moves the item to `fix` and reaches the lead; a pass with fixes names a review head that descends from the submitted head, and one that does not is ignored; the coordinator gets one line, not the review |
-| B4 | A `fix_needed` item never lands; a pass with fixes lands the review head; a stacked item lands after the item it stacks on with the earlier commits out of its diff; a target that moves during CI makes the lane start again; three moves send it back; a protected-branch refusal stops the lane; an item branch that empties `lane.checks` still runs the target's checks; a restart after the land push marks the item landed; the end lists leftovers and removes nothing with uncommitted changes |
+| B4 | After a land the lead and the reviewer keep running, their worktrees stay until their sessions end, and the item does not stall when the user closes them; the group's end closes them when idle; a project with no `lane.ci` lands on its checks and the card says "no CI"; a `fix_needed` item never lands; a pass with fixes lands the review head; a stacked item lands after the item it stacks on with the earlier commits out of its diff; a target that moves during CI makes the lane start again; three moves send it back; a protected-branch refusal stops the lane; an item branch that empties `lane.checks` still runs the target's checks; a restart after the land push marks the item landed; the end lists leftovers and removes nothing with uncommitted changes |
 | B6 | A sibling action against a session in use waits, then skips after 10 minutes; a Codex member with a fake rollout reading goes straight to a fresh session at 60%; a member with no `context_pct` is supervised by size; a member gets no context nudge, and its own compaction counts |
+| B9 | Two habs over the ssh stand-in, real git and fake harnesses: `gff group move` moves the record, the lane and the catalog entry; the coordinator gets one line; a member on a third hab sends its next report and `lane_submit` to the new home after one catalog pull, and one sent to the old home is forwarded; the old home's lane worktree goes. An item before its push goes back to the front of the queue; one after it lands first. The new home killed before its answer: the old home keeps the group after 60 s. The old home killed after its tombstone: at its start the commit goes again and the new home runs the lane; calls meanwhile are retried. A move to a hab without the project, a move of an `ended` group and a move from a pane are refused. A move asked while the home is stopped is refused, and the queued move runs when it is back. With Capcom as coordinator (a fake service): `capcom.assign` to the other hab moves the group with the mark, and the new thread gets the note; with the old home stopped during the assignment, reports reach the new Capcom, and the group moves when the old home links again. Swift and Go over a fake hab: the card's "Move home" and the new home label |
 | B8 | Live check of `swarm-study.md` 2.4 scenario 2: Capcom finds the project, starts a group across two hosts after one confirmation, and replies with the summary |
 
 ---

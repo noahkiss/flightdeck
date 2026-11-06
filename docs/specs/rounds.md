@@ -3,7 +3,9 @@
 Status: accepted for build. Part 13. Written 2026-11-01; questions settled and build stages
 planned 2026-11-01 (section 12, section 14). Watchers added 2026-11-06 from the swarm study
 (`swarm-study.md` 5, 8): the `watch` trigger, the `capcom` and `group` modes, and the
-`notice.raised`, `logbook.updated` and `hab.woke` events (4.3 to 4.6, 5.2, 14.1, 16).
+`notice.raised`, `logbook.updated` and `hab.woke` events (4.3 to 4.6, 5.2, 14.1). The owner
+answered the watcher questions on 2026-11-06 (12): Capcom's second answer, module watchers
+(stage 12) and, for Capcom jobs, the `actions` field (3).
 
 A round is a scheduled agent job. Each run is an ordinary visible session: you can watch it,
 type into it and take it over. This spec covers the job definition, triggers, session modes,
@@ -149,6 +151,7 @@ that hands a message to Capcom or to a coordinator is a new thing a run does.
 | `trigger` | Yes | One trigger (4). An `event` trigger holds the event and its filter (4.3); a `watch` trigger holds `watch` (4.4) |
 | `prompt` | Yes, unless `command` | Text the agent receives each run. In `capcom` and `group` mode, the instruction that goes with the events (5.2) |
 | `group` | `group` | The group, by id (5.2) |
+| `actions` | No | `capcom` only: the action words Capcom may use in the event turn that takes this round's message (`capcom-service.md` 9.6). Default none. Stage A9 |
 | `debounce`, `cooldown` | No | `event` and `watch` only: default 30 s and 5 minutes (4.5) |
 | `secrets` | No | `watch` only: the name of a secret set in the hab's config (4.4) |
 | `harness` | `fresh` with a prompt | `claude`, `codex`, `opencode`, or a later adapter |
@@ -196,6 +199,10 @@ Rules:
   `group` rounds only. `debounce` and `cooldown` are for `event` and `watch` triggers only,
   `secrets` for `watch` only. Any mode takes any trigger: a `cron` round in `capcom` mode is a
   morning brief from Capcom.
+- **Field rules (Capcom jobs).** `actions` is for `capcom` rounds only, from the closed set of
+  `capcom-service.md` 9.6. A create or update from a pane route that sets a non-empty `actions`
+  or adds a word is refused `denied`; only a person grants Capcom an action. Removing words is
+  allowed from anywhere.
 
 Decision: rounds live in the runner's state and are edited by the API, with export and apply for
 a file. Reason: the app and agents must create and edit rounds, as in Paseo, and a store the hab
@@ -414,14 +421,86 @@ command = ["/usr/local/bin/print-mail-secrets"]
 - `round.create` and `round.update` refuse a `secrets` name the hab's config lacks (`invalid`).
   The export carries the name only, so a file in git holds no secret.
 
-**Module watchers.** A module may later serve as a watcher: gff-hab calls its `watch(ctx)` on the
-manifest's `refresh` schedule and takes the events it returns, with the cursor in the module's
-state. A module's `refresh` has a 30 s limit (`modules.md` 8.1), so it can poll a feed but not
-hold a connection. Not in the first watcher stage (14).
+**Module watchers (stage 12).** A module (`modules.md`) may serve as a watcher instead of a
+program. It suits a source that a poll covers: a feed, a status page, an API with a cursor. It
+cannot hold a connection: a module call has a 30 s limit (`modules.md` 8.1). Owner decision,
+2026-11-06 (W3, section 12): module watchers get a stage of their own.
 
-Two deviations from `swarm-study.md` 5, for the owner to see: the study's "a command or module"
-builds the command first and leaves modules for later (16, W3); its "stops it on sleep" becomes
-"restarts it at wake", since no sleep signal reaches gff-hab without cgo.
+The `watch` trigger takes `module` in place of `argv`:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `watch.module` | Yes, instead of `argv` | The id of a module installed on the runner hab (`modules.md` 10.6) |
+| `watch.every` | No | Time between calls: 30 s to 24 hours, default 5 minutes |
+| `watch.args` | No | A JSON object, at most 4 KiB, passed to the module as `ctx.args`, such as a feed URL |
+| `watch.kinds`, `secrets` | No | As for a program watcher |
+
+`argv` and `module` are exclusive; `cwd` is for `argv` only.
+
+**What the module provides.** `main.js` exports `watch(ctx)` beside `render` (`modules.md` 5).
+The bridge gains it as an additive function, so no bridge version changes (`modules.md` 9).
+
+- `ctx` holds the usual fields (`modules.md` 7.3), with `place` set to `watch`, plus `round` (the
+  round id and name), `cursor` (the round's stored cursor, or absent), `args` (`watch.args`) and
+  `secrets` (the secret set's variables as a frozen object of strings, or absent).
+- It returns `{events: [...], cursor?: "<text>"}`, or a promise of it (`modules.md` 7.3). Each
+  event has the fields of a program watcher's event line (title, kind, key, level, at, data),
+  with the same bounds. At most 60 events per call; the rest are dropped and counted.
+- Its time limit is `refresh`'s, 30 s. It may use the powers the manifest declares, except `act`:
+  in `watch`, `fd.hab.act` throws `PowerError`. A watcher reports; it never acts. `fd.hab.get`
+  keeps its read list. `fd.state.set` works as in `refresh`, in the module's one state store.
+- The cursor belongs to the round, not the module, so one module can serve several rounds. Two
+  rounds that use one module with different `watch.args` keep apart.
+- A module with no `watch` export is refused at `round.create` and `round.update` (`invalid`,
+  "module <id> has no watch function"). So is a module not installed on the runner.
+
+**How it runs.**
+
+- **In the module host,** not in a pane. gff-hab asks the module host (`modules.md` 4) to call
+  `watch` every `watch.every`, counted from the end of the last call. Calls on one module run one
+  at a time with its card's calls (`modules.md` 7.3), so a slow card refresh can delay a watch
+  call. The module host's restart, and gff-hab's, lose nothing: the cursor is on the round, and
+  the next call starts at the interval from gff-hab's start.
+- **No session.** A module watcher has no session and no pane. What it does shows on the round's
+  page: the watcher's state, the last call's time, result (`ok` with an event count, or the
+  error) and duration, and the last 20 lines its calls wrote with `fd.log`, which the module log
+  (`modules.md` 8.3) also keeps. Reason: a module owns no PTY; the page shows what a pane would.
+- **States.** `Round.watcher` reads `waiting` (with the next call's time), `calling`, `backoff`
+  or `stopped`, in place of a program watcher's `running`.
+- **Events** take the same path as a program watcher's lines: `kinds`, the `key` dedup, the rate
+  bucket, then the batch (4.5). The cursor follows the same save rule (at most once per 10 s, and
+  with each new run).
+- **Failures.** A call that throws, returns a value of the wrong shape, or passes its limit is a
+  failure; its events are dropped and its cursor is not kept. The next call follows the backoff
+  of a program watcher (1 s doubling to 5 minutes, but never sooner than `watch.every`). Five
+  failures in a row pause the round with the `paused` notice, its body naming the last error. A
+  success clears the count. These counts are the round's; the module's own failure pause for its
+  card (`modules.md` 8.3) is apart, and a paused card does not stop the watcher.
+- **Sleep and wake.** A call due during sleep runs once after the wake settle (8.3), not once per
+  missed interval. A call in flight at sleep ends by its limit at wake and counts as gff-hab's own
+  hang-up: no failure.
+- **A module removed, disabled or failing to load** stops the watcher: state `stopped`, with the
+  reason. The round pauses with the `paused` notice at once. Reinstalling the module and
+  unpausing the round starts it again. An update of the module takes effect at the next call; a
+  change of its powers waits for the user's accept, as every module update does (`modules.md`
+  7.2), and the watcher keeps calling the version it has until then.
+- **Caps.** A module watcher counts toward `rounds.max_watchers` (16).
+- **Secrets.** The set's command runs once per call, as for a program watcher's start; its
+  output reaches `ctx.secrets` and nothing else. Reason: a module with `fetch` can send a secret
+  anywhere, as a program can; the user picked both the module and the set.
+- **Move.** `move` takes a module watcher round when the new runner has the module installed with
+  the same id and a `watch` export; the create is refused otherwise and the move rolls back (9).
+
+Decision: a module watcher is polled by the module host on the round's interval, with the cursor on
+the round. Reason: it reuses the module runtime's limits and powers unchanged, and the program
+watcher's event path, cursor and pause rules; only the calling loop is new. The round, not the
+manifest, sets the interval, since the user tunes a watcher per source.
+
+Decision: a module watcher has no pane. Reason: modules own no PTY (`modules.md` 4), and the
+round's page shows what a pane would show for a program watcher: each call and its log lines.
+
+One deviation from `swarm-study.md` 5 remains, for the owner to see: its "stops it on sleep"
+becomes "restarts it at wake", since no sleep signal reaches gff-hab without cgo.
 
 Decision: a watcher is a plain program in a pane, under a wrapper. Reason: the owner's rules want
 every run visible and sessions that outlive updates; a pane gives both. A program can hold IMAP
@@ -587,6 +666,7 @@ shared with them, and a change to it changes both specs.
 | `events` | The batch (4.5), at most 50 events or 32 KiB, with the count of the rest. Marked as data from outside |
 | `level` | The highest `level` in the batch, or absent. A hint, never a push of its own |
 | `last_ok` | `GFF_ROUND_LAST_OK` (5.1) |
+| `actions` | `capcom` only, from stage A9: the round's `actions` (3), or absent. The home hab caps them by its level (`capcom-service.md` 9.6) |
 
 - **Size.** The whole message fits the channel limit of 64 KiB (`mesh.md` 6.3); the event block is
   cut first, with the count of what it left out.
@@ -618,6 +698,14 @@ shared with them, and a change to it changes both specs.
   with a reason word from an open set (today `off`: the user turned Capcom's round messages off).
   Quiet hours and the daily turn budget never decline: the message is accepted and waits. The
   run waits for no turn.
+- **The second answer** (owner, 2026-11-06; W1 in 12). After the turn that took the message,
+  Capcom answers once more with an `outcome`: `told` (it wrote to the user), `quiet` (it did
+  not), `acted` (from A9, it ran an action the round allows) or `unseen` (no turn took it)
+  (`capcom-service.md` 9.5). It arrives as a status item after the final state, maybe hours
+  later, through the outbox while the runner sleeps. The runner records it on the run as
+  `outcome` with its time, and emits `round.run_updated`. The run's state never changes: an
+  ended run gains this one field, once. A run with no outcome after 7 days shows "outcome
+  unknown". The round's page shows it beside the state: "accepted by Capcom · told 07:02".
 - **Where Capcom runs.** The service runs on the Capcom home host (`capcom.md` 7.3). On the
   runner the call is local. On a peer, the message travels as a channel message to the service
   (`mesh.md` 6), so the outbox holds it while that host sleeps. The home host's hab hands it to
@@ -697,6 +785,8 @@ Interface shared with Part 14 (A1) and Part 15 (B1), in one place:
 | Item | Owner | Rounds use |
 |---|---|---|
 | The round message and its answers `accepted`, `duplicate`, `declined` | Part 14, `capcom-service.md` 9.5 | Hand over a `capcom` message; map the answer (above) |
+| The second answer `outcome`: `told`, `quiet`, `acted`, `unseen` | Part 14, `capcom-service.md` 9.5 | Record it on the run (above) |
+| The `actions` of a Capcom job, and the level that caps them | Part 14, `capcom-service.md` 9.6 | Store the field (3); send it in the message |
 | The `capcom-service` catalog capability | Part 14, `capcom-service.md` 9.5 | Refuse at create; skip a run |
 | The service's actor id (its session id) on its notices and Logbook ops | Part 14, `capcom-service.md` 9.5 | The no-loop rule (4.3) |
 | The group's coordinator address and state in the catalog `groups` section | Part 15, `groups.md` 5.1, 12.5 | Address a `group` message; complete the round |
@@ -1025,7 +1115,8 @@ lose runs for reasons the user never sees. A restart is treated like a short sle
   on a laptop works: its cursor reports at wake what came during the sleep (4.4). The app's
   always-on line applies to `watch` rounds too, since a sleeping runner hears nothing.
 - **Moving these rounds.** `move` takes `capcom`, `group` and `event` rounds, and `watch` rounds
-  whose `secrets` set the new runner's config holds; the new runner refuses the create
+  whose `secrets` set the new runner's config holds and, for a module watcher, whose module it
+  has installed with a `watch` export (4.4); the new runner refuses the create
   otherwise, and the move rolls back. A `capcom` or `group` round names no project, so the
   remote rule does not apply to it. An event filter that names a session cannot move (the
   session lives on one host); one that names a project names it by remote in the move, as the
@@ -1106,7 +1197,12 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 - An `event` or `watch` round shows its trigger in plain words (`on logbook.updated`, `watch
   mailwatch`), its pending event count, and for a watcher its state (`running`, `backoff` until
   <time>, `stopped`), restarts, the drop count and the last exit. A link opens the watcher's pane.
+  A module watcher shows `watch module <id>`, its state (`waiting` until <time>, `calling`,
+  `backoff`, `stopped`), the last call's result and its log lines, with no pane link (4.4).
   Run now on an event round runs with the pending batch, or with none (4.5).
+- A `capcom` run shows Capcom's second answer beside its state ("accepted by Capcom · told
+  07:02", 5.2). A filter shows only `capcom` rounds: the Capcom jobs list with their `actions`
+  (`capcom-service.md` 9.6, stage A9).
 
 ---
 
@@ -1157,7 +1253,16 @@ differ. These are the coordinator's calls on that rule, not owner decisions.
 | Q2. Does a successful fresh or fork run close its pane? | Yes: `on_finish = close` by default. Failed, timed-out, blocked and taken-over runs stay open | Matches Paseo; daily rounds would leave idle harnesses. The session record and transcript stay, so the chat view shows the run and resume is one tap |
 | Q3. Does a successful run notify? | No: `notify = failures` by default, `always` per round | Success shows on the status board and in the history; the `done` banner is off by default too (`app.md` 8.2) |
 
-The study's options and recommendations follow, for the record.
+**Owner decisions on watchers** (2026-11-06, plan-xagejg31 (q)). These were W1 to W3 of the
+watcher study; the owner answered them.
+
+| # | Question | Decision | Where |
+|---|---|---|---|
+| W1 | Should Capcom report back what it did with a round's message, so the round's history shows it? | Yes (owner, 2026-11-06). Capcom answers each round message a second time, `told` or `quiet` (and `acted` or `unseen`), recorded on the run | 5.2; `capcom-service.md` 9.5 |
+| W2 | May an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes (owner, 2026-11-06). Such a round message runs at once in quiet hours. Rounds pass the level either way | `capcom-service.md` 9.2 |
+| W3 | Are module watchers worth a stage of their own? | Yes (owner, 2026-11-06): stage 12 | 4.4, 14, 14.1 |
+
+The study's options and recommendations for Q1 to Q3 follow, for the record.
 
 ### Q1. Does a round that an agent creates need the user's confirmation?
 
@@ -1215,6 +1320,11 @@ it.
 | `RoundSpec` | New fields | `group`, `debounce_ms`, `cooldown_ms`, `secrets`; modes `capcom` and `group` |
 | `Round.pending`, `Round.watcher` | Read-only fields | The pending event count; the watcher's state (`starting`, `running`, `backoff` with its next start, `stopped`), restarts, drops since start, last exit, its session id |
 | `RoundRun.events`, `RoundRun.destination`, `RoundRun.message` | Read-only fields | An event run's count; a `capcom` or `group` run's destination and channel message id |
+| `RoundRun.outcome` | Read-only field | A `capcom` run's second answer: `told`, `quiet`, `acted` or `unseen`, with its time; set once, after the run ended (5.2). Stage 9 |
+| `RoundSpec.actions` | New field | `capcom` rounds only: the action words of `capcom-service.md` 9.6. Set only by a person (3). Stage A9 |
+| `RoundSpec.trigger` `watch.module`, `watch.every`, `watch.args` | Field values | A module watcher (4.4), in place of `argv`. Stage 12 |
+| `Round.watcher` states `waiting`, `calling` | Words | A module watcher's states, beside `backoff` and `stopped` (4.4). Stage 12 |
+| Message status item `outcome` | Word (`mesh.md` 6.3) | Capcom's second answer to a round message (5.2). Stage 9 |
 | `Session.round.watcher` | Optional field | True on a watcher's session (4.4) |
 | `round.watch_event` | Method, pane route only | The wrapper's call: a page of event and cursor lines from the watcher pane that names the round. Answers which were taken and which dropped, with reasons. Any other pane is refused with `denied` |
 | `hab.woke` | Event | A detected wake (4.3), with `slept_s`. Host scope |
@@ -1251,11 +1361,14 @@ them all at once (`mesh.md` 6.5 did the same for channels).
 | `gff round add <name> --mode capcom\|group [--group <id>] ... <prompt>` | Create a round whose runs message Capcom or a group's coordinator (5.2) |
 | `gff round add <name> ... --on <event> [--where key=value]... [--debounce d] [--cooldown d]` | Create an event round (4.3). Each `--where` is one filter field; a list is comma-separated (`--where status=done,dropped`) |
 | `gff round add <name> ... --watch [--secrets <set>] [--kinds k,...] [--watch-cwd dir] -- <program> [args...]` | Create a watch round (4.4). The words after `--` are the watcher's argv |
+| `gff round add <name> ... --watch-module <id> [--every <d>] [--watch-args <json>] [--secrets <set>] [--kinds k,...]` | Create a round with a module watcher (4.4). Stage 12 |
+| `gff round add <name> --mode capcom ... [--actions w,...]`, `gff round edit <name> --actions w,...` | Set the action words of a Capcom job (3; `capcom-service.md` 9.6). Refused from a pane when it grants a word. Stage A9 |
 | `gff-hab watch-pane -round <id> -- <program> [args...]` | What a watcher's pane runs (4.4). Not for people: gff-hab starts it |
 
 Export and apply carry the new fields: `[rounds.trigger]` holds `on` and its `where` table, or a
-`[rounds.watch]` table holds `argv`, `cwd` and `kinds`; `secrets`, `debounce`, `cooldown` and
-`group` are plain keys. A group named by id cannot move between meshes; apply refuses a `group`
+`[rounds.watch]` table holds `argv`, `cwd` and `kinds`, or `module`, `every`, `args` and `kinds`;
+`secrets`, `debounce`, `cooldown`, `group` and `actions` are plain keys. `apply` of a file that
+grants `actions` is a person's write only, as `round.update` is (3). A group named by id cannot move between meshes; apply refuses a `group`
 that no catalog copy lists (`groups.md` 5.1).
 
 Built (stage 3, task-ams092is). Where this spec left a choice open:
@@ -1597,14 +1710,18 @@ fresh-eyes reviewer before they close.
 | 9 | Event triggers, `capcom` and `group` modes (the swarm study's D2) | The six events in 4.3 with their filters, `hab.woke`, the event batch (4.5), no self-loops; the `capcom` and `group` modes (5.2); the channel `round` mark and the lock on the receiving hab | task-awkgh5h1 |
 | 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere` | task-ybb4c3ed |
 | 11 | Watchers (the swarm study's D3) | The `watch` trigger: `gff-hab watch-pane`, supervision, backoff, the exit pause, restart at wake, event lines, the cursor, dedup keys, secret sets; `--watch`, export and apply; the watcher's state on the round; a mail watcher example | task-qhdhg0x2 |
-| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12); module watchers (4.4) | Planned when Logbook is built; module watchers after stage 11 |
+| 12 | Module watchers (owner, 2026-11-06, W3) | `watch.module`, `every`, `args`; the `watch(ctx)` export in the module runtime and the module host's call loop; `act` refused in `watch`; the cursor, events, failures, pause, wake and removal rules of 4.4; the round page's call log; `--watch-module`, export, apply and `move` | New task (plan-vtsaeon9) |
+| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12) | Planned when Logbook is built |
 
 Stages 1 to 3 run in order. Stages 4 and 6 can run side by side after 3; 5 follows 4. Stages 7
 and 8 need 3 and 6. Stage 9 waits for 5 and 6; stage 10 waits for the agent kit and Capcom's
 confirmation cards. Stage 9 waits for this spec (watchers, task-pt6pnli6); its `capcom` mode
 needs the Capcom service (Part 14 A2, task-vz6mxa3f) and its `group` mode the group record (Part
 15 B3, task-nz4aglbr). Each mode answers `unavailable` until its other side exists, so the rest
-of stage 9 can land first. Stage 11 follows stage 9.
+of stage 9 can land first. Stage 11 follows stage 9. Stage 12 follows stage 11 and the module runtime and host (Part 7
+stages 3 and 5, task-349z6rqz); modules come after the first release (`modules.md` 14, O1), so
+stage 12 does too. Stage 9 also builds `RoundRun.outcome` (5.2) against a fake service; Part 14 A7
+sends it. The `actions` field is built by Part 14 A9, which touches the rounds store, API and CLI.
 
 ### 14.1 Acceptance for the watcher stages
 
@@ -1628,7 +1745,9 @@ Stage 9, with `go test -race` over a real gff-hab and holder and fake harnesses:
   host on a peer that is offline queues the message, which arrives once after the link comes up,
   also when the runner sends it again after a restart; a host that lost the Capcom mark refuses
   it and the run skips with its batch kept. A notice or op with the service's actor id never
-  triggers the round.
+  triggers the round. An `outcome` status item after `accepted` sets `RoundRun.outcome` once,
+  emits one `round.run_updated` and leaves the run's state; a second one for the same message is
+  dropped; one from a peer arrives after the runner wakes; an older runner ignores it.
 - `group` against a fake group record and two habs: delivered to the coordinator on the other
   hab; held under the round lock while a client typed into it, then `expired` at the deadline
   and the run `skipped`, "in use", with the batch kept; a message that reaches the far hab after
@@ -1662,6 +1781,34 @@ Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher p
 - Live check, after Part 14 A7 (task-hj8cnr5v): a mail reaches Capcom's thread as one round
   message.
 
+Stage 12, with `go test -race` over a real gff-hab, its module host and hand-written module
+bundles (in the style of `internal/modhost/testdata/bundles/`), on a fake clock where it says so:
+
+- A round with `watch.module` calls the module's `watch` every `every` (fake clock), counted from
+  each call's end; a call's events make one run through the batch rules; `ctx` carries the round,
+  `args`, the stored cursor and the secret set's variables.
+- The returned cursor reaches the next call, also after a gff-hab restart and a module host
+  kill; a call that fails keeps the old cursor and drops its events.
+- A module with no `watch` export, or not installed, is refused at create (`invalid`); `argv`
+  with `module` is refused.
+- `fd.hab.act` in `watch` throws `PowerError` even with the `act` power; `fetch` and `exec` work
+  when declared; a declared power reaches its backend.
+- A call that throws, returns the wrong shape or loops past 30 s is a failure: the backoff
+  doubles from 1 s but never comes sooner than `every`; five in a row pause the round with one
+  `paused` notice naming the error; a success clears the count. The module's card pause does
+  not stop the watcher.
+- More than 60 events in one call: 60 taken, the rest counted; a bad event (no title, too long,
+  oversize `data`) dropped and counted; a repeated `key` dropped quietly.
+- Fake clock: a sleep over ten intervals makes one call after the wake settle; a call in flight
+  at sleep ends at its limit and counts no failure.
+- Removing the module stops the watcher and pauses the round with one notice; reinstalling and
+  unpausing starts it again. A module update with a new power keeps the old version calling
+  until the user accepts.
+- Two rounds on one module with different `args` keep separate cursors and batches.
+- The round page's data (`round.get`) shows the state, the last call's result and its `fd.log`
+  lines; the secret set's values appear in no log, store, export, catalog or call log.
+- `move` to a hab without the module is refused and rolls back; export then apply gives no diff.
+
 ---
 
 ## 15. Sources
@@ -1691,11 +1838,4 @@ Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher p
 
 ## 16. Open questions: watchers
 
-Owner decisions 1 and 2 of the swarm study are settled and are not repeated here. These need the
-owner, or an agreement with the Part 14 and Part 15 specs:
-
-| # | Question | Default until answered |
-|---|---|---|
-| W1 | Should Capcom report back what it did with a round's message (`told` or `quiet`), so the round's history shows it? It needs a second answer in the Part 14 interface | No: the run ends at `accepted`; Capcom's thread is the record |
-| W2 | For Part 14, with no effect on rounds: may an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes, as `capcom-service.md` 9.2 now builds it: such a round message runs at once. Rounds pass the level either way |
-| W3 | Are module watchers (4.4) worth a stage, or does a plain program cover every watcher the owner wants? | A later idea after stage 11 |
+None open. The owner answered W1 to W3 on 2026-11-06; they are in section 12.
