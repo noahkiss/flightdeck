@@ -1761,6 +1761,62 @@ shows its last rounds, stale: its last snapshot's, or a newer copy from another 
 `catalog.list`. The trigger words moved to `rounds.TriggerWords`, so the catalog section, `ls
 -all` and the board share them. The calls are in `gff-client.md` 7.5.
 
+Built (stage 9, task-awkgh5h1): event triggers, event batches, and the `capcom` and `group`
+modes (`internal/rounds/events.go`, `internal/rounds/batch.go`, `cmd/gff-hab/roundevents.go`,
+`cmd/gff-hab/roundmsg.go`, `internal/channels/rounds.go`). Where this spec left a choice open:
+
+- **The matcher.** gff-hab hands every event it publishes to the matcher through a queue of
+  4,096; a full queue drops the event and logs one line, so a publisher never waits. The
+  matcher keeps the last project, agent state and command it saw: `project.updated` counts only
+  a change of `head`, `branch` or `behind` against the last copy, and no first sight;
+  `agent.state` counts a `done` or `error` once per turn; `command.updated` counts an ended
+  command with a non-zero exit once.
+- **No self-loops.** A round's own run sessions (every run it keeps), and in `capcom` and
+  `group` mode its destination's actor id (the service's `capcom.service` id from the catalog,
+  or the coordinator's session), never trigger it. A notice whose `round` names the round never
+  triggers it.
+- **Logbook ops.** The Logbook keeps a local `folds` table: each op gets a number when this
+  replica folds it, and a rebuild keeps the numbers. `logbook.history` takes `folded_after` and
+  answers `last_fold`. The matcher keeps a mark per record and reads only the ops folded after
+  it, so a peer's op that lands in the middle of a record's history counts once. At start the
+  mark is the replica's last fold number: ops folded before gff-hab started never count.
+- **The filter's project.** A structure project id, or an absolute folder taken as its project.
+  For `logbook.updated` it maps to the Logbook project by the project's remote or root commit;
+  any other value is taken as a Logbook project id. A round read back carries the filter's
+  `project_remote` when the project has one.
+- **The CLI.** `-on <event>`, `-where key=value` (repeat it; a list is comma-separated, as in
+  `-where status=done,dropped`; `project=` takes a folder), `-debounce`, `-cooldown`, `-mode
+  capcom|group` and `-group <id>`. Export and apply carry `on`, `[rounds.filter]`, `debounce`,
+  `cooldown` and `group`; a filter's project goes by remote.
+- **The batch.** The scheduler keeps each round's pending batch in memory and saves it at most
+  every `state_save_every`, at a stop, and in the write that makes the run. Run now takes the
+  batch and starts no cooldown. A run that ends `skipped` with its batch kept puts the events
+  back in front of the newer ones, inside the bounds. A run's events go to
+  `<state>/rounds/events/<round>/<run>.json`; `$GFF_ROUND_EVENTS` names the file.
+- **The message.** A `capcom` message's text is the round's prompt; the events ride in the
+  `round` mark, cut to the block's bounds and to the 64 KiB channel ceiling, oldest first. A
+  `group` message carries the deadline. The message id is a hash of the run id, so a runner
+  that restarts never sends a second message for one run.
+- **`duplicate`.** The reason is "already accepted by Capcom". A `duplicate` or `declined` run
+  gets no outcome.
+- **The timing of `wait`.** The runner's own `wait` timer and the far side's deadline end
+  together. With clocks in step, the runner usually ends the run first, "not delivered in
+  <wait>: handed"; the "in use" row of the table shows only when the far side's `expired`
+  arrives first.
+- **A group the catalog does not show.** The create is refused `unavailable`, as for a capcom
+  round with no service. A group run whose coordinator is Capcom uses `wait` as its limit, and
+  ends `timed_out` at it.
+- **move.** `capcom`, `group` and event rounds move. `round.get` with `batch` reads the pending
+  batch after the pause; `round.create` with `batch` starts the new round with it, its
+  debounce from the create (refused on the pane route). A filter that names a session stays; a
+  filter's project goes by remote, or as it is for `logbook.updated` (a Logbook project id is the
+  same on every hab); a filter's project with no remote stays.
+- **The far sides.** The Capcom service (Part 14 A2) and the group record (Part 15 B3) do not
+  exist yet. This hab lists no `capcom-service` and publishes no groups, so a capcom round is
+  refused at creation and a group round finds no group. A build with the `testseam` tag stands
+  both in from files (`cmd/gff-hab/roundfake.go`: `$GFF_TEST_CAPCOM_SERVICE`,
+  `$GFF_TEST_GROUPS`), and the tests run the rounds side end to end against them.
+
 ---
 
 ## 14. Build stages
