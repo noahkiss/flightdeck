@@ -185,6 +185,11 @@ type Usage interface {
 }
 
 // Config is what New needs. Source is required.
+// Stats serves hab.stats. Readers share a cached sample across clients.
+type Stats interface {
+	Stats(context.Context) (api.HostStats, error)
+}
+
 type Config struct {
 	Build        string
 	Host         api.HostInfo
@@ -204,6 +209,7 @@ type Config struct {
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
 	Catalog      Catalog     // nil: the catalog methods answer unavailable
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
+	Stats        Stats       // nil: hab.stats answers unavailable
 	Usage        Usage       // nil: usage.list answers unavailable
 	Content      Content     // nil: the content.* methods answer unavailable
 	Channels     Channels    // nil: the channel and mail methods answer unavailable

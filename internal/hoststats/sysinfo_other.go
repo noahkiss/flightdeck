@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package gffclient
+package hoststats
 
 import "github.com/noahkiss/flightdeck/api"
 

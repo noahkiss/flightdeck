@@ -466,6 +466,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleTrust(m)
 		return
 	}
+	if m.Method == "hab.stats" {
+		c.handleStats(m)
+		return
+	}
 	if m.Method == "hab.permissions" {
 		c.handlePermissions(m)
 		return
@@ -672,6 +676,31 @@ func (c *conn) handleCommandOutput(m message) {
 
 // maxPermissionsTime bounds one hab.permissions call. A walk's request keeps a probe alive for
 // up to two minutes while the user answers a dialog.
+// handleStats keeps resource reads off the connection's request loop.
+func (c *conn) handleStats(m message) {
+	seq := c.currentSeq()
+	var p api.HabStatsParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	if c.s.cfg.Stats == nil {
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "hab.stats is unavailable on this hab"))
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		defer cancel()
+		res, err := c.s.cfg.Stats.Stats(ctx)
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		res.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, res, nil)
+	}()
+}
+
 const maxPermissionsTime = 3 * time.Minute
 
 // handlePermissions runs a hab.permissions call on its own goroutine: a probe pane takes seconds,
@@ -1207,7 +1236,6 @@ const (
 // (spec 3.9). Each answers unavailable with a hint that names it.
 var later = map[string]string{
 	"session.interrupt": "Part 4 stage 4 (harness adapters: state and input)",
-	"hab.stats":         "Part 5 stage 5 (system info)",
 }
 
 // actionErr turns an Actions error into an application error.

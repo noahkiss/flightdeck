@@ -836,7 +836,7 @@ names the stage, and an event is defined but never sent.
 | `push.unregister` | Drop a token (capability `push`) | Yes (task-oe7ioczy) |
 | `notice.raise` | Raise a Flightdeck notification from a hab event or a local script: a `notice.raised` event, and a push where push is set up | Yes (task-oe7ioczy) |
 | `usage.list` | The latest usage reading of each harness account (capability `usage`) | Yes (task-6189lsjb) |
-| `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Part 5 stage 5 |
+| `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Built |
 | `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes (task-bgjbr5rn) |
@@ -1036,6 +1036,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 - **`hab.stats`** is a method, not an event: a client asks while it shows the numbers. Sizes are
   bytes; `cpu_pct` is over all cores and absent where the host cannot measure it; `battery_pct`
   is absent with no battery.
+  The hab caches one reading for two seconds across clients. Disk figures describe the hab's state directory.
+  Linux measures CPU from CPU-time counters. macOS leaves CPU absent until a CPU-time reader exists; load average is not CPU usage.
 - **`usage.list`** returns `accounts`, each with `key`, `label`, `harness`, `windows` (`name`,
   `used_pct` in whole percent, `resets_at`, `read_at`, `length_s`, `starts_at`) and `degraded`.
   `length_s` is the window's length in seconds and `starts_at` is `resets_at` less that length;
