@@ -444,9 +444,9 @@ func checkScalar(typ, name string, spec fieldSpec, v json.RawMessage) error {
 		if !retypeOK(v) {
 			return invalid("", "only a task and an issue change type, into each other")
 		}
-	case "expires":
+	case "expires", "created":
 		if _, err := time.Parse(time.RFC3339Nano, s); err != nil {
-			return invalid("", "expires is an RFC 3339 time")
+			return invalid("", "%s is an RFC 3339 time", name)
 		}
 	case "triage":
 		if s != "" && s != "new" {
