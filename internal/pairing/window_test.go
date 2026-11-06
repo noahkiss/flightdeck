@@ -133,6 +133,7 @@ func dial(f *fixture, key ssh.Signer, hostPub ssh.PublicKey) (*ssh.Client, error
 // sends line, reads every answer, and returns them with the exit status (-1 when none came).
 func pairWith(t *testing.T, f *fixture, key ssh.Signer, line string, onWaiting func()) ([]Answer, int) {
 	t.Helper()
+	f.settle(t, "127.0.0.1", maxConnsPerSource-1)
 	c, err := dial(f, key, f.hostPub)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -467,6 +468,7 @@ func TestOnlyTheSubsystem(t *testing.T) {
 		if err != nil {
 			// Only one session channel per connection: a fresh connection for each try.
 			c.Close()
+			f.settle(t, "127.0.0.1", 0)
 			if c, err = dial(f, phoneKey(t), f.hostPub); err != nil {
 				t.Fatal(err)
 			}
@@ -489,6 +491,9 @@ func TestOnlyTheSubsystem(t *testing.T) {
 
 func TestHostKeyPinnedAndKeyTypes(t *testing.T) {
 	f := open(t, time.Minute, yes)
+	// Each refused dial holds one of the address's two slots until the window sees the client
+	// hang up, a moment after dial returns; settle before the next dial, or it may be refused.
+	// pairWith settles itself.
 	defer func() {
 		pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
 		f.wait(t)
@@ -501,10 +506,12 @@ func TestHostKeyPinnedAndKeyTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	rs, _ := ssh.NewSignerFromKey(rk)
+	f.settle(t, "127.0.0.1", 0)
 	if c, err := dial(f, rs, f.hostPub); err == nil {
 		c.Close()
 		t.Fatal("an RSA key passed auth")
 	}
+	f.settle(t, "127.0.0.1", 0)
 	if c, err := ssh.Dial("tcp", f.w.Offer().Endpoints[0], &ssh.ClientConfig{User: "u", Auth: []ssh.AuthMethod{ssh.Password("x")},
 		HostKeyCallback: ssh.FixedHostKey(f.hostPub), Timeout: 5 * time.Second}); err == nil {
 		c.Close()
