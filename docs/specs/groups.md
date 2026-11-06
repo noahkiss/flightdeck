@@ -987,7 +987,7 @@ fresh-eyes reviewer before they close.
 | B4 | Stacking and lane | Worktrees per lead with `fetch` (12.7), stacking, the lane from `ready` through its seven steps, back to the lead, the end of a group | B3, B7 | task-ur5zmuah |
 | B6 | Supervision | `context_pct` from Claude Code and Codex; compact, fresh session, sibling actions, the settings; the hab-started compaction and the nudge off for members (12.4); messages across a swap (12.8) | B3, task-f2fhhr6p | task-humtiqof |
 | B8 | Capcom coordinates | Group tools for Capcom, the card from its thread | Part 14 A2, B3 | task-itwl1sbg |
-| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, crashes), `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 | New task (plan-vu079jrc) |
+| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, crashes), `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 | task-3vwhq3dn |
 
 Order: B2 and B5; then B3; then B7 and B6; then B4; then B9; B8 after Part 14 A2, and B9's
 Capcom rows after B8. Usage pacing (10) lands with
