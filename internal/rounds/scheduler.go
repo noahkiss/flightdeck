@@ -216,6 +216,11 @@ type Scheduler struct {
 	// Limits.StateSaveEvery (pendSaved) and in the write that makes a run.
 	pend      map[string]*Pending
 	pendDirty map[string]bool
+	// pendN is each round's pending count as of the last unlock, under its own leaf lock: the
+	// sink reads it while it handles an event, with s.mu free or held by another caller that
+	// waits for emitMu.
+	pendNMu sync.Mutex
+	pendN   map[string]int
 	pendSaved time.Time
 	pendTimer *time.Timer
 	dueTimer  *time.Timer
@@ -665,6 +670,19 @@ func (s *Scheduler) manualLocked(id string, now time.Time) (*Run, error) {
 	return &run, nil
 }
 
+// countPendingLocked copies each round's pending count to pendN, for Pending.
+func (s *Scheduler) countPendingLocked() {
+	n := make(map[string]int, len(s.pend))
+	for id, p := range s.pend {
+		if l := p.Len(); l > 0 {
+			n[id] = l
+		}
+	}
+	s.pendNMu.Lock()
+	s.pendN = n
+	s.pendNMu.Unlock()
+}
+
 // notStarted reports whether a run has not begun its work: queued for a start, or waiting for
 // the lock. The scheduler ends such a run itself when its round pauses, expires, completes or
 // goes.
@@ -675,6 +693,7 @@ func notStarted(r *Run) bool {
 // unlockAndFlush releases the lock and hands the gathered events to the sink in order, then
 // starts the runs marked running. emitMu keeps the order across callers.
 func (s *Scheduler) unlockAndFlush() {
+	s.countPendingLocked()
 	evs, starts := s.events, s.starts
 	s.events, s.starts = nil, nil
 	s.emitMu.Lock()

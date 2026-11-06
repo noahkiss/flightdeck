@@ -41,14 +41,12 @@ func (s *Scheduler) AddEvents(roundID string, evs []Event) error {
 	return err
 }
 
-// Pending returns how many events wait in a round's pending batch, dropped ones included.
+// Pending returns how many events wait in a round's pending batch, dropped ones included, as
+// of the scheduler's last change. It never takes the scheduler's lock, so the sink may call it.
 func (s *Scheduler) Pending(roundID string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if p := s.pend[roundID]; p != nil {
-		return p.Len()
-	}
-	return 0
+	s.pendNMu.Lock()
+	defer s.pendNMu.Unlock()
+	return s.pendN[roundID]
 }
 
 // FlushPending saves every pending batch not saved yet, whatever the time since the last save:
