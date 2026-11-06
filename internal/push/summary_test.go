@@ -387,3 +387,23 @@ func TestSummaryHideWhilePending(t *testing.T) {
 		t.Fatalf("details in answered line: %q", body)
 	}
 }
+
+// A device that changes its setting during the initial wait receives a hidden banner.
+func TestSummaryHideDuringWait(t *testing.T) {
+	gate := make(chan struct{})
+	s := &summarizer{line: "Run tests?", gate: gate}
+	r := summaryRig(t, s, time.Second)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.n.State(blocked("req-1", "make test"))
+	waitFor(t, func() bool { return s.calls.Load() == 1 })
+	r.store.Register("dev-phone", phone, Production, allKinds, true)
+	close(gate)
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 1 || alertField(pa[0], "title") != "Approval needed" {
+		t.Fatalf("banner after hiding details: %v", pa)
+	}
+	if body, _ := alertField(pa[0], "body").(string); strings.Contains(body, "test") {
+		t.Fatalf("details in banner: %q", body)
+	}
+}

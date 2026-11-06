@@ -733,6 +733,9 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 			if !d.HideCommands && !sumAsked {
 				sum, sumAsked = n.summaryFor(st), true
 			}
+			// A setting can change while the summary is pending.
+			d.HideCommands = n.hideTarget(target{device: d.ID, token: d.Token, hide: d.HideCommands})
+			hide = hide || d.HideCommands
 			b = permissionBanner(w, st.Request, d.HideCommands, sum)
 		case KindQuestion:
 			b = QuestionBanner(w)

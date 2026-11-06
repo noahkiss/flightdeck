@@ -3033,8 +3033,8 @@ input to 2 KiB, the rest to 200 characters.
 - A device with "Show details in notifications" off gets no summary: its banner reads as 16.1
   says. When every device that would get the banner hides details or is held by presence (8.3),
   or the state raises no banner (a pane's last state replayed after a restart), the hab sends
-  nothing to the model. A device that starts hiding details while a summary is pending gets no
-  detailed replacement or answered line.
+  nothing to the model. A device that starts hiding details during the wait or while a summary is pending gets no
+  detailed banner, replacement or answered line.
 - The key and the reply body are never logged. A failure logs the status code, or the kind of
   error, never the body.
 
@@ -3050,8 +3050,8 @@ answered line with the body and actions unchanged; none for a hiding device, a p
 question; nothing sent when every device hides details; a summary that does not fit, holds a
 control character or fails leaves the title of before; the harness's summary passed on; three
 requests in one batch waiting together, and one arriving mid-wait waiting from its own arrival;
-none asked for a device presence holds or an unchanged state; a device that hides details
-  while a summary is pending gets no detailed replacement or answered line; the late replacement once, passive, same collapse id and
+none asked for a device presence holds or an unchanged state; a device that hides details during or after the wait gets no detailed banner, replacement or
+  answered line; the late replacement once, passive, same collapse id and
 actions, and none after ten seconds from arrival or after the request resolved. `go test -race -run TestPushSummaries
 ./cmd/gff-hab`: gff-hab with a fake endpoint: the title, the bearer key from the key command and
 in no log line, and a folder outside the allowed roots, a request with no folder and a config with no section
