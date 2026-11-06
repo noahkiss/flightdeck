@@ -296,6 +296,41 @@ A record may have no project: a general note, a household task, a finding about 
 everywhere. Capcom files these when nothing fits (`capcom.md` 3.4). They appear in `ls --general`,
 in search, and in every brief only when tagged `everywhere`.
 
+### 3.3 Built (stage 5)
+
+The store side is in `internal/logbook` (`project.go`). First sight, remote changes and the
+private rule are in `internal/lbsvc` (`projects.go`). gff-hab files projects in `logbookSighter`
+and finds a pane's project in `logbookProject` (`cmd/gff-hab/logbook_open.go`). The verbs are in
+`internal/lbcli`.
+
+| Item | Built |
+|---|---|
+| Identity | `lbsvc.Identity`: the remote in the catalog's form (`structure.NormalizeRemote`, `mesh.md` 5.1), else `root:<hash>` of the root commit. The remote and the root commit come from the catalog's read of the folder (`catalog.ReadFolder`): `origin`, else the first remote. So the SSH and HTTPS forms of one repository, every clone and every worktree are one identity |
+| First sight | The catalog hands gff-hab every folder it reads, after each scan and after each read of a new project folder (`catalog.Config.Scanned`). gff-hab files each folder a session works in (the structure's project folders) and each folder it filed before. A folder whose identity no project holds gets a new project with that identity. Its name is the last part of the remote, else the folder's name. A pane's call files its session's project at once when the catalog has not yet |
+| The writer | A project filed at first sight, and an identity a remote change adds, are the hab's own writes: actor `{kind: hab, host}` |
+| Folders | A `folders` table in `logbook.db` keeps each filed folder's project and the identity it had. It is this replica's own, like the idempotency keys: sync never sends it, and a rebuild keeps it |
+| Remote change | A filed folder whose identity changed, to one no project holds, adds the new identity to the folder's project. Its records stay. The catalog sees the change at its next scan: at start, then every hour. A folder whose new identity another project holds is filed under that project, and nothing is joined |
+| Join | `gff lb project join <a> <b>` adds every identity of b to a, and the identity `project:<b>` to both, so a project with no identity joins too. The fold then joins them (5.6): the older keeps its id, the other shows `joined_into`. Records of both list under either id |
+| Rename | `gff lb project rename <p> <name>` sets the title |
+| Private | The project field `private` (true or false), set by `gff lb project private <p> [on\|off]`. A project is private when it, or a project joined with it, is marked. `off` clears the mark on every project of the group. `logbook.projects` shows `private` (the group), `marked` (this project) and `joined_into`; `logbook.get` of a project shows the same |
+| What agents see | A pane's reads leave out every private project except the pane's own, and their records: `find`, `list`, `ready` and `projects` skip them, and `get` and `history` answer `not_found`, as for a record this replica lacks. A pane's write that touches one, or files a record under one, answers `not_found` too. The pane's project is its session's project, by identity. A pane with no session or no project sees no private project. While gff-hab is down, the CLI in a pane reads the file under the same rule, with the working folder's identity as the pane's project. A person sees everything |
+| Pane rules | An agent never files a project, never adds or removes an identity, and never sets or resolves `private`: each answers `invalid` with a hint that the user does it outside a pane. An agent may rename a project |
+| API | Additive: a change's `identity` (add, remove); a record's and a project's `private`, `marked` and `joined_into`. No new method or event. The fold version is 4, so an older file is rebuilt at open |
+
+Where this spec was silent, stage 5 decided. Each is a default the owner may revisit:
+
+| Point | Decision |
+|---|---|
+| Cross-project reads (15.3) | Option A: agents read every project; a private project is hidden from agents outside it |
+| Private is not a lock | Private hides; it does not protect. An agent runs as the user, so it can open `logbook.db` itself, unset `$GFF_HAB`, or read over `--socket`, which answers as a person. The rule keeps private records out of agents' ordinary reads and search |
+| Which side of a join wins | The older project by create stamp, as 5.6 joins any shared identity, whichever order the user names them in. Reason: one rule for every join; a join the user makes and one sync makes agree |
+| Private in a join | One mark makes the whole group private. Reason: joining must never show an agent what the user hid |
+| Deleted projects | A deleted project still holds its identities and its mark, so a new first sight finds it rather than making a second project |
+| Folder identities | Not built: a session outside a repository has no project in the structure, so Logbook files none for it (`folder:` of 3.1) |
+| A different repository in a filed folder | Counts as a remote change when its identity is new: the new identity joins the old project. There is no split. A user who reuses a folder for another repository can rename the folder first |
+| Peer-link reads | Unfiltered: no agent read goes over a peer link in this build. A read over one is a hab's |
+| Not built | The current project as the default view of `ls`, `ready` and the brief (12.1, 10.2): stage 6 builds it with the brief. The CLI's current project outside a pane (10.2). Unjoining |
+
 ---
 
 ## 4. Storage
@@ -375,7 +410,7 @@ Where this spec was silent, stage 2 decided:
 | Findings | `title`, `body` and `type` are fixed. An incoming set of them is kept, not folded, and logged once when it is applied |
 | Retype | Only a task and an issue change type, into each other |
 | Superseded twice | Derived when the record is read, from the `supersedes` links of records not deleted. Deleting one successor clears it |
-| Projects | Type `project`, ids `proj-<8>`, the title is its name, set field `identities`. On fold, projects that share an identity, directly or through others, join: the oldest by create stamp is canonical. `Record.Project` is the canonical id, and a list by either id finds both. Stage 5 adds identity detection, first sight, `project join` and the private flag |
+| Projects | Type `project`, ids `proj-<8>`, the title is its name, set field `identities`. On fold, projects that share an identity, directly or through others, join: the oldest by create stamp is canonical. `Record.Project` is the canonical id, and a list by either id finds both. Stage 5 adds identity detection, first sight, `project join` and the private flag (3.3) |
 | Forget | Targets a create (its text fields and source), a set of a text field, an append or an add. The value becomes `forgotten sha256:<hex of its JSON>`. Redaction is idempotent; an op that a held forget names is redacted before it is stored; the FTS index is optimised after a redaction. A repeat compares after redaction. A forget from a peer that names any other op (a set of a field with no text, a remove, a forget) changes nothing; an op of a kind this build does not know is redacted whole. Each forget of a record's op moves the record's revision. After a forget lands, a `TRUNCATE` checkpoint empties the WAL, whose older frames still hold the text; with `secure_delete` the file holds no copy either. A reader that holds the WAL open makes the checkpoint stop short, and the store logs it |
 | Shared origin | A second, different op with a held op id marks its origin shared; its further ops are refused. `Status.Shared` lists it. When the origin is this replica's own, `Write` refuses with `ErrSharedOrigin` until the host gets a new device id |
 | Clock ahead | An op stamped over 1 hour past the receiver's clock marks its origin, logs once, and shows in `Status.Ahead` |
@@ -763,7 +798,7 @@ Where this spec was silent, stage 7 decided. Each is a default the owner may rev
 | `forget <op id>` | Redact a value everywhere (5.7). Asks first; `-yes` skips |
 | `conflicts`, `resolve <id> <field> <value or op id>` | List and settle conflict flags |
 | `proposals`, `approve <id>`, `reject <id>` | Proposal review (9.2) |
-| `projects`, `project join <a> <b>`, `project rename <p> <name>` | Projects (3) |
+| `projects`, `project join <a> <b>`, `project rename <p> <name>`, `project private <p> [on\|off]` | Projects (3, 3.3) |
 | `status` | Replica size, version vector, unsynced ops per peer, last sync per peer |
 | `export [--format jsonl\|markdown] <path>`, `import <jsonl>` | Escape hatch and one-off import (13.1) |
 
@@ -816,7 +851,7 @@ shapes are in `api/logbook.go`.
 | Capability | `logbook`, one capability for sync and the verbs, sent when `<state>/logbook.db` opens with the hab's device id as origin. A corrupt file, or one of another origin, is set aside first (7.6); a file that still does not open stops gff-hab with the reason |
 | Sync | Each write through the verbs nudges sync, which sends the new ops at once (7.2). Writes wait out the start hold, and a restored file refuses them with `unavailable` (7.6); the CLI's own store honours both, since both live in the file |
 | Pane route | Every method above. `logbook.find` and `logbook.get` moved from the read methods to `hook.LogbookMethods`, whose handler knows the pane |
-| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `project join`, `project rename`, `export`, `import`) say which stage builds them. `approve` and `reject` are stage 7's (9.4) |
+| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `export`, `import`) say which stage builds them. `approve` and `reject` are stage 7's (9.4); `project join`, `project rename` and `project private` stage 5's (3.3) |
 | MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` waits for stage 6 |
 
 Where this spec was silent, stage 4 decided:
@@ -842,7 +877,7 @@ Where this spec was silent, stage 4 decided:
 | Lists | `logbook.list` and `find` without words go newest change first; `find` with words best match first. Filters: type, status, project (through joins), tag, host (the actor's host or the create's origin), author (the actor's session, device or harness), session (the actor's or the source's: Capcom lists one conversation's proposals with it), since, general, flagged, deleted. Default 50, at most 500, with `more` |
 | Events for other writers | gff-hab reads `Changes` after each of its own writes and every second, so the CLI's writes to the file reach clients within a second. Events start from the file's end at gff-hab's start: a client takes a fresh read on a new epoch |
 | `logbook.conflict` | Sent when a record's set of flag kinds changes, any kind; an empty list means the last one went |
-| Not built | `--host <label>` over SSH (10.1); the current project from the pane's session or the folder (10.2), which needs stage 5's identities |
+| Not built | `--host <label>` over SSH (10.1); the current project as the default view (10.2). Stage 5 finds a pane's project for the private rule (3.3) |
 
 ---
 
@@ -1019,6 +1054,8 @@ Recommendation: **A**, with the per-project setting to turn it off.
 
 Recommendation: **A.**
 
+Stage 5 builds A, the default, until the owner decides otherwise (3.3).
+
 ### 15.4 One-off import of the owner's existing records
 
 The product ships `gff lb import` for a generic JSONL file (13.1). Converting the owner's own
@@ -1088,7 +1125,7 @@ Each stage gets a fresh-eyes review before it closes (core functionality).
 | 2 | Store package | `internal/logbook`: ops, HLC, fold, FTS, ids, record types and their rules (2, 4, 5), `rebuild`, two writers (4.3) | P2, P3, P6, P10 pass; every example in 6 is a unit test; a finding body `set` is refused; a newer op is kept and forwarded but not folded; `check-pure` passes |
 | 3 | Sync | `logbook.pull` and `logbook.push` on the peer link, version vectors, paging, wake-ups (7) | P1, P4, P5, P7, P8, P9 pass; an end-to-end test with two real habs over `ssh localhost` (skips without it) syncs 10,000 records and then a write in under 2 s; a hab rebuilt with a new key gets its old ops back |
 | 4 | CLI, API and MCP | `gff lb` verbs (10.2), `logbook.*` methods and events (10.3), the four MCP tools in `gff-hab mcp serve`, idempotency keys, the pane write limit. Built: 10.5 | Golden messages for every new method and event (core test 5); the CLI writes while gff-hab is stopped and the hab syncs those ops after start; a repeated write key applies once; a write through a pane token records harness, session and host |
-| 5 | Projects | Identity set, first sight, join, remote change, private flag (3, 12.1) | SSH and HTTPS remotes of one repository match; two worktrees share a project; a remote rename keeps records; E9 holds across two habs |
+| 5 | Projects | Identity set, first sight, join, remote change, private flag (3, 12.1). Built: 3.3 | SSH and HTTPS remotes of one repository match; two worktrees share a project; a remote rename keeps records; E9 holds across two habs |
 | 6 | Habits | Context mode in `gff-hab hook`, brief, reminder, closeout per harness (11), ledger entries | Fixture tests per harness give the exact injected text; the brief stays under 8 KB with 1,000 open tasks; with gff-hab stopped the brief still prints from the file within the 900 ms budget; closeout fires at most once per session; each habit's setting turns it off |
 | 7 | Approval | `logbook.approval`, proposals, decide, first-writer-wins, overruled approvals (9); memory proposals from Part 8 stored here. Built: 9.4 | Under `agents`, an agent write returns `proposed` and lands only on approval; E10 holds across two habs; a reject that wins hides the approved record and flags it |
 | 8 | App views (Part 6) | A Logbook view: projects, lists with filters, record view with history and conflict banner, resolve; proposals in approvals; untriaged count on the status board; quick capture | The device smoke adds: create a task on the phone offline, see it on the Mac after reconnect; resolve a seeded conflict from the phone |

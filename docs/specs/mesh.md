@@ -416,6 +416,10 @@ Left for the project-identity `/consensus` (`logbook.md` 3), not decided here:
   remote was added, has a `remote:` key, so the two do not merge. Remote-less clones that share
   a root commit do merge across hosts, as they do on one hab.
 
+Logbook answers both for its own projects (`logbook.md` 3.3): a fork is its own project until
+the user joins the two, and a folder whose identity changes, a remote added to a `root:`
+repository too, adds the new identity to its project. The catalog's grouping is unchanged.
+
 ---
 
 ## 5. Catalog
