@@ -50,8 +50,8 @@ type roundMatcher struct {
 	commands map[string]bool
 	// folds is, per record, the highest fold number handled; start is the replica's number when
 	// the matcher started: only ops folded after it count (rounds.md 4.3, folded since).
-	folds   map[string]int64
-	start   int64
+	folds map[string]int64
+	start int64
 	// mu guards stopped and the close of ch against observe.
 	mu      sync.Mutex
 	stopped bool

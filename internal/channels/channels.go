@@ -143,9 +143,9 @@ type Config struct {
 	// It is called with the service's lock held and must not block or call back into it.
 	Outcome func(id, word, at string)
 	Poll    time.Duration // the mail round; default 15 s
-	Retry time.Duration // the delivery round; default 1 s
-	Now   func() time.Time
-	Logf  func(string, ...any)
+	Retry   time.Duration // the delivery round; default 1 s
+	Now     func() time.Time
+	Logf    func(string, ...any)
 	// write saves the state file; tests replace it to fail. Default writeSynced.
 	write func(path string, b []byte) error
 }

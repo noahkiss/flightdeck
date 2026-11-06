@@ -1335,10 +1335,10 @@ func serve(args []string) error {
 		caps = append(caps, "rounds", capRoundLock)
 	}
 	s := control.New(control.Config{
-		Build:        build,
-		Host:         api.HostInfo{ID: *hostID},
-		DeviceID:     key.Fingerprint(),
-		Source:       agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc},
+		Build:    build,
+		Host:     api.HostInfo{ID: *hostID},
+		DeviceID: key.Fingerprint(),
+		Source:   agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc},
 		Observe: func(e structure.Event) {
 			if r := roundsRef.Load(); r != nil {
 				r.matcher.observe(e)

@@ -5423,7 +5423,8 @@
             "description": "Events of the batch left out of events."
           },
           "prompt": {
-            "type": "string"
+            "type": "string",
+            "description": "Absent: the message's text is the prompt."
           },
           "round": {
             "type": "string",
@@ -5446,8 +5447,7 @@
           "round",
           "name",
           "run",
-          "trigger",
-          "prompt"
+          "trigger"
         ]
       },
       "ChannelSendParams": {
