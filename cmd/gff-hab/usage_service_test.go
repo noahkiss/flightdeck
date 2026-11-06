@@ -112,32 +112,35 @@ func TestUsageRolloutReads(t *testing.T) {
 // stream of hooks still reads within the max wait.
 func TestUsageDebounce(t *testing.T) {
 	d := scaleTimeout(150 * time.Millisecond)
-	tu := newTestUsage(t, d, time.Hour)
+	tu := newTestUsage(t, time.Hour, 2*time.Hour)
 	writeFile(t, tu.path, tokenLine(10, 12))
-	var last time.Time
-	for range 4 {
-		last = time.Now()
+	for range 3 {
 		tu.hook()
-		time.Sleep(d / 2)
 	}
-	time.Sleep(3 * d)
+	// The final hook must replace the pending timer.
+	tu.mu.Lock()
+	tu.debounce = d
+	tu.mu.Unlock()
+	last := time.Now()
+	tu.hook()
+	waitUntil(t, "the burst read", func() bool { return tu.used() == 12 })
 	reads := tu.reads()
 	if len(reads) != 1 || reads[0].Sub(last) < d-5*time.Millisecond {
-		t.Errorf("a burst of 4 hooks %v apart: reads at %v after the last hook, want one at %v or later", d/2, since(reads, last), d)
-	}
-	if tu.used() != 12 {
-		t.Errorf("used %d after the burst", tu.used())
+		t.Errorf("burst reads at %v after the last hook, want one at %v or later", since(reads, last), d)
 	}
 
-	tu = newTestUsage(t, d, 2*d)
+	// Age the first hook while holding the timer lock. The next hook must schedule
+	// an immediate read, even though the debounce is an hour away.
+	tu = newTestUsage(t, time.Hour, 2*time.Hour)
 	writeFile(t, tu.path, tokenLine(10, 12))
-	start := time.Now()
-	for time.Since(start) < 6*d {
-		tu.hook()
-		time.Sleep(d / 3)
-	}
-	if reads := tu.reads(); len(reads) < 2 || reads[0].Sub(start) > 3*d {
-		t.Errorf("hooks every %v for %v with a max wait of %v: reads at %v", d/3, 6*d, 2*d, since(reads, start))
+	tu.hook()
+	tu.mu.Lock()
+	tu.timers["s1"].first = time.Now().Add(-2 * time.Hour)
+	tu.mu.Unlock()
+	tu.hook()
+	waitUntil(t, "the max-wait read", func() bool { return tu.used() == 12 })
+	if reads := tu.reads(); len(reads) != 1 {
+		t.Errorf("max-wait reads = %v, want one", reads)
 	}
 }
 
