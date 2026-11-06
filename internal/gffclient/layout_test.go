@@ -318,3 +318,26 @@ func TestNewPaneInFolder(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(dir)
 	hst.waitScreen("pwd in the first pane's folder", func(s string) bool { return strings.Contains(s, want) })
 }
+
+// TestNewPaneKeepsSidebar: switching to the sidebar during a pane start keeps its keys.
+func TestNewPaneKeepsSidebar(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	a.AddSession("job")
+	hst := newHost(t, 120, 30, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.waitScreen("job", func(s string) bool { return line(s, "   job") > 0 })
+	hst.typ("\r")
+	hst.waitScreen("job view", func(s string) bool { return strings.Contains(s, " job · one") })
+	release := a.HoldCreates()
+	defer release()
+	hst.typ("\x10n")
+	hst.waitScreen("start in flight", func(s string) bool { return strings.Contains(s, "starting on one") })
+	hst.typ("\x0fw")
+	hst.waitScreen("sidebar", func(s string) bool { return strings.Contains(s, "Enter open") })
+	release()
+	waitUntil(t, "new session", func() bool { return len(a.Sessions()) == 2 })
+	hst.waitScreen("new view", func(s string) bool { return strings.Contains(s, " sh · one") })
+	hst.typ("r")
+	hst.waitScreen("rename prompt", func(s string) bool { return strings.Contains(s, "rename ") })
+}

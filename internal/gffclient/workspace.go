@@ -884,7 +884,7 @@ func (u *workspaceUI) start(host string, p api.SessionCreateParams, label string
 			focusedAnchor := at != nil && t.focusedView() == at
 			v := c.addViewAt(t, PaneSpec{ID: res.Pane, Label: label, Host: host, Session: res.Session}, hs, at, how)
 			switch {
-			case t == c.tab() && (u.mode == modeSidebar || u.mode == modePanes && focusedAnchor):
+			case t == c.tab() && (u.mode == modeSidebar && how == placeEnd || u.mode == modePanes && focusedAnchor):
 				t.focus = slicesIndex(t.views, v)
 				t.zoom = false
 				u.mode = modePanes
