@@ -3,7 +3,6 @@ package detect
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -132,25 +131,30 @@ func TestScreenText(t *testing.T) {
 	}
 }
 
-// TestGroupProcesses lists a real process group: a leader running a copy of sleep named claude,
-// and a member, and detects claude from it.
+// buildSleeper builds testdata/sleeper as dir/claude. A copy of the system sleep will not do: it
+// may be one multi-call binary (uutils coreutils) that picks its program from argv[0] and exits
+// at once under another name.
+func buildSleeper(t *testing.T, dir string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "claude")
+	if out, err := exec.Command("go", "build", "-o", bin, "./testdata/sleeper").CombinedOutput(); err != nil {
+		t.Fatalf("build sleeper: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// TestGroupProcesses lists a real process group: a leader running a sleeper named claude, and a
+// member running sleep, and detects claude from it.
 func TestGroupProcesses(t *testing.T) {
 	sleep, err := exec.LookPath("sleep")
 	if err != nil {
 		t.Skip("no sleep")
 	}
-	data, err := os.ReadFile(sleep)
-	if err != nil {
-		t.Skip(err)
-	}
-	bin := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(bin, data, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := buildSleeper(t, t.TempDir())
 	leader := exec.Command(bin, "30")
 	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := leader.Start(); err != nil {
-		t.Skipf("cannot run a copy of sleep: %v", err)
+		t.Skipf("cannot run the sleeper: %v", err)
 	}
 	defer func() { leader.Process.Kill(); leader.Wait() }()
 	pgid := leader.Process.Pid

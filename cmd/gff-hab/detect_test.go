@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -34,26 +33,25 @@ func explain(t *testing.T, e *habEnv, p api.DetectExplainParams) (api.DetectExpl
 	return api.Client{Caller: e.control()}.DetectExplain(ctx, p)
 }
 
+// buildSleeper builds internal/detect's testdata sleeper as dir/claude: a program that sleeps
+// under any name, which a copy of a multi-call system sleep does not.
+func buildSleeper(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "claude"), "../../internal/detect/testdata/sleeper").CombinedOutput(); err != nil {
+		t.Fatalf("build sleeper: %v\n%s", err, out)
+	}
+}
+
 // TestDetectExplain is the end-to-end test of `gff-hab detect explain`: a real holder, gff-hab
-// and a pane whose foreground program is a copy of sleep named claude, under a screen drawn as
+// and a pane whose foreground program is a sleeper named claude, under a screen drawn as
 // Claude's prompt and an OSC 7501 working report. detect.explain names the source that won
 // (osc), the process that matched, the manifest and why it was chosen, and the winning screen
 // rule with the region it read; it finds the pane by pane id, session id and session name, and
 // refuses bad names. The CLI prints the same as text and as JSON.
 func TestDetectExplain(t *testing.T) {
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep")
-	}
 	e := newHabEnv(t, 0)
-	data, err := os.ReadFile(sleep)
-	if err != nil {
-		t.Skip(err)
-	}
+	buildSleeper(t, e.work)
 	writeFile(t, filepath.Join(e.work, "screen"), detectScreen)
-	if err := os.WriteFile(filepath.Join(e.work, "claude"), data, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if w := welcome(t, e.sock); !slices.Contains(w.Capabilities, "detect-explain") {
 		t.Errorf("capabilities %v lack detect-explain", w.Capabilities)
 	}
@@ -276,19 +274,9 @@ var staleDialog = `● I'll remove the build directory.
 // dialog in scrollback, above a cleared screen, does not make the screen say blocked, and the
 // rules read one line.
 func TestDetectExplainVisibleOnly(t *testing.T) {
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep")
-	}
 	e := newHabEnv(t, 0)
-	data, err := os.ReadFile(sleep)
-	if err != nil {
-		t.Skip(err)
-	}
+	buildSleeper(t, e.work)
 	writeFile(t, filepath.Join(e.work, "screen"), staleDialog)
-	if err := os.WriteFile(filepath.Join(e.work, "claude"), data, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(10*time.Second))
 	defer cancel()
