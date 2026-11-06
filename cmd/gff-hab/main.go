@@ -616,8 +616,14 @@ func serve(args []string) error {
 		if err != nil {
 			return err
 		}
+		absConfig := "" // only a -config the panes could not find on their own
+		if *habConfig != "" {
+			if absConfig, err = filepath.Abs(*habConfig); err != nil {
+				return err
+			}
+		}
 		sessionActs = &actions{
-			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, state: absState, spawning: spawning, logf: logger.Printf},
+			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, state: absState, config: absConfig, spawning: spawning, logf: logger.Printf},
 			store:    store,
 			getenv:   os.Getenv,
 			environ:  func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },

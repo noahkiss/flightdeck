@@ -441,3 +441,16 @@ func TestHarnessStart(t *testing.T) {
 		t.Errorf("pi: %v", err)
 	}
 }
+
+// TestPaneEnvConfig: paneEnv sets GFF_HAB_CONFIG only with a config, in place of any the env had.
+func TestPaneEnvConfig(t *testing.T) {
+	in := []string{"A=1", "GFF_HAB_CONFIG=/work/old.toml", "GFF_HAB_STATE=/work/old"}
+	got := strings.Join(paneEnv(in, "addr", "/work/state", "/work/hab.toml"), " ")
+	if got != "A=1 GFF_HAB=addr GFF_HAB_STATE=/work/state GFF_HAB_CONFIG=/work/hab.toml" {
+		t.Fatalf("with a config: %s", got)
+	}
+	got = strings.Join(paneEnv(in, "addr", "/work/state", ""), " ")
+	if got != "A=1 GFF_HAB_CONFIG=/work/old.toml GFF_HAB=addr GFF_HAB_STATE=/work/state" {
+		t.Fatalf("without a config: %s", got)
+	}
+}

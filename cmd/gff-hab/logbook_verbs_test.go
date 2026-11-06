@@ -354,3 +354,47 @@ func TestLogbookCapcomPane(t *testing.T) {
 		t.Fatalf("the proposal after the refusals: %+v", rec.Record)
 	}
 }
+
+// TestLogbookPaneConfigEnv: gff-hab run with -config names that file, absolute, in each pane it starts
+// as GFF_HAB_CONFIG, over any the request's env had and over the one gff-hab inherited, so the
+// hook's file brief reads the habit switches the hab enforces (logbook.md 11.4). Without -config
+// the pane keeps what it inherits ($GFF_HAB_CONFIG of gff-hab's environment, here the test's).
+func TestLogbookPaneConfigEnv(t *testing.T) {
+	e := newHabEnv(t, 0)
+	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
+	const script = `printf '%s|%s' "${GFF_HAB_CONFIG-unset}" "$GFF_HAB_STATE" > "$DIR/$NAME.tmp" && mv "$DIR/$NAME.tmp" "$DIR/$NAME"
+while [ ! -e "$DIR/end" ]; do sleep 0.05; done
+`
+	paneSees := func(name string, env ...string) string {
+		t.Helper()
+		createSession(t, e.sock, api.SessionCreateParams{Name: name, Argv: []string{"/bin/sh", "-c", script}, Cwd: "/", Cols: 80, Rows: 24,
+			Env: append([]string{"PATH=/usr/bin:/bin", "LC_ALL=C", "DIR=" + e.work, "NAME=" + name}, env...)})
+		f := filepath.Join(e.work, name)
+		waitUntil(t, "the pane's env", func() bool { _, err := os.Stat(f); return err == nil })
+		b, _ := os.ReadFile(f)
+		return string(b)
+	}
+	if got := paneSees("plain"); got != filepath.Join(e.state, "no-hab.toml")+"|"+e.state {
+		t.Fatalf("without -config: %q", got)
+	}
+	e.stopHab(false)
+	cfg := filepath.Join(e.work, "hab.toml")
+	writeFile(t, cfg, "")
+	rel, err := filepath.Rel(mustGetwd(t), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv = startServeWith(t, e.sock, e.state, e.env, "-holders", e.hdir, "-config", rel)
+	if got := paneSees("configured", "GFF_HAB_CONFIG=/work/other.toml"); got != cfg+"|"+e.state {
+		t.Fatalf("with -config: %q, want %q", got, cfg+"|"+e.state)
+	}
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wd
+}
