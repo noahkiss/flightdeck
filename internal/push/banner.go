@@ -336,6 +336,12 @@ func permissionTitle(r *api.PermissionRequest) string {
 // the whole command fits after the safe drops, and never when commands are hidden. A request
 // with no id cannot be answered through approval.answer, so its banner only opens the app.
 func PermissionBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
+	return permissionBanner(w, r, hide, "")
+}
+
+// permissionBanner is PermissionBanner with a model-written summary (app.md 16.5) as the
+// title when it fits whole. The summary changes no action.
+func permissionBanner(w Where, r *api.PermissionRequest, hide bool, sum string) Banner {
 	b := Banner{Kind: KindPermission, Subtitle: w.place(), Level: LevelTimeSensitive, Category: CategoryDeny}
 	// A question is answered with its options in the app: Deny would read as a refusal to
 	// answer, and the hab takes no option from a banner yet.
@@ -351,6 +357,9 @@ func PermissionBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 		return b
 	}
 	b.Title = permissionTitle(r)
+	if t := summaryTitle(r, sum); t != "" {
+		b.Title = t
+	}
 	text, whole := requestText(r)
 	b.Body = text
 	if whole && b.Category == CategoryDeny {
@@ -437,6 +446,12 @@ func DoneBanner(w Where) Banner {
 // answered, and what. by is the answering client's label; empty means the terminal. allow is
 // nil when the hab does not know the answer.
 func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, hide bool) Banner {
+	return answeredBanner(w, by, allow, r, hide, "")
+}
+
+// answeredBanner is AnsweredBanner naming what was answered by its model-written summary
+// (app.md 16.5) when there is one that fits.
+func answeredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, hide bool, sum string) Banner {
 	title := "Answered in the terminal"
 	if by != "" {
 		title = Fit("Answered on "+by, 4, 32)
@@ -453,6 +468,8 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 	obj := ""
 	if r != nil && !hide {
 		switch {
+		case summaryTitle(r, sum) != "":
+			obj = strings.TrimSuffix(summaryTitle(r, sum), "?")
 		case commandDescription(r) != "":
 			// What the command does, in the harness's words, reads better than its first word.
 			obj = commandDescription(r)
@@ -484,7 +501,11 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 // ClosedBanner replaces an open approval banner whose pane closed: the request can no longer
 // be answered.
 func ClosedBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
-	b := AnsweredBanner(w, "", nil, r, hide)
+	return closedBanner(w, r, hide, "")
+}
+
+func closedBanner(w Where, r *api.PermissionRequest, hide bool, sum string) Banner {
+	b := answeredBanner(w, "", nil, r, hide, sum)
 	b.Title = "Pane closed"
 	return b
 }
@@ -492,7 +513,11 @@ func ClosedBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 // EndedBanner replaces an open approval banner whose pane's program exited: the session
 // ended, so nobody answered the request.
 func EndedBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
-	b := AnsweredBanner(w, "", nil, r, hide)
+	return endedBanner(w, r, hide, "")
+}
+
+func endedBanner(w Where, r *api.PermissionRequest, hide bool, sum string) Banner {
+	b := answeredBanner(w, "", nil, r, hide, sum)
 	b.Title = "Session ended"
 	return b
 }

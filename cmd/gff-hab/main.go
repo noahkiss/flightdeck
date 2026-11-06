@@ -342,7 +342,7 @@ func serve(args []string) error {
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
-	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] and [speech] sections (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
+	habConfig := fs.String("config", "", "the hab's config file, with its [catalog], [speech] and [summaries] sections (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
@@ -513,7 +513,13 @@ func serve(args []string) error {
 	// while some host runs Capcom (capcom.md 8.5).
 	var capcomRef atomic.Pointer[capcomService]
 	var readsRef atomic.Pointer[readtools.Service]
+	// Model-written approval titles (app.md 16.5), from the [summaries] section.
+	sumPath, err := habConfigPath(*habConfig)
+	if err != nil {
+		return err
+	}
 	pushes = newPushService(pushSetup{
+		habConfig: sumPath,
 		// Recent notices, saved in the state directory, for notice.get and Capcom (8.5).
 		notices: openNoticeLog(dir, nil, logger.Printf),
 		denied: func(folder string) bool {

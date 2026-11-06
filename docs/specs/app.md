@@ -3032,15 +3032,27 @@ input to 2 KiB, the rest to 200 characters.
   error, never the body.
 
 **Tests.** `go test -race ./internal/summary/`: the config (absent, partial, each bad value, the
-example file), the client against a fake HTTP server (never a real provider): the request's path,
-headers, model, `reasoning_effort` per setting, `max_tokens`; the reply clean-up; fallback on a
-timeout, a 4xx and a 5xx, a malformed body, an empty choice list and a reply too long; the key
-command (a key, a failure, the backoff, the key never in a log line or error); the cache (a hit, a
-failure not kept, the TTL, the bound). `go test -race -run Summar ./internal/push/`: a banner and
-its answered line with a summary; no summary for plans, questions and hiding devices; the
-actions unchanged by a summary; the 1.5 s wait measured from arrival across a batch; the late
-replacement once and only while the request is open; nothing sent when every device hides
-details; the hab with no config sends no request.
+example file), the http warning, the reply clean-up, the client against a fake HTTP server (never
+a real provider): the path, the model, `reasoning_effort` per setting, `max_tokens`, the bearer
+key; fallback on a 4xx and a 5xx, a body that is not JSON, no choices, null content, a reply too
+long, a refusal, two lines, an oversized body, a timeout, an unreachable host and the hab
+closing, with one log line per streak and no body or key in it; the key command (a key, a failure
+whose stderr key stays out of the log, the backoff); the cache (one call per input, a failure not
+kept, the TTL, the bound). `go test -race -run TestSummary ./internal/push/`: the title and
+answered line with the body and actions unchanged; none for a hiding device, a plan or a
+question; nothing sent when every device hides details; a summary that does not fit, holds a
+control character or fails leaves the title of before; the harness's summary passed on; three
+requests in one batch waiting together; the late replacement once, passive, same collapse id and
+actions, and none after the request resolved. `go test -race -run TestPushSummaries
+./cmd/gff-hab`: gff-hab with a fake endpoint: the title, the bearer key from the key command and
+in no log line, and a denied folder and a config with no section sending nothing.
+
+**Built choices.** Code: `internal/summary` (config, client, cache, key), `internal/push/summary.go`
+(the wait, the late replacement), `cmd/gff-hab/push.go` (the read-scope check). The key command
+shares push's runner (`push.RunSecret`). Limit: the in-app approval sheet (7.2) reads the
+request from `agent.state`, which carries no summary yet, so it keeps its own title; the
+summary reaches banners, the answered line, the Live Activity and the kept notice. Carrying it
+in `agent.state` is a later API change.
 
 ---
 

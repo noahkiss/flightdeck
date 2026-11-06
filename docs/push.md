@@ -159,6 +159,44 @@ and `APP_WIDGET_PROFILE` in `Local.xcconfig`).
 - **gff-hab restarts**: a pane's last state, replayed after the restart, raises no new
   banner. Pushes still queued when gff-hab stops are dropped.
 
+## Model-written titles
+
+A hab can ask a small model for an approval banner's title: "Deploy web app to prod?" in place
+of "Run shell script?" (`app.md` 16.5). It is off by default. Turn it on with a `[summaries]`
+section in the hab's config file (`hab.toml`, example in `docs/examples/hab.toml`):
+
+```toml
+[summaries]
+base_url = "http://127.0.0.1:11434/v1"   # any OpenAI-compatible API root
+model = "qwen3:4b"
+# key_command = ["pass", "show", "flightdeck/summaries-key"]
+# thinking = "off"
+```
+
+| Key | Value |
+|---|---|
+| `base_url` | The API root; the hab posts to `<base_url>/chat/completions`. A local server (Ollama, LM Studio) keeps the text on your network. Anthropic's OpenAI-compatible root is `https://api.anthropic.com/v1/`, with an API key |
+| `model` | The model name the endpoint knows. Pick a small, fast one |
+| `key_command` | Optional. The command that prints the API key, as an argv, run like push's key command above: no shell, stdin from `/dev/null`, 30 s at most, memory only, never logged. The first line of its output is the key. Leave it out for a server that needs no key |
+| `thinking` | `off` (the default) sends `reasoning_effort: "none"`; `minimal`, `low`, `medium` or `high` send that; `default` sends no `reasoning_effort`, for a model that refuses the field |
+| `timeout` | Optional: how long a banner waits for its title, `0.2s` to `5s`. Default `1.5s` |
+
+Restart gff-hab after an edit. Its log says `summaries are on: model <model>` once the key
+command (if any) printed a key, `summaries are off: <reason>` for a bad section, and one line
+when a call first fails and when it works again.
+
+- **What leaves the host.** For each approval: the command, the file names (base names), the
+  fetched URL or the tool input, the harness's own summary and the project name. Never a
+  transcript, a folder path or a key. A request in a folder the read scope (`[read]`) denies is
+  never sent. A device with "Show details in notifications" off gets no model title, and when
+  every device hides details, nothing is sent.
+- **When it fails.** An error, a timeout, a malformed reply or a reply that does not fit the
+  4-word title leaves the banner as it would be with no `[summaries]`.
+- **Actions.** The model writes the title only. Approve still shows only when the whole command
+  fits in the body, which keeps the command.
+- **A slow endpoint.** A banner waits at most the timeout. A title that arrives later, within
+  10 s, replaces the banner once, quietly; it also names the answered line.
+
 ## Notices from scripts
 
 Any local script can raise a Flightdeck notification through the hab:
@@ -187,6 +225,7 @@ the kept notice that `notice.get` and "Ask an agent" read, where the read scope 
 A push passes through Apple. In this release its text is plain: the title, the project and hab,
 and what the agent asks for, shortened. That is a command, file names, the start of a plan, a
 question and its options, or a fetched URL. A command's title and answered line may be the
-harness's own summary of it, such as Claude Code's Bash `description` (`app.md` 16.4). The app's setting "Show details in notifications"
+harness's own summary of it, such as Claude Code's Bash `description` (`app.md` 16.4). With
+`[summaries]` on, they may be a model's summary instead (Model-written titles, above). The app's setting "Show details in notifications"
 turns all of that off: banners then say "Approval needed" (or "Question waiting") and offer no
 Approve. Sealed payloads are a later step (`app.md` 18.9).

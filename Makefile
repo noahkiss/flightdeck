@@ -144,14 +144,14 @@ test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
 
 # Run the holder, structure, link, control, data stream, connection library, gff client core, pane size, command
-# marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push, speech and logbook tests three times under the race
+# marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push, summaries, speech and logbook tests three times under the race
 # detector. No libghostty needed.
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
 	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
 	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/hosts/... ./internal/merge/... ./internal/peers/... ./internal/catalog/... ./internal/capcom/... ./internal/channels/... ./internal/board/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
 	./internal/cmdmarks/... ./internal/readtools/... ./internal/confirm/... ./internal/suggest/... \
 	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
-	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/settings/... ./internal/rounds/... \
+	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/summary/... ./internal/settings/... ./internal/rounds/... \
 	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... ./internal/logbook/... ./internal/lbsync/... ./internal/lbsvc/... ./internal/lbcli/... ./internal/modhost/... ./internal/modview/... \
 	./internal/pairing/... ./internal/devicestore/... \
 	./cmd/...

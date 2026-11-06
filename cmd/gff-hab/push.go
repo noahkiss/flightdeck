@@ -14,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/summary"
 )
 
 // pushService serves the push methods, session.focus and notice.raise (app.md 8, 17). With no
@@ -32,6 +33,7 @@ type pushService struct {
 	now      func() time.Time
 	notices  *noticeLog // the notices raised, for notice.get; nil: none kept
 	denied   func(folder string) bool
+	sums     *summary.Service // nil: summaries off
 }
 
 var _ control.Push = (*pushService)(nil)
@@ -56,6 +58,11 @@ type pushSetup struct {
 	logf      func(string, ...any)
 	// sender replaces the APNs client; for tests.
 	sender push.Sender
+	// habConfig is the hab's config file, whose [summaries] section turns on model-written
+	// approval titles (app.md 16.5); "": off.
+	habConfig string
+	// summaryOptions replaces the summary service's seams; for tests.
+	summaryOptions summary.Options
 }
 
 // newPushService reads the push config and starts the notifier. Push not set up, or set up
@@ -89,7 +96,7 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 		return s
 	}
 	s.tokens = tokens
-	s.notifier = push.NewNotifier(push.NotifierConfig{
+	ncfg := push.NotifierConfig{
 		Sender: sender, Store: tokens, Hab: ps.hab, DefaultEnv: cfg.Environment,
 		Where:     func(pane, session string) push.Where { return whereOf(store, pane, session) },
 		Connected: ps.connected,
@@ -97,7 +104,13 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 		Capcom:    ps.capcom,
 		Self:      ps.self,
 		Keep:      s.keep,
-	})
+	}
+	if ps.habConfig != "" {
+		if s.sums = newSummaries(ps.habConfig, ps.summaryOptions, ps.logf); s.sums != nil {
+			ncfg.Summarize, ncfg.SummaryWait = summarize(s.sums, ps.denied), s.sums.Wait()
+		}
+	}
+	s.notifier = push.NewNotifier(ncfg)
 	on := func() {
 		ps.logf("push is on: topic %s, %s gateway for tokens with no environment", cfg.Topic, cfg.Environment)
 	}
@@ -130,6 +143,9 @@ func (s *pushService) Close() {
 	s.stop()
 	if s.notifier != nil {
 		s.notifier.Close()
+	}
+	if s.sums != nil {
+		s.sums.Close()
 	}
 }
 
@@ -357,3 +373,49 @@ func notifyCmd(args []string) error {
 }
 
 var scriptClient = api.ClientInfo{Name: "gff-hab notify", Version: build, Kind: api.ClientKindScript}
+
+// errSummaryDenied refuses a summary for a request the read scope denies.
+var errSummaryDenied = errors.New("the read scope denies the request's folder")
+
+// summarize asks svc for a request's summary (app.md 16.5), unless the read scope denies its
+// folder or one of its files: that text never leaves the host.
+func summarize(svc *summary.Service, denied func(string) bool) push.Summarize {
+	return func(ctx context.Context, r *api.PermissionRequest, w push.Where, description string) (string, error) {
+		if denied != nil {
+			if denied(r.Cwd) {
+				return "", errSummaryDenied
+			}
+			for _, f := range r.Files {
+				if !filepath.IsAbs(f) && r.Cwd != "" {
+					f = filepath.Join(r.Cwd, f)
+				}
+				if denied(f) {
+					return "", errSummaryDenied
+				}
+			}
+		}
+		return svc.Summarize(ctx, summary.FromRequest(r, w.Harness, w.Project, description))
+	}
+}
+
+// newSummaries reads the [summaries] section of the hab's config file (app.md 16.5) and returns
+// the service, or nil when summaries are off or set up wrong: a bad section is logged and
+// leaves them off, and never stops gff-hab.
+func newSummaries(path string, o summary.Options, logf func(string, ...any)) *summary.Service {
+	set, err := summary.LoadSettings(path)
+	switch {
+	case err != nil:
+		logf("summaries are off: %v", err)
+		return nil
+	case !set.On():
+		return nil
+	}
+	if w := set.PlainWarning(); w != "" {
+		logf("%s", w)
+	}
+	if set.KeyCommand == nil {
+		logf("summaries are on: model %s", set.Model)
+	}
+	o.Logf = logf
+	return summary.New(set, o)
+}

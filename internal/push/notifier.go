@@ -66,6 +66,11 @@ type NotifierConfig struct {
 	// command, hidden only what a banner with commands hidden shows; the keeper picks hidden
 	// when the session is outside the read scope. Nil: agent-state banners carry no Ask.
 	Keep func(full, hidden Notice) string
+	// Summarize asks for a model-written summary of a permission request (app.md 16.5). Nil:
+	// summaries are off and every banner reads as before. SummaryWait is how long a banner
+	// waits for it from the request's arrival; 0: DefaultSummaryWait.
+	Summarize   Summarize
+	SummaryWait time.Duration
 }
 
 // Notice is a notification raised through notice.raise or by the hab itself.
@@ -111,10 +116,11 @@ type Notifier struct {
 
 	// Owned by the worker goroutine.
 	last    map[string]api.AgentState
-	open    map[string]*sent     // pane -> the approval banner to withdraw
-	laLast  map[string]time.Time // device -> last Live Activity update sent
-	laKey   map[string]string    // device -> the state key of that update
-	settled map[string]answer    // pane -> the request an answer resolved, seen as resolved now
+	open    map[string]*sent           // pane -> the approval banner to withdraw
+	laLast  map[string]time.Time       // device -> last Live Activity update sent
+	laKey   map[string]string          // device -> the state key of that update
+	settled map[string]answer          // pane -> the request an answer resolved, seen as resolved now
+	sums    map[string]*pendingSummary // sumKey -> the request's summary call
 	backoff time.Duration
 	// backoffUntil: after a rate limit, non-urgent sends are skipped until then.
 	backoffUntil time.Time
@@ -137,12 +143,16 @@ type sent struct {
 	folder   string    // a trust prompt's folder (app.md 7.10)
 	expires  time.Time // the banner's apns-expiration; the withdrawal uses the same
 	to       []target
+	meta     Meta   // the banner's metadata, for a late summary's replacement
+	sumKey   string // the request's summary call; "" when it takes none
+	summary  string // the summary the banner showed, or a late one that replaced it
 }
 
 type target struct {
 	device, token, env string
 	hide               bool
-	ask                bool // the device's app registered the Ask categories
+	ask                bool   // the device's app registered the Ask categories
+	category           string // the actions the banner offered this device
 }
 
 // NewNotifier starts the notifier's goroutine.
@@ -186,6 +196,7 @@ func NewNotifier(cfg NotifierConfig) *Notifier {
 		laLast:  map[string]time.Time{},
 		laKey:   map[string]string{},
 		settled: map[string]answer{},
+		sums:    map[string]*pendingSummary{},
 	}
 	n.ctx, n.cancel = context.WithCancel(context.Background())
 	go n.run()
@@ -308,8 +319,9 @@ func (n *Notifier) Forget(pane string) {
 		if ob := n.open[pane]; ob != nil {
 			w := n.cfg.Where(pane, "")
 			w.Hab = n.cfg.Hab
+			sum := n.openSummary(ob)
 			for _, t := range ob.to {
-				b := ClosedBanner(w, ob.req, t.hide)
+				b := closedBanner(w, ob.req, t.hide, sum)
 				payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: pane, State: string(api.AgentStatusExited), Request: ob.request}, w.Session)
 				n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
 			}
@@ -317,6 +329,11 @@ func (n *Notifier) Forget(pane string) {
 		delete(n.open, pane)
 		delete(n.last, pane)
 		delete(n.settled, pane)
+		for k, p := range n.sums {
+			if p.pane == pane {
+				delete(n.sums, k)
+			}
+		}
 	})
 	n.mu.Unlock()
 	n.signal()
@@ -471,11 +488,11 @@ func (n *Notifier) ask(id string) (*Ask, string) {
 // keptNotice is the notice an agent-state banner is recorded as. With hide, only what a
 // banner with commands hidden shows; otherwise the banner's words with the commands shown, and
 // a permission request's whole command or file list as the body.
-func keptNotice(kind string, st api.AgentState, w Where, hide bool) Notice {
+func keptNotice(kind string, st api.AgentState, w Where, hide bool, sum string) Notice {
 	var b Banner
 	switch kind {
 	case KindPermission:
-		b = PermissionBanner(w, st.Request, hide)
+		b = permissionBanner(w, st.Request, hide, sum)
 		switch r := st.Request; {
 		case hide || r == nil:
 		case r.Command != "":
@@ -513,6 +530,11 @@ func (n *Notifier) run() {
 		n.mu.Unlock()
 		if closed {
 			return
+		}
+		// Start every summary of the batch first: each banner's wait then runs from its
+		// arrival, never one after the other (app.md 16.5).
+		for _, p := range order {
+			n.prefetch(n.effective(pending[p]))
 		}
 		for _, p := range order {
 			if n.ctx.Err() != nil {
@@ -601,13 +623,17 @@ func (n *Notifier) process(st api.AgentState) {
 		if ok && a.request == ob.request {
 			by, allow = a.by, &a.allow
 		}
+		sum := n.openSummary(ob)
+		if ob.sumKey != "" {
+			delete(n.sums, ob.sumKey)
+		}
 		for _, t := range ob.to {
-			b := AnsweredBanner(w, by, allow, ob.req, t.hide)
+			b := answeredBanner(w, by, allow, ob.req, t.hide, sum)
 			switch {
 			case ob.kind == string(api.BlockedKindTrust):
 				b = TrustAnsweredBanner(w, ob.folder, st.State == api.AgentStatusExited)
 			case st.State == api.AgentStatusExited && by == "":
-				b = EndedBanner(w, ob.req, t.hide)
+				b = endedBanner(w, ob.req, t.hide, sum)
 			}
 			payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: st.Pane, State: string(st.State), Request: ob.request}, w.Session)
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
@@ -681,7 +707,12 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		if st.Trust != nil {
 			out.folder = st.Trust.Folder
 		}
+		if n.wantsSummary(st) {
+			out.sumKey = sumKey(st)
+		}
 	}
+	// The summary, waited for once, at the first device that shows details (app.md 16.5).
+	sum, sumAsked := "", false
 	for _, d := range n.cfg.Store.Devices() {
 		if d.Token == "" || !d.Wants(kind) {
 			continue
@@ -696,7 +727,10 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		var b Banner
 		switch kind {
 		case KindPermission:
-			b = PermissionBanner(w, st.Request, d.HideCommands)
+			if !d.HideCommands && !sumAsked {
+				sum, sumAsked = n.summaryFor(st), true
+			}
+			b = permissionBanner(w, st.Request, d.HideCommands, sum)
 		case KindQuestion:
 			b = QuestionBanner(w)
 		case KindAuth:
@@ -711,10 +745,10 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		if !kept {
 			kept = true
 			if n.cfg.Capcom() != "" {
-				hidden := keptNotice(kind, st, w, true)
+				hidden := keptNotice(kind, st, w, true, "")
 				full := hidden
 				if !hide {
-					full = keptNotice(kind, st, w, false)
+					full = keptNotice(kind, st, w, false, sum)
 				}
 				meta.Context, meta.CapcomHome = n.ask(n.cfg.Keep(full, hidden))
 			}
@@ -724,10 +758,11 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		}
 		payload := AlertPayload(b, meta, w.Session)
 		if n.send(Message{Token: d.Token, Environment: d.Environment, Type: TypeAlert, Priority: priority(b.Level), CollapseID: collapse, Expiration: expires, Payload: payload}, true) && out != nil {
-			out.to = append(out.to, target{device: d.ID, token: d.Token, env: d.Environment, hide: d.HideCommands})
+			out.to = append(out.to, target{device: d.ID, token: d.Token, env: d.Environment, hide: d.HideCommands, category: b.Category})
 		}
 	}
 	if out != nil && len(out.to) > 0 {
+		out.meta, out.summary = meta, sum
 		n.open[st.Pane] = out
 	}
 }
@@ -782,7 +817,7 @@ func (n *Notifier) activity(st api.AgentState, w Where, changed bool) {
 func (n *Notifier) activityTitle(st api.AgentState, w Where, hide bool) string {
 	switch {
 	case st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindPermission:
-		return PermissionBanner(w, st.Request, hide).Title
+		return permissionBanner(w, st.Request, hide, n.readySummary(st)).Title
 	case st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindQuestion:
 		return "Question"
 	case st.State == api.AgentStatusBlocked:

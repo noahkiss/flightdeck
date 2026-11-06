@@ -56,6 +56,23 @@ helper = "/usr/local/bin/gff-hab-speech"
 # Decode threads. Leave it out for the CPU count, at most 4.
 threads = 4
 
+# The [summaries] section: model-written titles for approval banners (docs/specs/app.md 16.5).
+# Off unless base_url and model are set. With it on, the command, file names, URL or tool input
+# of each approval, the harness's own summary and the project name go to this endpoint.
+[summaries]
+# An OpenAI-compatible API root; the hab posts to <base_url>/chat/completions. A local server
+# (Ollama, LM Studio) keeps the text on this network.
+base_url = "http://127.0.0.1:11434/v1"
+model = "qwen3:4b"
+# The command that prints the API key, as an argv with no shell (as push's key_command,
+# docs/push.md). Leave it out for a local server that needs no key.
+# key_command = ["pass", "show", "flightdeck/summaries-key"]
+# "off" (the default), "minimal", "low", "medium", "high", or "default" to send no
+# reasoning_effort for a model that refuses the field.
+thinking = "off"
+# How long a banner waits for its summary. Leave it out for 1.5s; 0.2s to 5s.
+# timeout = "1.5s"
+
 # The [capcom] section: the Capcom session host (docs/specs/capcom.md 7.6).
 [capcom]
 # The harness a new Capcom conversation runs: "claude" (the default), "codex" or "opencode".

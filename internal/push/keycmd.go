@@ -52,20 +52,36 @@ type KeyCommand struct {
 // Run runs the command once and parses its stdout as a .p8 key. An error names the program,
 // the exit status and at most a cut first line of stderr; never stdout.
 func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
-	if len(k.Argv) == 0 || k.Argv[0] == "" {
-		return nil, errors.New("push key_command names no program")
+	var key *ecdsa.PrivateKey
+	err := RunSecret(ctx, "push key_command", k.Argv, k.Timeout, k.MaxOutput, func(out []byte) error {
+		var err error
+		if key, err = ParseKey(out); err != nil {
+			return fmt.Errorf("printed no APNs key: %v", err)
+		}
+		return nil
+	})
+	return key, err
+}
+
+// RunSecret runs a command that prints a secret (docs/push.md): the argv with no shell,
+// gff-hab's environment, stdin from /dev/null and its own process group, killed with the
+// group past timeout (0: KeyCommandTimeout), its stdout capped at limit bytes (0:
+// maxKeyOutput). use reads stdout, which is wiped when use returns; its error is reported as
+// "<what> <program> <error>". Every error names what, the program, the exit status and at
+// most a cut first line of stderr; never stdout.
+func RunSecret(ctx context.Context, what string, argv []string, timeout time.Duration, limit int, use func([]byte) error) error {
+	if len(argv) == 0 || argv[0] == "" {
+		return fmt.Errorf("%s names no program", what)
 	}
-	timeout := k.Timeout
 	if timeout <= 0 {
 		timeout = KeyCommandTimeout
 	}
-	limit := k.MaxOutput
 	if limit <= 0 {
 		limit = maxKeyOutput
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, k.Argv[0], k.Argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = nil // /dev/null: no password prompt can wait on a terminal
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -78,7 +94,7 @@ func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
 	stdout := &capBuffer{limit: limit, cancel: cancel}
 	stderr := &capBuffer{limit: maxKeyStderr}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
-	name := k.Argv[0]
+	name := argv[0]
 	err := cmd.Run()
 	defer stdout.wipe()
 	// A program that exits 0 but leaves a child holding stdout (an agent it started) has
@@ -88,9 +104,9 @@ func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
 	}
 	switch {
 	case stdout.over:
-		return nil, fmt.Errorf("push key_command %s printed more than %d bytes", name, limit)
+		return fmt.Errorf("%s %s printed more than %d bytes", what, name, limit)
 	case ctx.Err() == context.DeadlineExceeded:
-		return nil, fmt.Errorf("push key_command %s ran past %v", name, timeout)
+		return fmt.Errorf("%s %s ran past %v", what, name, timeout)
 	case err != nil:
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -101,15 +117,14 @@ func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
 			}
 		}
 		if line := stderrHint(stderr.buf.Bytes()); line != "" {
-			return nil, fmt.Errorf("push key_command %s: %v: %s", name, err, line)
+			return fmt.Errorf("%s %s: %v: %s", what, name, err, line)
 		}
-		return nil, fmt.Errorf("push key_command %s: %v", name, err)
+		return fmt.Errorf("%s %s: %v", what, name, err)
 	}
-	key, err := ParseKey(stdout.buf.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("push key_command %s printed no APNs key: %v", name, err)
+	if err := use(stdout.buf.Bytes()); err != nil {
+		return fmt.Errorf("%s %s %v", what, name, err)
 	}
-	return key, nil
+	return nil
 }
 
 // stderrHint returns the first non-empty line of stderr, cut to stderrLine bytes, or "" when
