@@ -8,7 +8,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio-ssh", exact: "0.15.1"),
-        .package(url: "https://github.com/apple/swift-nio", from: "2.65.0"),
+        .package(url: "https://github.com/apple/swift-nio", from: "2.105.0"),
     ],
     targets: [
         .executableTarget(
