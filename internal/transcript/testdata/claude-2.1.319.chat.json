@@ -1,0 +1,32 @@
+[
+  {
+    "id": "00000000-0000-4000-b000-000000000001",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-03-01T10:00:01.000Z",
+    "text": "List the files in the demo folder."
+  },
+  {
+    "id": "00000000-0000-4000-b000-000000000002",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-03-01T10:00:02.000Z",
+    "tool": {
+      "name": "Bash",
+      "target": "ls",
+      "status": "done",
+      "input": {
+        "command": "ls",
+        "description": "List files"
+      },
+      "output": "main.go\nREADME.md"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-b000-000000000004",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-03-01T10:00:04.000Z",
+    "text": "The folder holds main.go and README.md."
+  }
+]
