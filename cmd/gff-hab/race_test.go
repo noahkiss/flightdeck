@@ -8,6 +8,7 @@ import "os"
 // fails the test that ran it.
 // GORACE drops the race runtime's default 1 s sleep at exit, which each child process would pay.
 func init() {
+	raceBuild = true
 	buildFlags = append(buildFlags, "-race")
 	os.Setenv("GORACE", "atexit_sleep_ms=0")
 }
