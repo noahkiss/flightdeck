@@ -7123,6 +7123,10 @@
             "type": "string",
             "description": "The record. On create, an id to claim; absent mints one."
           },
+          "identity": {
+            "type": "string",
+            "description": "add, remove: a project's identity (logbook.md 3.1). Only a person changes one."
+          },
           "link": {
             "$ref": "#/components/schemas/LogbookLink",
             "description": "add, remove: a link."
@@ -7568,8 +7572,20 @@
               "type": "string"
             }
           },
+          "joined_into": {
+            "type": "string",
+            "description": "Joined with an older project: the project it shows as (logbook.md 5.6)."
+          },
+          "marked": {
+            "type": "boolean",
+            "description": "This project itself is marked private."
+          },
           "name": {
             "type": "string"
+          },
+          "private": {
+            "type": "boolean",
+            "description": "Hidden from agents' reads outside the project (logbook.md 12.1): this project, or one joined with it, is marked private."
           },
           "revision": {
             "type": "integer",
@@ -7794,12 +7810,20 @@
               "type": "string"
             }
           },
+          "joined_into": {
+            "type": "string",
+            "description": "A project joined with an older one: the project it shows as (logbook.md 5.6)."
+          },
           "links": {
             "type": "array",
             "description": "This record's links.",
             "items": {
               "$ref": "#/components/schemas/LogbookLink"
             }
+          },
+          "marked": {
+            "type": "boolean",
+            "description": "A project that is itself marked private."
           },
           "notes": {
             "type": "array",
@@ -7815,6 +7839,10 @@
             "type": "integer",
             "format": "int64",
             "description": "A task or issue: 1 to 3."
+          },
+          "private": {
+            "type": "boolean",
+            "description": "A project hidden from agents' reads outside it (logbook.md 12.1): it, or a project joined with it, is marked private."
           },
           "project": {
             "type": "string"

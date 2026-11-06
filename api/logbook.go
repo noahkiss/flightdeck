@@ -77,6 +77,10 @@ type LogbookRecord struct {
 	Notes        []LogbookNote  `json:"notes,omitempty"`
 	Flags        []LogbookFlag  `json:"flags,omitempty" doc:"What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice, approval_overruled."`
 	SupersededBy []string       `json:"superseded_by,omitempty" doc:"A finding: the findings that supersede it."`
+	// Added by stage 5 (logbook.md 3.3).
+	Private    bool   `json:"private,omitempty" doc:"A project hidden from agents' reads outside it (logbook.md 12.1): it, or a project joined with it, is marked private."`
+	Marked     bool   `json:"marked,omitempty" doc:"A project that is itself marked private."`
+	JoinedInto string `json:"joined_into,omitempty" doc:"A project joined with an older one: the project it shows as (logbook.md 5.6)."`
 }
 
 // LogbookActor is who asked for a change (logbook.md 2.5): an agent through its pane, or a
@@ -178,8 +182,8 @@ type LogbookHistory struct {
 type LogbookChangeOp string
 
 // LogbookChange is one change of a write. create takes the record fields, and tags and links
-// added in the same batch; set takes field and value; add and remove take tag or link; note takes
-// text; forget takes op_id.
+// added in the same batch; set takes field and value; add and remove take tag, link or identity;
+// note takes text; forget takes op_id.
 type LogbookChange struct {
 	Op        LogbookChangeOp `json:"op"`
 	ID        string          `json:"id,omitempty" doc:"The record. On create, an id to claim; absent mints one."`
@@ -201,6 +205,8 @@ type LogbookChange struct {
 	Link      *LogbookLink    `json:"link,omitempty" doc:"add, remove: a link."`
 	Text      string          `json:"text,omitempty" doc:"note: the note."`
 	OpID      string          `json:"op_id,omitempty" doc:"forget: the op whose value is redacted everywhere (logbook.md 5.7)."`
+	// Added by stage 5 (logbook.md 3.3).
+	Identity string `json:"identity,omitempty" doc:"add, remove: a project's identity (logbook.md 3.1). Only a person changes one."`
 }
 
 // LogbookWriteParams is one batch of changes: it lands all or nothing.
@@ -254,6 +260,10 @@ type LogbookProject struct {
 	Name       string   `json:"name"`
 	Identities []string `json:"identities,omitempty"`
 	Revision   int      `json:"revision"`
+	// Added by stage 5 (logbook.md 3.3).
+	Private    bool   `json:"private,omitempty" doc:"Hidden from agents' reads outside the project (logbook.md 12.1): this project, or one joined with it, is marked private."`
+	Marked     bool   `json:"marked,omitempty" doc:"This project itself is marked private."`
+	JoinedInto string `json:"joined_into,omitempty" doc:"Joined with an older project: the project it shows as (logbook.md 5.6)."`
 }
 
 // LogbookProjects answers logbook.projects.

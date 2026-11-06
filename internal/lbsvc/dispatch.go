@@ -24,6 +24,13 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 	if len(params) == 0 {
 		params = json.RawMessage("{}")
 	}
+	var hide []string
+	if pane != nil {
+		var err error
+		if hide, err = s.Hide(ctx, pane.Project); err != nil {
+			return nil, err
+		}
+	}
 	decode := func(v any) error {
 		if err := json.Unmarshal(params, v); err != nil {
 			return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err)
@@ -36,31 +43,31 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
-		return s.Find(ctx, p)
+		return s.find(ctx, p, hide)
 	case "logbook.get":
 		var p api.LogbookGetParams
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
-		return s.Get(ctx, p)
+		return s.get(ctx, p, hide)
 	case "logbook.list":
 		var p api.LogbookListParams
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
-		return s.List(ctx, p)
+		return s.search(ctx, hide, "", p.LogbookFilter, false)
 	case "logbook.ready":
 		var p api.LogbookReadyParams
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
-		return s.Ready(ctx, p)
+		return s.ready(ctx, p, hide)
 	case "logbook.history":
 		var p api.LogbookHistoryParams
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
-		return s.History(ctx, p)
+		return s.history(ctx, p, hide)
 	case "logbook.write":
 		var p api.LogbookWriteParams
 		if err := decode(&p); err != nil {
@@ -82,6 +89,9 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 			if err := s.paneSet(ctx, p.ID, p.Field, false, false); err != nil {
 				return nil, control.Errorf(api.ErrorKindInvalid, "%v", err)
 			}
+			if err := s.touchesHidden(ctx, []string{p.ID}, hide); err != nil {
+				return nil, err
+			}
 			if err := s.allow(pane.ID, 1); err != nil {
 				return nil, err
 			}
@@ -98,7 +108,7 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 		}
 		return s.Decide(ctx, a, p)
 	case "logbook.projects":
-		return s.Projects(ctx)
+		return s.projects(ctx, hide)
 	case "logbook.status":
 		return s.Status(ctx)
 	}

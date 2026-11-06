@@ -1,0 +1,26 @@
+{
+  "projects": [
+    {
+      "id": "id-4",
+      "identities": [
+        "identities-6"
+      ],
+      "joined_into": "joined_into-8",
+      "marked": true,
+      "name": "name-5",
+      "private": true,
+      "revision": 7,
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

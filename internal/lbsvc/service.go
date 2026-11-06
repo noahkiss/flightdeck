@@ -55,6 +55,8 @@ type Service struct {
 	cfg Config
 	st  *logbook.Store
 
+	sightMu sync.Mutex // one Sight at a time: two first sights of one identity file one project
+
 	mu     sync.Mutex // orders Changed: one cursor, events in order
 	cursor int64
 	flags  map[string][]string // records that carry a flag, by id: their flag kinds
@@ -123,22 +125,30 @@ func invalid(format string, args ...any) error {
 
 // Find searches by words; with none it lists, as List.
 func (s *Service) Find(ctx context.Context, p api.LogbookFindParams) (api.LogbookRecords, error) {
-	return s.search(ctx, p.Words, api.LogbookFilter{Type: p.Type, Status: p.Status, Project: p.Project, Tag: p.Tag,
+	return s.find(ctx, p, nil)
+}
+
+func (s *Service) find(ctx context.Context, p api.LogbookFindParams, hide []string) (api.LogbookRecords, error) {
+	return s.search(ctx, hide, p.Words, api.LogbookFilter{Type: p.Type, Status: p.Status, Project: p.Project, Tag: p.Tag,
 		Host: p.Host, Author: p.Author, Session: p.Session, Since: p.Since, General: p.General, Deleted: p.Deleted, Flagged: p.Flagged, Limit: p.Limit}, false)
 }
 
 // List lists records, newest change first.
 func (s *Service) List(ctx context.Context, p api.LogbookListParams) (api.LogbookRecords, error) {
-	return s.search(ctx, "", p.LogbookFilter, false)
+	return s.search(ctx, nil, "", p.LogbookFilter, false)
 }
 
 // Ready lists open tasks and issues with no open blocker.
 func (s *Service) Ready(ctx context.Context, p api.LogbookReadyParams) (api.LogbookRecords, error) {
-	return s.search(ctx, "", api.LogbookFilter{Project: p.Project, Limit: p.Limit}, true)
+	return s.ready(ctx, p, nil)
 }
 
-func (s *Service) search(ctx context.Context, words string, f api.LogbookFilter, ready bool) (api.LogbookRecords, error) {
-	q := logbook.Query{Words: words, Type: f.Type, Status: f.Status, Project: f.Project, Tag: f.Tag, Host: f.Host,
+func (s *Service) ready(ctx context.Context, p api.LogbookReadyParams, hide []string) (api.LogbookRecords, error) {
+	return s.search(ctx, hide, "", api.LogbookFilter{Project: p.Project, Limit: p.Limit}, true)
+}
+
+func (s *Service) search(ctx context.Context, hide []string, words string, f api.LogbookFilter, ready bool) (api.LogbookRecords, error) {
+	q := logbook.Query{Hide: hide, Words: words, Type: f.Type, Status: f.Status, Project: f.Project, Tag: f.Tag, Host: f.Host,
 		Author: f.Author, Session: f.Session, General: f.General, Flagged: f.Flagged, Ready: ready, Deleted: f.Deleted, Limit: f.Limit}
 	if f.Limit < 0 {
 		return api.LogbookRecords{}, invalid("limit is a positive number")
@@ -164,10 +174,17 @@ func (s *Service) search(ctx context.Context, words string, f api.LogbookFilter,
 
 // Get reads one record whole.
 func (s *Service) Get(ctx context.Context, p api.LogbookGetParams) (api.LogbookRecordResult, error) {
+	return s.get(ctx, p, nil)
+}
+
+func (s *Service) get(ctx context.Context, p api.LogbookGetParams, hide []string) (api.LogbookRecordResult, error) {
 	if p.ID == "" {
 		return api.LogbookRecordResult{}, invalid("logbook.get needs an id")
 	}
 	r, err := s.st.Get(ctx, p.ID)
+	if err == nil {
+		err = s.hidden(ctx, r, hide)
+	}
 	if err != nil {
 		return api.LogbookRecordResult{}, apiErr(err)
 	}
@@ -175,13 +192,30 @@ func (s *Service) Get(ctx context.Context, p api.LogbookGetParams) (api.LogbookR
 	if err != nil {
 		return api.LogbookRecordResult{}, err
 	}
-	return api.LogbookRecordResult{Record: Record(r, upd)}, nil
+	rec, err := s.record(ctx, r, upd, nil)
+	if err != nil {
+		return api.LogbookRecordResult{}, err
+	}
+	return api.LogbookRecordResult{Record: rec}, nil
 }
 
 // History lists every op on a record.
 func (s *Service) History(ctx context.Context, p api.LogbookHistoryParams) (api.LogbookHistory, error) {
+	return s.history(ctx, p, nil)
+}
+
+func (s *Service) history(ctx context.Context, p api.LogbookHistoryParams, hide []string) (api.LogbookHistory, error) {
 	if p.ID == "" {
 		return api.LogbookHistory{}, invalid("logbook.history needs an id")
+	}
+	if len(hide) > 0 {
+		r, err := s.st.Get(ctx, p.ID)
+		if err == nil {
+			err = s.hidden(ctx, r, hide)
+		}
+		if err != nil {
+			return api.LogbookHistory{}, apiErr(err)
+		}
 	}
 	ops, err := s.st.History(ctx, p.ID)
 	if err != nil {
@@ -204,9 +238,17 @@ func (s *Service) History(ctx context.Context, p api.LogbookHistoryParams) (api.
 
 // Projects lists the projects.
 func (s *Service) Projects(ctx context.Context) (api.LogbookProjects, error) {
-	items, _, err := s.st.Search(ctx, logbook.Query{Type: logbook.TypeProject, Limit: logbook.MaxLimit})
+	return s.projects(ctx, nil)
+}
+
+func (s *Service) projects(ctx context.Context, hide []string) (api.LogbookProjects, error) {
+	items, _, err := s.st.Search(ctx, logbook.Query{Type: logbook.TypeProject, Hide: hide, Limit: logbook.MaxLimit})
 	if err != nil {
 		return api.LogbookProjects{}, apiErr(err)
+	}
+	private, err := s.st.PrivateProjects(ctx)
+	if err != nil {
+		return api.LogbookProjects{}, err
 	}
 	out := api.LogbookProjects{Projects: []api.LogbookProject{}}
 	for _, it := range items {
@@ -214,9 +256,37 @@ func (s *Service) Projects(ctx context.Context) (api.LogbookProjects, error) {
 		if err != nil {
 			return out, apiErr(err)
 		}
-		out.Projects = append(out.Projects, api.LogbookProject{ID: r.ID, Name: r.Title, Identities: r.Identities, Revision: r.Revision})
+		rec, err := s.record(ctx, r, 0, private)
+		if err != nil {
+			return out, err
+		}
+		out.Projects = append(out.Projects, api.LogbookProject{ID: r.ID, Name: r.Title, Identities: r.Identities, Revision: r.Revision,
+			Private: rec.Private, Marked: rec.Marked, JoinedInto: rec.JoinedInto})
 	}
 	slices.SortFunc(out.Projects, func(a, b api.LogbookProject) int { return strings.Compare(a.Name+a.ID, b.Name+b.ID) })
+	return out, nil
+}
+
+// record is Record with what only the store knows filled in: a project's privacy and the
+// project it is joined into (3.3). private is PrivateProjects' answer, or nil to read it.
+func (s *Service) record(ctx context.Context, r *logbook.Record, updated int64, private []string) (api.LogbookRecord, error) {
+	out := Record(r, updated)
+	if r.Type != logbook.TypeProject {
+		return out, nil
+	}
+	c, err := s.st.Canonical(ctx, r.ID)
+	if err != nil {
+		return out, err
+	}
+	if c != r.ID {
+		out.JoinedInto = c
+	}
+	if private == nil {
+		if private, err = s.st.PrivateProjects(ctx); err != nil {
+			return out, err
+		}
+	}
+	out.Private = slices.Contains(private, c)
 	return out, nil
 }
 
@@ -243,6 +313,9 @@ type Pane struct {
 	Session string // the Flightdeck session the pane belongs to, or ""
 	Harness string
 	Host    string
+	// Project is the project the pane's session works in, by any of its ids, or "" for none
+	// (3.3). The pane's reads leave out every private project but this one (12.1).
+	Project string
 	// Propose makes every write from the pane a pending proposal: a Capcom session's records
 	// wait for review (capcom.md D3, D14), and under logbook.approval = agents every agent's do
 	// (9.1).
@@ -257,6 +330,13 @@ type Pane struct {
 func (s *Service) WritePane(ctx context.Context, pn Pane, p api.LogbookWriteParams) (api.LogbookWritten, error) {
 	hash := hashOf("logbook.write", p) // the request as sent, before the pane's fields go in
 	if err := s.paneChecks(ctx, pn.Session, p.Changes, p.Propose || pn.Propose); err != nil {
+		return api.LogbookWritten{}, err
+	}
+	hide, err := s.Hide(ctx, pn.Project)
+	if err != nil {
+		return api.LogbookWritten{}, err
+	}
+	if err := s.writesHidden(ctx, p.Changes, hide); err != nil {
 		return api.LogbookWritten{}, err
 	}
 	if err := s.allow(pn.ID, len(p.Changes)); err != nil {
@@ -292,6 +372,13 @@ func (s *Service) paneChecks(ctx context.Context, session string, changes []api.
 		case api.LogbookChangeOpCreate:
 			if c.Type == logbook.TypeProposal {
 				return invalid("change %d: an agent files a proposal with propose: true, never as a create of type proposal", i+1)
+			}
+			if c.Type == logbook.TypeProject {
+				return invalid("change %d: %s", i+1, projectsHint)
+			}
+		case api.LogbookChangeOpAdd, api.LogbookChangeOpRemove:
+			if c.Identity != "" {
+				return invalid("change %d: a project's identities are the user's to change: %s", i+1, projectsHint)
 			}
 			if c.ID != "" {
 				created[c.ID] = true
@@ -329,6 +416,9 @@ func (s *Service) paneChecks(ctx context.Context, session string, changes []api.
 func (s *Service) paneSet(ctx context.Context, id, field string, created, strict bool) error {
 	if field == "decided_by" {
 		return errors.New("only a person decides a proposal: decided_by is not an agent's to set")
+	}
+	if field == "private" {
+		return errors.New("only the user marks a project private: gff lb project private, run outside a pane")
 	}
 	if field != "status" || created || id == "" {
 		return nil
@@ -628,6 +718,17 @@ func (s *Service) draftSteps(ctx context.Context, r *logbook.Record, edits []api
 	return out, who, nil
 }
 
+// count is how many of bs are true.
+func count(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
+}
+
 func str(v json.RawMessage) string {
 	var s string
 	_ = json.Unmarshal(v, &s)
@@ -804,8 +905,10 @@ func Steps(changes []api.LogbookChange, src *api.LogbookSource) ([]logbook.Step,
 			switch {
 			case c.ID == "":
 				return nil, bad("needs an id")
-			case (c.Tag == "") == (c.Link == nil):
-				return nil, bad("takes a tag or a link, one of them")
+			case count(c.Tag != "", c.Link != nil, c.Identity != "") != 1:
+				return nil, bad("takes a tag, a link or an identity, one of them")
+			case c.Identity != "":
+				steps = append(steps, logbook.Step{Kind: kind, Record: c.ID, Field: "identities", Value: c.Identity})
 			case c.Tag != "":
 				steps = append(steps, logbook.Step{Kind: kind, Record: c.ID, Field: "tags", Value: c.Tag})
 			default:
@@ -971,6 +1074,8 @@ func Record(r *logbook.Record, updated int64) api.LogbookRecord {
 	out.Expires = str("expires")
 	_ = json.Unmarshal(r.Fields["priority"].Value, &out.Priority)
 	_ = json.Unmarshal(r.Fields["pinned"].Value, &out.Pinned)
+	_ = json.Unmarshal(r.Fields["private"].Value, &out.Marked)
+	out.Private = out.Marked // Service.record also counts the projects joined with it
 	if d := r.Fields["draft"].Value; len(d) > 0 {
 		out.Draft = api.RawJSON(d)
 	}

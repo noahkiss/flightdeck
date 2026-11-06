@@ -3138,6 +3138,8 @@ public struct LogbookChange: Codable, Sendable, Hashable {
     public var field: String?
     /// The record. On create, an id to claim; absent mints one.
     public var id: String?
+    /// add, remove: a project's identity (logbook.md 3.1). Only a person changes one.
+    public var identity: String?
     /// add, remove: a link.
     public var link: LogbookLink?
     /// create: links to add.
@@ -3168,6 +3170,7 @@ public struct LogbookChange: Codable, Sendable, Hashable {
         case component = "component"
         case field = "field"
         case id = "id"
+        case identity = "identity"
         case link = "link"
         case links = "links"
         case op = "op"
@@ -3185,12 +3188,13 @@ public struct LogbookChange: Codable, Sendable, Hashable {
         case value = "value"
     }
 
-    public init(assignee: String? = nil, body: String? = nil, component: String? = nil, field: String? = nil, id: String? = nil, link: LogbookLink? = nil, links: [LogbookLink]? = nil, op: LogbookChangeOp, opId: String? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, status: String? = nil, tag: String? = nil, tags: [String]? = nil, text: String? = nil, title: String? = nil, triage: String? = nil, type: String? = nil, value: JSONValue? = nil) {
+    public init(assignee: String? = nil, body: String? = nil, component: String? = nil, field: String? = nil, id: String? = nil, identity: String? = nil, link: LogbookLink? = nil, links: [LogbookLink]? = nil, op: LogbookChangeOp, opId: String? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, status: String? = nil, tag: String? = nil, tags: [String]? = nil, text: String? = nil, title: String? = nil, triage: String? = nil, type: String? = nil, value: JSONValue? = nil) {
         self.assignee = assignee
         self.body = body
         self.component = component
         self.field = field
         self.id = id
+        self.identity = identity
         self.link = link
         self.links = links
         self.op = op
@@ -3572,20 +3576,32 @@ public struct LogbookOrigin: Codable, Sendable, Hashable {
 public struct LogbookProject: Codable, Sendable, Hashable {
     public var id: String
     public var identities: [String]?
+    /// Joined with an older project: the project it shows as (logbook.md 5.6).
+    public var joinedInto: String?
+    /// This project itself is marked private.
+    public var marked: Bool?
     public var name: String
+    /// Hidden from agents' reads outside the project (logbook.md 12.1): this project, or one joined with it, is marked private.
+    public var `private`: Bool?
     public var revision: Int
 
     enum CodingKeys: String, CodingKey {
         case id = "id"
         case identities = "identities"
+        case joinedInto = "joined_into"
+        case marked = "marked"
         case name = "name"
+        case `private` = "private"
         case revision = "revision"
     }
 
-    public init(id: String, identities: [String]? = nil, name: String, revision: Int) {
+    public init(id: String, identities: [String]? = nil, joinedInto: String? = nil, marked: Bool? = nil, name: String, `private`: Bool? = nil, revision: Int) {
         self.id = id
         self.identities = identities
+        self.joinedInto = joinedInto
+        self.marked = marked
         self.name = name
+        self.`private` = `private`
         self.revision = revision
     }
 }
@@ -3738,13 +3754,19 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
     public var id: String
     /// A project: its identities (logbook.md 3.1).
     public var identities: [String]?
+    /// A project joined with an older one: the project it shows as (logbook.md 5.6).
+    public var joinedInto: String?
     /// This record's links.
     public var links: [LogbookLink]?
+    /// A project that is itself marked private.
+    public var marked: Bool?
     public var notes: [LogbookNote]?
     /// A guide: in every brief for its project.
     public var pinned: Bool?
     /// A task or issue: 1 to 3.
     public var priority: Int?
+    /// A project hidden from agents' reads outside it (logbook.md 12.1): it, or a project joined with it, is marked private.
+    public var `private`: Bool?
     public var project: String?
     /// The record's count of folded ops: it never goes down. logbook.updated carries the same number.
     public var revision: Int?
@@ -3776,10 +3798,13 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         case flags = "flags"
         case id = "id"
         case identities = "identities"
+        case joinedInto = "joined_into"
         case links = "links"
+        case marked = "marked"
         case notes = "notes"
         case pinned = "pinned"
         case priority = "priority"
+        case `private` = "private"
         case project = "project"
         case revision = "revision"
         case source = "source"
@@ -3793,7 +3818,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         case updated = "updated"
     }
 
-    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, expires: String? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, links: [LogbookLink]? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
+    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, expires: String? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, joinedInto: String? = nil, links: [LogbookLink]? = nil, marked: Bool? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, `private`: Bool? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
         self.assignee = assignee
         self.backlinks = backlinks
         self.body = body
@@ -3807,10 +3832,13 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         self.flags = flags
         self.id = id
         self.identities = identities
+        self.joinedInto = joinedInto
         self.links = links
+        self.marked = marked
         self.notes = notes
         self.pinned = pinned
         self.priority = priority
+        self.`private` = `private`
         self.project = project
         self.revision = revision
         self.source = source
