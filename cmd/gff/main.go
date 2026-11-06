@@ -203,7 +203,7 @@ func run(args []string) error {
 			return err
 		}
 		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar,
-			Workspace: settings.Workspace.Name, StatePath: state, StartupTabs: settings.Workspace.Tabs})
+			TitleTemplate: &settings.Workspace.Title, Workspace: settings.Workspace.Name, StatePath: state, StartupTabs: settings.Workspace.Tabs})
 	}
 	octx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, err := habconn.Connect(octx, habconn.Config{Transport: tr, Client: client})
@@ -243,7 +243,7 @@ func run(args []string) error {
 		panes = append(panes, gffclient.PaneSpec{ID: res.Pane, Label: label(cmd, res.Pane), Observe: *observe})
 	}
 
-	err = runTerminal(ctx, in, out, gffclient.Config{Conn: conn, Panes: panes, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar})
+	err = runTerminal(ctx, in, out, gffclient.Config{TitleTemplate: &settings.Workspace.Title, Conn: conn, Panes: panes, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar})
 	if err == nil {
 		return errEnded
 	}

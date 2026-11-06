@@ -230,7 +230,7 @@ func TestQueriesNeverAnswered(t *testing.T) {
 			if s := hst.screen(); !strings.Contains(s, "got[XY]") {
 				t.Errorf("the program read something before the typed keys:\n%s", s)
 			}
-			if m := queryRE.FindAll(hst.output(), -1); len(m) > 0 {
+			if m := terminalQueries(hst.output()); len(m) > 0 {
 				t.Errorf("queries reached the host terminal: %q", m)
 			}
 			if !tc.split && !bytes.Contains(hst.output(), []byte("start")) {

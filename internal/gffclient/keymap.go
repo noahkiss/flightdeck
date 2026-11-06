@@ -544,6 +544,7 @@ type Settings struct {
 
 // WorkspaceConfig is the config file's [workspace] table (gff-client.md 5.5).
 type WorkspaceConfig struct {
+	Title string // host window title template; empty disables it
 	// Name is the workspace gff opens; DefaultWorkspace when the file names none.
 	Name string
 	// Tabs are the startup tabs, [[workspace.tabs]]: made only in a new workspace (5.6).
@@ -584,7 +585,7 @@ func DefaultBar() BarConfig {
 
 // DefaultSettings is the default keymap and bars.
 func DefaultSettings() Settings {
-	return Settings{Keymap: DefaultKeymap(), Bar: DefaultBar(), Workspace: WorkspaceConfig{Name: DefaultWorkspace}}
+	return Settings{Keymap: DefaultKeymap(), Bar: DefaultBar(), Workspace: WorkspaceConfig{Name: DefaultWorkspace, Title: DefaultTitleTemplate}}
 }
 
 // fileSettings is the part of gff's config file this package reads. The hosts belong to
@@ -879,6 +880,13 @@ func LoadSettings(path string) (Settings, []string, error) {
 	slices.Sort(wsKeys)
 	for _, k := range wsKeys {
 		switch k {
+		case "title":
+			var title string
+			if err := md.PrimitiveDecode(ws[k], &title); err != nil {
+				problems = append(problems, where("workspace", k)+": want a string in quotes")
+				continue
+			}
+			s.Workspace.Title = title
 		case "name":
 			var n string
 			if err := md.PrimitiveDecode(ws[k], &n); err != nil || !ValidWorkspaceName(n) {

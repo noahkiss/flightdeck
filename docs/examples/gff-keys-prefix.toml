@@ -128,3 +128,7 @@ p = "pause"
 R = "run-sessions"
 esc = "back"
 q = "back"
+
+# Host window title; empty disables updates.
+# [workspace]
+# title = "{host} · {workspace} | {title}"

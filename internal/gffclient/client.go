@@ -97,6 +97,8 @@ type Config struct {
 	// Workspace is the workspace's name, shown beside the clock (gff-client.md 5.5). Empty:
 	// none shows.
 	Workspace string
+	// TitleTemplate sets the host window title. Nil uses DefaultTitleTemplate; empty disables it.
+	TitleTemplate *string
 	// StatePath is the workspace's file (WorkspacePath): gff restores the tabs from it at start
 	// and writes them back on each change (gff-client.md 5.6). Empty: nothing is saved.
 	StatePath string
@@ -186,9 +188,11 @@ type client struct {
 	cur   int
 	last  *tab // the tab shown before the current one, for last-tab
 
-	restored   bool   // the workspace file was read (or is new), so writing it loses nothing
-	savedBytes []byte // what the file holds, as last written or read
-	saveErr    string // the last write's failure, shown once
+	windowTitle string
+	titleSaved  bool
+	restored    bool   // the workspace file was read (or is new), so writing it loses nothing
+	savedBytes  []byte // what the file holds, as last written or read
+	saveErr     string // the last write's failure, shown once
 
 	w, h   int
 	canvas canvas
@@ -516,7 +520,7 @@ func (c *client) repoint(t *tab, v *view, pane string) {
 	v.exited, v.ended, v.note, v.owner = nil, nil, "", ""
 	v.offset, v.haveOffset, v.opens, v.scroll = 0, false, 0, 0
 	v.cols, v.rows, v.sentCols, v.sentRows = 0, 0, 0, 0
-	v.filter.reset()
+	v.filter = passFilter{}
 	v.dirty = true
 	c.startInput(v)
 	if t == c.tab() {
@@ -723,6 +727,10 @@ func (c *client) frame(pf paneFrame) {
 		v.scroll = 0 // a new screen: the live one
 		v.offset, v.haveOffset = f.Offset, true
 		v.filter.reset()
+		if f.Encoding == string(vt.EncodingVT) {
+			var discard bytes.Buffer
+			v.filter.write(&discard, f.Data)
+		}
 		if c.pass == v {
 			c.pass = nil // pass through again from the new screen
 		}
@@ -1063,6 +1071,7 @@ var mirrored = []struct {
 // render brings the host terminal up to date: pass-through when one pane fits it, else a
 // composed screen.
 func (c *client) render() {
+	defer c.updateTitle()
 	if c.pass != nil && !c.ws {
 		if done, _ := c.allEnded(); done {
 			return // the last pane ended: the host keeps what it drew, as after ssh
@@ -1130,6 +1139,10 @@ func resetMirrored(modes map[int]bool) string {
 
 // restoreHost leaves the host terminal as gff found it.
 func (c *client) restoreHost() {
+	if c.titleSaved {
+		c.out.WriteString("\x1b[23;2t")
+		c.titleSaved = false
+	}
 	switch {
 	case c.composed:
 		c.out.WriteString(resetMirrored(c.modes))
@@ -1236,6 +1249,9 @@ func (c *client) compose(a arrangement) {
 func (c *client) frameText(v *view, s slot) string {
 	t := " " + v.spec.Label
 	var notes []string
+	if v.filter.title != "" {
+		notes = append(notes, v.filter.title)
+	}
 	if c.ws {
 		// A view of a session shows the session's name as the hab has it now.
 		if r, ok := rowOf(c.ui.rows, v); ok && v.spec.Session != "" && r.Name != "" {

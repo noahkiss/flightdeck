@@ -359,7 +359,7 @@ request, and a debounce timer the test fires.
 | The composed view reads keys as the host sends them; it does not ask the host for the kitty keyboard protocol and does not re-encode keys per pane (8.2) | Cursor-key, keypad and bracketed paste modes are mirrored; pass-through gets the full protocol. The keymap stage owns key encoding |
 | No mouse in the composed view; no wheel scrolling of scrollback; no selection (5.2) | Pass-through gets the pane's mouse modes. Later stages |
 | Kitty graphics and other APC strings are dropped in pass-through | The host would answer them; images are a later stage |
-| Window titles (OSC 0, 2) pass through in pass-through and are ignored when composed; no host title of gff's own (3.2) | The tab bar stage owns titles |
+| Window titles | Built: pane OSC 0/2 titles appear in frames and the configurable host title follows focus |
 | The cursor style (DECSCUSR) is not mirrored in the composed view | Cosmetic |
 | With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
@@ -2048,3 +2048,15 @@ Opened while writing this spec, 2026-10-31.
 
 Not opened: the herdr, tssh and earlier GFF sources. Facts marked *(gk)* need a check when the
 stage that relies on them starts.
+
+### Window titles (task-g08plxf6)
+
+`[workspace] title` sets the host window title template. The default is
+`{host} · {workspace} | {title}`. Empty disables host title updates. Tokens expand once;
+unknown tokens stay literal. Without a pane title, `{title}` uses the view label.
+The focused pane supplies `{host}` and `{title}`. Empty tabs leave both empty.
+Pane OSC 0 and 2 titles also appear in its frame. Titles are plain text: control and
+format characters are removed, and output is capped at 512 runes. gff saves the host
+window title once and restores it when it exits. Pane title sequences never pass through
+to the host directly. A title is learned from VT snapshots and subsequent output;
+a snapshot without title data keeps the last title known, or the view label.

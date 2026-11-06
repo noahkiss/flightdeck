@@ -359,13 +359,20 @@ func newHost(t *testing.T, cols, rows int, answer bool) *host {
 // queryRE matches the queries a terminal answers.
 var queryRE = regexp.MustCompile(`\x1b\[[?>=]?[0-9;]*[nc]|\x1b\[[0-9;\x08]*t|\x1b\]52;[^\x07\x1b]*;\?|\x1b\]1[0-2];\?|\x1bP[$+]q`)
 
+// Saving and restoring the title stack does not ask the terminal for an answer.
+func terminalQueries(p []byte) [][]byte {
+	p = bytes.ReplaceAll(p, []byte("\x1b[22;2t"), nil)
+	p = bytes.ReplaceAll(p, []byte("\x1b[23;2t"), nil)
+	return queryRE.FindAll(p, -1)
+}
+
 func (h *host) Write(p []byte) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.log.Write(p)
 	h.term.Write(p)
 	if h.answer {
-		for _, m := range queryRE.FindAllIndex(h.log.Bytes(), -1)[h.answered:] {
+		for _, m := range terminalQueries(h.log.Bytes())[h.answered:] {
 			_ = m
 			h.answered++
 			h.replies <- []byte("\x1b[4;600;800t\x1b]52;c;c2VjcmV0\x07\x1b[?62;22c")

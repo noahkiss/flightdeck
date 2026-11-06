@@ -3,6 +3,7 @@ package gffclient
 import (
 	"bytes"
 	"strconv"
+	"strings"
 )
 
 // passFilter cleans a pane's output before the pass-through view writes it to the host
@@ -16,16 +17,19 @@ import (
 //     because the host's answer would arrive on gff's input and go to the program as typing.
 //   - Settings that would change the host terminal beyond the pane: the palette and the special
 //     colours (OSC 4, 5, 10 to 19 and their resets), the working directory (OSC 7), window
-//     moves and resizes (CSI t), and kitty graphics (APC), whose commands the host answers.
+//     moves, resizes and title-stack operations (CSI t), titles (OSC 0/2), and kitty graphics (APC), whose commands the host answers.
 //
 // Everything else passes byte for byte. A sequence is held until it is complete, across
 // writes; a control string longer than maxHeld cannot be a query, so it streams once the
 // filter knows it is not one it drops.
 type passFilter struct {
-	st   fState
-	held []byte
-	drop bool // in a long control string being dropped
-	pass bool // in a long control string being passed on
+	title           string
+	pendingTitle    string
+	hasPendingTitle bool
+	st              fState
+	held            []byte
+	drop            bool // in a long control string being dropped
+	pass            bool // in a long control string being passed on
 }
 
 type fState uint8
@@ -43,7 +47,7 @@ const (
 // maxHeld bounds a held control string. Queries are short; a longer string streams.
 const maxHeld = 1024
 
-func (f *passFilter) reset() { *f = passFilter{} }
+func (f *passFilter) reset() { title := f.title; *f = passFilter{title: title} }
 
 // write filters p and appends what passes to out.
 func (f *passFilter) write(out *bytes.Buffer, p []byte) {
@@ -135,6 +139,14 @@ func (f *passFilter) hold(out *bytes.Buffer, b byte) {
 	default:
 		f.held = append(f.held, b)
 		if len(f.held) > maxHeld {
+			if title, ok := oscTitle(f.held); ok {
+				// A rune may take four bytes. Keep enough for the title cap without
+				// increasing the holding bound for other control strings.
+				if len(f.held) <= 4*512+len("\x1b]2;") {
+					return
+				}
+				f.pendingTitle, f.hasPendingTitle = cleanTitle(title), true
+			}
 			if stringDropped(f.held, false) {
 				f.drop, f.held = true, f.held[:0]
 			} else {
@@ -149,15 +161,36 @@ func (f *passFilter) hold(out *bytes.Buffer, b byte) {
 func (f *passFilter) endString(out *bytes.Buffer, tail []byte) {
 	switch {
 	case f.drop:
+		if f.hasPendingTitle && titleTerminator(tail) {
+			f.title = f.pendingTitle
+		}
 	case f.pass:
 		out.Write(tail)
 	default:
+		if titleTerminator(tail) {
+			if title, ok := oscTitle(f.held); ok {
+				f.title = cleanTitle(title)
+			}
+		}
 		f.held = append(f.held, tail...)
 		if !stringDropped(f.held, true) {
 			out.Write(f.held)
 		}
 	}
 	f.st, f.held, f.drop, f.pass = fGround, f.held[:0], false, false
+	f.pendingTitle, f.hasPendingTitle = "", false
+}
+
+func titleTerminator(tail []byte) bool {
+	return len(tail) > 0 && (tail[0] == 7 || tail[len(tail)-1] == '\\')
+}
+
+func oscTitle(seq []byte) (string, bool) {
+	if !bytes.HasPrefix(seq, []byte("\x1b]")) {
+		return "", false
+	}
+	cmd, title, ok := strings.Cut(string(seq[2:]), ";")
+	return title, ok && (cmd == "0" || cmd == "2")
 }
 
 func (f *passFilter) flush(out *bytes.Buffer) {
@@ -176,27 +209,23 @@ func csiDropped(seq []byte) bool {
 	if len(body) > 0 && body[0] >= 0x3c && body[0] <= 0x3f {
 		prefix, body = body[0], body[1:]
 	}
-	var params, inter []byte
+	var inter []byte
 	for i, c := range body {
 		if c >= 0x20 && c <= 0x2f {
-			params, inter = body[:i], body[i:]
+			inter = body[i:]
 			break
 		}
-	}
-	if inter == nil {
-		params = body
 	}
 	switch final {
 	case 'n': // device status, cursor position and every other report request
 		return true
 	case 'c': // device attributes, primary, secondary and tertiary
 		return len(inter) == 0
-	case 't': // window operations: reports, moves and resizes; the title stack stays
+	case 't': // window operations, including the title stack owned by gff
 		if prefix != 0 || len(inter) != 0 {
 			return false
 		}
-		n, _ := strconv.Atoi(firstParam(params))
-		return n != 22 && n != 23
+		return true
 	case 'q': // XTVERSION
 		return prefix == '>' && len(inter) == 0
 	case 'p': // DECRQM, ANSI and private
@@ -246,7 +275,7 @@ func stringDropped(seq []byte, complete bool) bool {
 			return true // not a well-formed OSC: nothing a host should act on
 		}
 		switch {
-		case n == 4 || n == 5 || n == 7 || (n >= 10 && n <= 19) ||
+		case n == 0 || n == 2 || n == 4 || n == 5 || n == 7 || (n >= 10 && n <= 19) ||
 			n == 104 || n == 105 || (n >= 110 && n <= 119):
 			return true
 		}

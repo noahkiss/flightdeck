@@ -18,9 +18,10 @@ import (
 // directory and window settings, from any split of the bytes; everything else passes byte for
 // byte.
 func TestPassFilter(t *testing.T) {
-	kept := "plain \x1b[1;31mred\x1b[0m \x1b]0;title\x07 \x1b]52;c;aGk=\x07 \x1b[?1049h\x1b[22;0t\x1b[2 q" +
+	kept := "plain \x1b[1;31mred\x1b[0m \x1b]52;c;aGk=\x07 \x1b[?1049h\x1b[2 q" +
 		"\x1b[?2004h\x1b[>1u\x1b[!p\x1bPq#0;2;0;0;0#0!10~\x1b\\ \x1b(B\x1b7\x1b8 ü"
 	dropped := []string{
+		"\x1b]0;title\x07", "\x1b]2;title\x1b\\", "\x1b[22;0t", "\x1b[23;2t",
 		"\x1b[6n", "\x1b[?6n", "\x1b[5n", "\x1b[c", "\x1b[>c", "\x1b[=c", "\x1b[>q", "\x1b[?1$p", "\x1b[4$p",
 		"\x1b[?u", "\x1b[14t", "\x1b[16t", "\x1b[18t", "\x1b[8;50;100t", "\x1b[1\x088t", "\x1b[x",
 		"\x1b]52;c;?\x07", "\x1b]11;?\x1b\\", "\x1b]4;1;?\x07", "\x1b]4;1;rgb:ff/00/00\x07", "\x1b]7;file:///x\x07",
