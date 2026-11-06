@@ -874,3 +874,27 @@ func TestOpencodeBriefOnceAcrossFollowers(t *testing.T) {
 	x.f.emit("session.created", `{"sessionID":"ses_4","version":"2.2.5"}`)
 	waitUntil(t, "the new session's brief", func() bool { return x.f.requests("POST /api/session/ses_4/synthetic") == 1 })
 }
+
+// TestOpencodeBriefSkippedUnrecorded: a brief whose session cannot be written to the pane's
+// record is skipped, not posted: after a restart nothing would stop a second post.
+func TestOpencodeBriefSkippedUnrecorded(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only folder")
+	}
+	x := newOcTest(t)
+	x.o.SetBrief(func(context.Context, string) string { return "the brief" })
+	x.follow()
+	waitUntil(t, "the stream", func() bool { return x.f.streamCount() > 0 })
+	x.emitSeen()
+	if err := os.Chmod(x.o.dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(x.o.dir, 0o700) })
+	x.f.emit("session.created", `{"sessionID":"ses_1","version":"2.2.5"}`)
+	waitUntil(t, "the skip logged", func() bool { return x.logs.count("the Logbook brief for session ses_1 skipped") == 1 })
+	x.emitSeen()
+	time.Sleep(200 * time.Millisecond)
+	if n := x.f.requests("POST /api/session/ses_1/synthetic"); n != 0 {
+		t.Fatalf("posted an unrecorded brief %d times", n)
+	}
+}

@@ -714,9 +714,11 @@ func (o *opencodeServers) postBrief(ctx context.Context, pane string, p *ocPane,
 	if c == nil {
 		return
 	}
-	// Recorded before the post: a gff-hab that stops mid-post never posts it again.
+	// Recorded before the post: a gff-hab that stops mid-post never posts it again. A brief
+	// that cannot be recorded is skipped: a missed brief beats one posted twice.
 	if err := o.saveRecord(pane, p); err != nil {
-		o.logf("opencode: pane %s: record the brief for session %s: %v", pane, sid, err)
+		o.logf("opencode: pane %s: the Logbook brief for session %s skipped: cannot record it: %v", pane, sid, err)
+		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, opencodeTimeout+briefBuild)
