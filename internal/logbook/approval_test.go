@@ -247,3 +247,32 @@ func TestProposalMadeByOverruledApprove(t *testing.T) {
 		t.Fatal("A and B folded differently")
 	}
 }
+
+// Only a person's restore shows an overruled approve's record again (9.4): an agent's restore
+// stamped after the approve leaves it hidden, a person's shows it, still flagged.
+func TestOnlyPersonRestoresOverruled(t *testing.T) {
+	a, b, x, task := proposalHosts(t)
+	b.clock.Set(at("09:58"))
+	reject(t, b, x)
+	a.clock.Set(at("10:00"))
+	made := approve(t, a, x, task)
+	link(t, a, b)
+	a.clock.Set(at("11:00"))
+	a.write(t, agentS1, set(made, "deleted", false))
+	link(t, a, b)
+	for _, r := range []*replica{a, b} {
+		if m := r.get(t, made); !m.Deleted {
+			t.Fatalf("%s: an agent's restore showed the overruled record", r.name)
+		}
+		refoldSame(t, r)
+	}
+	b.clock.Set(at("11:30"))
+	b.write(t, phone, set(made, "deleted", false))
+	link(t, a, b)
+	for _, r := range []*replica{a, b} {
+		if m := r.get(t, made); m.Deleted || len(flagsOf(m, FlagApprovalOverruled)) != 1 {
+			t.Fatalf("%s: after a person's restore: deleted %v flags %+v", r.name, m.Deleted, m.Flags)
+		}
+		refoldSame(t, r)
+	}
+}

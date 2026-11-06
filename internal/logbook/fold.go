@@ -290,7 +290,11 @@ func fold(create *Op, ops []*Op, collision int, ov overrule) *folded {
 		f.Flags = append(f.Flags, fl)
 	}
 	if createOver {
-		restored := deleteOp != nil && deleteOp.ID() != f.Root && !f.boolean("deleted") && create.before(deleteOp)
+		// Only a person's restore stamped after the approve shows the record again: the standing
+		// deleted = false, written by a person. One made before the overrule arrived counts too,
+		// since it is still stamped after the approve.
+		restored := deleteOp != nil && deleteOp.ID() != f.Root && !f.boolean("deleted") && create.before(deleteOp) &&
+			deleteOp.Actor != nil && deleteOp.Actor.Kind == "person"
 		if !restored {
 			fv := FieldValue{Value: json.RawMessage("true"), Op: createWin.ID()}
 			if old, ok := f.Fields["deleted"]; ok {
