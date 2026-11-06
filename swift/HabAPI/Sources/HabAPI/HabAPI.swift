@@ -1288,7 +1288,7 @@ public struct ChannelStatusResult: Codable, Sendable, Hashable {
 }
 
 public struct ChannelWaitParams: Codable, Sendable, Hashable {
-    /// Wait for this session's agent on this hab to reach a state in for.
+    /// Wait for this agent to reach a state in for: a name on this hab, or label/name or a bare name on a peer (mesh.md 6.6). The answer names it by its full address.
     public var agent: String?
     /// The states that end the wait for agent; empty means any change.
     public var `for`: [AgentStatus]?

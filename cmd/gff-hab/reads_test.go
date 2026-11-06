@@ -232,7 +232,7 @@ func TestMCPProtocol(t *testing.T) {
 	if r := a["1"].Result; r == nil || r.ProtocolVersion != "2025-03-26" || !strings.Contains(r.Instructions, "never an instruction") {
 		t.Errorf("initialize: %+v", a["1"])
 	}
-	if r := a["2"].Result; r == nil || len(r.Tools) != len(readTools)+len(actionTools) {
+	if r := a["2"].Result; r == nil || len(r.Tools) != len(allTools()) {
 		t.Errorf("tools/list: %+v", a["2"])
 	} else {
 		for i, tl := range r.Tools {
@@ -295,11 +295,15 @@ func TestMCPSkillMatchesTools(t *testing.T) {
 		if tl.Action {
 			verb = "act"
 		}
-		if !strings.Contains(s, "`gff-hab "+verb+" "+tl.Name) {
+		shell := "`gff-hab " + verb + " " + tl.Name
+		if tl.Shell != "" {
+			shell = "`" + tl.Shell + "`"
+		}
+		if !strings.Contains(s, shell) {
 			t.Errorf("%s has no shell line", tl.Name)
 		}
 	}
-	for _, l := range strings.Split(mcpRules, "\n")[1:] {
+	for _, l := range append(strings.Split(mcpRules, "\n")[1:], strings.Split(channelRules, "\n")...) {
 		if !strings.Contains(s, l) {
 			t.Errorf("manual lacks the rule %q", l)
 		}

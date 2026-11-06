@@ -280,6 +280,73 @@ func TestChannelsWaitForIdle(t *testing.T) {
 	}
 }
 
+// TestChannelsWaitPeerAgent (task-mz98sb7l, task-dokhx3sg): gff-hab wait -agent on hab a waits
+// on an agent on hab b and returns at its state change; from alice's pane on a, the MCP tools
+// send to that agent and wait, by a bare name, for it to exit (mesh.md 6.6).
+func TestChannelsWaitPeerAgent(t *testing.T) {
+	p := newMeshPair(t)
+	m1 := pasted("ay/alice", "over the tool")
+	startReceiver(t, p.b, "working", m1)
+	addr := startSender(t, p.a)
+
+	done := make(chan string, 1)
+	go func() {
+		out, err := exec.Command(bin, "wait", "-socket", p.a.sock, "-agent", "bee/bob", "-for", "idle", "-timeout", "30s").CombinedOutput()
+		if err != nil {
+			out = append(out, []byte(" err: "+err.Error())...)
+		}
+		done <- string(out)
+	}()
+	select {
+	case out := <-done:
+		t.Fatalf("the wait returned while bob works: %q", out)
+	case <-time.After(500 * time.Millisecond):
+	}
+	writeFile(t, filepath.Join(p.b.work, "go-idle"), "")
+	if out := <-done; out != "bee/bob idle\n" {
+		t.Fatalf("wait printed %q", out)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(40*time.Second))
+	defer cancel()
+	c := hookCaller{addr}
+	send, _ := findIn(allTools(), "channel_send")
+	res, text, err := send.run(ctx, c, toolArgs{"to": "bee/bob", "text": "over the tool"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := res.(api.ChannelSent)
+	if !strings.Contains(text, "to bee/bob") {
+		t.Fatalf("channel_send: %q", text)
+	}
+	waitUntil(t, "the tool's message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-1"), withID(m1, sent.ID)))
+	if r := channelStatus(t, p.a.sock, sent.ID, 20000); r.State != api.ChannelStateDelivered || r.From != "alice" {
+		t.Fatalf("record on a: %+v", r)
+	}
+
+	waitCatalog(t, p.a.sock, "a's copy of b lists bob", func(l api.CatalogList) bool {
+		return channels.ClashLabel(l, welcome(t, p.a.sock).DeviceID, "bob") == "bee"
+	})
+	wait, _ := findIn(allTools(), "channel_wait")
+	got := make(chan string, 1)
+	go func() {
+		_, text, err := wait.run(ctx, c, toolArgs{"agent": "bob", "for": "exited", "timeout_seconds": float64(30)})
+		if err != nil {
+			text += " err: " + err.Error()
+		}
+		got <- text
+	}()
+	select {
+	case out := <-got:
+		t.Fatalf("channel_wait returned while bob runs: %q", out)
+	case <-time.After(500 * time.Millisecond):
+	}
+	writeFile(t, filepath.Join(p.b.work, "end"), "")
+	if out := <-got; out != "bee/bob is exited.\n" {
+		t.Fatalf("channel_wait: %q", out)
+	}
+}
+
 // TestChannelsNameClash: creating, or renaming to, a name an agent holds on a peer fails
 // (task acceptance 4).
 func TestChannelsNameClash(t *testing.T) {

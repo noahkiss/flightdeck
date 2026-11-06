@@ -36,7 +36,12 @@ type kitTool struct {
 	Doc    string
 	Args   []toolArg
 	Action bool // an action tool: it asks the hab to change something
-	run    func(ctx context.Context, c caller, a toolArgs) (any, string, error)
+	// Shell is the manual's shell line when the tool has a command of its own; "" is
+	// `gff-hab read <tool>` or `gff-hab act <tool>`.
+	Shell string
+	// Time bounds one MCP call; 0 is the default for a read or an action tool.
+	Time time.Duration
+	run  func(ctx context.Context, c caller, a toolArgs) (any, string, error)
 }
 
 // toolArgs are a call's arguments, checked against the tool's own.
@@ -216,7 +221,9 @@ var actionTools = []kitTool{
 }
 
 // allTools is every tool, read tools first.
-func allTools() []kitTool { return append(slices.Clip(readTools), actionTools...) }
+func allTools() []kitTool {
+	return append(append(slices.Clip(readTools), actionTools...), channelTools...)
+}
 
 func findIn(tools []kitTool, name string) (kitTool, bool) {
 	name = strings.ReplaceAll(name, "-", "_")

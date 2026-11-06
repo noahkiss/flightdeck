@@ -176,7 +176,7 @@ func (m *mcpServer) handle(line []byte) {
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "flightdeck", "version": build},
-			"instructions":    mcpRules,
+			"instructions":    mcpRules + "\n" + channelRules,
 		})
 	case "ping":
 		m.reply(msg.ID, map[string]any{})
@@ -210,6 +210,9 @@ func (m *mcpServer) handle(line []byte) {
 		wait := mcpCallTime
 		if t.Action {
 			wait = actionCallTime
+		}
+		if t.Time > 0 {
+			wait = t.Time
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), wait)
 		call := &mcpCall{cancel: cancel}
@@ -299,6 +302,7 @@ func skillText() string {
 	for _, l := range strings.Split(mcpRules, "\n")[1:] {
 		b.WriteString(l + "\n")
 	}
+	b.WriteString(channelRules + "\n")
 	section := func(title, verb string, tools []kitTool) {
 		fmt.Fprintf(&b, "\n## %s\n", title)
 		for _, t := range tools {
@@ -307,6 +311,7 @@ func skillText() string {
 	}
 	section("Read tools", "read", readTools)
 	section("Action tools", "act", actionTools)
+	section("Channel tools", "", channelTools)
 	return b.String()
 }
 
@@ -324,6 +329,10 @@ func toolEntry(b *strings.Builder, verb string, t kitTool) {
 			}
 			fmt.Fprintf(b, "- `%s` (%s%s): %s\n", x.Name, x.Type, req, x.Doc)
 		}
+	}
+	if t.Shell != "" {
+		fmt.Fprintf(b, "\nShell: `%s`\n", t.Shell)
+		return
 	}
 	fmt.Fprintf(b, "\nShell: `gff-hab %s %s%s`\n", verb, t.Name, cliExample(t))
 }

@@ -313,7 +313,7 @@ func waitCmd(args []string, out io.Writer) error {
 	sock := socketFlag(fs)
 	via := fs.String("via", "", "run this command and speak over its stdio, e.g. \"ssh <host> gff-hab connect\"")
 	session := fs.String("session", "", "wait for messages to this session on this hab (outside a pane only)")
-	agent := fs.String("agent", "", "also wait for this session's agent on this hab to reach a state in -for")
+	agent := fs.String("agent", "", "also wait for this agent to reach a state in -for: a session on this hab, or label/name (or a bare name) on a peer")
 	forStates := fs.String("for", "", "comma-separated agent states that end the wait for -agent (default: any change)")
 	timeout := fs.Duration("timeout", channels.DefaultWait, "give up after this long (default 110s from a pane, under a harness's 2 min tool limit)")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
