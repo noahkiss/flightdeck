@@ -10775,7 +10775,7 @@
           },
           "created": {
             "type": "string",
-            "description": "RFC 3339 time of the create."
+            "description": "RFC 3339 time of the create; an imported record's original date (logbook.md 13.1)."
           },
           "created_by": {
             "$ref": "#/components/schemas/LogbookActor"
@@ -10810,6 +10810,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "imported": {
+            "type": "boolean",
+            "description": "An import wrote the record; created is its original date."
           },
           "joined_into": {
             "type": "string",

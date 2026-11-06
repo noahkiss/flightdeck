@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -182,5 +183,54 @@ func TestProposalVerbs(t *testing.T) {
 	}
 	if out, _, _ := runCLI(t, state, "", "ls", "--type", "task"); strings.Contains(out, "unwanted") {
 		t.Fatalf("a rejected proposal landed:\n%s", out)
+	}
+}
+
+// TestExportImport: export through the file to JSONL and to Markdown, then import into another
+// replica: ids kept, created and imported set, a second import writes nothing.
+func TestExportImport(t *testing.T) {
+	ctx := context.Background()
+	stateA, stateB := t.TempDir(), t.TempDir()
+	for state, origin := range map[string]string{stateA: "SHA256:a", stateB: "SHA256:b"} {
+		st, err := logbook.Open(ctx, filepath.Join(state, "logbook.db"), logbook.Options{Origin: origin})
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+	}
+	out, _, code := runCLI(t, stateA, "", "new", "task", "Keep", "me", "--tag", "x")
+	id := strings.TrimSpace(out)
+	if code != 0 {
+		t.Fatal(out)
+	}
+	dump := filepath.Join(t.TempDir(), "dump.jsonl")
+	if out, errs, code := runCLI(t, stateA, "", "export", dump); code != 0 || out != "1 records in "+dump+"\n" {
+		t.Fatalf("export: %d %q %q", code, out, errs)
+	}
+	if _, errs, code := runCLI(t, stateA, "", "export", dump); code != 1 || !strings.Contains(errs, "exists") {
+		t.Fatalf("export over a file: %d %q", code, errs)
+	}
+	if out, _, code := runCLI(t, stateA, "", "export", "-"); code != 0 || !strings.Contains(out, `"id":"`+id+`"`) {
+		t.Fatalf("export to stdout: %d %q", code, out)
+	}
+	md := filepath.Join(t.TempDir(), "md")
+	if out, errs, code := runCLI(t, stateA, "", "--json", "export", "--format", "markdown", md); code != 0 || !strings.Contains(out, `"records":1`) {
+		t.Fatalf("markdown: %d %q %q", code, out, errs)
+	}
+	if _, err := os.Stat(filepath.Join(md, "general", id+".md")); err != nil {
+		t.Fatal(err)
+	}
+	if out, errs, code := runCLI(t, stateB, "", "import", dump); code != 0 || out != "1 written, 0 already here, 0 proposals skipped\n" {
+		t.Fatalf("import: %d %q %q", code, out, errs)
+	}
+	out, _, _ = runCLI(t, stateB, "", "--json", "show", id)
+	if !strings.Contains(out, `"imported"`) || !strings.Contains(out, `"created"`) || !strings.Contains(out, "Keep me") {
+		t.Fatalf("imported record: %s", out)
+	}
+	if out, _, code := runCLI(t, stateB, "", "--json", "import", dump); code != 0 || !strings.Contains(out, `"exists":1`) {
+		t.Fatalf("second import: %d %q", code, out)
+	}
+	if _, errs, code := runCLI(t, stateB, "{\"id\":", "import", "-"); code != 1 || !strings.Contains(errs, "line 1") {
+		t.Fatalf("bad line: %d %q", code, errs)
 	}
 }

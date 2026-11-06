@@ -78,27 +78,29 @@ type LogbookRecord struct {
 	Body    string `json:"body,omitempty" doc:"Absent in a search result."`
 	Updated string `json:"updated,omitempty" doc:"RFC 3339 time of the last change."`
 	// Added by stage 4 (logbook.md 10.3).
-	Revision     int            `json:"revision,omitempty" doc:"The record's count of folded ops: it never goes down. logbook.updated carries the same number."`
-	Deleted      bool           `json:"deleted,omitempty"`
-	Tags         []string       `json:"tags,omitempty"`
-	Created      string         `json:"created,omitempty" doc:"RFC 3339 time of the create."`
-	CreatedBy    *LogbookActor  `json:"created_by,omitempty"`
-	Source       *LogbookSource `json:"source,omitempty"`
-	Assignee     string         `json:"assignee,omitempty" doc:"A task or issue: a session or a person."`
-	Priority     int            `json:"priority,omitempty" doc:"A task or issue: 1 to 3."`
-	Triage       string         `json:"triage,omitempty" doc:"A task or issue: new until a person looked at it."`
-	Component    string         `json:"component,omitempty" doc:"An issue: the tool, file or service that misbehaves."`
-	Pinned       bool           `json:"pinned,omitempty" doc:"A guide: in every brief for its project."`
-	Target       string         `json:"target,omitempty" doc:"A proposal: record, memory or flight_rules."`
-	Draft        RawJSON        `json:"draft,omitempty" doc:"A proposal: the full content it would apply, as logbook.write's changes."`
-	DecidedBy    string         `json:"decided_by,omitempty" doc:"A decided proposal: the deciding device."`
-	Expires      string         `json:"expires,omitempty" doc:"A memory proposal: RFC 3339 time after which it can no longer be decided (logbook.md 9.2)."`
-	Identities   []string       `json:"identities,omitempty" doc:"A project: its identities (logbook.md 3.1)."`
-	Links        []LogbookLink  `json:"links,omitempty" doc:"This record's links."`
-	Backlinks    []LogbookLink  `json:"backlinks,omitempty" doc:"Other records' links to this one; to names the linking record."`
-	Notes        []LogbookNote  `json:"notes,omitempty"`
-	Flags        []LogbookFlag  `json:"flags,omitempty" doc:"What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice, approval_overruled."`
-	SupersededBy []string       `json:"superseded_by,omitempty" doc:"A finding: the findings that supersede it."`
+	Revision   int            `json:"revision,omitempty" doc:"The record's count of folded ops: it never goes down. logbook.updated carries the same number."`
+	Deleted    bool           `json:"deleted,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
+	Created    string         `json:"created,omitempty" doc:"RFC 3339 time of the create; an imported record's original date (logbook.md 13.1)."`
+	CreatedBy  *LogbookActor  `json:"created_by,omitempty"`
+	Source     *LogbookSource `json:"source,omitempty"`
+	Assignee   string         `json:"assignee,omitempty" doc:"A task or issue: a session or a person."`
+	Priority   int            `json:"priority,omitempty" doc:"A task or issue: 1 to 3."`
+	Triage     string         `json:"triage,omitempty" doc:"A task or issue: new until a person looked at it."`
+	Component  string         `json:"component,omitempty" doc:"An issue: the tool, file or service that misbehaves."`
+	Pinned     bool           `json:"pinned,omitempty" doc:"A guide: in every brief for its project."`
+	Target     string         `json:"target,omitempty" doc:"A proposal: record, memory or flight_rules."`
+	Draft      RawJSON        `json:"draft,omitempty" doc:"A proposal: the full content it would apply, as logbook.write's changes."`
+	DecidedBy  string         `json:"decided_by,omitempty" doc:"A decided proposal: the deciding device."`
+	Expires    string         `json:"expires,omitempty" doc:"A memory proposal: RFC 3339 time after which it can no longer be decided (logbook.md 9.2)."`
+	Identities []string       `json:"identities,omitempty" doc:"A project: its identities (logbook.md 3.1)."`
+	Links      []LogbookLink  `json:"links,omitempty" doc:"This record's links."`
+	Backlinks  []LogbookLink  `json:"backlinks,omitempty" doc:"Other records' links to this one; to names the linking record."`
+	Notes      []LogbookNote  `json:"notes,omitempty"`
+	// Added by stage 9 (logbook.md 13.1).
+	Imported     bool          `json:"imported,omitempty" doc:"An import wrote the record; created is its original date."`
+	Flags        []LogbookFlag `json:"flags,omitempty" doc:"What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice, approval_overruled."`
+	SupersededBy []string      `json:"superseded_by,omitempty" doc:"A finding: the findings that supersede it."`
 	// Added by stage 5 (logbook.md 3.3).
 	Private    bool   `json:"private,omitempty" doc:"A project hidden from agents' reads outside it (logbook.md 12.1): it, or a project joined with it, is marked private."`
 	Marked     bool   `json:"marked,omitempty" doc:"A project that is itself marked private."`

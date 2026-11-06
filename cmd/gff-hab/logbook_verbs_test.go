@@ -172,9 +172,14 @@ func TestLogbookServe(t *testing.T) {
 	if out, errs := lbOK(t, nil, "--socket", sock, "approve", filed.Proposal); !strings.HasPrefix(out, "approved: "+filed.Proposal+"\n") || !strings.Contains(out, "task-") {
 		t.Fatalf("approve: %q %q", out, errs)
 	}
-	// Later stages' verbs say so.
-	if _, errs, code := lbRun(t, nil, "--socket", sock, "export", "x"); code != 1 || !strings.Contains(errs, "stage 9") {
-		t.Fatalf("export: %d %s", code, errs)
+	// Export reads the hab's file while gff-hab runs, and an import of it into another state
+	// folder keeps every id (logbook.md 13.1).
+	dump := filepath.Join(d, "export.jsonl")
+	if out, errs := lbOK(t, nil, "--state", state, "export", dump); !strings.Contains(out, " records in "+dump) {
+		t.Fatalf("export: %q %q", out, errs)
+	}
+	if _, errs, code := lbRun(t, []string{"GFF_HAB=" + sock}, "--state", state, "export", dump+"2"); code != 1 || !strings.Contains(errs, "outside a pane") {
+		t.Fatalf("export from a pane: %d %s", code, errs)
 	}
 	// An API error exits 3.
 	if _, errs, code := lbRun(t, nil, "--socket", sock, "show", "task-zzzzzzzz"); code != 3 || !strings.Contains(errs, "no such record") {
