@@ -22,8 +22,8 @@ stty raw -echo
 "$HAB" hook claude SessionStart < "$DIR/start.json"
 "$HAB" hook claude UserPromptSubmit < "$DIR/ups.json"
 "$HAB" statusline claude < "$DIR/status.json" > /dev/null
-"$HAB" hook -context claude PostToolUse < "$DIR/post.json" > "$DIR/nudge"
-"$HAB" hook -context claude PostToolUse < "$DIR/post.json" > "$DIR/nudge-again"
+"$HAB" hook claude PostToolUse < "$DIR/post.json" > "$DIR/nudge"
+"$HAB" hook claude PostToolUse < "$DIR/post.json" > "$DIR/nudge-again"
 "$HAB" agent compact "$FOLLOW" > "$DIR/compact.out" 2>&1
 "$HAB" agent compact again > "$DIR/compact2.out" 2>&1; echo $? > "$DIR/compact2.code"
 touch "$DIR/called"
@@ -35,13 +35,13 @@ printf '%s\n' '{"type":"system","subtype":"compact_boundary","uuid":"b1"}' >> "$
 "$HAB" hook claude SessionStart < "$DIR/start-compact.json"
 head -c "$LEN2" > "$DIR/got2.tmp" && mv "$DIR/got2.tmp" "$DIR/got2"
 "$HAB" hook claude UserPromptSubmit < "$DIR/ups.json"
-"$HAB" hook -context claude PostToolUse < "$DIR/post.json" > "$DIR/nudge-after"
+"$HAB" hook claude PostToolUse < "$DIR/post.json" > "$DIR/nudge-after"
 touch "$DIR/finished"
 while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 `
 
 // TestCompactClaude: self-compact and the context nudge end to end with the real holder and
-// gff-hab and a fake Claude Code. The nudge comes once per level through the -context hook; the
+// gff-hab and a fake Claude Code. The nudge comes once per level through the PostToolUse hook; the
 // agent's `gff-hab agent compact` answers at once, a second call is refused; /compact goes in
 // only after the Stop hook, as one paste and Enter; PreCompact moves it to compacting; the
 // follow-up goes in only after SessionStart compact; each step is an agent.compact event; after
