@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -165,7 +166,9 @@ func TestSessionResumeAfterHolderLoss(t *testing.T) {
 
 	e.holder.Process.Kill()
 	<-e.holderDone
-	if err := os.Remove(holderreg.Path(e.hdir, "one")); err != nil {
+	// The running gff-hab may already have removed the dead holder's registry file as stale
+	// (hab-holder.md 4.2); either way it must be gone before the new holder starts.
+	if err := os.Remove(holderreg.Path(e.hdir, "one")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
 	startHolder(t, e.hdir, "two")
