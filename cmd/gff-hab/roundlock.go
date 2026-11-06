@@ -241,6 +241,15 @@ func (s *roundsService) noteInput(pane string) {
 	s.mu.Unlock()
 }
 
+// typedWithin reports whether a client typed into pane, or sent its session a message, within d
+// (self-compact's send guard, harness-adapters.md).
+func (s *roundsService) typedWithin(pane string, d time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.inputAt[canonicalPane(pane)]
+	return ok && time.Since(at) < d
+}
+
 // noteSessionInput records a client's session.send to a session.
 func (s *roundsService) noteSessionInput(session string) {
 	if ss, ok := s.cfg.store.Session(session); ok && ss.Pane != "" {

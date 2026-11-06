@@ -77,7 +77,10 @@ func newCompactRig(t *testing.T) *compactRig {
 			return "", false
 		}
 		return "sess-" + pane, true
-	}, func(_ context.Context, session, text string) error {
+	}, func(_ context.Context, session, text string, guard func(string) error) error {
+		if err := guard(strings.TrimPrefix(session, "sess-")); err != nil {
+			return err
+		}
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if err := r.refuse; err != nil {
@@ -253,6 +256,49 @@ func TestCompactByTranscript(t *testing.T) {
 	r.next(t, compactDone)
 	if s := r.sends(); len(s) != 1 {
 		t.Fatalf("sends %v (no follow-up given)", s)
+	}
+}
+
+// TestCompactWaitsForTyping: while a client types into the pane, neither /compact nor the
+// follow-up goes in (a draft would take the paste); once the input stops, each does.
+func TestCompactWaitsForTyping(t *testing.T) {
+	r := newCompactRig(t)
+	var mu sync.Mutex
+	typing := true
+	r.svc.typing = func(pane string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return pane == "p1" && typing
+	}
+	setTyping := func(v bool) {
+		mu.Lock()
+		typing = v
+		mu.Unlock()
+	}
+	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
+	if _, err := r.svc.Request("p1", api.CompactParams{FollowUp: "go on"}); err != nil {
+		t.Fatal(err)
+	}
+	r.next(t, compactQueued)
+	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusDone})
+	time.Sleep(300 * time.Millisecond)
+	if s := r.sends(); len(s) != 0 {
+		t.Fatalf("sent while the user typed: %v", s)
+	}
+	setTyping(false)
+	r.next(t, compactSent)
+	r.svc.Observe("p1", hookEnv("PreCompact", `{"session_id":"n1","trigger":"manual"}`))
+	r.next(t, compactCompacting)
+	setTyping(true)
+	r.svc.Observe("p1", hookEnv("SessionStart", `{"session_id":"n1","source":"compact"}`))
+	time.Sleep(300 * time.Millisecond)
+	if s := r.sends(); len(s) != 1 {
+		t.Fatalf("follow-up while the user typed: %v", s)
+	}
+	setTyping(false)
+	r.next(t, compactDone)
+	if s := r.sends(); len(s) != 2 || s[1] != "sess-p1: go on" {
+		t.Fatalf("sends %v", s)
 	}
 }
 
