@@ -68,8 +68,16 @@ type outcomes struct {
 	got []string
 }
 
-func (o *outcomes) add(id, word, at string) { o.mu.Lock(); o.got = append(o.got, id+" "+word); o.mu.Unlock() }
-func (o *outcomes) list() []string        { o.mu.Lock(); defer o.mu.Unlock(); return append([]string(nil), o.got...) }
+func (o *outcomes) add(id, word, at string) {
+	o.mu.Lock()
+	o.got = append(o.got, id+" "+word)
+	o.mu.Unlock()
+}
+func (o *outcomes) list() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.got...)
+}
 
 func TestRoundCapcomAnswers(t *testing.T) {
 	cc := &fakeCapcom{answer: api.ChannelStateAccepted}

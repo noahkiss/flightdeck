@@ -1280,7 +1280,8 @@ public struct ChannelRound: Codable, Sendable, Hashable {
     public var name: String
     /// Events of the batch left out of events.
     public var omitted: Int?
-    public var prompt: String
+    /// Absent: the message's text is the prompt.
+    public var prompt: String?
     /// The round id.
     public var round: String
     /// The run id.
@@ -1304,7 +1305,7 @@ public struct ChannelRound: Codable, Sendable, Hashable {
         case trigger = "trigger"
     }
 
-    public init(deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String, round: String, run: String, slot: String? = nil, trigger: String) {
+    public init(deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String? = nil, round: String, run: String, slot: String? = nil, trigger: String) {
         self.deadline = deadline
         self.events = events
         self.lastOk = lastOk

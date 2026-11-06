@@ -1127,7 +1127,7 @@ func apiRound(e rounds.Entry) api.Round {
 			Name: r.Name, Mode: api.RoundMode(r.Mode),
 			Trigger: api.RoundTrigger{Kind: api.RoundTriggerKind(r.Trigger.Kind), Cron: r.Trigger.Cron, Zone: r.Trigger.Zone, At: rfc(r.Trigger.At),
 				Event: r.Trigger.Event, Filter: apiFilter(r.Trigger.Filter)},
-			Prompt:  r.Prompt, Harness: r.Harness, Model: r.Model, HarnessArgs: r.HarnessArgs, Command: r.Command,
+			Prompt: r.Prompt, Harness: r.Harness, Model: r.Model, HarnessArgs: r.HarnessArgs, Command: r.Command,
 			Project: r.Project, Cwd: r.Cwd, Target: r.Target, MaxRuns: r.MaxRuns, ExpiresAt: rfc(r.ExpiresAt),
 			TimeoutMS: time.Duration(r.Timeout).Milliseconds(), WaitMS: time.Duration(r.Wait).Milliseconds(),
 			CatchUp: api.RoundCatchUp(r.CatchUp), OnFinish: api.RoundOnFinish(r.OnFinish), Notify: api.RoundNotify(r.Notify),
@@ -1256,7 +1256,7 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		Wait: rounds.Duration(time.Duration(p.WaitMS) * time.Millisecond), CatchUp: rounds.CatchUp(p.CatchUp),
 		OnFinish: rounds.OnFinish(p.OnFinish), Notify: rounds.Notify(p.Notify), Paused: p.Paused,
 		Trigger: rounds.Trigger{Kind: rounds.TriggerKind(p.Trigger.Kind), Cron: p.Trigger.Cron, Zone: p.Trigger.Zone, Event: p.Trigger.Event},
-		Group: p.Group, Debounce: rounds.Duration(time.Duration(p.DebounceMS) * time.Millisecond),
+		Group:   p.Group, Debounce: rounds.Duration(time.Duration(p.DebounceMS) * time.Millisecond),
 		Cooldown: rounds.Duration(time.Duration(p.CooldownMS) * time.Millisecond),
 	}
 	if f := p.Trigger.Filter; f != nil {
