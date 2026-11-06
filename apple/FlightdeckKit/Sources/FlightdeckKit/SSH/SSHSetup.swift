@@ -407,8 +407,8 @@ public final class SSHSetup {
     /// the same key again). A failed test throws with the entry kept.
     public func finishPairing(_ e: SSHHabEntry) async throws {
         guard SSHFingerprint.isValid(e.hostKeyFingerprint) else { throw TransportError("no trusted host key") }
-        if unfinishedPairing?.id == e.id { unfinishedPairing = nil }
         if entry(id: e.id) != e { try add(e) }
+        if unfinishedPairing?.id == e.id { unfinishedPairing = nil }
         _ = try await test(e)
     }
 

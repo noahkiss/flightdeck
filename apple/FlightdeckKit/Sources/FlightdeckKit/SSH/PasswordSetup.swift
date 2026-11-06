@@ -70,7 +70,7 @@ public enum PasswordSetup {
         if [ -f "$f" ] && grep -v '^[[:space:]]*#' "$f" | grep -qF -- "$key"; then echo 'flightdeck: present'; exit 0; fi
         if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then printf '\\n' >> "$f" || { echo 'flightdeck: error could not write the file'; exit 3; }; fi
         printf '%s\\n' "$line" >> "$f" || { echo 'flightdeck: error could not write the file'; exit 3; }
-        chmod 600 "$f"
+        chmod 600 "$f" || { echo 'flightdeck: error could not secure the file'; exit 3; }
         echo 'flightdeck: added'
         exit 0
 

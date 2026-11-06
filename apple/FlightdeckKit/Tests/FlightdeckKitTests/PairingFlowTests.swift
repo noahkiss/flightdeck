@@ -110,6 +110,20 @@ final class PairingFlowTests: XCTestCase {
         XCTAssertNil(none.entry.hostKey)
     }
 
+    @MainActor
+    func testUnfinishedPairingSurvivesSaveFailure() async throws {
+        let s = TestPairServer()
+        let entry = try Pairing.entry(from: answer(paired(s, device: "SHA256:dev")), code: code(s), deviceFingerprint: "SHA256:dev", keyID: "device").entry
+        let setup = SSHSetup(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false), listURL: nil, fleet: nil)
+        setup.unfinishedPairing = entry
+        do {
+            try await setup.finishPairing(entry)
+            XCTFail("save should fail")
+        } catch {
+            XCTAssertEqual(setup.unfinishedPairing, entry)
+        }
+    }
+
     func testEntryRefusals() throws {
         let s = TestPairServer()
         let c = code(s)
@@ -283,11 +297,11 @@ final class PairingFlowTests: XCTestCase {
         return u
     }
 
-    func runScript(home: URL, line: String, key: NIOSSHPublicKey) throws -> PasswordSetup.Outcome {
+    func runScript(home: URL, line: String, key: NIOSSHPublicKey, path: String = "/usr/bin:/bin") throws -> PasswordSetup.Outcome {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = ["-s"]
-        p.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
+        p.environment = ["HOME": home.path, "PATH": path]
         let i = Pipe(), o = Pipe()
         p.standardInput = i
         p.standardOutput = o
@@ -365,6 +379,20 @@ final class PairingFlowTests: XCTestCase {
         XCTAssertEqual(try runScript(home: home, line: line, key: key.publicKey), .added)
         XCTAssertEqual(try String(contentsOf: real, encoding: .utf8), "a\n" + line + "\n")
         XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: ssh.appendingPathComponent("authorized_keys").path), real.path)
+    }
+
+    func testScriptReportsChmodFailure() throws {
+        let key = try testKey()
+        let home = try tempHome()
+        let bin = home.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let chmod = bin.appendingPathComponent("chmod")
+        try Data("#!/bin/sh\nexit 1\n".utf8).write(to: chmod)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: chmod.path)
+        let line = PasswordSetup.keyLine(publicKey: key.publicKey, command: "gff-hab connect", name: "phone")
+        XCTAssertThrowsError(try runScript(home: home, line: line, key: key.publicKey, path: bin.path + ":/usr/bin:/bin")) {
+            XCTAssertTrue("\($0)".contains("could not secure"))
+        }
     }
 
     func testScriptOutcomeRefusals() {
