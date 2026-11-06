@@ -147,9 +147,10 @@ func (v *view) live() bool {
 // tab is one client-side page of panes (gff-client.md 5.1). The hab knows nothing of tabs.
 type tab struct {
 	name     string
-	views    []*view
+	root     *node   // the layout tree (layout.go)
+	views    []*view // the views in tree order
 	focus    int
-	split    Split
+	split    Split // how a view added at the end of the tab joins it
 	zoom     bool
 	activity bool      // a hidden pane printed
 	bell     time.Time // a pane rang the bell; marked until then
@@ -418,12 +419,18 @@ func (c *client) eachView(f func(*tab, *view)) {
 
 // addView adds a view of a hab pane to t and, when t is shown, opens its stream.
 func (c *client) addView(t *tab, spec PaneSpec, hs *hostState) *view {
+	return c.addViewAt(t, spec, hs, nil, placeEnd)
+}
+
+// addViewAt adds a view of a hab pane to t against anchor, as how says (layout.go), and, when
+// t is shown, opens its stream.
+func (c *client) addViewAt(t *tab, spec PaneSpec, hs *hostState, anchor *view, how place) *view {
 	if spec.Label == "" {
 		spec.Label = spec.ID
 	}
 	v := &view{spec: spec, h: hs}
 	c.startInput(v)
-	t.views = append(t.views, v)
+	t.put(v, anchor, how)
 	if t == c.tab() {
 		c.openStream(v)
 	}
@@ -465,15 +472,7 @@ func (c *client) repoint(t *tab, v *view, pane string) {
 
 // removeView takes a view out of its tab; the program keeps running (gff-client.md 5.2).
 func (c *client) removeView(t *tab, v *view) {
-	for i, x := range t.views {
-		if x == v {
-			t.views = append(t.views[:i], t.views[i+1:]...)
-			if t.focus >= len(t.views) {
-				t.focus = max(len(t.views)-1, 0)
-			}
-			break
-		}
-	}
+	t.take(v)
 	c.closeStream(v)
 	v.quit()
 	if v.term != nil {
@@ -761,28 +760,42 @@ func keyBytes(k string) []byte {
 // so they never change what is out of sight.
 func (c *client) panesFocused() bool { return !c.ws || c.ui.mode == modePanes }
 
-// moveFocus moves focus one view along the tab's split, as zellij's Alt keys: left and right
-// in side-by-side views, up and down in stacked ones. Left or right with no view that way goes
-// to the previous or next tab in the workspace; up and down stop at the edge.
+// moveFocus moves focus to the view next to the focused one in the direction, as zellij's Alt
+// keys: across nested splits and stacks, by where the views are on screen. Up or down past the
+// end of a stack wraps to its other end. Left or right with no view that way goes to the
+// previous or next tab in the workspace; up and down stop at the edge.
 func (c *client) moveFocus(act string) {
 	t := c.tab()
 	horizontal := act == actFocusLeft || act == actFocusRight
-	step := 1
-	if act == actFocusLeft || act == actFocusUp {
-		step = -1
-	}
-	if n := len(t.views); n > 0 && horizontal == (t.split == SplitColumns) {
-		if i := min(t.focus, n-1) + step; i >= 0 && i < n {
-			t.focus = i
-			if t.zoom {
-				c.layoutChanged()
+	if len(t.views) > 0 {
+		r := c.paneArea()
+		i := t.neighbour(act, r.w, r.h)
+		if i < 0 && !horizontal {
+			if st := t.stackOf(t.focusedView()); st != nil {
+				// Past the end of a stack: its other end.
+				end := st.kids[0]
+				if act == actFocusUp {
+					end = st.kids[len(st.kids)-1]
+				}
+				cur := t.leafOf(t.focusedView())
+				if cur != end {
+					for k, v := range t.views {
+						if v == end.v {
+							i = k
+						}
+					}
+				}
 			}
+		}
+		if i >= 0 {
+			t.focus = i
+			c.layoutChanged()
 			c.ui.focusChanged()
 			return
 		}
 	}
 	if horizontal && c.ws {
-		if step < 0 {
+		if act == actFocusLeft {
 			c.ui.command(actPrevTab)
 		} else {
 			c.ui.command(actNextTab)
@@ -822,9 +835,7 @@ func (c *client) command(ev keyEvent) error {
 	switch ev.act {
 	case actFocusNext:
 		t.focus = (t.focus + 1) % len(t.views)
-		if t.zoom {
-			c.layoutChanged()
-		}
+		c.layoutChanged() // a stack may expand another member
 		c.ui.focusChanged()
 	case actZoom:
 		if len(t.views) > 1 {
@@ -832,11 +843,7 @@ func (c *client) command(ev keyEvent) error {
 			c.layoutChanged()
 		}
 	case actSplit:
-		if t.split == SplitColumns {
-			t.split = SplitRows
-		} else {
-			t.split = SplitColumns
-		}
+		t.flip(v)
 		c.layoutChanged()
 	case actRedraw, actNudge:
 		mode := api.RedrawModeSnapshot
@@ -884,7 +891,7 @@ func (c *client) arrangement() arrangement {
 		return arrangement{}
 	}
 	r := c.paneArea()
-	a := arrange(len(t.views), min(t.focus, len(t.views)-1), t.split, t.zoom, r.w, r.h)
+	a := t.arrange(r.w, r.h)
 	for i := range a.slots {
 		s := &a.slots[i]
 		s.frame.x += r.x
@@ -906,7 +913,7 @@ func (c *client) sendSizes() {
 	vs := c.tab().views
 	for _, s := range a.slots {
 		v := vs[s.view]
-		if v.spec.Observe || (v.sentCols == s.wantCols && v.sentRows == s.wantRows) {
+		if s.folded || v.spec.Observe || (v.sentCols == s.wantCols && v.sentRows == s.wantRows) {
 			continue
 		}
 		v.sentCols, v.sentRows = s.wantCols, s.wantRows
@@ -1119,7 +1126,7 @@ func (c *client) compose(a arrangement) {
 		for _, s := range a.slots {
 			v := t.views[s.view]
 			focused := s.view == t.focus
-			if v.term != nil {
+			if v.term != nil && !s.folded {
 				if v.dirty || v.screen.Cells == nil {
 					if err := v.term.ReadScreen(&v.screen); err != nil {
 						c.cfg.Logf("pane %s: read screen: %v", v.spec.ID, err)
@@ -1177,6 +1184,10 @@ func (c *client) frameText(v *view, s slot) string {
 	t := " " + v.spec.Label
 	var notes []string
 	if c.ws {
+		// A view of a session shows the session's name as the hab has it now.
+		if r, ok := rowOf(c.ui.rows, v); ok && v.spec.Session != "" && r.Name != "" {
+			t = " " + r.Name
+		}
 		notes = append(notes, v.h.label)
 		if st := c.ui.agentWord(v); st != "" {
 			notes = append(notes, st)

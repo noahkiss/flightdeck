@@ -89,7 +89,7 @@ func TestAltFocusAndTabMoves(t *testing.T) {
 		{"\x1bh", SplitRows, state{2, 2}},      // stacked: left goes to the previous tab, wrapping
 		{"\x1b[108;3u", SplitRows, state{0, 2}},
 	} {
-		a.split = step.split
+		a.split, a.root = step.split, nil // laid out again along the step's split
 		if err := c.input([]byte(step.keys)); err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +122,7 @@ func TestAltFocusAndTabMoves(t *testing.T) {
 		}
 	}
 	// A zoomed tab lays out again for the newly focused view.
-	a.split, a.zoom, a.focus = SplitColumns, true, 0
+	a.split, a.root, a.zoom, a.focus = SplitColumns, nil, true, 0
 	c.canvas.valid = true
 	if err := c.input([]byte("\x1bl")); err != nil {
 		t.Fatal(err)

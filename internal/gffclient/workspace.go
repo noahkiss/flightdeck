@@ -362,6 +362,9 @@ func (u *workspaceUI) command(act string) bool {
 		u.switchTab((c.cur + 1) % len(c.tabs))
 	case actPrevTab:
 		u.switchTab((c.cur + len(c.tabs) - 1) % len(c.tabs))
+	case actNewPane, actNewRight, actNewDown, actNewLeft, actNewUp:
+		u.newPane(map[string]place{actNewPane: placeStack, actNewRight: placeRight, actNewDown: placeDown,
+			actNewLeft: placeLeft, actNewUp: placeUp}[act])
 	case actCloseView:
 		if v := c.focused(); v != nil {
 			c.removeView(c.tab(), v)
@@ -803,6 +806,49 @@ func (u *workspaceUI) newSession() {
 }
 
 func (u *workspaceUI) create(host, dir, cmd string) {
+	p := api.SessionCreateParams{ProjectDir: dir}
+	label := "shell"
+	if cmd != "" {
+		p.Argv = []string{"/bin/sh", "-c", cmd}
+		if f := strings.Fields(cmd); len(f) > 0 {
+			label = f[0]
+		}
+	}
+	u.start(host, p, label, nil, placeEnd)
+}
+
+// newPane starts the hab's shell in a new pane beside the focused one (gff-client.md 5.4): on
+// its host, in its folder (cwd_of), stacked onto it or split on one side. With no view in the
+// tab, it starts on the selected row's host, else the first online one, in the hab's default
+// folder.
+func (u *workspaceUI) newPane(how place) {
+	c := u.c
+	p := api.SessionCreateParams{}
+	host := ""
+	anchor := c.focused()
+	if anchor != nil && anchor.h != nil {
+		host = anchor.h.label
+		p.CwdOf = anchor.spec.ID
+	} else {
+		if r, _, ok := u.selected(); ok && !r.Offline() {
+			host = r.Host
+		}
+		if host == "" {
+			host = u.nextHost("")
+		}
+	}
+	if host == "" {
+		u.msg = "no host is online"
+		return
+	}
+	u.start(host, p, "shell", anchor, how)
+}
+
+// start has host start p in a new pane and shows it in the current tab against anchor, as how
+// says. The pane starts at its view's size in that tab, and its view goes there when the call
+// returns, even if another tab shows by then. The keys move to it only from that tab's sidebar,
+// or from its panes when the anchor still has focus; a prompt or the board keep them.
+func (u *workspaceUI) start(host string, p api.SessionCreateParams, label string, anchor *view, how place) {
 	c := u.c
 	// The same source as the tab bar and the host prompt: the host set's model. The client's
 	// own hostState can trail it by one queued update.
@@ -814,12 +860,7 @@ func (u *workspaceUI) create(host, dir, cmd string) {
 	hs := c.host(hm)
 	t := c.tab()
 	r := c.paneArea()
-	sizes := ViewSizes(len(t.views)+1, t.split, r.w, r.h)
-	size := sizes[len(sizes)-1]
-	p := api.SessionCreateParams{ProjectDir: dir, Cols: size[0], Rows: size[1]}
-	if cmd != "" {
-		p.Argv = []string{"/bin/sh", "-c", cmd}
-	}
+	p.Cols, p.Rows = t.sizeIfPut(anchor, how, r.w, r.h)
 	u.msg = "starting on " + host
 	conn := hs.conn
 	go func() {
@@ -832,28 +873,37 @@ func (u *workspaceUI) create(host, dir, cmd string) {
 				return
 			}
 			u.msg = ""
-			if hs := c.hosts[host]; hs != nil {
-				label := cmd
-				if f := strings.Fields(cmd); len(f) > 0 {
-					label = f[0]
-				}
-				if label == "" {
-					label = "shell"
-				}
-				// The size was for t, so the view goes there even when another tab shows now.
-				// The keys move to it only from the sidebar of that tab: a prompt, the board
-				// or the panes keep them.
-				c.addView(t, PaneSpec{ID: res.Pane, Label: label, Host: host, Session: res.Session}, hs)
-				if t == c.tab() && u.mode == modeSidebar {
-					t.focus = len(t.views) - 1
-					u.mode = modePanes
-				} else if t != c.tab() {
-					u.msg = label + " on " + host + " is in tab " + t.name
-				}
-				c.layoutChanged()
+			hs := c.hosts[host]
+			if hs == nil {
+				return
 			}
+			at := anchor
+			if at != nil && t.leafOf(at) == nil {
+				at = nil // the anchor's view closed meanwhile: the end of the tab
+			}
+			focusedAnchor := at != nil && t.focusedView() == at
+			v := c.addViewAt(t, PaneSpec{ID: res.Pane, Label: label, Host: host, Session: res.Session}, hs, at, how)
+			switch {
+			case t == c.tab() && (u.mode == modeSidebar || u.mode == modePanes && focusedAnchor):
+				t.focus = slicesIndex(t.views, v)
+				t.zoom = false
+				u.mode = modePanes
+			case t != c.tab():
+				u.msg = label + " on " + host + " is in tab " + t.name
+			}
+			c.layoutChanged()
+			u.dirty = true
 		})
 	}()
+}
+
+func slicesIndex(vs []*view, v *view) int {
+	for i, x := range vs {
+		if x == v {
+			return i
+		}
+	}
+	return 0
 }
 
 func (u *workspaceUI) rename() {

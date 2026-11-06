@@ -466,6 +466,13 @@
           }
         },
         {
+          "name": "cwd_of",
+          "description": "A pane id: start in that pane's working folder (its program's, else the last one its shell reported with OSC 7, else where its session started) and file the session in that pane's project. Cwd and project_dir win over it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "env",
           "description": "KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.",
           "schema": {
@@ -9809,6 +9816,10 @@
           "cwd": {
             "type": "string",
             "description": "Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory."
+          },
+          "cwd_of": {
+            "type": "string",
+            "description": "A pane id: start in that pane's working folder (its program's, else the last one its shell reported with OSC 7, else where its session started) and file the session in that pane's project. Cwd and project_dir win over it."
           },
           "env": {
             "type": "array",

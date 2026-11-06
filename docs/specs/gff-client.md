@@ -219,8 +219,9 @@ composed view the active screen as cells: each cell's grapheme, width and style 
 stay indexes, so they draw in the host's own theme), plus the cursor and whether it shows.
 libghostty reads them through its render state; `vt.Fake` gives text in the default style.
 
-**Layout.** One row or column of panes: side by side with a separator column, or stacked
-(`-split columns|rows`, or `s` in pane mode). Each composed pane has a one-row frame on top
+**Layout.** Built as one row or column of panes: side by side with a separator column, or
+top to bottom (`-split columns|rows`). Nested splits and stacks came later (5.4); `-split`
+sets how the panes named on the command line join. Each composed pane has a one-row frame on top
 with its label and notes (exited, gone, offline, observer, the owner and size when they differ
 from the view). Zoom shows the focused pane alone.
 
@@ -363,7 +364,7 @@ request, and a debounce timer the test fires.
 | With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
 | A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |
-| One row or column of panes per tab, no saved workspace | Several habs and tabs are built (4.3); nested splits, stacks and the saved workspace are later stages (5.1, 5.2) |
+| No saved workspace | Several habs and tabs are built (4.3), nested splits and stacks too (5.4); the saved workspace is a later stage (5.1) |
 | Output gff-hab has not parsed yet when it sends a resize is parsed at the new size (`hab-logic-api.md` 2.3) | Only bytes the program printed in the moment before the PTY resized; its redraw on SIGWINCH comes after them and is right. Terminal multiplexers do the same. `TestSplitsRedrawAfterResize` needs no nudge |
 
 ---
@@ -606,6 +607,73 @@ the hab reaching a state.
 
 Sources: zellij tabs, stacks and modes (1.1); the owner's setup (1.6); `hab-logic-api.md` 2.2 and
 5.1; Rex windows (1.3).
+
+### 5.4 Built choices (task-qbvi6tos: new panes, splits and stacks)
+
+zellij is the reference for the layout; the owner's zellij keys for pane mode are the
+reference for the keys (1.6, the parity review).
+
+**The layout tree.** A tab holds a tree (`layout.go`): a view, a split of children side by side
+(columns, a separator column between them) or top to bottom (rows), or a stack of views. A
+split shares its area evenly. A stack shows one member expanded and folds every other to its
+frame row, above or below the expanded one in stack order; the expanded member follows focus.
+A stack holds views only. The views keep their tree order for focus-next and tab numbers.
+
+**New panes.** Pane mode's new-pane keys start the hab's shell (`session.create` with no argv)
+on the focused view's host, with `cwd_of` naming the focused view's pane:
+
+| Key (pane mode) | Action | Where the new view goes |
+|---|---|---|
+| `n` | `new-pane` | Stacked onto the focused view: into its stack, after it, or a new stack of the two |
+| `l`, `r` | `new-pane-right` | On the right of the focused view |
+| `j`, `d` | `new-pane-down` | Below it |
+| `h` | `new-pane-left` | On its left |
+| `k` | `new-pane-up` | Above it |
+
+- A split beside a stacked view splits the whole stack, so a stack never holds a split. When
+  the split that holds the view (or its stack) runs the same way, the new view joins it next to
+  the view; else the view and the new one become a split of their own in its place.
+- The pane starts at the size its view gets, so the program never starts at the wrong size.
+  The view goes in the tab that was current at the key, even if another tab shows by then. It
+  takes the focus when that tab shows and the focused view is still the one the pane was
+  started from; a prompt, the board and the sidebar keep the keys.
+- With no view in the tab, the new pane starts on the selected row's host, else the first online
+  host, in the hab's default folder. An offline host is refused with "<host> is offline".
+- Pane mode's `s` turns the split that holds the focused view the other way (with none, the
+  tab's own split, used for the next view added at the end). The sidebar's Open still adds a
+  view at the end of the tab, along the tab's split.
+- Closing a view takes it out of the tree. A split or stack left with one child gives way to
+  it, and a split that then sits in a split of its own direction joins it.
+- A view of a session shows the session's name on its frame as the hab has it now, so a new
+  pane's frame names the session the hab made (`sh-2`), and a rename shows.
+- A folded member asks the hab for no size; it keeps the size it had until it expands.
+- Outside the workspace (`gff` with panes) the new-pane keys do nothing.
+
+**The folder (gff-hab).** `session.create` takes an optional `cwd_of`: a pane id. With no `cwd`
+and no `project_dir`, the pane starts in that pane's working folder: the folder its program is
+in (the shell's, read from `/proc/<pid>/cwd` on Linux and with `lsof` on macOS), else the folder
+its shell last reported with OSC 7, else the folder its session started in, else the default.
+The new session is filed in that pane's project unless the call names one. Decided
+(implementer): zellij takes the focused pane's process folder; OSC 7 and the session's folder
+are fallbacks for a program whose folder cannot be read.
+
+**Focus.** Alt+h, Alt+j, Alt+k and Alt+l move focus to the nearest view on that side, by where
+the views are on screen: a view whose box lies wholly that way and overlaps the focused one
+across, the nearest first, then the larger overlap, then tree order. Up or down past the end
+of a stack goes to its other end (5.2: focus wraps in a stack). Left or right with no view
+there goes to the previous or next tab (8.4). A zoomed tab moves by the unzoomed layout and
+shows the new view zoomed. Pane mode's `p` and Tab go to the next view in tree order.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestLayoutTree` | Stacked, right, down, left and up placement, a split beside a stacked view splitting the stack, the tree order, focus kept on the view it was on; closing views folding away splits and stacks with one child and joining a split into its parent of the same direction, down to an empty tab |
+| `TestStackArrange` | A stack of three: the folded rows above and below the expanded member and their slots, no size for a folded member, the expanded member following focus; a new pane's size when stacked and when split |
+| `TestFocusAcrossNestedLayout` | Alt keys across a stack beside a column: up and down in the stack and wrapping at both ends, right to the view that overlaps most, left into the stack's expanded member, down at the bottom doing nothing, right at the edge going to the next tab |
+| `TestNewPaneStacksAndSplits` | Over a fake hab: `n` gives a stack of two (the folded frame row right above the expanded one), then `l`, `j`, `h` and `k` each place the new view on that side; each `session.create` names the focused pane in `cwd_of` and asks for the hab's shell; the new view takes the focus |
+| `TestNewPaneInFolder` | Real holder and gff-hab: a pane whose program is in a folder; `n` starts the shell there (`pwd -P` in the new pane) |
+| `cmd/gff-hab` `TestCreateCwdOf`, `TestLsofName` | `cwd_of` starts in the other pane's program's folder, `cwd` wins over it, an unknown pane gives the default; the `lsof` reader |
 
 ---
 
@@ -1023,7 +1091,7 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
 | normal, session, pane, tab | Alt+h focus left, else the previous tab; Alt+l focus right, else the next tab; Alt+j focus down; Alt+k focus up; Alt+i move the tab left; Alt+o move the tab right |
 | locked | Ctrl+G unlock |
 | session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, `R` run sessions, Esc back |
-| pane (Ctrl+P) | `p` or Tab focus the next pane (stays), `f` zoom, `s` split, `x` close view, Esc or Enter back |
+| pane (Ctrl+P) | `n` new pane stacked onto the focused one, `l` or `r` new pane on the right, `j` or `d` below, `h` on the left, `k` above (5.4); `p` or Tab focus the next pane (stays), `f` zoom, `s` turn the split that holds the focused pane the other way, `x` close view, Esc or Enter back |
 | tab (Ctrl+T) | `n` new tab, `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
 | sidebar, board | As 4.3 and 7 |
 
@@ -1036,9 +1104,9 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
   the board, bars and warnings join it. Ctrl+S, Ctrl+B and Ctrl+Q stay with programs, as in the
   owner's trims (1.6).
 - **Alt keys, as zellij's globals.** Alt+h and Alt+l are zellij's MoveFocusOrTab: focus moves
-  one view along a side-by-side tab, and past the edge (or in a stacked tab) to the previous or
-  next tab, wrapping as `prev-tab` and `next-tab` do. Alt+j and Alt+k are MoveFocus: one view
-  along a stacked tab, stopping at the edge, and nothing in a side-by-side tab. Alt+i and Alt+o
+  to the view on that side (5.4), and with none there to the previous or next tab, wrapping as
+  `prev-tab` and `next-tab` do. Alt+j and Alt+k are MoveFocus: the view below or above,
+  wrapping at the ends of a stack, else stopping at the edge. Alt+i and Alt+o
   are MoveTab: the tab moves one place, and stays at the edge. Outside the workspace there is one
   tab, so left and right stop at the edge and the tab moves do nothing. A zoomed tab keeps its
   zoom and shows the newly focused view. Alt+F and Alt+B are never bound by default: they are
@@ -1053,10 +1121,9 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
   release, so recording it would drop a later release of the plain letter.
 - **Behind the sidebar, board or a prompt** the Alt keys do nothing: focus and tab moves act only
   while the panes have the keys, so nothing changes out of sight.
-- **Gaps against zellij.** gff has one row or column of views per tab (3.4), so a direction
-  across the split has no view: Alt+j and Alt+k do nothing side by side, and Alt+h and Alt+l go
-  to a tab. zellij's own MoveTab wraps at the edge; gff's stops there. Decided (implementer,
-  task-y62yb3nb): the simplest action for each, to revisit with nested splits (5.2).
+- **Gaps against zellij.** zellij's own MoveTab wraps at the edge; gff's stops there. Decided
+  (implementer, task-y62yb3nb). Before nested splits (5.4) a tab was one row or column, and a
+  direction across it had no view.
 - **Not taken.** zellij's resize (Ctrl+N), move (Ctrl+H) and scroll (Ctrl+S) modes have no gff
   mode yet, so their keys go to programs. Ctrl+H is Backspace in the legacy encoding as well.
 - **Redraw, nudge and fit** live in session mode, not in pane mode. Decided (implementer,
@@ -1108,7 +1175,8 @@ d = "none"                # unbind
   `tab`, `enter`, `esc`, `up`, `down`, `left`, `right`, `backspace` or `space`.
 - Actions: `session-mode`, `pane-mode`, `tab-mode`, `lock`, `unlock`, `back`, `send`, `focus-next`,
   `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-tab-left`, `move-tab-right`,
-  `zoom`, `split`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
+  `zoom`, `split`, `new-pane`, `new-pane-right`, `new-pane-down`, `new-pane-left`,
+  `new-pane-up`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
   `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `warnings`; in the sidebar and board
   also `up`, `down`, `open`, `open-tab`, and in the sidebar `new-session`, `rename`,
   `close-session`, `filter`, `group`. `none` unbinds.
@@ -1143,7 +1211,7 @@ replaces the row.
 |---|---|
 | `TestBarFollowsMode` | gff's screen over a fake hab: the bar shows the sidebar's keys, then normal's four leaders and Alt keys, session mode's keys after Ctrl+O, pane mode's after Ctrl+P from there (kept after a focus move, gone after zoom), tab mode's (kept after a right arrow), then only the unlock key while locked; Enter and unlock return to normal |
 | `TestDefaultKeymap` | Each mode's bar text in full; Ctrl+S, Ctrl+B, Ctrl+Q, Ctrl+N, Alt+F and Alt+B stay with programs; no exit problem; the reader: focus keeps pane mode, zoom and close view end it, tab moves (letters and the left arrow) keep tab mode, new tab and a digit end it, session mode takes one key, the leaders switch modes, lock from pane mode, each leader pressed twice sends itself; the six Alt keys in legacy, kitty and modifyOtherKeys forms, Alt+F, Alt+B and Alt+Shift passing, a kitty Alt release dropped, Alt keys keeping pane mode, an unbound Alt key going nowhere in pane mode and cancelling session mode, kitty Alt+F naming no key in tab mode, locked mode passing Alt keys |
-| `TestAltFocusAndTabMoves` | In the workspace: Alt+l along side-by-side views and on to the next tab, Alt+h from a tab with no view to the previous one, Alt+j and Alt+k doing nothing side by side and stopping at the edge when stacked, Alt+h in a stacked tab going to the previous tab (wrapping), a kitty Alt key; Alt+o and Alt+i moving the tab and stopping at each edge, the moved tab still current; a zoomed tab laid out again; no Alt key acting while the sidebar, the board or a prompt has the keys |
+| `TestAltFocusAndTabMoves` | In the workspace: Alt+l along side-by-side views and on to the next tab, Alt+h from a tab with no view to the previous one, Alt+j and Alt+k doing nothing side by side and stopping at the edge in a column, Alt+h in a column going to the previous tab (wrapping), a kitty Alt key; Alt+o and Alt+i moving the tab and stopping at each edge, the moved tab still current; a zoomed tab laid out again; no Alt key acting while the sidebar, the board or a prompt has the keys |
 | `TestAltKeySplitRead` | A kitty Alt+h cut between two reads is held and read whole |
 | `TestKeyBytes` | A send binding types a Ctrl key's byte, or an Alt key as ESC and the character |
 | `TestAltKeyConfig` | `alt-<character>` parsed with its case, `alt-[`, `alt-O` and others refused, Alt keys bound and unbound in normal and locked mode, an unbound Alt key passing |

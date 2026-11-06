@@ -77,6 +77,17 @@ func (l *Link) Commands(u hp.UUID, before *uint64, limit int) ([]cmdmarks.Comman
 	return cs, more, nil
 }
 
+// Cwd returns the working directory pane u's shell last reported with OSC 7, or "".
+func (l *Link) Cwd(u hp.UUID) string {
+	p := l.pane(u)
+	if p == nil {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cmds.Cwd()
+}
+
 // CommandChanges returns pane u's commands that started or ended since the last call, oldest
 // first. A PaneCommands notice says there are some.
 func (l *Link) CommandChanges(u hp.UUID) []cmdmarks.Command {

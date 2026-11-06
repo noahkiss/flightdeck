@@ -42,7 +42,8 @@ type Hab struct {
 	hold     chan struct{} // while set, session.create waits for it to close
 	closes   int           // pane.close calls
 	resumes  int           // session.resume calls answered
-	noResume error         // set: session.resume answers it
+	creates  []api.SessionCreateParams
+	noResume error // set: session.resume answers it
 
 	rounds roundBook        // rounds.go
 	cat    *api.CatalogList // what catalog.list answers; nil: unavailable
@@ -290,6 +291,7 @@ type actions struct{ h *Hab }
 
 func (a actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (string, string, error) {
 	a.h.mu.Lock()
+	a.h.creates = append(a.h.creates, p)
 	hold := a.h.hold
 	a.h.mu.Unlock()
 	if hold != nil {
@@ -337,6 +339,13 @@ func (a actions) ResumeSession(_ context.Context, session string) (string, error
 	}
 	a.h.holder.Add(structure.HolderPane{ID: pane, HolderID: "h1", HolderBuild: "test", Cols: 80, Rows: 24})
 	return pane, nil
+}
+
+// Creates returns the session.create calls the hab got, in order.
+func (h *Hab) Creates() []api.SessionCreateParams {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]api.SessionCreateParams(nil), h.creates...)
 }
 
 // Resumes counts the session.resume calls the hab has answered.

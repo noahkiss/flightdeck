@@ -63,6 +63,9 @@ type actions struct {
 	resume func(ctx context.Context, session string) (pane string, ok bool, err error)
 	// general serves session.resume for every other session (resume.go). nil: unavailable.
 	general func(ctx context.Context, session string) (string, error)
+	// folderOf is a session's working folder (the content service's), "" when not known. nil:
+	// none.
+	folderOf func(ctx context.Context, session string) string
 	// created hears how a new session was asked to start, for its resume. nil: none.
 	created func(session string, p api.SessionCreateParams)
 }
@@ -131,6 +134,14 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		return "", "", err
 	}
 
+	if p.CwdOf != "" && p.Cwd == "" && p.ProjectDir == "" {
+		// A new pane beside another (gff-client.md 5.4): its folder, and its project unless the
+		// create names one.
+		p.Cwd = a.paneCwd(ctx, p.CwdOf)
+		if ss, ok := a.store.SessionByPane(p.CwdOf); ok && p.Project == "" {
+			p.Project = ss.Project
+		}
+	}
 	project, projectTop := p.Project, ""
 	switch {
 	case p.Project != "" && p.ProjectDir != "":

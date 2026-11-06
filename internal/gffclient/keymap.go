@@ -55,14 +55,21 @@ const (
 	actSend      = "send"         // send the bound key itself to the pane
 	actFocusNext = "focus-next"   // focus the next pane
 	actZoom      = "zoom"         // the focused pane alone, and back
-	actSplit     = "split"        // side by side or stacked
-	actRedraw    = "redraw"       // pane.redraw snapshot
-	actNudge     = "nudge"        // pane.redraw nudge
-	actFit       = "fit"          // pane.take
-	actDetach    = "detach"       // quit gff; programs keep running
-	actSidebar   = "sidebar"      // focus the sidebar, showing it
-	actBoard     = "board"        // the status board
-	actBars      = "bars"         // hide or show the bars
+	actSplit     = "split"        // turn the split that holds the focused pane the other way
+	// New panes (gff-client.md 5.4): on the focused pane's host, in its folder, stacked onto it
+	// or split beside it.
+	actNewPane   = "new-pane"
+	actNewRight  = "new-pane-right"
+	actNewDown   = "new-pane-down"
+	actNewLeft   = "new-pane-left"
+	actNewUp     = "new-pane-up"
+	actRedraw    = "redraw"  // pane.redraw snapshot
+	actNudge     = "nudge"   // pane.redraw nudge
+	actFit       = "fit"     // pane.take
+	actDetach    = "detach"  // quit gff; programs keep running
+	actSidebar   = "sidebar" // focus the sidebar, showing it
+	actBoard     = "board"   // the status board
+	actBars      = "bars"    // hide or show the bars
 	actNewTab    = "new-tab"
 	actNextTab   = "next-tab"
 	actPrevTab   = "prev-tab"
@@ -98,7 +105,9 @@ const (
 // show as one hint.
 var actionLabels = map[string]string{
 	actSession: "session", actPaneMode: "pane", actTabMode: "tab", actLock: "lock", actUnlock: "unlock",
-	actBack: "back", actSend: "send key", actFocusNext: "focus", actZoom: "zoom", actSplit: "split",
+	actBack: "back", actSend: "send key", actFocusNext: "focus", actZoom: "zoom", actSplit: "turn split",
+	actNewPane: "new pane", actNewRight: "split right", actNewDown: "split down", actNewLeft: "split left",
+	actNewUp:  "split up",
 	actRedraw: "redraw", actNudge: "nudge", actFit: "fit", actDetach: "detach", actSidebar: "sidebar",
 	actBoard: "board", actBars: "bars", actNewTab: "new tab", actNextTab: "next tab", actPrevTab: "previous tab",
 	actCloseView: "close view", actWarnings: "warnings", actUp: "move", actDown: "move", actOpen: "open",
@@ -303,8 +312,9 @@ func DefaultKeymap() *Keymap {
 	add(ModeLocked, "ctrl-g", actUnlock)
 	add(ModeSession, "w", actSidebar, "g", actBoard, "b", actBars, "!", actWarnings,
 		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "R", actRunSessions, "esc", actBack)
-	add(ModePane, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit, "x", actCloseView,
-		"esc", actBack, "enter", actBack)
+	add(ModePane, "n", actNewPane, "l", actNewRight, "r", actNewRight, "j", actNewDown, "d", actNewDown,
+		"h", actNewLeft, "k", actNewUp, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit,
+		"x", actCloseView, "esc", actBack, "enter", actBack)
 	add(ModeTab, "n", actNewTab, "h", actPrevTab, "left", actPrevTab, "k", actPrevTab, "up", actPrevTab,
 		"l", actNextTab, "right", actNextTab, "j", actNextTab, "down", actNextTab)
 	for i := 1; i <= 9; i++ {

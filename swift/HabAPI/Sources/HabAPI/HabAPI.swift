@@ -5698,6 +5698,8 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var cols: Int?
     /// Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory.
     public var cwd: String?
+    /// A pane id: start in that pane's working folder (its program's, else the last one its shell reported with OSC 7, else where its session started) and file the session in that pane's project. Cwd and project_dir win over it.
+    public var cwdOf: String?
     /// KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.
     public var env: [String]?
     /// Detection manifest id of a harness to start, such as claude. Needs that harness's adapter.
@@ -5723,6 +5725,7 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case argv = "argv"
         case cols = "cols"
         case cwd = "cwd"
+        case cwdOf = "cwd_of"
         case env = "env"
         case harness = "harness"
         case idempotencyKey = "idempotency_key"
@@ -5735,10 +5738,11 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case seedFrom = "seed_from"
     }
 
-    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil) {
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil) {
         self.argv = argv
         self.cols = cols
         self.cwd = cwd
+        self.cwdOf = cwdOf
         self.env = env
         self.harness = harness
         self.idempotencyKey = idempotencyKey

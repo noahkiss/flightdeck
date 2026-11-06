@@ -265,6 +265,11 @@ func TestRestoreLeavesAltScreen(t *testing.T) {
 }
 
 func TestArrange(t *testing.T) {
+	arrange := func(n, focus int, split Split, zoom bool, w, h int) arrangement {
+		t := flatTab(n, split)
+		t.focus, t.zoom = focus, zoom
+		return t.arrange(w, h)
+	}
 	a := arrange(2, 0, SplitColumns, false, 100, 30)
 	if len(a.slots) != 2 || a.slots[0].content != (rect{0, 1, 50, 29}) || a.slots[1].content != (rect{51, 1, 49, 29}) ||
 		len(a.seps) != 1 || a.seps[0] != (rect{50, 0, 1, 30}) {

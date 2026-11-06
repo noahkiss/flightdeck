@@ -717,6 +717,7 @@ func serve(args []string) error {
 		attachRef.Store(attachSvc)
 		sessionActs.startedIn = contentSvc.NoteFolder
 		sessionActs.created = resumes.started
+		sessionActs.folderOf = contentSvc.Folder
 		general := &generalResumer{acts: sessionActs, book: resumes, folder: contentSvc.Folder,
 			complete: func() bool { return structure.Complete(hs) }, claudeTranscript: claudeTranscriptExists}
 		sessionActs.general = general.Resume

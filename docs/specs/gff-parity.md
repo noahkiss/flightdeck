@@ -32,8 +32,8 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 | 7 | Keys left to programs | pass | A raw reader in the pane got Ctrl+B, Alt+F, Alt+B, Ctrl+S, Alt+arrows, Alt+Shift+Left, Ctrl+N, Ctrl+Q, Ctrl+H and a kitty Ctrl+B byte for byte | |
 | 8 | Locked mode | pass | After Ctrl+G, Ctrl+P, Ctrl+T, Ctrl+O and Alt+H reached the pane; Ctrl+G unlocked | |
 | 9 | System info on the bottom bar | pass | `cpu 63% mem 97% disk 70% bat 36% up 2d 9h` at the right end. This machine's figures only: the hab serves no `hab.stats` yet (task-bw97v7dk) | |
-| 10 | Stacked panes by default | gap | Pane mode binds only `p`, `f`, `s`, `x`; no new pane, no stacks | task-qbvi6tos |
-| 11 | Splits on direction keys | gap | A new pane comes only from the sidebar's `n` and lands side by side; an empty directory starts in the home folder, not the focused pane's | task-qbvi6tos |
+| 10 | Stacked panes by default | pass (task-qbvi6tos) | Pane mode `n` stacks a new pane onto the focused one: one expanded, the other folded to its frame row (`TestNewPaneStacksAndSplits`, `gff-client.md` 5.4) | task-qbvi6tos |
+| 11 | Splits on direction keys | pass (task-qbvi6tos) | Pane mode `l`/`r`, `j`/`d`, `h` and `k` put the new pane on that side, in the focused pane's folder (`TestNewPaneStacksAndSplits`, `TestNewPaneInFolder`); Alt+h/j/k/l move focus across the nested layout and wrap in a stack (`TestFocusAcrossNestedLayout`) | task-qbvi6tos |
 | 12 | Focus moves on direction keys | pass | Alt+H and Alt+L move focus between two side-by-side views, typing follows. Alt+Shift+arrows cannot be bound (8.4) | |
 | 13 | Zoom and close | pass | Ctrl+P `f` zooms; Ctrl+P `x` closes the view and the session stays in the sidebar; the sidebar's `x` asks "end zsh-2 on alpha? the program gets a hang-up (y/n)" | |
 | 14 | Reopen a closed pane | gap | No reopen action in the keymap | task-kjqb27j3 |

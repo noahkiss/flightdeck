@@ -13,9 +13,11 @@ type SessionCreateParams struct {
 	Harness    string   `json:"harness,omitempty" doc:"Detection manifest id of a harness to start, such as claude. Needs that harness's adapter."`
 	Argv       []string `json:"argv,omitempty" doc:"Program and arguments. Default: the hab's $SHELL, else /bin/sh."`
 	Cwd        string   `json:"cwd,omitempty" doc:"Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory."`
-	Env        []string `json:"env,omitempty" doc:"KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key."`
-	Cols       int      `json:"cols,omitempty" doc:"Initial width. Default 80."`
-	Rows       int      `json:"rows,omitempty" doc:"Initial height. Default 24."`
+	// CwdOf is added for gff's new panes (gff-client.md 5.4). Optional, so an older hab ignores it.
+	CwdOf string   `json:"cwd_of,omitempty" doc:"A pane id: start in that pane's working folder (its program's, else the last one its shell reported with OSC 7, else where its session started) and file the session in that pane's project. Cwd and project_dir win over it."`
+	Env   []string `json:"env,omitempty" doc:"KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key."`
+	Cols  int      `json:"cols,omitempty" doc:"Initial width. Default 80."`
+	Rows  int      `json:"rows,omitempty" doc:"Initial height. Default 24."`
 	// IdempotencyKey makes a retried create start one session (spec 3.9, Idempotency keys).
 	IdempotencyKey string `json:"idempotency_key,omitempty" doc:"A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing."`
 	// Model and Seed come with the confirm capability (capcom.md 3.3).

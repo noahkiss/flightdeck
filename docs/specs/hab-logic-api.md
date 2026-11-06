@@ -926,6 +926,10 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   reaches the agent as its first message when the agent can take one, in a start envelope that
   names `seed_from` as the writer, on the owner's behalf (`capcom.md` 6.4). A seed that cannot
   be queued after the spawn is logged, not answered, so a retry never starts a second session.
+- **`cwd_of`** on `session.create` names a pane: with no `cwd` and no `project_dir`, the new
+  pane starts in that pane's working folder (its program's folder, else its shell's last OSC 7
+  report, else its session's start folder, else the default) and is filed in that pane's
+  project unless `project` is given (`gff-client.md` 5.4).
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
   session keeps its id and gets a new pane; it must be exited (else `conflict`). A Capcom
   session resumes through Capcom (task-aqw4iowl, `capcom.md` 7.6). Any other session resumes

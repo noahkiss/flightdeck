@@ -114,6 +114,9 @@ func (t *Tracker) Save() Saved {
 	return Saved{Phase: t.phase, Prompt: t.prompt, Input: t.input, Cwd: t.cwd, Commands: append([]Command(nil), t.cmds...)}
 }
 
+// Cwd returns the working directory the shell last reported with OSC 7, or "".
+func (t *Tracker) Cwd() string { return t.cwd }
+
 // Offset returns the offset after the last byte fed.
 func (t *Tracker) Offset() uint64 { return t.sc.Offset() }
 

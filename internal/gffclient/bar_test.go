@@ -39,7 +39,7 @@ func TestBarFollowsMode(t *testing.T) {
 		{"\x1b", []string{leaders}, []string{"Enter open", "zoom"}},
 		{"\x0f", []string{"session ·", "w sidebar", "g board", "r redraw", "d detach", "Ctrl+P pane"}, []string{"Ctrl+O session"}},
 		// Ctrl+P switches from session mode to pane mode.
-		{"\x10", []string{"pane ·", "p/Tab focus", "f zoom", "s split", "x close view", "Esc/Enter back", "Ctrl+T tab", "Ctrl+O session"},
+		{"\x10", []string{"pane ·", "n new pane", "l/r split right", "j/d split down", "h split left", "k split up", "p/Tab focus", "f zoom", "s turn split", "x close view", "Esc/Enter back", "Ctrl+T tab", "Ctrl+O session"},
 			[]string{"w sidebar", "session ·", "Ctrl+P pane"}},
 		{"p", []string{"pane ·", "p/Tab focus"}, nil}, // a focus move keeps pane mode
 		{"f", []string{leaders}, []string{"pane ·"}},  // a command ends it
