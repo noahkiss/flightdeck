@@ -682,6 +682,10 @@ adapters' agent states (only `claude`, `codex` and `opencode`). A later state wi
 the id known; another harness replaces it. The entry goes with the session record. A file that
 does not read is set aside as `resume.json.bad` and the book starts empty.
 
+The book does not store caller-provided environment values; they may contain secrets. A resumed
+session gets the hab's pane environment fresh, including `GFF_HAB`. A caller's other environment
+values do not return. Rounds set their `GFF_ROUND_*` values on their own resume path.
+
 Resume of a session that is not Capcom's:
 
 1. Refused with `conflict` while the session runs, and with `unavailable` while it is exited
