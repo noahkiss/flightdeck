@@ -721,6 +721,8 @@ If two hosts decide one proposal while apart, the first decision stands (5.6). W
 over an approve that already made a record, that record is hidden like a deleted one and flagged
 "approval overruled". When an approve wins over a reject, the record appears when the approving
 host's ops arrive. Nothing is applied twice: the record's create is part of the approve batch.
+A proposal's `status` and `decided_by` are never overruled: only the records and changes of an
+approve that lost are (9.4, Fold order).
 
 ### 9.4 Built (stage 7)
 
