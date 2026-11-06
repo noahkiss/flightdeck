@@ -731,6 +731,9 @@ func (c *client) frame(pf paneFrame) {
 			return
 		}
 		v.term.Write(f.Data)
+		if v.scroll > 0 {
+			v.scroll = v.term.ScrollView(0)
+		}
 		v.offset, v.haveOffset = f.Offset+uint64(len(f.Data)), true
 		start := c.out.Len()
 		v.filter.write(&c.out, f.Data)

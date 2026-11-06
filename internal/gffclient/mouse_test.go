@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
 func TestParseMouse(t *testing.T) {
@@ -147,4 +148,28 @@ func paneText(s string) string {
 		return s
 	}
 	return strings.Join(l[1:len(l)-1], "\n")
+}
+
+// TestScrollTracksOutput keeps Shift+End tied to the bottom as output adds rows.
+func TestScrollTracksOutput(t *testing.T) {
+	term, err := (vt.Fake{}).New(vt.Config{Cols: 20, Rows: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.Write([]byte("1\r\n2\r\n3\r\n4\r\n5"))
+	v := &view{term: term}
+	c := &client{}
+	c.scrollView(v, -1)
+	if v.scroll != 1 {
+		t.Fatalf("scroll = %d", v.scroll)
+	}
+	c.frame(bytesFrame(v, "\r\n6\r\n7"))
+	if v.scroll != 3 {
+		t.Fatalf("scroll after output = %d, want 3", v.scroll)
+	}
+	c.scrollView(v, v.scroll)
+	if v.scroll != 0 {
+		t.Fatalf("scroll at bottom = %d", v.scroll)
+	}
 }
