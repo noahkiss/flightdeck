@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -62,6 +63,7 @@ const opencodeMaxRequests = 256
 // (ocServer). <pane uuid>.json is gff-hab's: the session last bound, so a restarted gff-hab
 // binds it again. The password is derived from the hook secret, never stored.
 type opencodeServers struct {
+	recMu  sync.Mutex // one record write at a time, so none undoes another's fields
 	dir    string
 	secret []byte
 	agents *harness.Store
@@ -106,6 +108,9 @@ type ocPane struct {
 // ocRecord is a pane's record file.
 type ocRecord struct {
 	Session string `json:"session,omitempty"`
+	// Briefed lists the sessions the Logbook brief went to, or was tried for, so a follower
+	// made again (a gff-hab restart, a replaced follower) never posts it twice.
+	Briefed []string `json:"briefed,omitempty"`
 }
 
 // errServerGone: the server file says the pane's server ended, or names a process that is gone.
@@ -162,6 +167,27 @@ func (o *opencodeServers) writeRecord(pane string, r ocRecord) error {
 		return err
 	}
 	return nil
+}
+
+// saveRecord writes the record of a followed pane from its follower: the session last bound
+// and the sessions briefed. It writes nothing for a follower that was replaced.
+func (o *opencodeServers) saveRecord(pane string, p *ocPane) error {
+	o.recMu.Lock()
+	defer o.recMu.Unlock()
+	o.mu.Lock()
+	live := o.panes[pane] == p
+	o.mu.Unlock()
+	if !live {
+		return nil
+	}
+	p.mu.Lock()
+	r := ocRecord{Session: p.session}
+	for sid := range p.briefed {
+		r.Briefed = append(r.Briefed, sid)
+	}
+	p.mu.Unlock()
+	sort.Strings(r.Briefed)
+	return o.writeRecord(pane, r)
 }
 
 // register records a new pane and starts following its server, once the wrapper reports it.
@@ -245,9 +271,17 @@ func (o *opencodeServers) follow(pane string, u hp.UUID, r ocRecord) {
 	p := &ocPane{password: o.password(u), serverPath: o.serverPath(pane), cancel: cancel, done: make(chan struct{}),
 		session: r.Session, children: map[string]bool{}, running: map[string]bool{}, requests: map[string]string{},
 		briefed: map[string]bool{}}
+	for _, sid := range r.Briefed {
+		p.briefed[sid] = true
+	}
 	o.mu.Lock()
 	if old := o.panes[pane]; old != nil {
 		old.cancel()
+		old.mu.Lock()
+		for sid := range old.briefed {
+			p.briefed[sid] = true
+		}
+		old.mu.Unlock()
 	}
 	o.panes[pane] = p
 	o.mu.Unlock()
@@ -680,6 +714,10 @@ func (o *opencodeServers) postBrief(ctx context.Context, pane string, p *ocPane,
 	if c == nil {
 		return
 	}
+	// Recorded before the post: a gff-hab that stops mid-post never posts it again.
+	if err := o.saveRecord(pane, p); err != nil {
+		o.logf("opencode: pane %s: record the brief for session %s: %v", pane, sid, err)
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, opencodeTimeout+briefBuild)
 		defer cancel()
@@ -741,7 +779,7 @@ func (o *opencodeServers) apply(pane string, p *ocPane, t int64, u harness.Updat
 		live := o.panes[pane] == p
 		o.mu.Unlock()
 		if live {
-			if err := o.writeRecord(pane, ocRecord{Session: st.Session}); err != nil {
+			if err := o.saveRecord(pane, p); err != nil {
 				o.logf("opencode: pane %s: %v", pane, err)
 			}
 		}

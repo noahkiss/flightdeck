@@ -816,3 +816,61 @@ func TestOpencodeBrief(t *testing.T) {
 		t.Fatalf("brief asked %d times, want 3 (ses_1, ses_2, ses_3)", asked[x.pane])
 	}
 }
+
+// TestOpencodeBriefOnceAcrossFollowers: the sessions briefed, or tried, live in the pane's
+// record, so neither a replaced follower nor a gff-hab restart posts a brief again or retries
+// a failed post.
+func TestOpencodeBriefOnceAcrossFollowers(t *testing.T) {
+	x := newOcTest(t)
+	brief := func(context.Context, string) string { return "the brief" }
+	x.o.SetBrief(brief)
+	x.follow()
+	waitUntil(t, "the stream", func() bool { return x.f.streamCount() > 0 })
+	x.emitSeen()
+	const post1, post3 = "POST /api/session/ses_1/synthetic", "POST /api/session/ses_3/synthetic"
+	x.f.emit("session.created", `{"sessionID":"ses_1","version":"2.2.5"}`)
+	waitUntil(t, "the brief posted", func() bool { return x.f.requests(post1) == 1 })
+	x.f.set(func(f *ocFake) { f.synthFail = true })
+	x.f.emit("session.created", `{"sessionID":"ses_3","version":"2.2.5"}`)
+	waitUntil(t, "the failure logged", func() bool { return x.logs.count("the Logbook brief for session ses_3") == 1 })
+	x.f.set(func(f *ocFake) { f.synthFail = false })
+	var rec ocRecord
+	waitUntil(t, "both sessions recorded", func() bool {
+		b, err := os.ReadFile(x.o.recordPath(x.pane))
+		rec = ocRecord{}
+		return err == nil && json.Unmarshal(b, &rec) == nil && strings.Join(rec.Briefed, ",") == "ses_1,ses_3"
+	})
+
+	again := func(what string) {
+		t.Helper()
+		x.emitSeen()
+		x.f.emit("session.created", `{"sessionID":"ses_1","version":"2.2.5"}`)
+		x.f.emit("session.created", `{"sessionID":"ses_3","version":"2.2.5"}`)
+		x.emitSeen()
+		time.Sleep(200 * time.Millisecond)
+		if n, m := x.f.requests(post1), x.f.requests(post3); n != 1 || m != 1 {
+			t.Fatalf("%s: posts ses_1 %d, ses_3 %d, want 1 each", what, n, m)
+		}
+	}
+
+	// A follower made again with a stale record keeps what the one it replaces knew.
+	n := x.f.streamCount()
+	x.o.follow(x.pane, x.uuid, ocRecord{})
+	waitUntil(t, "the new follower's stream", func() bool { return x.f.streamCount() > n })
+	again("a replaced follower")
+
+	// A restarted gff-hab reads the record.
+	x.o.Close()
+	o2 := newOpencodeServers(filepath.Dir(x.o.dir), []byte("hook secret"), x.agents, x.logs.logf)
+	o2.dirty = x.o.dirty
+	o2.SetBrief(brief)
+	t.Cleanup(o2.Close)
+	x.o = o2
+	n = x.f.streamCount()
+	o2.load(func(string) (hp.UUID, bool) { return x.uuid, true })
+	waitUntil(t, "the restarted follower's stream", func() bool { return x.f.streamCount() > n })
+	again("a gff-hab restart")
+	// A new session still gets its brief.
+	x.f.emit("session.created", `{"sessionID":"ses_4","version":"2.2.5"}`)
+	waitUntil(t, "the new session's brief", func() bool { return x.f.requests("POST /api/session/ses_4/synthetic") == 1 })
+}
