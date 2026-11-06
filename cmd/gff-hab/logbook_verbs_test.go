@@ -226,8 +226,12 @@ func TestLogbookPaneWrites(t *testing.T) {
 	var rec api.LogbookRecordResult
 	call(t, c, "logbook.get", api.LogbookGetParams{ID: id}, &rec)
 	by := rec.Record.CreatedBy
-	if by == nil || by.Kind != "agent" || by.Harness != "claude" || by.Session != made.Session || by.Pane != made.Pane || by.Host != "test-host" {
+	if by == nil || by.Kind != "agent" || by.Harness != "claude" || by.Session != made.Session || by.SessionName != "worker" || by.Pane != made.Pane || by.Host != "test-host" {
 		t.Fatalf("a pane's write: %+v", by)
+	}
+	// The writer shows by the session's name; the record keeps its id.
+	if out, _ := lbOK(t, pane, "show", id); !strings.Contains(out, " by agent claude worker test-host\n") {
+		t.Fatalf("show names the writer:\n%s", out)
 	}
 	// claim: the calling session.
 	task, _ := lbOK(t, pane, "new", "task", "Rebuild the cache")

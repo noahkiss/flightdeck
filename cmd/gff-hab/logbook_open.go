@@ -56,7 +56,7 @@ func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Sto
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		pn := lbsvc.Pane{ID: pane, Host: host}
 		if s, ok := store.SessionByPane(pane); ok {
-			pn.Session = s.ID
+			pn.Session, pn.SessionName = s.ID, s.Name
 			pn.Propose = s.Kind == api.SessionKindCapcom
 			pn.Project = logbookProject(ctx, svc, store, host, s.Project)
 		}
