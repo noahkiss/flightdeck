@@ -345,9 +345,20 @@ func (u *workspaceUI) command(act string) bool {
 		}
 		c.canvas.valid = false
 	case actNewTab:
-		c.tabs = append(c.tabs, &tab{name: strconv.Itoa(len(c.tabs) + 1), split: c.cfg.Split})
+		c.tabs = append(c.tabs, &tab{name: c.freeTabName(len(c.tabs) + 1), split: c.cfg.Split})
 		u.switchTab(len(c.tabs) - 1)
 		u.mode = modeSidebar
+	case actRenameTab:
+		u.renameTab()
+	case actCloseTab:
+		u.closeTab()
+	case actLastTab:
+		for i, t := range c.tabs {
+			if t == c.last {
+				u.switchTab(i)
+				break
+			}
+		}
 	case actMoveTabLeft, actMoveTabRight:
 		j := c.cur - 1
 		if act == actMoveTabRight {
@@ -392,6 +403,7 @@ func (u *workspaceUI) switchTab(i int) {
 	for _, v := range c.tab().views {
 		c.closeStream(v)
 	}
+	c.last = c.tab()
 	c.cur = i
 	t := c.tab()
 	t.activity, t.bell = false, time.Time{}
@@ -401,6 +413,56 @@ func (u *workspaceUI) switchTab(i int) {
 	}
 	if u.mode == modeBoard {
 		u.mode = modePanes
+	}
+	c.layoutChanged()
+	u.dirty = true
+}
+
+// renameTab asks for the current tab's new name. An empty name gives the tab a number again.
+func (u *workspaceUI) renameTab() {
+	t := u.c.tab()
+	u.ask(&prompt{label: "rename tab " + t.name, text: []rune(t.name), done: func(name, _ string) {
+		name = strings.Join(strings.Fields(name), " ")
+		if name == "" {
+			t.name = ""
+			name = u.c.freeTabName(slicesIndexTab(u.c.tabs, t) + 1)
+		}
+		t.name = name
+	}})
+}
+
+// closeTab closes the current tab: its views close and their programs keep running, in the
+// sidebar. The tab shown before it shows, else the one on its left. Closing the only tab leaves
+// an empty tab.
+func (u *workspaceUI) closeTab() {
+	c := u.c
+	t := c.tab()
+	for _, v := range append([]*view(nil), t.views...) {
+		c.removeView(t, v)
+	}
+	if len(c.tabs) == 1 {
+		t.root, t.views, t.focus, t.zoom, t.name = nil, nil, 0, false, ""
+		t.name = c.freeTabName(1)
+		u.mode = modeSidebar
+		c.layoutChanged()
+		u.dirty = true
+		return
+	}
+	i := c.cur
+	c.tabs = append(c.tabs[:i], c.tabs[i+1:]...)
+	next := max(i-1, 0)
+	for j, x := range c.tabs {
+		if x == c.last {
+			next = j
+		}
+	}
+	c.cur = next
+	c.last = nil
+	nt := c.tab()
+	nt.activity, nt.bell = false, time.Time{}
+	for _, v := range nt.views {
+		c.openStream(v)
+		v.sentCols, v.sentRows = 0, 0
 	}
 	c.layoutChanged()
 	u.dirty = true
@@ -441,7 +503,7 @@ func (u *workspaceUI) open(r board.Row, newTab bool) {
 		return
 	}
 	if newTab {
-		c.tabs = append(c.tabs, &tab{name: strconv.Itoa(len(c.tabs) + 1), split: c.cfg.Split})
+		c.tabs = append(c.tabs, &tab{name: c.freeTabName(len(c.tabs) + 1), split: c.cfg.Split})
 		u.switchTab(len(c.tabs) - 1)
 	}
 	t := c.tab()
@@ -895,6 +957,15 @@ func (u *workspaceUI) start(host string, p api.SessionCreateParams, label string
 			u.dirty = true
 		})
 	}()
+}
+
+func slicesIndexTab(ts []*tab, t *tab) int {
+	for i, x := range ts {
+		if x == t {
+			return i
+		}
+	}
+	return 0
 }
 
 func slicesIndex(vs []*view, v *view) int {

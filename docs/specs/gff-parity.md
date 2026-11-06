@@ -25,7 +25,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 |---|---|---|---|---|
 | 1 | Workspace opens on launch | fail | After a restart the tab is empty ("empty tab: open a session from the sidebar"); the view from the last run is gone. No workspace file | task-iijjqm8r |
 | 2 | Startup tabs | gap | No startup tabs in the config | task-iijjqm8r |
-| 3 | Tab bar with session name and clock | gap | Tabs (`1:1 2:2`), the current one, `!` marks and the clock show. No workspace name; tabs cannot be renamed or closed | task-55uk35vg |
+| 3 | Tab bar with session name and clock | pass (task-55uk35vg) | Tabs as `1:work 2:2` after a rename, the current one bold, `!` marks, the workspace name beside the clock; tab mode `r` renames, `x` closes (programs keep running), Tab goes to the last tab (`TestTabRenameCloseLast`, `gff-client.md` 5.5) | task-55uk35vg |
 | 4 | Agent usage row | pass | `claude · 5h 42% resets 1h 56m · 7d 61% resets 3d 23h · over pace on 7d`, and `claude 1 working`, then `claude 1 needs you` | |
 | 5 | Mode-aware shortcut bar | pass | `session ·`, `pane ·`, `tab ·` and `locked · Ctrl+G unlock` each list their own keys | |
 | 6 | Unbound key leaves the bar | pass | `[keys.pane] f = "none"` removes `f zoom` from pane mode's hints | |

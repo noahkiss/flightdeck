@@ -58,19 +58,24 @@ const (
 	actSplit     = "split"        // turn the split that holds the focused pane the other way
 	// New panes (gff-client.md 5.4): on the focused pane's host, in its folder, stacked onto it
 	// or split beside it.
-	actNewPane   = "new-pane"
-	actNewRight  = "new-pane-right"
-	actNewDown   = "new-pane-down"
-	actNewLeft   = "new-pane-left"
-	actNewUp     = "new-pane-up"
-	actRedraw    = "redraw"  // pane.redraw snapshot
-	actNudge     = "nudge"   // pane.redraw nudge
-	actFit       = "fit"     // pane.take
-	actDetach    = "detach"  // quit gff; programs keep running
-	actSidebar   = "sidebar" // focus the sidebar, showing it
-	actBoard     = "board"   // the status board
-	actBars      = "bars"    // hide or show the bars
-	actNewTab    = "new-tab"
+	actNewPane  = "new-pane"
+	actNewRight = "new-pane-right"
+	actNewDown  = "new-pane-down"
+	actNewLeft  = "new-pane-left"
+	actNewUp    = "new-pane-up"
+	actRedraw   = "redraw"  // pane.redraw snapshot
+	actNudge    = "nudge"   // pane.redraw nudge
+	actFit      = "fit"     // pane.take
+	actDetach   = "detach"  // quit gff; programs keep running
+	actSidebar  = "sidebar" // focus the sidebar, showing it
+	actBoard    = "board"   // the status board
+	actBars     = "bars"    // hide or show the bars
+	actNewTab   = "new-tab"
+	// Tab actions (gff-client.md 5.5): rename the tab, close it (its views; the programs keep
+	// running), go to the tab shown before it.
+	actRenameTab = "rename-tab"
+	actCloseTab  = "close-tab"
+	actLastTab   = "last-tab"
 	actNextTab   = "next-tab"
 	actPrevTab   = "prev-tab"
 	actCloseView = "close-view" // close the focused view; the program keeps running
@@ -109,7 +114,7 @@ var actionLabels = map[string]string{
 	actNewPane: "new pane", actNewRight: "split right", actNewDown: "split down", actNewLeft: "split left",
 	actNewUp:  "split up",
 	actRedraw: "redraw", actNudge: "nudge", actFit: "fit", actDetach: "detach", actSidebar: "sidebar",
-	actBoard: "board", actBars: "bars", actNewTab: "new tab", actNextTab: "next tab", actPrevTab: "previous tab",
+	actBoard: "board", actBars: "bars", actNewTab: "new tab", actRenameTab: "rename tab", actCloseTab: "close tab", actLastTab: "last tab", actNextTab: "next tab", actPrevTab: "previous tab",
 	actCloseView: "close view", actWarnings: "warnings", actUp: "move", actDown: "move", actOpen: "open",
 	actOpenTab: "open in new tab", actNew: "new", actRename: "rename", actClose: "close", actFilter: "filter",
 	actGroup: "group", actFocusLeft: "move focus", actFocusRight: "move focus", actFocusUp: "move focus",
@@ -290,7 +295,7 @@ func (km *Keymap) bindShared(k, act string) {
 // do. Every other action in those modes goes back to normal after it runs.
 func stays(act string) bool {
 	switch act {
-	case actFocusNext, actNextTab, actPrevTab, actFocusLeft, actFocusRight, actFocusUp, actFocusDown,
+	case actFocusNext, actNextTab, actPrevTab, actLastTab, actFocusLeft, actFocusRight, actFocusUp, actFocusDown,
 		actMoveTabLeft, actMoveTabRight:
 		return true
 	}
@@ -315,7 +320,7 @@ func DefaultKeymap() *Keymap {
 	add(ModePane, "n", actNewPane, "l", actNewRight, "r", actNewRight, "j", actNewDown, "d", actNewDown,
 		"h", actNewLeft, "k", actNewUp, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit,
 		"x", actCloseView, "esc", actBack, "enter", actBack)
-	add(ModeTab, "n", actNewTab, "h", actPrevTab, "left", actPrevTab, "k", actPrevTab, "up", actPrevTab,
+	add(ModeTab, "n", actNewTab, "r", actRenameTab, "x", actCloseTab, "tab", actLastTab, "h", actPrevTab, "left", actPrevTab, "k", actPrevTab, "up", actPrevTab,
 		"l", actNextTab, "right", actNextTab, "j", actNextTab, "down", actNextTab)
 	for i := 1; i <= 9; i++ {
 		add(ModeTab, strconv.Itoa(i), actTabN+strconv.Itoa(i))
@@ -530,8 +535,33 @@ func fitHints(hs []hint, w, max int) string {
 
 // Settings is what gff's config file says about the keymap and the bars.
 type Settings struct {
-	Keymap *Keymap
-	Bar    BarConfig
+	Keymap    *Keymap
+	Bar       BarConfig
+	Workspace WorkspaceConfig
+}
+
+// WorkspaceConfig is the config file's [workspace] table (gff-client.md 5.5).
+type WorkspaceConfig struct {
+	// Name is the workspace gff opens; DefaultWorkspace when the file names none.
+	Name string
+}
+
+// DefaultWorkspace is the workspace's name when neither the config file nor -workspace names
+// one.
+const DefaultWorkspace = "default"
+
+// ValidWorkspaceName reports whether s can name a workspace: 1 to 64 of A-Z, a-z, 0-9, dot,
+// dash and underscore, not starting with a dot.
+func ValidWorkspaceName(s string) bool {
+	if s == "" || len(s) > 64 || s[0] == '.' {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // BarConfig shapes the bars (gff-client.md 8.1, 9.1).
@@ -549,19 +579,22 @@ func DefaultBar() BarConfig {
 }
 
 // DefaultSettings is the default keymap and bars.
-func DefaultSettings() Settings { return Settings{Keymap: DefaultKeymap(), Bar: DefaultBar()} }
+func DefaultSettings() Settings {
+	return Settings{Keymap: DefaultKeymap(), Bar: DefaultBar(), Workspace: WorkspaceConfig{Name: DefaultWorkspace}}
+}
 
 // fileSettings is the part of gff's config file this package reads. The hosts belong to
 // internal/hosts. Each value is read on its own, so one of the wrong type is a problem on its
 // line and the rest still loads.
 type fileSettings struct {
-	Keys toml.Primitive `toml:"keys"`
-	Bar  toml.Primitive `toml:"bar"`
+	Keys      toml.Primitive `toml:"keys"`
+	Bar       toml.Primitive `toml:"bar"`
+	Workspace toml.Primitive `toml:"workspace"`
 }
 
 // SettingsTables are the config file's tables LoadSettings reads, for a reader of the rest of
 // the file that warns about keys it does not know.
-var SettingsTables = []string{"keys", "bar"}
+var SettingsTables = []string{"keys", "bar", "workspace"}
 
 // The [keys] names that are no mode: the switch that drops the shipped bindings, and the table
 // that binds one key in every shared mode.
@@ -600,6 +633,8 @@ func modeNamed(n string) Mode {
 //	clock = "15:04"           # a Go time layout; "" hides the clock
 //	usage = true
 //	info = ["cpu", "mem", "disk", "battery", "uptime"]
+//	[workspace]
+//	name = "work"             # the workspace gff opens; default "default"
 //
 // An unknown mode, key or action, one a mode cannot take, or a value of the wrong type, is a
 // problem naming the file and line, and the rest still loads (8.3). A keymap that leaves a
@@ -825,6 +860,25 @@ func LoadSettings(path string) (Settings, []string, error) {
 		}
 		if err != nil {
 			problems = append(problems, where("bar", k)+": want "+want)
+		}
+	}
+	ws := table(fs.Workspace, "workspace")
+	wsKeys := make([]string, 0, len(ws))
+	for k := range ws {
+		wsKeys = append(wsKeys, k)
+	}
+	slices.Sort(wsKeys)
+	for _, k := range wsKeys {
+		switch k {
+		case "name":
+			var n string
+			if err := md.PrimitiveDecode(ws[k], &n); err != nil || !ValidWorkspaceName(n) {
+				problems = append(problems, where("workspace", k)+": want a name of letters, digits, dots, dashes and underscores, in quotes")
+				continue
+			}
+			s.Workspace.Name = n
+		default:
+			problems = append(problems, where("workspace", k)+": unknown key")
 		}
 	}
 	problems = append(problems, s.Keymap.exits(path)...)

@@ -94,6 +94,10 @@ type Config struct {
 	Tick <-chan time.Time
 	Logf func(format string, args ...any)
 
+	// Workspace is the workspace's name, shown beside the clock (gff-client.md 5.5). Empty:
+	// none shows.
+	Workspace string
+
 	// Modules gives the status board its module cards (gff-client.md 7.6). Nil: no module
 	// section; the hab does not serve module trees yet.
 	Modules ModuleSource
@@ -174,6 +178,7 @@ type client struct {
 	first string // the first host's label
 	tabs  []*tab
 	cur   int
+	last  *tab // the tab shown before the current one, for last-tab
 
 	w, h   int
 	canvas canvas
@@ -404,6 +409,23 @@ func (c *client) host(hm hosts.Host) *hostState {
 		c.first = hm.Label
 	}
 	return hs
+}
+
+// freeTabName is a number for a tab at place pos (from 1): pos, else the next number no tab is
+// named.
+func (c *client) freeTabName(pos int) string {
+	for n := max(pos, 1); ; n++ {
+		name := strconv.Itoa(n)
+		taken := false
+		for _, t := range c.tabs {
+			if t.name == name {
+				taken = true
+			}
+		}
+		if !taken {
+			return name
+		}
+	}
 }
 
 // tab returns the current tab.

@@ -455,7 +455,8 @@ stay, dimmed, and count for nothing in the needs-you count.
 
 **Screen.** A tab bar on top: tabs as `n:name`, the current one bold, with `!` when a session
 in the tab needs you, `*` for a bell in the last second, `~` when a hidden pane printed; on the
-right the needs-you count, online hosts out of all, and the clock. The sidebar is 28 columns on
+right the needs-you count, online hosts out of all, the workspace's name (5.5) and the clock.
+The sidebar is 28 columns on
 the left; a host narrower than 80 columns shows it only while it has the keys. A shortcut row
 at the bottom shows the keys of the mode, a prompt, or the last message. Ctrl+O `b` hides the
 bars, so one pane that fits passes through as in 3.4. A pane frame adds its host label and its
@@ -490,7 +491,8 @@ session, project or host name, `p` changes the grouping, `R` hides or shows run 
 - Every call runs off the loop; a failure shows on the bottom row. The results arrive as events.
 
 **Tabs.** In tab mode (Ctrl+T), `n` makes an empty tab and gives the sidebar the keys; `h` and
-`l` (or `k` and `j`, or the arrows) move, `1` to `9` go to a tab. Pane mode's `x` closes the
+`l` (or `k` and `j`, or the arrows) move, `1` to `9` go to a tab; `r`, `x` and Tab rename, close
+and go to the last tab (5.5). Pane mode's `x` closes the
 focused view (the program keeps running, and stays in the sidebar). A hidden tab's views close their data streams and keep their parsers and offsets;
 showing the tab reopens each stream from its offset, so the hab sends only what the view
 missed, or a snapshot (11.3). A hidden pane's `pane.output` event marks its tab, unless the view
@@ -543,7 +545,7 @@ the hab reaching a state.
 | Only a host's first endpoint is used. Trying endpoints in order with a stagger needs habconn to try the next at the hello, since ssh fails there and not at the dial | The merge layer and peer list stages own endpoints (11.7, `mesh.md` 4.1) |
 | Pinned device ids live in the config file only; a first contact is not written back, and there is no "accept the new id" flow in gff | `peers accept` and pin storage belong to the peer list stage (`mesh.md` 3.2) |
 | No wake-from-sleep detection; `Set.Retry` exists for it | 11.5; the bar is a reconnect within the 30 s backoff |
-| Tabs, splits and focus are not saved; no tab rename, move or startup tabs | The workspace file is a later stage (5.1) |
+| Tabs, splits and focus are not saved; no startup tabs | The workspace file is a later stage (5.1) |
 | No live preview beside the board's selected row; no approval answer keys | Preview needs an observer stream per selection; approvals wait for `approval.answer` (Part 4) |
 | Times in state use this machine's clock against the hab's `at`; habs with skewed clocks show skewed times | The welcome carries no hab time yet (`app.md` 3.2 wants the hab's own time) |
 | Rows across hosts order by `at` stamps from different clocks | Only rows in one rank are compared, and only by when they entered it |
@@ -674,6 +676,35 @@ shows the new view zoomed. Pane mode's `p` and Tab go to the next view in tree o
 | `TestNewPaneStacksAndSplits` | Over a fake hab: `n` gives a stack of two (the folded frame row right above the expanded one), then `l`, `j`, `h` and `k` each place the new view on that side; each `session.create` names the focused pane in `cwd_of` and asks for the hab's shell; the new view takes the focus |
 | `TestNewPaneInFolder` | Real holder and gff-hab: a pane whose program is in a folder; `n` starts the shell there (`pwd -P` in the new pane) |
 | `cmd/gff-hab` `TestCreateCwdOf`, `TestLsofName` | `cwd_of` starts in the other pane's program's folder, `cwd` wins over it, an unknown pane gives the default; the `lsof` reader |
+
+### 5.5 Built choices (task-55uk35vg: tab actions and the workspace name)
+
+zellij is the reference: tab mode's `r` renames the tab, `x` closes it, Tab toggles to the tab
+shown before; the owner's tab bar shows the session's name.
+
+| Key (tab mode) | Action | What it does |
+|---|---|---|
+| `r` | `rename-tab` | Asks for the name on the bottom row, with the current name filled in. Runs of spaces become one; an empty name gives the tab its place's number again. Ends tab mode |
+| `x` | `close-tab` | Closes the tab's views; their programs keep running and stay in the sidebar. The tab shown before it shows, else the one on its left. Closing the only tab leaves one empty tab named `1`, with the sidebar holding the keys. Ends tab mode. No question: nothing ends |
+| Tab | `last-tab` | Shows the tab shown before the current one. Keeps tab mode, as the other tab moves do |
+
+- A new tab is named after its place (`3` for a third tab), or the next number no tab has.
+- The tab bar shows each tab as `<place>:<name>`. The current tab is bold.
+- **The workspace's name.** `[workspace] name` in gff's config file, or `-workspace` for one
+  run, names the workspace; the default is `default`. A name is 1 to 64 letters, digits,
+  dots, dashes and underscores, not starting with a dot (it names the workspace's state file,
+  5.1). The tab bar shows it beside the clock: `… · 2/2 hosts · default · 14:05`. A bad name
+  or an unknown key in `[workspace]` is a problem on its line, and the rest loads.
+- Decided (implementer): the workspace's name is gff's own word, not the host's name: one
+  machine may keep several workspaces, as zellij keeps several sessions.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestTabRenameCloseLast` | Over a fake hab: the workspace name beside the clock; `r` renames a tab and the bar shows it; a new tab is named after its place; Tab goes to the last tab and back, staying in tab mode; `x` closes a tab, its session stays in the sidebar; closing the only tab leaves an empty tab `1`; no `pane.close` |
+| `TestWorkspaceConfig` | `[workspace] name`, a bad name and an unknown key as problems on their lines, the name rule |
+| `TestDefaultKeymap` | Tab mode's bar with the new keys |
 
 ---
 
@@ -1092,7 +1123,7 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
 | locked | Ctrl+G unlock |
 | session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, `R` run sessions, Esc back |
 | pane (Ctrl+P) | `n` new pane stacked onto the focused one, `l` or `r` new pane on the right, `j` or `d` below, `h` on the left, `k` above (5.4); `p` or Tab focus the next pane (stays), `f` zoom, `s` turn the split that holds the focused pane the other way, `x` close view, Esc or Enter back |
-| tab (Ctrl+T) | `n` new tab, `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
+| tab (Ctrl+T) | `n` new tab, `r` rename the tab, `x` close the tab, Tab the last tab (stays), `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
 | sidebar, board | As 4.3 and 7 |
 
 - **Leaders in every command mode.** Each of Ctrl+G, Ctrl+P, Ctrl+T and Ctrl+O also works in
@@ -1177,6 +1208,7 @@ d = "none"                # unbind
   `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-tab-left`, `move-tab-right`,
   `zoom`, `split`, `new-pane`, `new-pane-right`, `new-pane-down`, `new-pane-left`,
   `new-pane-up`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
+  `rename-tab`, `close-tab`, `last-tab`,
   `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `warnings`; in the sidebar and board
   also `up`, `down`, `open`, `open-tab`, and in the sidebar `new-session`, `rename`,
   `close-session`, `filter`, `group`. `none` unbinds.
@@ -1303,7 +1335,7 @@ width; the hints get the rest.
   neither. Other systems: disk only.
 
 **Tab bar.** On the right: the needs-you count, the warnings count when there are any (`2
-warnings`), online hosts out of all, and the clock. `[bar] clock` is a Go time layout (default
+warnings`), online hosts out of all, the workspace's name (5.5), and the clock. `[bar] clock` is a Go time layout (default
 `15:04`); empty hides the clock. Ctrl+O `!` lists the warnings on the bottom row: each host that
 is not online with its problem (`two offline 3m`, `connecting`, `update needed`, `host key
 changed`).

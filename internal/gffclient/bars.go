@@ -93,6 +93,9 @@ func (u *workspaceUI) drawTabBar() {
 		parts = append(parts, strconv.Itoa(n)+" warnings")
 	}
 	parts = append(parts, fmt.Sprintf("%d/%d hosts", online, total))
+	if c.cfg.Workspace != "" {
+		parts = append(parts, c.cfg.Workspace)
+	}
 	if c.cfg.Bar.Clock != "" {
 		parts = append(parts, now.Format(c.cfg.Bar.Clock))
 	}

@@ -1,7 +1,7 @@
 // Command gff is the terminal client (docs/specs/gff-client.md).
 //
 //	gff [-config path] [-host label=endpoint[,endpoint...]]... [-socket path | -via command | -ssh host]
-//	    [-split columns|rows] [-prefix ctrl-<key>]
+//	    [-split columns|rows] [-prefix ctrl-<key>] [-workspace name]
 //	gff [-config path] [-socket path | -via command | -ssh host] [-new command]...
 //	    [-split columns|rows] [-observe] [-prefix ctrl-<key>] [pane...]
 //	gff lb [--json] [--socket path] [--state dir] <verb> [args]
@@ -32,9 +32,11 @@
 // row shows the keys of the current one. The default keymap, as zellij's:
 //
 //	Ctrl+G  lock: every key goes to the pane until Ctrl+G again
-//	Ctrl+P  pane mode: p or Tab focus the next pane, f zoom, s side by side or stacked,
-//	        x close the focused view (the program keeps running)
-//	Ctrl+T  tab mode: n new tab, h/l or the arrows previous and next, 1-9 go to a tab
+//	Ctrl+P  pane mode: n new pane stacked onto the focused one, l/r j/d h k new pane on the
+//	        right, below, left or above (in the focused pane's folder), p or Tab focus the next
+//	        pane, f zoom, s turn the split, x close the focused view (the program keeps running)
+//	Ctrl+T  tab mode: n new tab, r rename the tab, x close the tab (its programs keep running),
+//	        Tab the last tab, h/l or the arrows previous and next, 1-9 go to a tab
 //	Ctrl+O  session mode, one key: w the sidebar, g the status board, b hide or show the bars,
 //	        ! the warnings, r redraw (a fresh snapshot from the hab), n nudge (the program
 //	        redraws after a one-column resize), f fit (pane.take), d detach (quit gff; the
@@ -48,8 +50,9 @@
 // open, t open in a new tab, n new session, r rename, x end or remove, / filter, p grouping,
 // Esc back. docs/examples/gff-keys-prefix.toml is a one-prefix keymap instead (Ctrl+\).
 //
-// The config file's [keys.<mode>] tables change the keymap and [bar] the bars (LoadSettings in
-// internal/gffclient).
+// The config file's [keys.<mode>] tables change the keymap, [bar] the bars and [workspace] the
+// workspace's name (LoadSettings in internal/gffclient); -workspace names it for one run. The
+// name shows beside the clock.
 //
 // `gff setup` checks and walks the permission grants of the hab's processes (setup.go,
 // docs/specs/macos-identity.md 7).
@@ -129,6 +132,7 @@ func run(args []string) error {
 	observe := fs.Bool("observe", false, "open every pane as an observer: no input, no size")
 	prefixFlag := fs.String("prefix", "", "the key that enters session mode, as ctrl-<key> (default the config's, else ctrl-o)")
 	configPath := fs.String("config", "", "gff's config file (default $GFF_CONFIG, else gff/config.toml in the user config directory)")
+	workspace := fs.String("workspace", "", "the workspace to open (default the config's [workspace] name, else default)")
 	var hostFlags multi
 	fs.Var(&hostFlags, "host", "a host for the workspace, as label=endpoint[,endpoint...] (repeatable)")
 	fs.Parse(args)
@@ -153,6 +157,12 @@ func run(args []string) error {
 	}
 	for _, p := range problems {
 		fmt.Fprintln(os.Stderr, "gff:", p)
+	}
+	if *workspace != "" {
+		if !gffclient.ValidWorkspaceName(*workspace) {
+			return fmt.Errorf("-workspace %q: use 1 to 64 letters, digits, dots, dashes and underscores", *workspace)
+		}
+		settings.Workspace.Name = *workspace
 	}
 	var sp gffclient.Split
 	switch *split {
@@ -185,7 +195,8 @@ func run(args []string) error {
 			return err
 		}
 		defer set.Close()
-		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar})
+		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar,
+			Workspace: settings.Workspace.Name})
 	}
 	octx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, err := habconn.Connect(octx, habconn.Config{Transport: tr, Client: client})
