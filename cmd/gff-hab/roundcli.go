@@ -57,6 +57,9 @@ type roundDef struct {
 	manual, paused, command                                                 bool
 	via                                                                     bool // the hab is reached through -via or -host
 	harnessArgs                                                             stringList
+	// Event triggers and message modes (rounds.md 4.3, 4.5, 5.2).
+	on, debounce, cooldown, group string
+	where                         stringList
 }
 
 type stringList []string
@@ -65,7 +68,12 @@ func (l *stringList) String() string     { return strings.Join(*l, " ") }
 func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 func (d *roundDef) flags(fs *flag.FlagSet) {
-	fs.StringVar(&d.mode, "mode", "", "fresh (the default for add), resume or fork")
+	fs.StringVar(&d.mode, "mode", "", "fresh (the default for add), resume, fork, capcom or group")
+	fs.StringVar(&d.on, "on", "", "run on this hab's events: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated")
+	fs.Var(&d.where, "where", "with -on: one filter field as key=value, a list comma-separated (status=done,dropped); repeat it for more")
+	fs.StringVar(&d.debounce, "debounce", "", "with -on: how long a batch gathers events after its first (default 30s)")
+	fs.StringVar(&d.cooldown, "cooldown", "", "with -on: the least time between two event runs' starts (default 5m)")
+	fs.StringVar(&d.group, "group", "", "group: the group id whose coordinator gets each run's message")
 	fs.StringVar(&d.cron, "cron", "", "a 5-field cron expression")
 	fs.StringVar(&d.tz, "tz", "", "the IANA time zone of -cron or -at (default: the hab's zone)")
 	fs.StringVar(&d.every, "every", "", "a preset: 1m, 5m, 15m, 1h, 1d and the like")
@@ -79,7 +87,7 @@ func (d *roundDef) flags(fs *flag.FlagSet) {
 	fs.StringVar(&d.model, "model", "", "the model for the harness")
 	fs.Var(&d.harnessArgs, "harness-arg", "one argument for the harness; repeat it for more")
 	fs.StringVar(&d.timeout, "timeout", "", "the longest a run may take (default 60m)")
-	fs.StringVar(&d.wait, "wait", "", "resume: how long a run waits for the session to be free (default 10m)")
+	fs.StringVar(&d.wait, "wait", "", "resume and group: how long a run waits for the session to be free, or for its delivery (default 10m)")
 	fs.StringVar(&d.maxRuns, "max-runs", "", "complete the round after this many finished runs")
 	fs.StringVar(&d.expires, "expires", "", "complete the round at this time (RFC 3339)")
 	fs.StringVar(&d.catchUp, "catch-up", "", "once (default) or skip: what a slot missed in sleep does")
@@ -95,13 +103,13 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 		spec.Mode = api.RoundMode(d.mode)
 	}
 	triggers := 0
-	for _, f := range []string{"cron", "every", "at", "manual"} {
+	for _, f := range []string{"cron", "every", "at", "manual", "on"} {
 		if set[f] {
 			triggers++
 		}
 	}
 	if triggers > 1 {
-		return errors.New("give one trigger: -cron, -every, -at or -manual")
+		return errors.New("give one trigger: -cron, -every, -at, -manual or -on")
 	}
 	switch {
 	case set["cron"]:
@@ -116,8 +124,36 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 		spec.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindOnce, At: at, Zone: d.tz}
 	case set["manual"]:
 		spec.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindManual}
+	case set["on"]:
+		spec.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindEvent, Event: d.on}
 	case set["tz"]:
 		spec.Trigger.Zone = d.tz
+	}
+	if set["where"] {
+		if spec.Trigger.Kind != api.RoundTriggerKindEvent {
+			return errors.New("-where is for an event trigger: give -on")
+		}
+		f, err := parseWhere(d.where)
+		if err != nil {
+			return err
+		}
+		spec.Trigger.Filter = f
+	}
+	for _, x := range []struct {
+		flag, v string
+		p       *int64
+	}{{"debounce", d.debounce, &spec.DebounceMS}, {"cooldown", d.cooldown, &spec.CooldownMS}} {
+		if !set[x.flag] {
+			continue
+		}
+		t, err := time.ParseDuration(x.v)
+		if err != nil || t <= 0 {
+			return fmt.Errorf("-%s %q is not a duration such as 30s", x.flag, x.v)
+		}
+		*x.p = t.Milliseconds()
+	}
+	if set["group"] {
+		spec.Group = d.group
 	}
 	if set["project"] && set["remote"] {
 		return errors.New("give -project or -remote, not both")
@@ -209,6 +245,78 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 		spec.Prompt, spec.Command = strings.Join(words, " "), nil
 	}
 	return nil
+}
+
+// parseWhere reads -where key=value words into an event filter (rounds.md 4.3, 13). A list
+// field takes a comma-separated value; project takes a folder as well as a project id.
+func parseWhere(words []string) (*api.RoundEventFilter, error) {
+	f := &api.RoundEventFilter{}
+	for _, w := range words {
+		k, v, ok := strings.Cut(w, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("-where %q: want key=value", w)
+		}
+		list := func() []string { return strings.Split(v, ",") }
+		switch k {
+		case "project":
+			if v != "" && (strings.HasPrefix(v, ".") || strings.Contains(v, string(filepath.Separator))) {
+				abs, err := filepath.Abs(v)
+				if err != nil {
+					return nil, err
+				}
+				v = abs
+			}
+			f.Project = v
+		case "session":
+			f.Session = v
+		case "field":
+			f.Field = list()
+		case "state":
+			f.State = list()
+		case "level":
+			f.Level = v
+		case "text":
+			f.Text = v
+		case "type":
+			f.Type = v
+		case "change":
+			f.Change = v
+		case "status":
+			f.Status = list()
+		case "tags":
+			f.Tags = list()
+		case "by":
+			f.By = v
+		default:
+			return nil, fmt.Errorf("-where %q: no filter field %s; the fields are project, session, field, state, level, text, type, change, status, tags and by", w, k)
+		}
+	}
+	return f, nil
+}
+
+// whereText is a filter as -where words, for show and ls.
+func whereText(f *api.RoundEventFilter) string {
+	if f == nil {
+		return ""
+	}
+	var w []string
+	add := func(k, v string) {
+		if v != "" {
+			w = append(w, k+"="+v)
+		}
+	}
+	add("project", f.Project)
+	add("session", f.Session)
+	add("field", strings.Join(f.Field, ","))
+	add("state", strings.Join(f.State, ","))
+	add("level", f.Level)
+	add("text", f.Text)
+	add("type", f.Type)
+	add("change", f.Change)
+	add("status", strings.Join(f.Status, ","))
+	add("tags", strings.Join(f.Tags, ","))
+	add("by", f.By)
+	return strings.Join(w, " ")
 }
 
 // parseRoundTime reads RFC 3339, or a local time without an offset in zone (else this host's
@@ -506,6 +614,11 @@ func triggerText(t api.RoundTrigger) string {
 		return fmt.Sprintf("cron %q %s", t.Cron, t.Zone)
 	case api.RoundTriggerKindOnce:
 		return "once " + t.At
+	case api.RoundTriggerKindEvent:
+		if w := whereText(t.Filter); w != "" {
+			return "on " + t.Event + " " + w
+		}
+		return "on " + t.Event
 	}
 	return string(t.Kind)
 }
@@ -559,6 +672,12 @@ func printRound(out io.Writer, r api.Round, runs []api.RoundRun) {
 	row("remote", r.ProjectRemote)
 	row("cwd", r.Cwd)
 	row("target", r.Target)
+	row("group", r.Group)
+	if r.Trigger.Kind == api.RoundTriggerKindEvent {
+		row("debounce", (time.Duration(r.DebounceMS) * time.Millisecond).String())
+		row("cooldown", (time.Duration(r.CooldownMS) * time.Millisecond).String())
+		row("pending", strconv.Itoa(r.Pending)+" events")
+	}
 	row("timeout", (time.Duration(r.TimeoutMS) * time.Millisecond).String())
 	if r.WaitMS > 0 {
 		row("wait", (time.Duration(r.WaitMS) * time.Millisecond).String())
@@ -610,7 +729,18 @@ func printRuns(out io.Writer, runs []api.RoundRun) {
 	tw := tabwriter.NewWriter(out, 2, 8, 2, ' ', 0)
 	fmt.Fprintln(tw, "RUN\tSTATE\tSLOT\tSTARTED\tENDED\tSESSION\tREASON")
 	for _, r := range runs {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Number, r.State, orDash(r.Slot), orDash(r.StartedAt), orDash(r.EndedAt), orDash(r.Session), r.Reason)
+		reason := r.Reason
+		if r.Events > 0 {
+			reason = strings.TrimSpace(fmt.Sprintf("%s (%d events)", reason, r.Events))
+		}
+		if r.Outcome != nil {
+			reason = strings.TrimSpace(reason + " · " + r.Outcome.Word)
+		}
+		session := r.Session
+		if session == "" {
+			session = r.Destination
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Number, r.State, orDash(r.Slot), orDash(r.StartedAt), orDash(r.EndedAt), orDash(session), reason)
 	}
 	tw.Flush()
 }
@@ -644,6 +774,27 @@ type fileRound struct {
 	OnFinish      string   `toml:"on_finish,omitempty"`
 	Notify        string   `toml:"notify,omitempty"`
 	Paused        bool     `toml:"paused,omitempty"`
+	// Event triggers and message modes (rounds.md 4.3, 4.5, 5.2).
+	On       string      `toml:"on,omitempty"`
+	Filter   *fileFilter `toml:"filter,omitempty"`
+	Debounce string      `toml:"debounce,omitempty"`
+	Cooldown string      `toml:"cooldown,omitempty"`
+	Group    string      `toml:"group,omitempty"`
+}
+
+// fileFilter is an event trigger's filter in an exported file.
+type fileFilter struct {
+	Project string   `toml:"project,omitempty"`
+	Session string   `toml:"session,omitempty"`
+	Field   []string `toml:"field,omitempty"`
+	State   []string `toml:"state,omitempty"`
+	Level   string   `toml:"level,omitempty"`
+	Text    string   `toml:"text,omitempty"`
+	Type    string   `toml:"type,omitempty"`
+	Change  string   `toml:"change,omitempty"`
+	Status  []string `toml:"status,omitempty"`
+	Tags    []string `toml:"tags,omitempty"`
+	By      string   `toml:"by,omitempty"`
 }
 
 type roundsFile struct {
@@ -664,7 +815,16 @@ func toFile(r api.Round) fileRound {
 		f.At = r.Trigger.At
 	case api.RoundTriggerKindManual:
 		f.Manual = true
+	case api.RoundTriggerKindEvent:
+		f.On = r.Trigger.Event
+		if r.Trigger.Filter != nil && whereText(r.Trigger.Filter) != "" {
+			ff := fileFilter(*r.Trigger.Filter)
+			f.Filter = &ff
+		}
+		f.Debounce = (time.Duration(r.DebounceMS) * time.Millisecond).String()
+		f.Cooldown = (time.Duration(r.CooldownMS) * time.Millisecond).String()
 	}
+	f.Group = r.Group
 	if r.ProjectRemote != "" {
 		f.ProjectRemote = r.ProjectRemote
 	} else {
@@ -741,11 +901,22 @@ func (f fileRound) normalize(have *fileRound) (fileRound, error) {
 		return f, err
 	}
 	wdef := time.Duration(0)
-	if f.Mode == "resume" {
+	if f.Mode == "resume" || f.Mode == "group" {
 		wdef = rounds.DefaultWait
 	}
 	if err := dur(&f.Wait, wdef); err != nil {
 		return f, err
+	}
+	if f.On != "" {
+		if err := dur(&f.Debounce, rounds.DefaultDebounce); err != nil {
+			return f, err
+		}
+		if err := dur(&f.Cooldown, rounds.DefaultCooldown); err != nil {
+			return f, err
+		}
+		if f.Filter != nil && whereText((*api.RoundEventFilter)(f.Filter)) == "" {
+			f.Filter = nil
+		}
 	}
 	if f.CatchUp == "" {
 		f.CatchUp = "once"
@@ -753,7 +924,7 @@ func (f fileRound) normalize(have *fileRound) (fileRound, error) {
 	if f.Notify == "" {
 		f.Notify = "failures"
 	}
-	if f.OnFinish == "" && f.Mode != "resume" {
+	if f.OnFinish == "" && (f.Mode == "fresh" || f.Mode == "fork") {
 		f.OnFinish = "close"
 	}
 	if f.ProjectRemote != "" {
@@ -768,17 +939,23 @@ func (f fileRound) spec() (api.RoundSpec, error) {
 		HarnessArgs: f.HarnessArgs, Command: f.Command, Project: f.Project, ProjectRemote: f.ProjectRemote,
 		Cwd: f.Cwd, Target: f.Target, MaxRuns: f.MaxRuns, ExpiresAt: f.ExpiresAt, CatchUp: api.RoundCatchUp(f.CatchUp),
 		OnFinish: api.RoundOnFinish(f.OnFinish), Notify: api.RoundNotify(f.Notify), Paused: f.Paused,
+		Group: f.Group,
 	}
 	kinds := 0
-	for _, b := range []bool{f.Cron != "", f.At != "", f.Manual} {
+	for _, b := range []bool{f.Cron != "", f.At != "", f.Manual, f.On != ""} {
 		if b {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return s, fmt.Errorf("round %s: give one trigger: cron, every, at or manual", f.Name)
+		return s, fmt.Errorf("round %s: give one trigger: cron, every, at, manual or on", f.Name)
 	}
 	switch {
+	case f.On != "":
+		s.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindEvent, Event: f.On}
+		if f.Filter != nil {
+			s.Trigger.Filter = (*api.RoundEventFilter)(f.Filter)
+		}
 	case f.Cron != "":
 		s.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindCron, Cron: f.Cron, Zone: f.Zone}
 	case f.At != "":
@@ -789,7 +966,7 @@ func (f fileRound) spec() (api.RoundSpec, error) {
 	for _, d := range []struct {
 		v string
 		p *int64
-	}{{f.Timeout, &s.TimeoutMS}, {f.Wait, &s.WaitMS}} {
+	}{{f.Timeout, &s.TimeoutMS}, {f.Wait, &s.WaitMS}, {f.Debounce, &s.DebounceMS}, {f.Cooldown, &s.CooldownMS}} {
 		if d.v != "" {
 			t, err := time.ParseDuration(d.v)
 			if err != nil {
