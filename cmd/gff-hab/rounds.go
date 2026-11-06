@@ -1019,7 +1019,7 @@ func (s *roundsService) CatalogSection() []api.CatalogRound {
 
 // triggerWords is a trigger in plain words (rounds.TriggerWords).
 func triggerWords(t api.RoundTrigger) string {
-	return rounds.TriggerWords(string(t.Kind), t.Cron, t.Zone, t.At)
+	return rounds.TriggerWords(string(t.Kind), t.Cron, t.Zone, t.At, t.Event)
 }
 
 // List returns every round, by name: the snapshot's rounds and round.list.

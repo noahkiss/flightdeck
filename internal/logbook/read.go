@@ -158,6 +158,52 @@ func (s *Store) History(ctx context.Context, id string) ([]*Op, error) {
 	return ops, nil
 }
 
+// FoldedOp is an op with the local fold number this replica gave it when it folded it.
+type FoldedOp struct {
+	*Op
+	Fold int64
+}
+
+// FoldedAfter lists a record's ops that this replica folded after the fold number after, in
+// fold order (rounds.md 4.3, folded since). The numbers are local and never synced.
+func (s *Store) FoldedAfter(ctx context.Context, id string, after int64) ([]FoldedOp, error) {
+	var root string
+	err := s.db.QueryRowContext(ctx, `SELECT root FROM records WHERE id = ?`, id).Scan(&root)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT f.n, o.raw FROM ops o JOIN folds f ON f.origin = o.origin AND f.seq = o.seq
+		WHERE o.root = ? AND f.n > ? ORDER BY f.n`, root, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FoldedOp
+	for rows.Next() {
+		var n int64
+		var raw []byte
+		if err := rows.Scan(&n, &raw); err != nil {
+			return nil, err
+		}
+		o, err := decodeOp(raw)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, FoldedOp{Op: o, Fold: n})
+	}
+	return out, rows.Err()
+}
+
+// LastFold is the highest fold number this replica gave, 0 before any.
+func (s *Store) LastFold(ctx context.Context) (int64, error) {
+	var n sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT max(n) FROM folds`).Scan(&n)
+	return n.Int64, err
+}
+
 // Op reads one op by its id, or ErrNotFound.
 func (s *Store) Op(ctx context.Context, id OpID) (*Op, error) {
 	ops, err := scanOps(s.db.QueryContext(ctx, `SELECT raw FROM ops WHERE origin = ? AND seq = ?`, id.Origin, id.Seq))

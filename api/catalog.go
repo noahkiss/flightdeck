@@ -25,6 +25,25 @@ type Catalog struct {
 	Rounds []CatalogRound `json:"rounds,omitempty" doc:"The rounds this hab runs, by name. Absent from a hab without the rounds capability or with no round."`
 	// Heavy was added within revision 1, a new field of each catalog message (groups.md 8.2).
 	Heavy *CatalogHeavy `json:"heavy,omitempty" doc:"The heavy-run lock and the free space of the state and worktree volumes. Absent from a hab without the heavy capability."`
+	// Groups was added by rounds stage 9 as the read side of groups.md 5.1; Part 15 fills it.
+	Groups []CatalogGroup `json:"groups,omitempty" doc:"The groups this hab is the home of: the short form (groups.md 5.1). Absent with none."`
+}
+
+// CatalogGroup is one group's short form in its home hab's catalog (groups.md 5.1, 12.5).
+type CatalogGroup struct {
+	ID          string         `json:"id"`
+	Title       string         `json:"title,omitempty"`
+	State       string         `json:"state" doc:"confirming, running, paused, ending, ended or dropped. An open set."`
+	Coordinator *CatalogMember `json:"coordinator,omitempty" doc:"The coordinator, when the group has one."`
+	Generation  uint64         `json:"generation,omitempty"`
+}
+
+// CatalogMember names a session on a hab of the mesh.
+type CatalogMember struct {
+	Device  string `json:"device" doc:"The device id of the hab the session runs on."`
+	Session string `json:"session,omitempty" doc:"The session id on that hab."`
+	Name    string `json:"name" doc:"The session's name on that hab: its channel address there."`
+	Capcom  bool   `json:"capcom,omitempty" doc:"The coordinator is the Capcom service: a round message goes to it (groups.md 12.1)."`
 }
 
 // CatalogRound is one round on the publishing host, as peers see it (rounds.md 9, 10.3).
@@ -47,9 +66,11 @@ type CatalogRound struct {
 // mark (home is its own device id). Across catalogs the highest assignment wins, and on a tie
 // the lower home device id.
 type CatalogCapcom struct {
-	Assignment uint64                 `json:"assignment" doc:"The highest assignment counter this hab has seen; 0 for none."`
-	Home       string                 `json:"home,omitempty" doc:"The device id of the home host at that assignment."`
-	Sessions   []CatalogCapcomSession `json:"sessions" doc:"The Capcom sessions on this host, the standing one marked."`
+	Assignment uint64 `json:"assignment" doc:"The highest assignment counter this hab has seen; 0 for none."`
+	Home       string `json:"home,omitempty" doc:"The device id of the home host at that assignment."`
+	// Service was added by rounds stage 9 as the read side of capcom-service.md 9.5.
+	Service  string                 `json:"service,omitempty" doc:"On the home host, while it runs the Capcom service: the service's actor id, the session id its notices and Logbook ops carry."`
+	Sessions []CatalogCapcomSession `json:"sessions" doc:"The Capcom sessions on this host, the standing one marked."`
 }
 
 // CatalogCapcomSession is one Capcom session on the publishing host.

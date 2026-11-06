@@ -177,6 +177,8 @@ type LogbookRecordResult struct {
 
 type LogbookHistoryParams struct {
 	ID string `json:"id"`
+	// FoldedAfter was added by rounds stage 9 (rounds.md 4.3).
+	FoldedAfter *int64 `json:"folded_after,omitempty" doc:"Only the ops this replica folded after this local fold number, in fold order. The numbers are this replica's own and never synced; logbook.history's folded gives the highest."`
 }
 
 // LogbookOp is one op as logbook.history shows it.
@@ -191,6 +193,7 @@ type LogbookOp struct {
 	Target string        `json:"target,omitempty" doc:"A forget: the op it redacts."`
 	By     *LogbookActor `json:"by,omitempty"`
 	Folded bool          `json:"folded,omitempty" doc:"This build folds the op. False: kept and forwarded for a newer build (logbook.md 4.4)."`
+	Fold   int64         `json:"fold,omitempty" doc:"With folded_after: the local fold number this replica gave the op."`
 }
 
 // LogbookHistory answers logbook.history: every op on the record, losers included, in stamp
@@ -198,6 +201,8 @@ type LogbookOp struct {
 type LogbookHistory struct {
 	Seq
 	Ops []LogbookOp `json:"ops"`
+	// LastFold was added by rounds stage 9.
+	LastFold int64 `json:"last_fold,omitempty" doc:"With folded_after: the highest fold number this replica has given, to pass as folded_after next."`
 }
 
 // LogbookChangeOp is one kind of change in logbook.write. A closed set.

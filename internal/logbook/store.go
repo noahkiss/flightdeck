@@ -185,6 +185,12 @@ CREATE TABLE IF NOT EXISTS origins (
 	clock_ahead INTEGER NOT NULL DEFAULT 0,
 	shared INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS folds (
+	n INTEGER PRIMARY KEY AUTOINCREMENT,
+	origin TEXT NOT NULL,
+	seq INTEGER NOT NULL,
+	UNIQUE (origin, seq)
+);
 `
 
 // foldedSchema is the folded tables. Rebuild drops and refills their rows.

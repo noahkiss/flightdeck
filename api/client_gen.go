@@ -53,6 +53,9 @@ const (
 	ChannelStateNotDelivered ChannelState = "not_delivered"
 	ChannelStateRefused      ChannelState = "refused"
 	ChannelStateExpired      ChannelState = "expired"
+	ChannelStateAccepted     ChannelState = "accepted"
+	ChannelStateDuplicate    ChannelState = "duplicate"
+	ChannelStateDeclined     ChannelState = "declined"
 )
 
 const (
@@ -284,6 +287,8 @@ const (
 	RoundModeFresh  RoundMode = "fresh"
 	RoundModeResume RoundMode = "resume"
 	RoundModeFork   RoundMode = "fork"
+	RoundModeCapcom RoundMode = "capcom"
+	RoundModeGroup  RoundMode = "group"
 )
 
 const (
@@ -321,6 +326,7 @@ const (
 const (
 	RoundTriggerKindCron   RoundTriggerKind = "cron"
 	RoundTriggerKindOnce   RoundTriggerKind = "once"
+	RoundTriggerKindEvent  RoundTriggerKind = "event"
 	RoundTriggerKindManual RoundTriggerKind = "manual"
 )
 
@@ -432,6 +438,7 @@ const (
 	EventConfirmClosed    EventType = "confirm.closed"
 	EventRoundUpdated     EventType = "round.updated"
 	EventRoundRunUpdated  EventType = "round.run_updated"
+	EventHabWoke          EventType = "hab.woke"
 	EventLogbookUpdated   EventType = "logbook.updated"
 	EventLogbookConflict  EventType = "logbook.conflict"
 	EventMeshChanged      EventType = "mesh.changed"
@@ -543,6 +550,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventRoundRunUpdated:
 		var v RoundRun
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventHabWoke:
+		var v HabWoke
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventLogbookUpdated:

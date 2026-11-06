@@ -1,0 +1,20 @@
+{
+  "data": {
+    "at": "at-4",
+    "slept_s": 3,
+    "x_unknown_field": "later"
+  },
+  "id": "id-7",
+  "revision": 5,
+  "seq": 6,
+  "type": "hab.woke",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

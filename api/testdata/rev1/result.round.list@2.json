@@ -1,0 +1,115 @@
+{
+  "rounds": [
+    {
+      "catch_up": "skip",
+      "command": [
+        "command-27"
+      ],
+      "completed": true,
+      "completed_reason": "completed_reason-49",
+      "cooldown_ms": 39,
+      "created_at": "created_at-41",
+      "created_by": "created_by-40",
+      "cwd": "cwd-31",
+      "debounce_ms": 38,
+      "deleted": true,
+      "expires_at": "expires_at-34",
+      "failures": 46,
+      "group": "group-37",
+      "harness": "harness-24",
+      "harness_args": [
+        "harness_args-26"
+      ],
+      "id": "id-4",
+      "last_ok": "last_ok-45",
+      "last_run": {
+        "created": "created-58",
+        "destination": "destination-63",
+        "ended_at": "ended_at-60",
+        "events": 62,
+        "id": "id-51",
+        "message": "message-64",
+        "missed": 55,
+        "number": 52,
+        "outcome": {
+          "at": "at-66",
+          "word": "word-65",
+          "x_unknown_field": "later"
+        },
+        "reason": "reason-56",
+        "result": "result-61",
+        "round": "round-53",
+        "session": "session-57",
+        "slot": "slot-54",
+        "started_at": "started_at-59",
+        "state": "taken_over",
+        "trigger": "manual",
+        "x_unknown_field": "later"
+      },
+      "last_slot": "last_slot-44",
+      "max_runs": 33,
+      "mode": "group",
+      "model": "model-25",
+      "name": "name-6",
+      "next_slot": "next_slot-43",
+      "notify": "never",
+      "on_finish": "keep",
+      "paused": true,
+      "paused_reason": "paused_reason-48",
+      "pending": 67,
+      "project": "project-28",
+      "project_dir": "project_dir-29",
+      "project_remote": "project_remote-30",
+      "prompt": "prompt-23",
+      "revision": 5,
+      "skips": 47,
+      "target": "target-32",
+      "timeout_ms": 35,
+      "trigger": {
+        "at": "at-10",
+        "cron": "cron-7",
+        "event": "event-11",
+        "every": "every-8",
+        "filter": {
+          "by": "by-22",
+          "change": "change-19",
+          "field": [
+            "field-14"
+          ],
+          "level": "level-16",
+          "project": "project-12",
+          "session": "session-13",
+          "state": [
+            "state-15"
+          ],
+          "status": [
+            "status-20"
+          ],
+          "tags": [
+            "tags-21"
+          ],
+          "text": "text-17",
+          "type": "type-18",
+          "x_unknown_field": "later"
+        },
+        "kind": "manual",
+        "x_unknown_field": "later",
+        "zone": "zone-9"
+      },
+      "trigger_error": "trigger_error-50",
+      "updated_at": "updated_at-42",
+      "wait_ms": 36,
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

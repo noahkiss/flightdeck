@@ -1,0 +1,39 @@
+{
+  "data": {
+    "created": "created-10",
+    "destination": "destination-15",
+    "ended_at": "ended_at-12",
+    "events": 14,
+    "id": "id-3",
+    "message": "message-16",
+    "missed": 7,
+    "number": 4,
+    "outcome": {
+      "at": "at-18",
+      "word": "word-17",
+      "x_unknown_field": "later"
+    },
+    "reason": "reason-8",
+    "result": "result-13",
+    "round": "round-5",
+    "session": "session-9",
+    "slot": "slot-6",
+    "started_at": "started_at-11",
+    "state": "taken_over",
+    "trigger": "manual",
+    "x_unknown_field": "later"
+  },
+  "id": "id-21",
+  "revision": 19,
+  "seq": 20,
+  "type": "round.run_updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

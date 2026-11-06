@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -553,6 +553,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var deviceId: String
     /// Raised on every change of this catalog; kept across restarts.
     public var generation: UInt64
+    /// The groups this hab is the home of: the short form (groups.md 5.1). Absent with none.
+    public var groups: [CatalogGroup]?
     /// Coding-agent harnesses found on PATH, with their versions.
     public var harnesses: [CatalogTool]
     /// The heavy-run lock and the free space of the state and worktree volumes. Absent from a hab without the heavy capability.
@@ -582,6 +584,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case capcom = "capcom"
         case deviceId = "device_id"
         case generation = "generation"
+        case groups = "groups"
         case harnesses = "harnesses"
         case heavy = "heavy"
         case host = "host"
@@ -594,7 +597,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -603,6 +606,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.capcom = capcom
         self.deviceId = deviceId
         self.generation = generation
+        self.groups = groups
         self.harnesses = harnesses
         self.heavy = heavy
         self.host = host
@@ -682,18 +686,22 @@ public struct CatalogCapcom: Codable, Sendable, Hashable {
     public var assignment: UInt64
     /// The device id of the home host at that assignment.
     public var home: String?
+    /// On the home host, while it runs the Capcom service: the service's actor id, the session id its notices and Logbook ops carry.
+    public var service: String?
     /// The Capcom sessions on this host, the standing one marked.
     public var sessions: [CatalogCapcomSession]
 
     enum CodingKeys: String, CodingKey {
         case assignment = "assignment"
         case home = "home"
+        case service = "service"
         case sessions = "sessions"
     }
 
-    public init(assignment: UInt64, home: String? = nil, sessions: [CatalogCapcomSession]) {
+    public init(assignment: UInt64, home: String? = nil, service: String? = nil, sessions: [CatalogCapcomSession]) {
         self.assignment = assignment
         self.home = home
+        self.service = service
         self.sessions = sessions
     }
 }
@@ -811,6 +819,32 @@ public struct CatalogGetResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct CatalogGroup: Codable, Sendable, Hashable {
+    /// The coordinator, when the group has one.
+    public var coordinator: CatalogMember?
+    public var generation: UInt64?
+    public var id: String
+    /// confirming, running, paused, ending, ended or dropped. An open set.
+    public var state: String
+    public var title: String?
+
+    enum CodingKeys: String, CodingKey {
+        case coordinator = "coordinator"
+        case generation = "generation"
+        case id = "id"
+        case state = "state"
+        case title = "title"
+    }
+
+    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, id: String, state: String, title: String? = nil) {
+        self.coordinator = coordinator
+        self.generation = generation
+        self.id = id
+        self.state = state
+        self.title = title
+    }
+}
+
 public struct CatalogHeavy: Codable, Sendable, Hashable {
     /// Nothing is granted for lack of free space.
     public var diskLow: Bool?
@@ -884,6 +918,31 @@ public struct CatalogLocation: Codable, Sendable, Hashable {
         self.folders = folders
         self.label = label
         self.stale = stale
+    }
+}
+
+public struct CatalogMember: Codable, Sendable, Hashable {
+    /// The coordinator is the Capcom service: a round message goes to it (groups.md 12.1).
+    public var capcom: Bool?
+    /// The device id of the hab the session runs on.
+    public var device: String
+    /// The session's name on that hab: its channel address there.
+    public var name: String
+    /// The session id on that hab.
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case capcom = "capcom"
+        case device = "device"
+        case name = "name"
+        case session = "session"
+    }
+
+    public init(capcom: Bool? = nil, device: String, name: String, session: String? = nil) {
+        self.capcom = capcom
+        self.device = device
+        self.name = name
+        self.session = session
     }
 }
 
@@ -1147,6 +1206,8 @@ public struct ChannelMessage: Codable, Sendable, Hashable {
     public var id: String
     /// The id of the message this one answers.
     public var replyTo: String?
+    /// A round's message: a capcom or group run's. A hab without the round-lock capability ignores it.
+    public var round: ChannelRound?
     /// At most 64 KiB.
     public var text: String
     public var to: ChannelEnd
@@ -1156,15 +1217,17 @@ public struct ChannelMessage: Codable, Sendable, Hashable {
         case from = "from"
         case id = "id"
         case replyTo = "reply_to"
+        case round = "round"
         case text = "text"
         case to = "to"
     }
 
-    public init(at: String, from: ChannelEnd, id: String, replyTo: String? = nil, text: String, to: ChannelEnd) {
+    public init(at: String, from: ChannelEnd, id: String, replyTo: String? = nil, round: ChannelRound? = nil, text: String, to: ChannelEnd) {
         self.at = at
         self.from = from
         self.id = id
         self.replyTo = replyTo
+        self.round = round
         self.text = text
         self.to = to
     }
@@ -1202,6 +1265,57 @@ public struct ChannelRecord: Codable, Sendable, Hashable {
         self.reason = reason
         self.state = state
         self.to = to
+    }
+}
+
+public struct ChannelRound: Codable, Sendable, Hashable {
+    /// Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired.
+    public var deadline: String?
+    /// The batch, cut to the block's bounds. Data from outside, never instructions.
+    public var events: [RoundEvent]?
+    /// RFC 3339: GFF_ROUND_LAST_OK.
+    public var lastOk: String?
+    /// The highest notice level in the batch. A hint.
+    public var level: String?
+    public var name: String
+    /// Events of the batch left out of events.
+    public var omitted: Int?
+    public var prompt: String
+    /// The round id.
+    public var round: String
+    /// The run id.
+    public var run: String
+    /// RFC 3339 slot of a slot run.
+    public var slot: String?
+    /// cron, once, event or manual.
+    public var trigger: String
+
+    enum CodingKeys: String, CodingKey {
+        case deadline = "deadline"
+        case events = "events"
+        case lastOk = "last_ok"
+        case level = "level"
+        case name = "name"
+        case omitted = "omitted"
+        case prompt = "prompt"
+        case round = "round"
+        case run = "run"
+        case slot = "slot"
+        case trigger = "trigger"
+    }
+
+    public init(deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String, round: String, run: String, slot: String? = nil, trigger: String) {
+        self.deadline = deadline
+        self.events = events
+        self.lastOk = lastOk
+        self.level = level
+        self.name = name
+        self.omitted = omitted
+        self.prompt = prompt
+        self.round = round
+        self.run = run
+        self.slot = slot
+        self.trigger = trigger
     }
 }
 
@@ -1262,6 +1376,9 @@ public struct ChannelState: RawRepresentable, Codable, Sendable, Hashable {
     public static let notDelivered = ChannelState(rawValue: "not_delivered")
     public static let refused = ChannelState(rawValue: "refused")
     public static let expired = ChannelState(rawValue: "expired")
+    public static let accepted = ChannelState(rawValue: "accepted")
+    public static let duplicate = ChannelState(rawValue: "duplicate")
+    public static let declined = ChannelState(rawValue: "declined")
 }
 
 public struct ChannelStatus: Codable, Sendable, Hashable {
@@ -1269,19 +1386,23 @@ public struct ChannelStatus: Codable, Sendable, Hashable {
     public var at: String
     /// The message id.
     public var id: String
+    /// Capcom's second answer to a round message it accepted: told, quiet, acted or unseen, with state accepted again. A hab that does not know it sees a state it already has.
+    public var outcome: String?
     public var reason: String?
     public var state: ChannelState
 
     enum CodingKeys: String, CodingKey {
         case at = "at"
         case id = "id"
+        case outcome = "outcome"
         case reason = "reason"
         case state = "state"
     }
 
-    public init(at: String, id: String, reason: String? = nil, state: ChannelState) {
+    public init(at: String, id: String, outcome: String? = nil, reason: String? = nil, state: ChannelState) {
         self.at = at
         self.id = id
+        self.outcome = outcome
         self.reason = reason
         self.state = state
     }
@@ -3023,6 +3144,23 @@ public struct HabStatsParams: Codable, Sendable, Hashable {
     }
 }
 
+public struct HabWoke: Codable, Sendable, Hashable {
+    /// RFC 3339 time of the event.
+    public var at: String
+    /// About how long the host slept, in seconds.
+    public var sleptS: Int
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case sleptS = "slept_s"
+    }
+
+    public init(at: String, sleptS: Int) {
+        self.at = at
+        self.sleptS = sleptS
+    }
+}
+
 public struct Heartbeat: Codable, Sendable, Hashable {
     public var seq: UInt64
 
@@ -3695,29 +3833,37 @@ public struct LogbookGetParams: Codable, Sendable, Hashable {
 }
 
 public struct LogbookHistory: Codable, Sendable, Hashable {
+    /// With folded_after: the highest fold number this replica has given, to pass as folded_after next.
+    public var lastFold: Int?
     public var ops: [LogbookOp]
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
 
     enum CodingKeys: String, CodingKey {
+        case lastFold = "last_fold"
         case ops = "ops"
         case seq = "seq"
     }
 
-    public init(ops: [LogbookOp], seq: UInt64) {
+    public init(lastFold: Int? = nil, ops: [LogbookOp], seq: UInt64) {
+        self.lastFold = lastFold
         self.ops = ops
         self.seq = seq
     }
 }
 
 public struct LogbookHistoryParams: Codable, Sendable, Hashable {
+    /// Only the ops this replica folded after this local fold number, in fold order. The numbers are this replica's own and never synced; logbook.history's folded gives the highest.
+    public var foldedAfter: Int?
     public var id: String
 
     enum CodingKeys: String, CodingKey {
+        case foldedAfter = "folded_after"
         case id = "id"
     }
 
-    public init(id: String) {
+    public init(foldedAfter: Int? = nil, id: String) {
+        self.foldedAfter = foldedAfter
         self.id = id
     }
 }
@@ -3831,6 +3977,8 @@ public struct LogbookOp: Codable, Sendable, Hashable {
     public var at: String
     public var by: LogbookActor?
     public var field: String?
+    /// With folded_after: the local fold number this replica gave the op.
+    public var fold: Int?
     /// This build folds the op. False: kept and forwarded for a newer build (logbook.md 4.4).
     public var folded: Bool?
     /// seq@origin.
@@ -3848,6 +3996,7 @@ public struct LogbookOp: Codable, Sendable, Hashable {
         case at = "at"
         case by = "by"
         case field = "field"
+        case fold = "fold"
         case folded = "folded"
         case id = "id"
         case kind = "kind"
@@ -3857,10 +4006,11 @@ public struct LogbookOp: Codable, Sendable, Hashable {
         case value = "value"
     }
 
-    public init(at: String, by: LogbookActor? = nil, field: String? = nil, folded: Bool? = nil, id: String, kind: String, prev: [String]? = nil, record: String, target: String? = nil, value: JSONValue? = nil) {
+    public init(at: String, by: LogbookActor? = nil, field: String? = nil, fold: Int? = nil, folded: Bool? = nil, id: String, kind: String, prev: [String]? = nil, record: String, target: String? = nil, value: JSONValue? = nil) {
         self.at = at
         self.by = by
         self.field = field
+        self.fold = fold
         self.folded = folded
         self.id = id
         self.kind = kind
@@ -5482,18 +5632,24 @@ public struct Round: Codable, Sendable, Hashable {
     /// The round will not run again until its trigger changes.
     public var completed: Bool?
     public var completedReason: String?
+    /// Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes.
+    public var cooldownMs: Int?
     /// RFC 3339.
     public var createdAt: String
     /// The session that created the round, when an agent did from its pane. Absent for a user. Read only.
     public var createdBy: String?
     /// Fresh: an absolute folder to start in, instead of the project's most recent one.
     public var cwd: String?
+    /// Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s.
+    public var debounceMs: Int?
     /// In a round.updated event only: the round was deleted. Its live run goes on to its end.
     public var deleted: Bool?
     /// RFC 3339 time the round completes. A past time is refused.
     public var expiresAt: String?
     /// Failed or timed-out runs in a row.
     public var failures: Int?
+    /// Group only: the group id. Its coordinator gets each run's message.
+    public var group: String?
     /// Fresh with a prompt: claude, codex or opencode.
     public var harness: String?
     /// Passed to the harness at start, as session.create does.
@@ -5507,7 +5663,7 @@ public struct Round: Codable, Sendable, Hashable {
     public var lastSlot: String?
     /// The round completes after this many finished runs. Absent: no limit.
     public var maxRuns: Int?
-    /// fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage.
+    /// fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2).
     public var mode: RoundMode
     public var model: String?
     /// Unique on the hab: 1 to 64 letters, digits, - and _.
@@ -5522,6 +5678,8 @@ public struct Round: Codable, Sendable, Hashable {
     public var paused: Bool?
     /// Why the round paused itself. Absent for a pause by the user.
     public var pausedReason: String?
+    /// Event rounds: the events waiting for the next run.
+    public var pending: Int?
     /// Fresh: the project id. The run starts in the project's most recently used folder.
     public var project: String?
     /// In a create or update only, instead of project: an absolute folder; the hab finds or creates its project, as session.create does, and stores the project id.
@@ -5543,7 +5701,7 @@ public struct Round: Codable, Sendable, Hashable {
     public var triggerError: String?
     /// RFC 3339.
     public var updatedAt: String
-    /// Resume only: how long a run waits for the session to be free. Absent: 10 minutes.
+    /// Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes.
     public var waitMs: Int?
 
     enum CodingKeys: String, CodingKey {
@@ -5551,12 +5709,15 @@ public struct Round: Codable, Sendable, Hashable {
         case command = "command"
         case completed = "completed"
         case completedReason = "completed_reason"
+        case cooldownMs = "cooldown_ms"
         case createdAt = "created_at"
         case createdBy = "created_by"
         case cwd = "cwd"
+        case debounceMs = "debounce_ms"
         case deleted = "deleted"
         case expiresAt = "expires_at"
         case failures = "failures"
+        case group = "group"
         case harness = "harness"
         case harnessArgs = "harness_args"
         case id = "id"
@@ -5572,6 +5733,7 @@ public struct Round: Codable, Sendable, Hashable {
         case onFinish = "on_finish"
         case paused = "paused"
         case pausedReason = "paused_reason"
+        case pending = "pending"
         case project = "project"
         case projectDir = "project_dir"
         case projectRemote = "project_remote"
@@ -5586,17 +5748,20 @@ public struct Round: Codable, Sendable, Hashable {
         case waitMs = "wait_ms"
     }
 
-    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil) {
+    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, cooldownMs: Int? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, debounceMs: Int? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, pending: Int? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil) {
         self.catchUp = catchUp
         self.command = command
         self.completed = completed
         self.completedReason = completedReason
+        self.cooldownMs = cooldownMs
         self.createdAt = createdAt
         self.createdBy = createdBy
         self.cwd = cwd
+        self.debounceMs = debounceMs
         self.deleted = deleted
         self.expiresAt = expiresAt
         self.failures = failures
+        self.group = group
         self.harness = harness
         self.harnessArgs = harnessArgs
         self.id = id
@@ -5612,6 +5777,7 @@ public struct Round: Codable, Sendable, Hashable {
         self.onFinish = onFinish
         self.paused = paused
         self.pausedReason = pausedReason
+        self.pending = pending
         self.project = project
         self.projectDir = projectDir
         self.projectRemote = projectRemote
@@ -5671,6 +5837,83 @@ public struct RoundCreated: Codable, Sendable, Hashable {
     }
 }
 
+public struct RoundEvent: Codable, Sendable, Hashable {
+    public var at: String
+    public var data: JSONValue?
+    public var kind: String
+    public var level: String?
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case data = "data"
+        case kind = "kind"
+        case level = "level"
+        case title = "title"
+    }
+
+    public init(at: String, data: JSONValue? = nil, kind: String, level: String? = nil, title: String) {
+        self.at = at
+        self.data = data
+        self.kind = kind
+        self.level = level
+        self.title = title
+    }
+}
+
+public struct RoundEventFilter: Codable, Sendable, Hashable {
+    /// logbook.updated: who wrote the change: person, agent, hab or any (the default).
+    public var by: String?
+    /// logbook.updated: created (the default), status, deleted or any.
+    public var change: String?
+    /// project.updated: the changed fields that count: head, branch, behind. Absent: any.
+    public var field: [String]?
+    /// notice.raised: the lowest level: passive, active or time-sensitive.
+    public var level: String?
+    /// A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project.
+    public var project: String?
+    /// A session id: agent.state, command.updated, notice.raised.
+    public var session: String?
+    /// agent.state: the new states that count: done, error. Absent: both.
+    public var state: [String]?
+    /// logbook.updated with change status: the new statuses that count. Absent: any.
+    public var status: [String]?
+    /// logbook.updated: the record holds any of these tags.
+    public var tags: [String]?
+    /// notice.raised: a case-insensitive part of the title or body.
+    public var text: String?
+    /// logbook.updated: the record type.
+    public var type: String?
+
+    enum CodingKeys: String, CodingKey {
+        case by = "by"
+        case change = "change"
+        case field = "field"
+        case level = "level"
+        case project = "project"
+        case session = "session"
+        case state = "state"
+        case status = "status"
+        case tags = "tags"
+        case text = "text"
+        case type = "type"
+    }
+
+    public init(by: String? = nil, change: String? = nil, field: [String]? = nil, level: String? = nil, project: String? = nil, session: String? = nil, state: [String]? = nil, status: [String]? = nil, tags: [String]? = nil, text: String? = nil, type: String? = nil) {
+        self.by = by
+        self.change = change
+        self.field = field
+        self.level = level
+        self.project = project
+        self.session = session
+        self.state = state
+        self.status = status
+        self.tags = tags
+        self.text = text
+        self.type = type
+    }
+}
+
 public struct RoundList: Codable, Sendable, Hashable {
     public var rounds: [Round]
     /// Seq of the last event queued for this connection before the request ran.
@@ -5699,6 +5942,8 @@ public struct RoundMode: RawRepresentable, Codable, Sendable, Hashable {
     public static let fresh = RoundMode(rawValue: "fresh")
     public static let resume = RoundMode(rawValue: "resume")
     public static let fork = RoundMode(rawValue: "fork")
+    public static let capcom = RoundMode(rawValue: "capcom")
+    public static let group = RoundMode(rawValue: "group")
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
@@ -5764,13 +6009,21 @@ public struct RoundResult: Codable, Sendable, Hashable {
 public struct RoundRun: Codable, Sendable, Hashable {
     /// RFC 3339 time the run was made.
     public var created: String
+    /// Capcom and group runs: where the message went, the Capcom home host or the coordinator's address.
+    public var destination: String?
     /// RFC 3339.
     public var endedAt: String?
+    /// An event run's batch size, dropped events included. Its run has them in GFF_ROUND_EVENTS.
+    public var events: Int?
     public var id: String
+    /// Capcom and group runs: the channel message id.
+    public var message: String?
     /// How many slots the run covers: 1 on time, more after a catch-up.
     public var missed: Int?
     /// The run number within its round, from 1.
     public var number: Int
+    /// Capcom runs: Capcom's second answer, set once after the run ended. Word unknown when none came within outcome_wait.
+    public var outcome: RoundRunOutcome?
     public var reason: String?
     /// The first 4 KiB of the final agent message.
     public var result: String?
@@ -5788,10 +6041,14 @@ public struct RoundRun: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case created = "created"
+        case destination = "destination"
         case endedAt = "ended_at"
+        case events = "events"
         case id = "id"
+        case message = "message"
         case missed = "missed"
         case number = "number"
+        case outcome = "outcome"
         case reason = "reason"
         case result = "result"
         case round = "round"
@@ -5802,12 +6059,16 @@ public struct RoundRun: Codable, Sendable, Hashable {
         case trigger = "trigger"
     }
 
-    public init(created: String, endedAt: String? = nil, id: String, missed: Int? = nil, number: Int, reason: String? = nil, result: String? = nil, round: String, session: String? = nil, slot: String? = nil, startedAt: String? = nil, state: RoundRunState, trigger: RoundTriggerKind) {
+    public init(created: String, destination: String? = nil, endedAt: String? = nil, events: Int? = nil, id: String, message: String? = nil, missed: Int? = nil, number: Int, outcome: RoundRunOutcome? = nil, reason: String? = nil, result: String? = nil, round: String, session: String? = nil, slot: String? = nil, startedAt: String? = nil, state: RoundRunState, trigger: RoundTriggerKind) {
         self.created = created
+        self.destination = destination
         self.endedAt = endedAt
+        self.events = events
         self.id = id
+        self.message = message
         self.missed = missed
         self.number = number
+        self.outcome = outcome
         self.reason = reason
         self.result = result
         self.round = round
@@ -5816,6 +6077,22 @@ public struct RoundRun: Codable, Sendable, Hashable {
         self.startedAt = startedAt
         self.state = state
         self.trigger = trigger
+    }
+}
+
+public struct RoundRunOutcome: Codable, Sendable, Hashable {
+    /// RFC 3339 time the turn that took the message ended. Absent for unknown.
+    public var at: String?
+    public var word: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case word = "word"
+    }
+
+    public init(at: String? = nil, word: String) {
+        self.at = at
+        self.word = word
     }
 }
 
@@ -5898,17 +6175,23 @@ public struct RoundSpec: Codable, Sendable, Hashable {
     public var catchUp: RoundCatchUp?
     /// Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.
     public var command: [String]?
+    /// Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes.
+    public var cooldownMs: Int?
     /// Fresh: an absolute folder to start in, instead of the project's most recent one.
     public var cwd: String?
+    /// Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s.
+    public var debounceMs: Int?
     /// RFC 3339 time the round completes. A past time is refused.
     public var expiresAt: String?
+    /// Group only: the group id. Its coordinator gets each run's message.
+    public var group: String?
     /// Fresh with a prompt: claude, codex or opencode.
     public var harness: String?
     /// Passed to the harness at start, as session.create does.
     public var harnessArgs: [String]?
     /// The round completes after this many finished runs. Absent: no limit.
     public var maxRuns: Int?
-    /// fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage.
+    /// fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2).
     public var mode: RoundMode
     public var model: String?
     /// Unique on the hab: 1 to 64 letters, digits, - and _.
@@ -5932,14 +6215,17 @@ public struct RoundSpec: Codable, Sendable, Hashable {
     /// The longest a run may take. Absent: 60 minutes.
     public var timeoutMs: Int?
     public var trigger: RoundTrigger
-    /// Resume only: how long a run waits for the session to be free. Absent: 10 minutes.
+    /// Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes.
     public var waitMs: Int?
 
     enum CodingKeys: String, CodingKey {
         case catchUp = "catch_up"
         case command = "command"
+        case cooldownMs = "cooldown_ms"
         case cwd = "cwd"
+        case debounceMs = "debounce_ms"
         case expiresAt = "expires_at"
+        case group = "group"
         case harness = "harness"
         case harnessArgs = "harness_args"
         case maxRuns = "max_runs"
@@ -5959,11 +6245,14 @@ public struct RoundSpec: Codable, Sendable, Hashable {
         case waitMs = "wait_ms"
     }
 
-    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, cwd: String? = nil, expiresAt: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
+    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, cooldownMs: Int? = nil, cwd: String? = nil, debounceMs: Int? = nil, expiresAt: String? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
         self.catchUp = catchUp
         self.command = command
+        self.cooldownMs = cooldownMs
         self.cwd = cwd
+        self.debounceMs = debounceMs
         self.expiresAt = expiresAt
+        self.group = group
         self.harness = harness
         self.harnessArgs = harnessArgs
         self.maxRuns = maxRuns
@@ -5989,9 +6278,13 @@ public struct RoundTrigger: Codable, Sendable, Hashable {
     public var at: String?
     /// Kind cron: a 5-field cron expression.
     public var cron: String?
+    /// Kind event: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated. Only this hab's own events.
+    public var event: String?
     /// Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every.
     public var every: String?
-    /// cron, once or manual. event triggers come in a later stage and are refused.
+    /// Kind event: which events of its kind make a run. Each event takes only its own fields; an absent field matches everything.
+    public var filter: RoundEventFilter?
+    /// cron, once, event or manual.
     public var kind: RoundTriggerKind
     /// Kind cron or once: the IANA time zone. Absent in a create: the hab's zone, stored by name.
     public var zone: String?
@@ -5999,15 +6292,19 @@ public struct RoundTrigger: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case at = "at"
         case cron = "cron"
+        case event = "event"
         case every = "every"
+        case filter = "filter"
         case kind = "kind"
         case zone = "zone"
     }
 
-    public init(at: String? = nil, cron: String? = nil, every: String? = nil, kind: RoundTriggerKind, zone: String? = nil) {
+    public init(at: String? = nil, cron: String? = nil, event: String? = nil, every: String? = nil, filter: RoundEventFilter? = nil, kind: RoundTriggerKind, zone: String? = nil) {
         self.at = at
         self.cron = cron
+        self.event = event
         self.every = every
+        self.filter = filter
         self.kind = kind
         self.zone = zone
     }
@@ -6019,6 +6316,7 @@ public struct RoundTriggerKind: RawRepresentable, Codable, Sendable, Hashable {
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let cron = RoundTriggerKind(rawValue: "cron")
     public static let once = RoundTriggerKind(rawValue: "once")
+    public static let event = RoundTriggerKind(rawValue: "event")
     public static let manual = RoundTriggerKind(rawValue: "manual")
 }
 
@@ -7795,6 +8093,8 @@ public enum HabEvent: Sendable, Hashable {
     case roundUpdated(Round)
     /// A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.
     case roundRunUpdated(RoundRun)
+    /// The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.
+    case habWoke(HabWoke)
     /// A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.
     case logbookUpdated(LogbookUpdated)
     /// A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.
@@ -7831,6 +8131,7 @@ public enum HabEvent: Sendable, Hashable {
         case "confirm.closed": self = .confirmClosed(try event.data.decode(Confirmation.self))
         case "round.updated": self = .roundUpdated(try event.data.decode(Round.self))
         case "round.run_updated": self = .roundRunUpdated(try event.data.decode(RoundRun.self))
+        case "hab.woke": self = .habWoke(try event.data.decode(HabWoke.self))
         case "logbook.updated": self = .logbookUpdated(try event.data.decode(LogbookUpdated.self))
         case "logbook.conflict": self = .logbookConflict(try event.data.decode(LogbookConflict.self))
         case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))

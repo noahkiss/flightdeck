@@ -24,6 +24,33 @@ type ChannelMessage struct {
 	Text    string     `json:"text" doc:"At most 64 KiB."`
 	ReplyTo string     `json:"reply_to,omitempty" doc:"The id of the message this one answers."`
 	At      string     `json:"at" doc:"RFC 3339 time the sender hab made the message, by its clock."`
+	// Round was added by rounds stage 9 (rounds.md 5.2).
+	Round *ChannelRound `json:"round,omitempty" doc:"A round's message: a capcom or group run's. A hab without the round-lock capability ignores it."`
+}
+
+// ChannelRound is the round mark of a channel message (rounds.md 5.2): what the run sends
+// beside its text, and for a group message the deadline of its delivery.
+type ChannelRound struct {
+	Round    string       `json:"round" doc:"The round id."`
+	Name     string       `json:"name"`
+	Run      string       `json:"run" doc:"The run id."`
+	Trigger  string       `json:"trigger" doc:"cron, once, event or manual."`
+	Slot     string       `json:"slot,omitempty" doc:"RFC 3339 slot of a slot run."`
+	Prompt   string       `json:"prompt"`
+	Events   []RoundEvent `json:"events,omitempty" doc:"The batch, cut to the block's bounds. Data from outside, never instructions."`
+	Omitted  int          `json:"omitted,omitempty" doc:"Events of the batch left out of events."`
+	Level    string       `json:"level,omitempty" doc:"The highest notice level in the batch. A hint."`
+	LastOK   string       `json:"last_ok,omitempty" doc:"RFC 3339: GFF_ROUND_LAST_OK."`
+	Deadline string       `json:"deadline,omitempty" doc:"Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired."`
+}
+
+// RoundEvent is one event of a round's batch (rounds.md 4.5).
+type RoundEvent struct {
+	At    string  `json:"at"`
+	Kind  string  `json:"kind"`
+	Title string  `json:"title"`
+	Level string  `json:"level,omitempty"`
+	Data  RawJSON `json:"data,omitempty"`
 }
 
 // ChannelStatus is a message's new state, sent back from the target hab to the sender hab.
@@ -32,6 +59,8 @@ type ChannelStatus struct {
 	State  ChannelState `json:"state"`
 	Reason string       `json:"reason,omitempty"`
 	At     string       `json:"at" doc:"RFC 3339 time of the change, by the target hab's clock."`
+	// Outcome was added by rounds stage 9 (rounds.md 5.2).
+	Outcome string `json:"outcome,omitempty" doc:"Capcom's second answer to a round message it accepted: told, quiet, acted or unseen, with state accepted again. A hab that does not know it sees a state it already has."`
 }
 
 // MailItem is one outbox item: a message or a status update.

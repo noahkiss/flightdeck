@@ -24,18 +24,36 @@ type RoundRunState string
 
 // RoundTrigger is a round's one trigger.
 type RoundTrigger struct {
-	Kind  RoundTriggerKind `json:"kind" doc:"cron, once or manual. event triggers come in a later stage and are refused."`
+	Kind  RoundTriggerKind `json:"kind" doc:"cron, once, event or manual."`
 	Cron  string           `json:"cron,omitempty" doc:"Kind cron: a 5-field cron expression."`
 	Every string           `json:"every,omitempty" doc:"Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every."`
 	Zone  string           `json:"zone,omitempty" doc:"Kind cron or once: the IANA time zone. Absent in a create: the hab's zone, stored by name."`
 	At    string           `json:"at,omitempty" doc:"Kind once: the RFC 3339 instant. A past instant is refused."`
+	// Event and Filter were added by stage 9 (rounds.md 4.3).
+	Event  string            `json:"event,omitempty" doc:"Kind event: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated. Only this hab's own events."`
+	Filter *RoundEventFilter `json:"filter,omitempty" doc:"Kind event: which events of its kind make a run. Each event takes only its own fields; an absent field matches everything."`
+}
+
+// RoundEventFilter is an event trigger's filter (rounds.md 4.3).
+type RoundEventFilter struct {
+	Project string   `json:"project,omitempty" doc:"A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project."`
+	Session string   `json:"session,omitempty" doc:"A session id: agent.state, command.updated, notice.raised."`
+	Field   []string `json:"field,omitempty" doc:"project.updated: the changed fields that count: head, branch, behind. Absent: any."`
+	State   []string `json:"state,omitempty" doc:"agent.state: the new states that count: done, error. Absent: both."`
+	Level   string   `json:"level,omitempty" doc:"notice.raised: the lowest level: passive, active or time-sensitive."`
+	Text    string   `json:"text,omitempty" doc:"notice.raised: a case-insensitive part of the title or body."`
+	Type    string   `json:"type,omitempty" doc:"logbook.updated: the record type."`
+	Change  string   `json:"change,omitempty" doc:"logbook.updated: created (the default), status, deleted or any."`
+	Status  []string `json:"status,omitempty" doc:"logbook.updated with change status: the new statuses that count. Absent: any."`
+	Tags    []string `json:"tags,omitempty" doc:"logbook.updated: the record holds any of these tags."`
+	By      string   `json:"by,omitempty" doc:"logbook.updated: who wrote the change: person, agent, hab or any (the default)."`
 }
 
 // RoundSpec is what a user or an agent writes of a round: create and update send it, and a
 // round read back holds it with the defaults filled.
 type RoundSpec struct {
 	Name          string        `json:"name" doc:"Unique on the hab: 1 to 64 letters, digits, - and _."`
-	Mode          RoundMode     `json:"mode" doc:"fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."`
+	Mode          RoundMode     `json:"mode" doc:"fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2)."`
 	Trigger       RoundTrigger  `json:"trigger"`
 	Prompt        string        `json:"prompt,omitempty" doc:"The text the agent gets each run, at most 64 KiB. Required unless command is set."`
 	Harness       string        `json:"harness,omitempty" doc:"Fresh with a prompt: claude, codex or opencode."`
@@ -50,11 +68,15 @@ type RoundSpec struct {
 	MaxRuns       int           `json:"max_runs,omitempty" doc:"The round completes after this many finished runs. Absent: no limit."`
 	ExpiresAt     string        `json:"expires_at,omitempty" doc:"RFC 3339 time the round completes. A past time is refused."`
 	TimeoutMS     int64         `json:"timeout_ms,omitempty" doc:"The longest a run may take. Absent: 60 minutes."`
-	WaitMS        int64         `json:"wait_ms,omitempty" doc:"Resume only: how long a run waits for the session to be free. Absent: 10 minutes."`
+	WaitMS        int64         `json:"wait_ms,omitempty" doc:"Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes."`
 	CatchUp       RoundCatchUp  `json:"catch_up,omitempty" doc:"once (the default) or skip."`
 	OnFinish      RoundOnFinish `json:"on_finish,omitempty" doc:"Fresh and fork: close (the default) closes the run's pane after a success; keep leaves it."`
 	Notify        RoundNotify   `json:"notify,omitempty" doc:"failures (the default), always or never."`
 	Paused        bool          `json:"paused,omitempty" doc:"A paused round starts no runs. An update keeps the stored mark: round.pause and round.unpause change it."`
+	// Group, DebounceMS and CooldownMS were added by stage 9 (rounds.md 4.5, 5.2).
+	Group      string `json:"group,omitempty" doc:"Group only: the group id. Its coordinator gets each run's message."`
+	DebounceMS int64  `json:"debounce_ms,omitempty" doc:"Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s."`
+	CooldownMS int64  `json:"cooldown_ms,omitempty" doc:"Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."`
 }
 
 // Round is one round as the hab holds it: its definition and where its schedule stands.
@@ -76,6 +98,7 @@ type Round struct {
 	CompletedReason string    `json:"completed_reason,omitempty"`
 	TriggerError    string    `json:"trigger_error,omitempty" doc:"The stored trigger no longer compiles on this host, such as a zone its zone database lacks. The round is not scheduled until an edit fixes it."`
 	LastRun         *RoundRun `json:"last_run,omitempty" doc:"The newest run, in round.list and round.get."`
+	Pending         int       `json:"pending,omitempty" doc:"Event rounds: the events waiting for the next run."`
 	Deleted         bool      `json:"deleted,omitempty" doc:"In a round.updated event only: the round was deleted. Its live run goes on to its end."`
 }
 
@@ -100,6 +123,24 @@ type RoundRun struct {
 	StartedAt string           `json:"started_at,omitempty" doc:"RFC 3339."`
 	EndedAt   string           `json:"ended_at,omitempty" doc:"RFC 3339."`
 	Result    string           `json:"result,omitempty" doc:"The first 4 KiB of the final agent message."`
+	// Events, Destination, Message and Outcome were added by stage 9 (rounds.md 4.5, 5.2).
+	Events      int              `json:"events,omitempty" doc:"An event run's batch size, dropped events included. Its run has them in GFF_ROUND_EVENTS."`
+	Destination string           `json:"destination,omitempty" doc:"Capcom and group runs: where the message went, the Capcom home host or the coordinator's address."`
+	Message     string           `json:"message,omitempty" doc:"Capcom and group runs: the channel message id."`
+	Outcome     *RoundRunOutcome `json:"outcome,omitempty" doc:"Capcom runs: Capcom's second answer, set once after the run ended. Word unknown when none came within outcome_wait."`
+}
+
+// RoundRunOutcome is what Capcom did with a round message (rounds.md 5.2): told, quiet, acted,
+// unseen; unknown when none came in time. The set is open.
+type RoundRunOutcome struct {
+	Word string `json:"word"`
+	At   string `json:"at,omitempty" doc:"RFC 3339 time the turn that took the message ended. Absent for unknown."`
+}
+
+// HabWoke is the data of hab.woke: the hab detected a wake, after the wake settle (rounds.md 4.3).
+type HabWoke struct {
+	SleptS int64  `json:"slept_s" doc:"About how long the host slept, in seconds."`
+	At     string `json:"at" doc:"RFC 3339 time of the event."`
 }
 
 // RoundRef names one round by id or by name; give one.

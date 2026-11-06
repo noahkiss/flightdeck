@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "id": "id-4",
+      "kind": "status",
+      "reason": "reason-5",
+      "state": "declined",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
