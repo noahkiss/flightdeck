@@ -168,5 +168,3 @@ func TestCompactClaude(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "end"), "")
 }
-
-
