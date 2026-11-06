@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,7 +23,12 @@ import (
 // printed and how long it took. It always exits 0.
 func habitHook(t *testing.T, env []string, harness, event, payload string) (string, time.Duration) {
 	t.Helper()
-	cmd := exec.Command(bin, "hook", harness, event)
+	return habitHookWith(t, bin, env, harness, event, payload)
+}
+
+func habitHookWith(t *testing.T, path string, env []string, harness, event, payload string) (string, time.Duration) {
+	t.Helper()
+	cmd := exec.Command(path, "hook", harness, event)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = strings.NewReader(payload)
 	var out bytes.Buffer
@@ -32,6 +38,34 @@ func habitHook(t *testing.T, env []string, harness, event, payload string) (stri
 		t.Fatalf("gff-hab hook %s %s: %v", harness, event, err)
 	}
 	return out.String(), time.Since(start)
+}
+
+var (
+	plainOnce sync.Once
+	plainPath string
+	plainErr  error
+)
+
+// plainBin is gff-hab built without -race: the binary that ships. A step that times the hook
+// against hook.Budget runs it, since the race detector makes the Logbook file's SQLite (pure
+// Go) some 40 times slower than a release build. Without -race it is bin.
+func plainBin(t *testing.T) string {
+	t.Helper()
+	if !raceBuild {
+		return bin
+	}
+	plainOnce.Do(func() {
+		plainPath = filepath.Join(testDir, "gff-hab-plain")
+		var out []byte
+		out, plainErr = exec.Command("go", "build", "-tags", "testseam", "-o", plainPath, ".").CombinedOutput()
+		if plainErr != nil {
+			plainErr = fmt.Errorf("%v\n%s", plainErr, out)
+		}
+	})
+	if plainErr != nil {
+		t.Fatalf("build gff-hab without -race: %v", plainErr)
+	}
+	return plainPath
 }
 
 func setHabit(t *testing.T, c *control.Client, id string, on bool) {
@@ -171,7 +205,8 @@ func TestLogbookHabits(t *testing.T) {
 		t.Fatalf("brief from the file turned off for the project: %q", out)
 	}
 	writeFile(t, cfg, "[settings]\n\"logbook.habits.brief\" = true\n")
-	out, took := habitHook(t, inPane, "claude", "SessionStart", start)
+	// The budget is the shipped binary's: under -race, a build without it (plainBin).
+	out, took := habitHookWith(t, plainBin(t), inPane, "claude", "SessionStart", start)
 	var got struct {
 		HookSpecificOutput struct {
 			AdditionalContext string `json:"additionalContext"`

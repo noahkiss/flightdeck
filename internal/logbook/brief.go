@@ -35,8 +35,12 @@ type BriefSet struct {
 	Flagged    int // records with a flag
 }
 
-// briefSelect reads the summary fields, the priority and the last change of each record r.
-const briefSelect = `SELECT r.id, r.type, r.status, r.title, r.project, r.deleted,
+// briefSelect reads the summary fields, the priority and the last change of each record r. The
+// project comes through joins (canonicalProject), in the same query: one query per row would
+// cost a brief of hundreds of records most of its time.
+const briefSelect = `SELECT r.id, r.type, r.status, r.title,
+	CASE WHEN r.project = '' THEN '' ELSE coalesce((SELECT canonical FROM aliases WHERE project = r.project), r.project) END,
+	r.deleted,
 	coalesce((SELECT CASE WHEN json_valid(f.value) THEN json_extract(f.value, '$') END FROM fields f
 		WHERE f.root = r.root AND f.field = 'priority'), 0) AS priority,
 	coalesce((SELECT max(o.wall) FROM ops o WHERE o.root = r.root AND o.known = 1), r.created_wall) AS updated
@@ -85,9 +89,6 @@ func (s *Store) Brief(ctx context.Context, q BriefQuery) (BriefSet, error) {
 				continue
 			}
 			seen[it.ID] = true
-			if it.Project, err = s.canonicalProject(ctx, it.Project); err != nil {
-				return err
-			}
 			*dst = append(*dst, it)
 		}
 		return rows.Err()

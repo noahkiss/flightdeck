@@ -30,6 +30,8 @@ var (
 	// race_test.go adds -race under the race detector. testseam compiles in the test seams,
 	// which stay off unless a test sets their variable ($GFF_TEST_SPAWN_DELAY).
 	buildFlags = []string{"-tags", "testseam"}
+	// raceBuild: bin is a race build (race_test.go).
+	raceBuild bool
 )
 
 // testDir is TestMain's directory: the built binaries and the fakes built once
