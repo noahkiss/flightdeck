@@ -402,11 +402,12 @@ public final class SSHSetup {
     public var unfinishedPairing: SSHHabEntry?
 
     /// Probes each paired endpoint until one presents a host key.
-    public func probePairing(_ entry: SSHHabEntry) async throws -> NIOSSHPublicKey {
+    public func probePairing(_ entry: SSHHabEntry) async throws -> (SSHEndpoint, NIOSSHPublicKey) {
         var last: Error = TransportError("the hab has no SSH address")
         for endpoint in entry.endpoints {
             do {
-                return try await probe(SSHDestination(user: entry.user, endpoint: endpoint), keyID: entry.keyID)
+                let key = try await probe(SSHDestination(user: entry.user, endpoint: endpoint), keyID: entry.keyID)
+                return (endpoint, key)
             } catch {
                 if Task.isCancelled { throw CancellationError() }
                 last = error

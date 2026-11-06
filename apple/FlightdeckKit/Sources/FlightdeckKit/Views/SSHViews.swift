@@ -445,7 +445,7 @@ struct PairingView: View {
         /// The owner is asked; the code to type on the hab.
         case waiting(String)
         /// Paired, but the answer had no sshd host key: compare and trust.
-        case hostKey(SSHHabEntry, String, String) // entry, fingerprint, OpenSSH line
+        case hostKey(SSHHabEntry, SSHEndpoint, String, String) // entry, endpoint, fingerprint, OpenSSH line
         /// Paired, but the host key probe failed.
         case probeFailed(SSHHabEntry)
         case testing
@@ -555,12 +555,12 @@ struct PairingView: View {
             } footer: {
                 Text("Upper and lower case count.")
             }
-        case .hostKey(let e, let fp, _):
+        case .hostKey(let e, let endpoint, let fp, _):
             Section {
                 Text(fp).font(.caption.monospaced()).textSelection(.enabled)
                 Button("Trust this host key") { trust(e, fp) }
             } header: {
-                Text("Host key of \(e.destination)")
+                Text("Host key of \(e.user)@\(endpoint.description)")
             } footer: {
                 Text("The hab sent no SSH host key. Compare with ssh-keygen -lf on the host's key, for example /etc/ssh/ssh_host_ed25519_key.pub.")
             }
@@ -654,8 +654,8 @@ struct PairingView: View {
         step = .connecting
         task = Task {
             do {
-                let key = try await setup.probePairing(e)
-                step = .hostKey(e, SSHFingerprint.of(key), String(openSSHPublicKey: key))
+                let (endpoint, key) = try await setup.probePairing(e)
+                step = .hostKey(e, endpoint, SSHFingerprint.of(key), String(openSSHPublicKey: key))
             } catch {
                 if Task.isCancelled { return }
                 self.error = "\(error)"
@@ -665,7 +665,7 @@ struct PairingView: View {
     }
 
     private func trust(_ e: SSHHabEntry, _ fp: String) {
-        guard case .hostKey(_, _, let line) = step else { return }
+        guard case .hostKey(_, _, _, let line) = step else { return }
         var entry = e
         entry.hostKeyFingerprint = fp
         entry.hostKey = line
