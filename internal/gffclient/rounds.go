@@ -67,13 +67,16 @@ func (u *workspaceUI) listCatalog(hs *hostState) {
 			delete(u.catBusy, label)
 			if err == nil {
 				ids := map[string]bool{}
+				labels := map[string]string{}
 				for _, h := range c.cfg.Hosts.Hosts() {
 					if id := h.Identity(); id != "" {
 						ids[id] = true
+						labels[id] = h.Label
 					}
 				}
 				for _, e := range res.Hosts {
 					u.keepCatalog(e, ids)
+					u.keepHeavy(label, e, labels)
 				}
 				u.dirty = true
 			}

@@ -23,6 +23,8 @@ type Catalog struct {
 	Capcom       *CatalogCapcom      `json:"capcom,omitempty" doc:"The Capcom home host as this hab knows it, and the Capcom sessions on this host (capcom.md 7.3). Absent from a hab without the capcom capability, and while no host was ever assigned and this host has no Capcom session."`
 	// Rounds was added within revision 1, a new field set of each catalog message (rounds.md 9).
 	Rounds []CatalogRound `json:"rounds,omitempty" doc:"The rounds this hab runs, by name. Absent from a hab without the rounds capability or with no round."`
+	// Heavy was added within revision 1, a new field of each catalog message (groups.md 8.2).
+	Heavy *CatalogHeavy `json:"heavy,omitempty" doc:"The heavy-run lock and the free space of the state and worktree volumes. Absent from a hab without the heavy capability."`
 }
 
 // CatalogRound is one round on the publishing host, as peers see it (rounds.md 9, 10.3).

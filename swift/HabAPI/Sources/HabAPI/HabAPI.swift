@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -555,6 +555,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var generation: UInt64
     /// Coding-agent harnesses found on PATH, with their versions.
     public var harnesses: [CatalogTool]
+    /// The heavy-run lock and the free space of the state and worktree volumes. Absent from a hab without the heavy capability.
+    public var heavy: CatalogHeavy?
     /// The publishing hab's host id.
     public var host: String
     /// The device ids in this hab's peer list.
@@ -581,6 +583,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case deviceId = "device_id"
         case generation = "generation"
         case harnesses = "harnesses"
+        case heavy = "heavy"
         case host = "host"
         case peers = "peers"
         case projects = "projects"
@@ -591,7 +594,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -601,6 +604,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.deviceId = deviceId
         self.generation = generation
         self.harnesses = harnesses
+        self.heavy = heavy
         self.host = host
         self.peers = peers
         self.projects = projects
@@ -804,6 +808,34 @@ public struct CatalogGetResult: Codable, Sendable, Hashable {
         self.catalog = catalog
         self.generation = generation
         self.seq = seq
+    }
+}
+
+public struct CatalogHeavy: Codable, Sendable, Hashable {
+    /// Nothing is granted for lack of free space.
+    public var diskLow: Bool?
+    /// Runs that hold the lock.
+    public var holding: Int
+    public var slots: Int
+    /// The state folder's volume and the worktree root's. free_bytes is published when it moved by 1 GiB or more, or crossed the threshold.
+    public var volumes: [HeavyVolume]
+    /// Runs that wait for it.
+    public var waiting: Int
+
+    enum CodingKeys: String, CodingKey {
+        case diskLow = "disk_low"
+        case holding = "holding"
+        case slots = "slots"
+        case volumes = "volumes"
+        case waiting = "waiting"
+    }
+
+    public init(diskLow: Bool? = nil, holding: Int, slots: Int, volumes: [HeavyVolume], waiting: Int) {
+        self.diskLow = diskLow
+        self.holding = holding
+        self.slots = slots
+        self.volumes = volumes
+        self.waiting = waiting
     }
 }
 
@@ -3000,6 +3032,197 @@ public struct Heartbeat: Codable, Sendable, Hashable {
 
     public init(seq: UInt64) {
         self.seq = seq
+    }
+}
+
+public struct HeavyReleaseParams: Codable, Sendable, Hashable {
+    public var ticket: String
+
+    enum CodingKeys: String, CodingKey {
+        case ticket = "ticket"
+    }
+
+    public init(ticket: String) {
+        self.ticket = ticket
+    }
+}
+
+public struct HeavyRun: Codable, Sendable, Hashable {
+    public var command: String?
+    /// RFC 3339 time it was granted.
+    public var granted: String?
+    public var pane: String?
+    /// The session of the pane the run asked from, when it named one.
+    public var session: String?
+    /// RFC 3339 time it first asked.
+    public var since: String
+    public var state: HeavyState
+    public var ticket: String
+
+    enum CodingKeys: String, CodingKey {
+        case command = "command"
+        case granted = "granted"
+        case pane = "pane"
+        case session = "session"
+        case since = "since"
+        case state = "state"
+        case ticket = "ticket"
+    }
+
+    public init(command: String? = nil, granted: String? = nil, pane: String? = nil, session: String? = nil, since: String, state: HeavyState, ticket: String) {
+        self.command = command
+        self.granted = granted
+        self.pane = pane
+        self.session = session
+        self.since = since
+        self.state = state
+        self.ticket = ticket
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct HeavyState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let holding = HeavyState(rawValue: "holding")
+    public static let waiting = HeavyState(rawValue: "waiting")
+}
+
+public struct HeavyStatus: Codable, Sendable, Hashable {
+    /// Free space fell below heavy.disk_min_free and has not come back above it by [heavy] disk_resume_margin: nothing is granted.
+    public var diskLow: Bool?
+    /// RFC 3339 time the hold after a gff-hab start ends; absent once it ended.
+    public var holdUntil: String?
+    /// In the order they were granted.
+    public var holders: [HeavyRun]
+    /// heavy.disk_min_free in bytes.
+    public var minFreeBytes: UInt64
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// heavy.slots: runs that may hold the lock at once.
+    public var slots: Int
+    public var volumes: [HeavyVolume]
+    /// In the order they will be granted.
+    public var waiters: [HeavyRun]
+
+    enum CodingKeys: String, CodingKey {
+        case diskLow = "disk_low"
+        case holdUntil = "hold_until"
+        case holders = "holders"
+        case minFreeBytes = "min_free_bytes"
+        case seq = "seq"
+        case slots = "slots"
+        case volumes = "volumes"
+        case waiters = "waiters"
+    }
+
+    public init(diskLow: Bool? = nil, holdUntil: String? = nil, holders: [HeavyRun], minFreeBytes: UInt64, seq: UInt64, slots: Int, volumes: [HeavyVolume], waiters: [HeavyRun]) {
+        self.diskLow = diskLow
+        self.holdUntil = holdUntil
+        self.holders = holders
+        self.minFreeBytes = minFreeBytes
+        self.seq = seq
+        self.slots = slots
+        self.volumes = volumes
+        self.waiters = waiters
+    }
+}
+
+public struct HeavyStatusParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+public struct HeavyTakeParams: Codable, Sendable, Hashable {
+    /// The command the run wraps, for heavy.status. At most 200 bytes are kept.
+    public var command: String?
+    /// With holding: the RFC 3339 time it was granted, from the last answer, so a long hold counts from then.
+    public var granted: String?
+    /// With a ticket the hab does not know: the run held the lock before the hab restarted, so it holds again at once.
+    public var holding: Bool?
+    /// The token in the calling pane's GFF_HAB: the hab releases the lock when that pane closes, and names the pane's session in heavy.status.
+    public var paneToken: String?
+    /// With a ticket the hab does not know: the RFC 3339 time it first asked, from the last answer, so it waits in its old place.
+    public var since: String?
+    /// A ticket from an earlier heavy.take: this connection takes it over. After a gff-hab restart the hab no longer knows it; holding and since then give back its place.
+    public var ticket: String?
+    /// Wait up to this long for the lock; 0 answers at once. At most 600000.
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case command = "command"
+        case granted = "granted"
+        case holding = "holding"
+        case paneToken = "pane_token"
+        case since = "since"
+        case ticket = "ticket"
+        case waitMs = "wait_ms"
+    }
+
+    public init(command: String? = nil, granted: String? = nil, holding: Bool? = nil, paneToken: String? = nil, since: String? = nil, ticket: String? = nil, waitMs: Int? = nil) {
+        self.command = command
+        self.granted = granted
+        self.holding = holding
+        self.paneToken = paneToken
+        self.since = since
+        self.ticket = ticket
+        self.waitMs = waitMs
+    }
+}
+
+public struct HeavyTaken: Codable, Sendable, Hashable {
+    /// Waiting: the runs before this one, holders included.
+    public var ahead: Int
+    /// Holding: RFC 3339 time it was granted.
+    public var granted: String?
+    /// Waiting: why nothing is granted now, beyond the runs ahead: disk low, or the hold after a gff-hab start.
+    public var reason: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// RFC 3339 time the ticket first asked. Send it back after a restart.
+    public var since: String
+    /// holding or waiting.
+    public var state: HeavyState
+    public var ticket: String
+
+    enum CodingKeys: String, CodingKey {
+        case ahead = "ahead"
+        case granted = "granted"
+        case reason = "reason"
+        case seq = "seq"
+        case since = "since"
+        case state = "state"
+        case ticket = "ticket"
+    }
+
+    public init(ahead: Int, granted: String? = nil, reason: String? = nil, seq: UInt64, since: String, state: HeavyState, ticket: String) {
+        self.ahead = ahead
+        self.granted = granted
+        self.reason = reason
+        self.seq = seq
+        self.since = since
+        self.state = state
+        self.ticket = ticket
+    }
+}
+
+public struct HeavyVolume: Codable, Sendable, Hashable {
+    /// What an ordinary user may still write.
+    public var freeBytes: UInt64
+    /// The folder whose volume this is: the hab's state folder or the worktree root.
+    public var path: String
+    public var totalBytes: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case freeBytes = "free_bytes"
+        case path = "path"
+        case totalBytes = "total_bytes"
+    }
+
+    public init(freeBytes: UInt64, path: String, totalBytes: UInt64) {
+        self.freeBytes = freeBytes
+        self.path = path
+        self.totalBytes = totalBytes
     }
 }
 
@@ -7379,6 +7602,12 @@ public enum HabMethods {
     public static let roundRun = HabMethod<RoundRef, RoundRunResult>(name: "round.run")
     /// A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.
     public static let roundRuns = HabMethod<RoundRunsParams, RoundRuns>(name: "round.runs")
+    /// Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.
+    public static let heavyTake = HabMethod<HeavyTakeParams, HeavyTaken>(name: "heavy.take")
+    /// Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.
+    public static let heavyRelease = HabMethod<HeavyReleaseParams, Empty>(name: "heavy.release")
+    /// Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.
+    public static let heavyStatus = HabMethod<HeavyStatusParams, HeavyStatus>(name: "heavy.status")
 }
 
 public enum HabNotification {

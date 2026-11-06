@@ -160,6 +160,9 @@ var Methods = []Method{
 	{"round.unpause", "Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.", RoundRef{}, RoundResult{}},
 	{"round.run", "Start a run now, outside the trigger. It answers after the run's session is spawned, or once the run is queued behind the host limit or the wake settle. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundRunResult{}},
 	{"round.runs", "A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.", RoundRunsParams{}, RoundRuns{}},
+	{"heavy.take", "Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.", HeavyTakeParams{}, HeavyTaken{}},
+	{"heavy.release", "Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.", HeavyReleaseParams{}, Empty{}},
+	{"heavy.status", "Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.", HeavyStatusParams{}, HeavyStatus{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -289,6 +292,8 @@ var Enums = map[string][]string{
 	"LogbookWriteState": {"applied", "proposed", "rejected"},
 	// Sets added for Logbook approval (logbook.md 9.2).
 	"LogbookDecision": {"approve", "reject"},
+	// Sets added for the heavy-run lock (groups.md 8.1).
+	"HeavyState": {"holding", "waiting"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -333,5 +338,6 @@ var Translators = map[int]Translator{}
 // and session.resume of a Capcom session work, and the catalog carries the capcom section
 // (capcom.md 7). "rounds" means the round.* methods and the round.updated and
 // round.run_updated events work, the host snapshot carries the rounds, and a run session
-// carries Session.round (rounds.md 13).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds"}
+// carries Session.round (rounds.md 13). "heavy" means heavy.take, heavy.release and
+// heavy.status work, and the catalog carries the heavy section (groups.md 8).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy"}

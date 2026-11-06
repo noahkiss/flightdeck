@@ -1,0 +1,18 @@
+{
+  "ahead": 5,
+  "granted": "granted-7",
+  "reason": "reason-8",
+  "seq": 3,
+  "since": "since-6",
+  "state": "waiting",
+  "ticket": "ticket-4",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

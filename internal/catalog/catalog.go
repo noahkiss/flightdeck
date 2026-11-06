@@ -83,6 +83,9 @@ type Config struct {
 	// Rounds returns the own catalog's rounds section (rounds.md 9). Nil, or an empty result:
 	// no section.
 	Rounds func() []api.CatalogRound
+	// Heavy returns the own catalog's heavy section (groups.md 8). Nil, or a nil result: no
+	// section.
+	Heavy func() *api.CatalogHeavy
 	// OnCopy hears each peer copy that changed, after it is stored. Nil: none.
 	OnCopy func(api.Catalog)
 	// Detect reads the host's facts. Default Detect.
@@ -580,6 +583,10 @@ func (s *Service) build(first bool) {
 	if s.cfg.Rounds != nil {
 		rounds = s.cfg.Rounds()
 	}
+	var heavy *api.CatalogHeavy
+	if s.cfg.Heavy != nil {
+		heavy = s.cfg.Heavy()
+	}
 	s.mu.Lock()
 	var watches []string
 	for _, id := range peerIDs {
@@ -603,6 +610,7 @@ func (s *Service) build(first bool) {
 		Watches:      watches,
 		Capcom:       capcom,
 		Rounds:       rounds,
+		Heavy:        heavy,
 	}
 	c = api.NonNil(c)
 	prev := s.own

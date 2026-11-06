@@ -36,7 +36,8 @@
     "logbook",
     "confirm",
     "capcom",
-    "rounds"
+    "rounds",
+    "heavy"
   ],
   "methods": [
     {
@@ -3519,6 +3520,110 @@
       "x-params": {
         "$ref": "#/components/schemas/RoundRunsParams"
       }
+    },
+    {
+      "name": "heavy.take",
+      "summary": "Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "command",
+          "description": "The command the run wraps, for heavy.status. At most 200 bytes are kept.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "granted",
+          "description": "With holding: the RFC 3339 time it was granted, from the last answer, so a long hold counts from then.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "holding",
+          "description": "With a ticket the hab does not know: the run held the lock before the hab restarted, so it holds again at once.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "pane_token",
+          "description": "The token in the calling pane's GFF_HAB: the hab releases the lock when that pane closes, and names the pane's session in heavy.status.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "since",
+          "description": "With a ticket the hab does not know: the RFC 3339 time it first asked, from the last answer, so it waits in its old place.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "ticket",
+          "description": "A ticket from an earlier heavy.take: this connection takes it over. After a gff-hab restart the hab no longer knows it; holding and since then give back its place.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "description": "Wait up to this long for the lock; 0 answers at once. At most 600000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/HeavyTaken"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/HeavyTakeParams"
+      }
+    },
+    {
+      "name": "heavy.release",
+      "summary": "Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "ticket",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/HeavyReleaseParams"
+      }
+    },
+    {
+      "name": "heavy.status",
+      "summary": "Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/HeavyStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/HeavyStatusParams"
+      }
     }
   ],
   "x-notifications": [
@@ -4427,6 +4532,10 @@
               "$ref": "#/components/schemas/CatalogTool"
             }
           },
+          "heavy": {
+            "$ref": "#/components/schemas/CatalogHeavy",
+            "description": "The heavy-run lock and the free space of the state and worktree volumes. Absent from a hab without the heavy capability."
+          },
           "host": {
             "type": "string",
             "description": "The publishing hab's host id."
@@ -4691,6 +4800,42 @@
         "required": [
           "seq",
           "generation"
+        ]
+      },
+      "CatalogHeavy": {
+        "type": "object",
+        "properties": {
+          "disk_low": {
+            "type": "boolean",
+            "description": "Nothing is granted for lack of free space."
+          },
+          "holding": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Runs that hold the lock."
+          },
+          "slots": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "volumes": {
+            "type": "array",
+            "description": "The state folder's volume and the worktree root's. free_bytes is published when it moved by 1 GiB or more, or crossed the threshold.",
+            "items": {
+              "$ref": "#/components/schemas/HeavyVolume"
+            }
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Runs that wait for it."
+          }
+        },
+        "required": [
+          "slots",
+          "holding",
+          "waiting",
+          "volumes"
         ]
       },
       "CatalogList": {
@@ -7012,6 +7157,215 @@
         },
         "required": [
           "seq"
+        ]
+      },
+      "HeavyReleaseParams": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket"
+        ]
+      },
+      "HeavyRun": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "granted": {
+            "type": "string",
+            "description": "RFC 3339 time it was granted."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The session of the pane the run asked from, when it named one."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time it first asked."
+          },
+          "state": {
+            "$ref": "#/components/schemas/HeavyState"
+          },
+          "ticket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket",
+          "state",
+          "since"
+        ]
+      },
+      "HeavyState": {
+        "type": "string",
+        "x-known-values": [
+          "holding",
+          "waiting"
+        ]
+      },
+      "HeavyStatus": {
+        "type": "object",
+        "properties": {
+          "disk_low": {
+            "type": "boolean",
+            "description": "Free space fell below heavy.disk_min_free and has not come back above it by [heavy] disk_resume_margin: nothing is granted."
+          },
+          "hold_until": {
+            "type": "string",
+            "description": "RFC 3339 time the hold after a gff-hab start ends; absent once it ended."
+          },
+          "holders": {
+            "type": "array",
+            "description": "In the order they were granted.",
+            "items": {
+              "$ref": "#/components/schemas/HeavyRun"
+            }
+          },
+          "min_free_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "heavy.disk_min_free in bytes."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "slots": {
+            "type": "integer",
+            "format": "int64",
+            "description": "heavy.slots: runs that may hold the lock at once."
+          },
+          "volumes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeavyVolume"
+            }
+          },
+          "waiters": {
+            "type": "array",
+            "description": "In the order they will be granted.",
+            "items": {
+              "$ref": "#/components/schemas/HeavyRun"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "slots",
+          "holders",
+          "waiters",
+          "min_free_bytes",
+          "volumes"
+        ]
+      },
+      "HeavyStatusParams": {
+        "type": "object"
+      },
+      "HeavyTakeParams": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The command the run wraps, for heavy.status. At most 200 bytes are kept."
+          },
+          "granted": {
+            "type": "string",
+            "description": "With holding: the RFC 3339 time it was granted, from the last answer, so a long hold counts from then."
+          },
+          "holding": {
+            "type": "boolean",
+            "description": "With a ticket the hab does not know: the run held the lock before the hab restarted, so it holds again at once."
+          },
+          "pane_token": {
+            "type": "string",
+            "description": "The token in the calling pane's GFF_HAB: the hab releases the lock when that pane closes, and names the pane's session in heavy.status."
+          },
+          "since": {
+            "type": "string",
+            "description": "With a ticket the hab does not know: the RFC 3339 time it first asked, from the last answer, so it waits in its old place."
+          },
+          "ticket": {
+            "type": "string",
+            "description": "A ticket from an earlier heavy.take: this connection takes it over. After a gff-hab restart the hab no longer knows it; holding and since then give back its place."
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Wait up to this long for the lock; 0 answers at once. At most 600000."
+          }
+        }
+      },
+      "HeavyTaken": {
+        "type": "object",
+        "properties": {
+          "ahead": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Waiting: the runs before this one, holders included."
+          },
+          "granted": {
+            "type": "string",
+            "description": "Holding: RFC 3339 time it was granted."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Waiting: why nothing is granted now, beyond the runs ahead: disk low, or the hold after a gff-hab start."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time the ticket first asked. Send it back after a restart."
+          },
+          "state": {
+            "$ref": "#/components/schemas/HeavyState",
+            "description": "holding or waiting."
+          },
+          "ticket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ticket",
+          "state",
+          "ahead",
+          "since"
+        ]
+      },
+      "HeavyVolume": {
+        "type": "object",
+        "properties": {
+          "free_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "What an ordinary user may still write."
+          },
+          "path": {
+            "type": "string",
+            "description": "The folder whose volume this is: the hab's state folder or the worktree root."
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        "required": [
+          "path",
+          "free_bytes",
+          "total_bytes"
         ]
       },
       "HelloParams": {
