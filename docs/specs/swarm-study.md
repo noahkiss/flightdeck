@@ -1,210 +1,262 @@
-# Swarm study: several agents on one task, Capcom as an always-on service
+# Swarm study: Capcom as an always-on service, agent groups, watchers
 
-A study, not a spec. The owner asked (2026-11-06) for three things: optional multi-agent work,
-an omni-agent, and a texting agent. Later guidance narrowed them:
+A study that new plan parts build on. Owner direction of 2026-11-06 (plan decisions (l) to (o))
+sets the scope:
 
-- The core is Capcom as an always-on, server-style agent that the owner reaches through the
-  iPhone app and its notifications, and that never makes the owner think about context (section 4).
-- Multi-agent work is a separate track (sections 1 to 3).
-- An iMessage bridge is optional and minor, and a good Capcom may make it unneeded (section 5).
-  SMS is out.
+- **A. Capcom as an always-on service** is the core (section 2).
+- **B. Agent groups** are a first-class, optional capability, modelled on the coordinator
+  workflow that builds Flightdeck (section 3). Section 4 maps the friction that workflow has today
+  to the pieces that remove it.
+- **D. Watchers** are long-lived, event-driven rounds (section 5).
+- **E. iMessage** is optional and minor (section 6).
 
 ## 1. What Flightdeck already has
 
 | Piece | What it gives | Where |
 |---|---|---|
-| Channels | Agent-to-agent text on any host, a disk outbox, dedup | `mesh.md` 6.1-6.3 |
-| Deliver when idle | A message waits while the target works and is held while it is blocked | `mesh.md` 6.2 |
-| `gff-hab wait` | A lead waits for a message or a worker's state without reading a screen | `mesh.md` 6.4 |
-| `hand_off`, `start_session` | Work to the agent on a project, or a seeded session on any host | `capcom.md` 3.2, 3.3, 6.4 |
-| Spawn verb (open) | A teammate in any harness by alias ("a codex reviewer"), result through channels | task-6iwat66b |
-| Capcom | A standing, folder-free session that reads every host; not a router or supervisor | `capcom.md` 2.1, 7 |
-| Rounds | Scheduled `fresh`, `resume` and `fork` runs that never type into a session in use | `rounds.md` 5, 6 |
-| Logbook | Records on every host, `claim`, hand-over to another project | `logbook.md` 10.2, 12.2 |
-| Catalog, `suggest_host` | Every host's tools, projects and agents; ranked hosts, no scores | `mesh.md` 5, 7 |
-| Worktrees | One checkout per writer | `hab-logic-api.md` 3.10 |
+| Channels | Agent-to-agent text on any host, deliver when idle, hold while blocked, outbox | `mesh.md` 6 |
+| `hand_off`, `start_session`, confirmations | Work to a project's agent; a seeded session on any host | `capcom.md` 3, 6 |
+| Capcom read tools, read scope | Every host's catalog, sessions, transcripts, notices, Logbook | `capcom.md` 4, 5 |
+| Trust card | `blocked:trust` and `trust.answer` for a harness's folder trust prompt | `app.md` 7.10 |
+| Usage readings, `context_pct` | Plan windows per harness; context use per session | `usage`, `hab-logic-api.md` |
+| Rounds | `fresh`, `resume` and `fork` runs; the lock that never types into a session in use | `rounds.md` 5, 6 |
+| Logbook | Records on every host, `claim`, proposals, a brief | `logbook.md` |
+| Worktrees | One checkout per writer, setup and teardown | `hab-logic-api.md` 3.10 |
+| App | Chat view, image and file attachments, speech input, push with actions | `app.md` 4, `voice.md` |
+| Spawn verb (open) | A teammate in any harness by alias, result through channels | task-6iwat66b |
 
-Missing for multi-agent work: a record that says "these sessions are one task", one view of
-them, and a rule for how their commits land.
+## 2. A. Capcom as an always-on service
 
-## 2. Multi-agent patterns, with clear eyes
-
-| Pattern | Pays off when | Costs |
-|---|---|---|
-| Subagent in the harness (Claude Code, Codex, opencode) | Read-heavy side work; a summary returns | Own tokens, same limit. Flightdeck adds nothing |
-| Lead and teammates, shared task list (Claude Code agent teams, experimental) | Independent modules, competing hypotheses, review | About 7x one session's tokens in plan mode. Same-file edits overwrite |
-| Sessions on one branch, a shared queue, a script that serialises commits, a second session reviewing each change (HN 50380658) | Many small, separable items | One user's report: 4,454 reviews of 4,471 commits, four in five found something. Reviewers "always find something": cap them to the top item |
-| Separate-context reviewer, ideally another harness | Nearly always; the best-supported pattern | One extra session per change |
-| Parent waits on children across hosts (herdr `hc wait --children`, Paseo's start-an-agent tool) | A lead hands out work and collects it | No merge rule in either tool |
-| Orchestrator, blackboard, pipeline (kadhar.dev) | Fixed, well-split work | Bottlenecks, race-like bugs, delegation loops; needs a depth cap and a budget |
-
-The skeptics: Anthropic's research system spends about 15x a chat's tokens and says coding has
-"fewer truly parallelizable tasks". Cognition and OpenHands: parallel agents make conflicting
-implicit decisions. Usage is wasted when each worker re-reads the repo, when workers edit the
-same files, when leads poll, and when review loops have no cap.
-
-## 3. Multi-agent option: a session group
-
-**Behaviour.** The user, Capcom or an agent starts a group: a lead and a few workers, each an
-ordinary session on any harness and host. The app and gff show one card: the task, each member's
-state, open approvals, the merge queue. Each member opens and resumes like any session.
-
-**Build.** A group record in gff-hab (task, lead, members, branch), taken by `session.create`
-and the spawn verb. A worktree per writer. A merge lane in gff-hab that lands one change at a
-time; a conflict goes back to the worker. The queue as Logbook tasks with `claim`. An optional
-reviewer of another harness. The group card.
-
-**Risks.** Usage multiplies by member count. In-pane teams already exist in the harnesses; do
-not rebuild them. Our value is cross-harness, cross-host and visible.
-
-**Size.** Finish the spawn verb, then a spec and four stages: record, merge lane, reviewer, card.
-
-## 4. Capcom as an always-on service
-
-### 4.1 Today
-
-Capcom is a Claude Code session (or Codex, or opencode) in a holder pane. gff-hab writes a
-folder with a manual and MCP settings, starts the harness with `--session-id`, and resumes it
-with `--resume` (`capcom.md` 7.1, 7.6). It has a terminal view, a chat view read from the
-transcript, and one standing conversation plus "new conversation". Context is the harness's: it
-grows until the harness compacts, and the user picks when to start fresh.
-
-### 4.2 The architecture
-
-A Capcom engine: an agent loop on the Claude Agent SDK, run as its own process beside gff-hab.
+### 2.1 Architecture
 
 | Part | Choice |
 |---|---|
-| Process | `gff-hab-capcom`, its own service job on the home host, so a gff-hab restart never drops a turn. The SDK is TypeScript or Python, so it cannot live inside the Go binary |
-| Input | The SDK's streaming input mode: one long-lived loop per conversation; new messages queue, an interrupt stops a turn |
-| Tools | The agent kit through `gff-hab mcp`, unchanged: read tools, `hand_off`, `start_session`, `logbook_write`, notices. No shell or file-write tools |
-| Approvals | The SDK's `canUseTool` callback raises Flightdeck's own cards; the hab still runs confirmed starts (`capcom.md` 6) |
-| Memory | Logbook. Durable facts and preferences become records; the engine reads the brief at every fresh start |
-| Context | The engine manages it (4.3); the user never sees a context limit |
-| Conversations | One standing thread by default; topic threads on request. Each thread maps to SDK sessions over time |
-| Proactive | Optional: the engine subscribes to hab events (a blocked agent, a failed round) and may write first. It reports; it never steers a session |
+| Process | `gff-hab-capcom`, an agent loop on the Claude Agent SDK, its own service job on the home host. The SDK is TypeScript or Python, so it is a sidecar, not part of gff-hab |
+| Input | The SDK's streaming input: one long-lived loop; messages queue; an interrupt stops a turn |
+| Tools | The agent kit through `gff-hab mcp`, plus the new tools in 2.3. No shell and no file writes |
+| Approvals | `canUseTool` raises Flightdeck cards; the hab still runs confirmed starts |
+| Channels | The engine holds a channel name, so agents it dispatched report back to it |
+| Memory | Logbook. Facts and preferences become records; each fresh start reads the brief |
+| Context | Managed by the engine (2.2) |
+| Billing | The owner's plan login: the SDK "still draw[s] from your subscription limits" (support article, 2026-10-30). Guardrails in 2.6 |
+| Later | A Codex SDK engine behind the same contract |
 
-The manual becomes the system prompt. Attached context (`capcom.md` 8.1) becomes a structured
-part of the user message instead of pasted text. The read scope stays in the read tools.
+### 2.2 Context with no user effort
 
-### 4.3 Context with no user effort
+- **Rolling summary.** After each turn the engine updates a short summary of the thread.
+- **Re-seed.** Past a size limit or a quiet hour, the engine ends the SDK session and starts a
+  fresh one with the summary, the Logbook brief and the last few messages.
+- **Compaction** stays on as a safety net; its `PreCompact` hook writes the summary first.
+- **Memory writes** land in Logbook at once; tasks and findings stay proposals.
+- **One thread to the user.** A quiet divider, "earlier messages summarised", opens the summary.
 
-- **Rolling summary.** After each turn the engine keeps a short summary of the thread so far.
-- **Re-seed.** Past a size limit, or after a quiet hour, the engine ends the SDK session and
-  starts a fresh one seeded with the summary, the Logbook brief and the last few messages. The
-  user sees one continuous thread with a quiet divider, "earlier messages summarised".
-- **Compaction** (the SDK's own) stays on as a safety net, with its `PreCompact` hook writing the
-  summary first.
-- **Memory writes** land in Logbook at once, per the owner's rule that memories are added by
-  default with a setting to require approval. Tasks and findings stay proposals (`capcom.md` 6.2).
-- **The summary is visible.** A tap on the divider shows what the engine kept, so a lost fact is
-  findable and fixable.
+### 2.3 Tools: where each runs
 
-### 4.4 What changes from `capcom.md`
+The engine runs on a hab; the phone holds the person's context. The app sends a **device
+context** block with each message: place (coarse location and place name), local time and time
+zone, the next few calendar events. Nothing is tracked in the background.
+
+| Tool | Runs on | Status |
+|---|---|---|
+| Read tools, `hand_off`, `start_session`, `logbook_write`, notices | Hab | Exists |
+| Image input (a photo in the thread) | Phone sends, engine reads it as an image block | Upload exists (`app.md` 4.4); passing it to the engine is new |
+| Device context | Phone | New: CoreLocation and EventKit read access in the app |
+| Weather | Hab: WeatherKit REST, under the Apple Developer membership | New |
+| Places nearby | Hab: Apple Maps Server API (same membership), or a Google Places key the user supplies | New |
+| Web search and fetch | Hab: the SDK's own read-only web tools | New in Capcom's tool list |
+| Add to calendar, set a reminder | Phone: a card; "Add" (in the app or the push action) writes through EventKit | New card kind |
+| Message the user | Hab: a Capcom reply with push | New: the thread in 2.5 |
+| Host checks | Hab: a seeded session on the named host through `start_session` | Exists; result back over channels is new |
+
+A phone tool is a card, never a silent call: iOS does not run the app on demand in the
+background, and the card is the guardrail.
+
+### 2.4 The acceptance scenarios
+
+| # | Ask | What happens | New pieces |
+|---|---|---|---|
+| 1 | "What can I do around here?" | Reads device context, calls weather and places, ranks by Logbook preferences, replies; an "Add" card per pick writes to the calendar | Device context, weather, places, calendar card |
+| 2 | "Look at what's going on in app X we run." | Finds the project in the catalog, hands off to its agent or starts a session on its host, waits on channels, sums up | Channel endpoint for the engine; group start for larger work (section 3) |
+| 3 | A photo of a flyer | Reads the image, searches the event, replies with the details and an "Add" card | Image input, web search, calendar card |
+| 4 | "Check security updates on host X." | Starts a seeded session on X (confirmation per `confirm.start_elsewhere`), gets the report over channels, replies | Channel endpoint only |
+
+### 2.5 How the app presents it
+
+- **Typing.** The engine reports turn start and end; the app shows typing dots. Tool calls fold
+  into one quiet line ("read 3 transcripts").
+- **Read state.** "Delivered" when the hab stores a message; "Read" when a turn takes it.
+- **Push.** A reply while the app is closed is a communication notification with Capcom's name
+  and avatar, and an inline reply.
+- **Approvals and phone tools** stay cards.
+
+### 2.6 Guardrails and terms
+
+- **Pacing.** A usage governor in gff-hab gives the engine and every group a share of the plan
+  window: by default a daily share of the weekly budget (about 15% per day, cumulative), from
+  the usage readings. At the cap the engine answers with a small model or says it waits.
+- **Proactive turns** (section 5) are batched, use a small model for the first look, and have a
+  daily turn budget.
+- **Terms.** Personal use on the owner's own plan fits "ordinary, individual usage". Flightdeck
+  shipped to others must never collect plan credentials: it uses the user's own login or an API
+  key. Recheck before release.
+
+### 2.7 What changes in `capcom.md`
 
 | Today | Service |
 |---|---|
-| D1: an ordinary session in a pane, kind `capcom` | A session record of kind `capcom` with no pane; the engine owns it |
-| `[capcom] harness` = claude, codex, opencode | `[capcom] engine` = claude (Agent SDK); codex (Codex SDK) later; the pane form kept one release as a fallback |
-| Terminal view, plain-terminal resume | No terminal view. The AGENTS.md rule that a plain terminal can resume a session needs an exception, or the engine keeps SDK sessions where `claude --resume` finds them (to verify) |
-| User starts "new conversation" | The engine re-seeds by itself; "new conversation" stays for a clean start |
-| Busy while working | Messages queue in the stream; Capcom is never busy to the user |
-| Home host assignment, read scope, confirmations, hand-off rules | Unchanged |
+| Kind `capcom` session in a pane, `[capcom] harness` | Kind `capcom` record with no pane; `[capcom] engine`; the pane form kept one release as fallback |
+| Plain-terminal resume | The engine keeps SDK sessions where `claude --resume` finds them; verify, else an AGENTS.md exception |
+| "New conversation" by the user | Re-seed by the engine; "new conversation" stays for a clean start |
+| Busy while working | Never busy: messages queue |
+| Home host, read scope, confirmations, hand-off rules | Unchanged |
 
-### 4.5 Billing and terms
+**Risks.** The SDK moves fast and adds a Node or Python runtime. Self-managed context can drop a
+fact; the visible summary limits that. Capcom needs its home host online.
 
-- **Claude.** Anthropic's support article "Use the Claude Agent SDK with your Claude plan"
-  (updated 2026-10-30) says: "when you're signed in with your Claude plan, the Claude Agent SDK
-  and claude -p still draw from your subscription limits." Plans with API credits can also use a
-  Console key.
-- **The limit on products.** The Agent SDK overview says: "Anthropic does not allow third party
-  developers to offer claude.ai login or rate limits for their products, including agents built
-  on the Claude Agent SDK." Usage limits "assume ordinary, individual usage". The owner running
-  Capcom for personal use on a personal plan fits. Flightdeck shipped to others must not collect or handle
-  plan credentials: the engine uses an API key the user supplies, or the login the user's own
-  Claude Code already has. The line between those is not defined by Anthropic; read it before
-  release.
-- **Codex.** The Codex SDK starts, continues and resumes local threads; the app-server streams
-  events and approvals. A ChatGPT login works for local use, but "App-server authentication has
-  never been permitted for commercial or hosted services."
-- **Cost of always on.** An idle engine costs nothing. Proactive triage costs a turn per event,
-  so batch events and use a small model for the first look.
+## 3. B. Agent groups
 
-### 4.6 How the app presents it
+### 3.1 The model
 
-The Capcom view (`app.md` 4.10) becomes a messages thread:
+A group is a task with a coordinator and members. Any session the user picks, or Capcom, can
+coordinate. Members are ordinary sessions on any host and harness: Claude Code, Codex, opencode
+or SDK agents. Each opens, resumes and shows like any session; the app and gff show one group
+card with the task, each member's state and context, approvals, the merge queue and usage.
 
-- **Typing.** The engine reports turn start and end; the app shows typing dots, then the reply.
-  Tool calls fold into one quiet line ("read 3 transcripts").
-- **Read state.** "Delivered" when the hab stores the message; "Read" when the engine takes it
-  into a turn.
-- **Push.** A reply while the app is closed is an iOS communication notification with Capcom's
-  name and avatar, with an inline reply. Proactive messages use the same path.
-- **Approvals** stay cards, never plain text.
+| Role | Does | Default |
+|---|---|---|
+| Coordinator | Splits the task, dispatches leads, reads verdicts, gates | The starting session |
+| Lead | Owns one item in its own worktree and branch; may run workers | Up to 3 at once |
+| Worker | A sub-task under a lead | The lead's choice |
+| Reviewer | Another harness than the author's; reports only high and medium findings (about 3); may fix in place | On for core changes |
 
-### 4.7 Risks
+### 3.2 The mechanisms
 
-- The SDK changes fast, and a Node or Python runtime joins every home host.
-- Terms can change; the pane form is the fallback.
-- Self-managed context can drop a fact; the visible summary and Logbook limit the damage.
-- Proactive messages can become noise; off by default.
-- With the home host offline there is no Capcom; an always-on host is the advice.
+| Mechanism | Flightdeck piece | Status |
+|---|---|---|
+| Start a member on a host, in a harness, with a brief | Spawn verb with host and alias; seed through the adapter | Open (task-6iwat66b); extend |
+| Folder trust on first start | Trust card; the group's start confirmation may pre-answer it for the group's folders | Card exists; pre-answer new |
+| Messaging | The spawn verb names each member on channels and tells both sides the address | Channels exist; wiring new |
+| Queue | Logbook tasks with `claim`, one per item | Exists |
+| Isolation | Worktree per lead; stacked branches, each lead on the branch before it when items touch | Worktrees exist; stacking new |
+| Gate and merge lane | gff-hab lands one branch at a time on the group branch after its checks and review pass; a conflict goes back to its lead | New |
+| Heavy-run lock | One host-wide lock that build and test runs take through the agent kit; others wait in order | New |
+| Cleanup | Remove a worktree after its merge; per-run build folders; the group's leftovers listed at its end | Teardown exists; group rule new |
+| Disk watch | Free space per host in the catalog; below a threshold, heavy runs wait and the coordinator hears of it | New |
+| Usage pacing | The governor (2.6) across members of every harness that reports usage | New |
+| Context supervision | Compact at about 40% `context_pct`; after 4 compacts or a 4 MB transcript, the member writes a hand-off record and a fresh session continues from it | `context_pct` exists; supervisor new |
+| Sibling actions | Any member, or the supervisor, can compact or clear-and-hand-off another; typed only through the rounds lock, never into a session in use | Lock exists; actions new |
 
-### 4.8 Stages
+Supervision is a hab-side default with settings, not a coordinator's chore. SDK members manage
+their own context as in 2.2.
 
-1. Spec: the engine contract, events, the resume question.
-2. Engine with one standing thread and `gff-hab mcp` tools, behind `[capcom] engine`.
-3. App: typing, read state, communication push, inline reply.
-4. Context manager: summary, re-seed, Logbook memory, the divider.
-5. Proactive events, opt-in.
-6. Codex SDK engine.
+### 3.3 When to use it
 
-## 5. Optional: an iMessage front door
+Use a group for many separable items, or a task that needs a cross-harness review; not for one
+change. Anthropic's research system spends about 15x a chat's tokens; Claude Code agent teams
+about 7x in plan mode. Parallel agents make conflicting implicit decisions (Cognition,
+OpenHands). Reviewers nearly always find something (HN 50380658), so they report only the top
+findings. A group's value is cross-host, cross-harness and visible.
 
-**"Insight."** No product by that name was found. The likely match is Instinct (Spear Street
-Technology), medium confidence; it does not say how it reaches iMessage. Poke runs on Apple
-Messages for Business, which sends typing events but shows as a business, not a contact.
+## 4. C. Tonight's friction, mapped
 
-**How the contact feel is made.** Hosted iMessage lines (Sendblue, Linq, LoopMessage) run real
-Apple IDs on Apple hardware, so the agent is an ordinary contact with native typing bubbles and
-read receipts. They are paid and see every message.
+| Friction | Piece that removes it |
+|---|---|
+| The owner opened the Codex pane | Spawn verb: the coordinator starts it on the right host and harness |
+| The owner approved Codex's folder trust | Trust card, pre-answered by the group's start confirmation |
+| The owner told the coordinator the pane existed and how to reach it | Spawn returns the member's channel name; replies route by name |
+| Reminders about context and compaction | Context supervision (3.2), on by default |
+| Reminders about usage pacing | The usage governor (2.6) |
+| Reminders about disk | Disk watch and the heavy-run lock |
+| Reviews read in full by the coordinator | Reviewer reports verdicts and top findings; the card shows them |
+| Merges done by hand in order | The gate and merge lane |
 
-**Self-hosted.** A Mac signed in to a dedicated Apple ID, with a bridge that watches the
-Messages database and sends through Messages automation (the open-source `imsg`, BlueBubbles).
-No webhook and no public port. Typing bubbles and read receipts need a private-API helper with
-System Integrity Protection off on that Mac. Only the owner's own handles are let in, and a text
-can never answer an approval or a confirmation.
+## 5. D. Watchers: always-on rounds
 
-**SMS and Twilio are out:** the owner does not want SMS, and US delivery needs carrier
-registration and a public webhook.
+Rounds 9 (task-awkgh5h1) adds a fixed list of hab events with debounce and cooldown. A watcher
+goes further: a long-lived program the hab supervises like a server, whose output wakes a target.
 
-## 6. Recommendation
+| Change to task-awkgh5h1 | Detail |
+|---|---|
+| New trigger kind `watch` | The round names a command or module that runs at all times. gff-hab restarts it with backoff, stops it on sleep and starts it at wake, and logs it like a run |
+| Event lines | The watcher prints one JSON line per event; debounce, cooldown and coalescing apply as for hab events |
+| New targets | `capcom` (the event lands in Capcom's thread as a proactive turn) and `group` (a message to a group's coordinator), beside today's `fresh`, `resume`, `fork` |
+| More hab events | `notice.raised` and Logbook record changes, beside the four in `rounds.md` 4.3 |
+| Unchanged | No webhooks and no TCP port: a watcher dials out (IMAP IDLE for mail, a feed, a status page) |
 
-1. Build Capcom as an always-on service (section 4) next in Part 9. It answers most of the ask.
-2. Finish the spawn verb with a reviewer alias; build session groups after it.
-3. Revisit iMessage after the app's Capcom thread ships.
+Example: a mail watcher holds IMAP IDLE and prints a line per new message from a sender list;
+Capcom writes to the owner only when a mail needs them.
 
-## 7. Decisions for the owner
+## 6. E. iMessage (optional)
+
+Instinct is the reference. Its plumbing is not public. A self-hosted bridge runs on an always-on
+Mac: it watches the Messages database and sends through Messages automation (`imsg`,
+BlueBubbles). Typing bubbles and read receipts need a private-API helper with SIP off, which the
+owner accepts.
+
+| Identity for the bridge | Works? | Cost |
+|---|---|---|
+| Apple ID with an email address only | Yes: an email handle sends and receives iMessage over data | Free |
+| Prepaid SIM with SMS in a spare iPhone | Yes: activation needs Apple's verification SMS | Small monthly plan, a spare phone |
+| Data-only eSIM | No: it cannot receive the verification SMS | - |
+| Google Voice number | No: Apple does not register forwarding numbers | - |
+| P2P line (Sendblue, Linq, LoopMessage) | Yes, a real number, native typing and read receipts | Paid; the vendor sees every message |
+
+**Recommendation:** a new Apple ID with an email address only, on the always-on Mac, saved as a
+contact named Capcom. A text never answers an approval or a confirmation.
+
+Built well, A makes E unnecessary: the app thread already gives typing, read state and push.
+SMS and Twilio are out.
+
+## 7. Plan sketch
+
+| Stage | One line | Kind | Depends on |
+|---|---|---|---|
+| A1 | Capcom service spec: engine contract, device context, phone cards, resume | Spec | Part 9 built stages |
+| A2 | `gff-hab-capcom` on the Agent SDK: one thread, agent kit tools, cards, channel name | Build | A1, Logbook stage 4 |
+| A3 | App thread: typing, read state, communication push, inline reply, images | Build | A2, `app.md` 4.10 |
+| A4 | Context manager: summary, re-seed, Logbook memory, divider | Build | A2 |
+| A5 | Device context and personal tools: weather, places, web, calendar card | Build | A3 |
+| G | Usage governor: daily pacing for Capcom and groups | Build | Usage readings |
+| A6 | Codex SDK engine | Build | A2 |
+| B1 | Groups spec: roles, record, supervision, merge lane, lock | Spec | Spawn verb spec |
+| B2 | Spawn verb with trust pre-answer and channel wiring | Build | task-6iwat66b, trust card |
+| B3 | Group record and group card in the app and gff | Build | B2 |
+| B4 | Stacked worktrees, gate and merge lane | Build | B3, worktrees |
+| B5 | Heavy-run lock and disk watch | Build | B1 |
+| B6 | Context supervision and sibling actions | Build | B3, rounds lock, `context_pct` |
+| B7 | Reviewer role, top findings, fix in place | Build | B2 |
+| B8 | Capcom starts and runs a group | Build | A2, B3 |
+| D1 | `rounds.md` 4.3 update: `watch`, new targets and events | Spec | Rounds 1-6 |
+| D2 | Rounds 9 with the new events and targets | Build | D1, A2 for `capcom` |
+| D3 | Watchers: supervised programs, event lines, a mail example | Build | D2 |
+
+Order: A1, B1 and D1 together; then A2, B2, G; then A3, A4, B3, B5; then A5, B4, B6, B7, D2;
+then B8, D3; A6 last.
+
+## 8. Decisions for the owner
 
 | # | Question | Suggested default |
 |---|---|---|
-| 1 | Replace the pane Capcom with the service? | Yes; keep the pane form one release as a fallback |
-| 2 | Can Capcom message you first? | Off at first; then only for things that need you, batched |
-| 3 | One standing thread, or threads by topic? | One thread; topic threads on request |
-| 4 | Show "earlier messages summarised"? | Yes, as a quiet divider you can open |
-| 5 | Session groups: how many workers, and a reviewer? | Three workers plus a lead, worktree each; a reviewer of another harness, top finding only |
-| 6 | iMessage bridge | Not now. If wanted later: a dedicated Apple ID on an always-on Mac, plain text first; typing and read receipts only if you accept SIP off on that Mac |
+| 1 | Replace the pane Capcom with the service? | Yes; keep the pane form one release |
+| 2 | May Capcom write first? | Yes, only for what needs you, batched, with quiet hours |
+| 3 | Location shared with Capcom | With each message only, as a place name; no background tracking |
+| 4 | Places and weather source | Apple (WeatherKit, Apple Maps Server API); Google only with your own key |
+| 5 | Calendar writes | A card with one "Add" tap, never silent |
+| 6 | A group's starts on other hosts | One confirmation for the group plan, not one per member |
+| 7 | Where the merge lane lands | On the group branch; merging to main asks you |
+| 8 | Show "earlier messages summarised" | Yes, as a quiet divider |
+| 9 | iMessage bridge | Not until the app thread ships; then an email-only Apple ID |
 
 ## Sources
 
-- Hacker News item 50380658; https://kadhar.dev/blog/multi-agent-systems-from-scratch;
-  https://www.cmu-agents.com/.
-- https://code.claude.com/docs/en/agent-teams, `sub-agents`, `costs`, `agent-sdk/overview`,
-  `legal-and-compliance`; https://support.claude.com/en/articles/15036540 (read 2026-11-06).
-- https://learn.chatgpt.com/docs/codex-sdk, `app-server`, `auth`; https://opencode.ai/docs/agents/.
+- Hacker News item 50380658; https://kadhar.dev/blog/multi-agent-systems-from-scratch.
+- https://code.claude.com/docs/en/agent-teams, `agent-sdk/overview`, `agent-sdk/agent-loop`,
+  `agent-sdk/streaming-vs-single-mode`, `legal-and-compliance`;
+  https://support.claude.com/en/articles/15036540 (read 2026-11-06).
+- https://learn.chatgpt.com/docs/codex-sdk, `app-server`, `auth`.
 - https://www.anthropic.com/engineering/multi-agent-research-system;
   https://cognition.com/blog/dont-build-multi-agents; OpenHands, "Don't sleep on single-agent
   systems".
-- Apple Messages for Business REST common specs; Sendblue and Linq docs; https://github.com/steipete/imsg;
-  https://docs.bluebubbles.app; press coverage of Poke and Instinct, June to October 2026.
-- `landscape.md` 1, `mesh.md` 1.3-1.4 for herdr and Paseo.
+- Sendblue and Linq docs; https://github.com/steipete/imsg; https://docs.bluebubbles.app;
+  Apple Community threads 252046064 and 254800806 (Google Voice); eSIM vendor guides on iMessage
+  activation; press coverage of Poke and Instinct, June to October 2026.
