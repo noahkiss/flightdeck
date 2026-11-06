@@ -42,6 +42,9 @@ func TestBoardHeavy(t *testing.T) {
 	if s := hst.screen(); line(s, "  two ") >= 0 {
 		t.Fatalf("an idle lock has a line:\n%s", s)
 	}
+	// A hab that goes down takes its line with it: its lock is no longer known.
+	a.Stop()
+	hst.waitScreen("one's line gone", func(s string) bool { return !strings.Contains(s, " Heavy runs") })
 }
 
 // TestKeepHeavy: the answering hab's own entry wins over a peer's copy; a peer's copy counts only

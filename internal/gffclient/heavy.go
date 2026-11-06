@@ -20,9 +20,10 @@ type heavyCopy struct {
 	seenAt  time.Time
 }
 
-// keepHeavy keeps a host's heavy section. The answering hab's own entry always wins: it is
-// live. A peer's copy is kept for a host in gff's host list when it is newer than the one held
-// and no own entry was read. labels maps device ids to labels.
+// keepHeavy keeps a host's heavy section. The answering hab's own entry wins while that host
+// is online: it is live. A peer's copy is kept for a host in gff's host list when it is newer
+// than the one held and no own entry of an online host holds it. labels maps device ids to
+// labels.
 func (u *workspaceUI) keepHeavy(answering string, e api.CatalogEntry, labels map[string]string) {
 	id := e.Catalog.DeviceID
 	if id == "" {
@@ -37,7 +38,7 @@ func (u *workspaceUI) keepHeavy(answering string, e api.CatalogEntry, labels map
 	}
 	seen, _ := time.Parse(time.RFC3339Nano, e.SeenAt)
 	old, had := u.heavy[id]
-	if had && !e.Own && (old.own || !seen.After(old.seenAt)) {
+	if had && !e.Own && ((old.own && u.heavyOnline(old.host)) || !seen.After(old.seenAt)) {
 		return
 	}
 	if e.Catalog.Heavy == nil {
@@ -52,6 +53,9 @@ func (u *workspaceUI) keepHeavy(answering string, e api.CatalogEntry, labels map
 func (u *workspaceUI) heavyLines() []string {
 	var cs []heavyCopy
 	for _, c := range u.heavy {
+		if c.own && !u.heavyOnline(c.host) {
+			continue // its hab is down: its last section is no longer known
+		}
 		s := c.section
 		if s.Holding+s.Waiting > 0 || s.DiskLow {
 			cs = append(cs, c)
@@ -85,4 +89,9 @@ func heavyText(c heavyCopy) string {
 		parts = append(parts, low+", runs wait")
 	}
 	return fmt.Sprintf("  %-10s %s", middle(c.host, 10), strings.Join(parts, " · "))
+}
+
+// heavyOnline is hostOnline, with every host online when there is no client (unit tests).
+func (u *workspaceUI) heavyOnline(label string) bool {
+	return u.c == nil || u.hostOnline(label)
 }

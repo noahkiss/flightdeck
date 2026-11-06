@@ -1033,7 +1033,8 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
 per host whose heavy-run lock is in use or whose disk is low: runs holding, runs waiting, and
 "disk low" with the least free space of its volumes. It reads the catalog's `heavy` section from
 the same `catalog.list` reads as the Rounds list; the answering hab's own entry wins over a
-peer's copy. Lines are not selectable. Tests: `TestBoardHeavy` (two fake habs: the line for a
+peer's copy while that host is online; a host whose hab is down loses its line until a peer's
+newer copy shows it. Lines are not selectable. Tests: `TestBoardHeavy` (two fake habs: the line for a
 busy, low host and none for an idle one) and `TestKeepHeavy`.
 
 ### 7.6 Built choices: module cards (task-kgr80lau)

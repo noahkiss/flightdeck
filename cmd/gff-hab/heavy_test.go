@@ -194,7 +194,7 @@ func TestHeavyKilledCLI(t *testing.T) {
 // order ahead of a run that asked after the restart, and nothing is granted during the
 // restart hold. When the holder ends, the first waiter runs.
 func TestHeavyRestartKeepsPlace(t *testing.T) {
-	sock, state, work, _, s := heavyHab(t, `restart_hold = "2s"`, nil)
+	sock, state, work, _, s := heavyHab(t, `restart_hold = "5s"`, nil)
 	a := startHeavyRun(t, sock, work, "a", heavyScript(0))
 	waitUntil(t, "a holds", func() bool { return readLog(work) == "start-a" })
 	startHeavyRun(t, sock, work, "b", heavyScript(0))
@@ -233,6 +233,9 @@ func TestHeavyRestartKeepsPlace(t *testing.T) {
 	}
 	if st.Waiters[0].Ticket != before.Waiters[0].Ticket || st.Waiters[1].Ticket != before.Waiters[1].Ticket {
 		t.Fatalf("waiters %+v, were %+v", st.Waiters, before.Waiters)
+	}
+	if st.HoldUntil == "" {
+		t.Fatal("every run came back after the restart hold ended; the test proves nothing about the hold")
 	}
 	select {
 	case <-a.done:
@@ -343,5 +346,26 @@ func TestHeavyNoHab(t *testing.T) {
 	cmd = exec.Command(bin, "heavy", "-socket", filepath.Join(d, "none.sock"))
 	if err := cmd.Run(); cmd.ProcessState.ExitCode() != 64 {
 		t.Fatalf("no command: %v", err)
+	}
+}
+
+// TestHeavySignalWhileHabDown: a waiting CLI whose gff-hab is down still ends on SIGINT, at once,
+// with 128 plus the signal, and never runs its command.
+func TestHeavySignalWhileHabDown(t *testing.T) {
+	sock, _, work, _, s := heavyHab(t, `restart_hold = "0s"`, nil)
+	startHeavyRun(t, sock, work, "a", heavyScript(0))
+	waitUntil(t, "a holds", func() bool { return readLog(work) == "start-a" })
+	b := startHeavyRun(t, sock, work, "b", heavyScript(0))
+	waitUntil(t, "b waits", func() bool { return len(heavyStatus(t, sock).Waiters) == 1 })
+	s.stop(t)
+	time.Sleep(300 * time.Millisecond) // b is dialing again
+	b.cmd.Process.Signal(syscall.SIGINT)
+	select {
+	case <-b.done:
+	case <-time.After(scaleTimeout(5 * time.Second)):
+		t.Fatal("SIGINT did not end a CLI waiting for gff-hab")
+	}
+	if b.code != 130 || strings.Contains(readLog(work), "start-b") {
+		t.Fatalf("exit %d, log %q", b.code, readLog(work))
 	}
 }

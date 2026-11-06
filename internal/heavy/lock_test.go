@@ -211,9 +211,16 @@ func TestPane(t *testing.T) {
 	if h := l.Status().Holders[0]; h.Pane != "pane-1" || h.Session != "builder" {
 		t.Fatalf("holder %+v", h)
 	}
-	if _, err := l.Take(nil, api.HeavyTakeParams{PaneToken: "nope"}); !isKind(err, api.ErrorKindNotFound) {
-		t.Fatalf("unknown token: %v", err)
+	// A token that names no pane yet is taken without a pane, and a later take binds it.
+	n := take(t, l, nil, api.HeavyTakeParams{Command: "n", PaneToken: "nope"})
+	if w := l.Status().Waiters; len(w) != 2 || w[1].Pane != "" {
+		t.Fatalf("an unknown token: %+v", w)
 	}
+	take(t, l, nil, api.HeavyTakeParams{Ticket: n.Ticket, PaneToken: "tok1"})
+	if w := l.Status().Waiters; w[1].Pane != "pane-1" {
+		t.Fatalf("the token bound later: %+v", w)
+	}
+	l.Release(api.HeavyReleaseParams{Ticket: n.Ticket})
 	l.ReleasePane("pane-1")
 	if !eq(holders(l), []string{"b"}) {
 		t.Fatalf("after the pane closed: holders %v", holders(l))
