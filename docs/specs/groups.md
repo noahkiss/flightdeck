@@ -691,6 +691,41 @@ when the command dies.
   per low-disk episode: host, free space, the largest leftovers the hab knows (7.5). The card's
   waits line shows it. Hosts with no group get one notice.
 
+### 8.3 Built choices (stage B5, task-aagbyg89)
+
+`internal/heavy`, wired into gff-hab; `gff heavy` and `gff-hab heavy` share its CLI.
+
+- **The calls.** `heavy.take {ticket?, holding?, since?, granted?, pane_token?, command?,
+  wait_ms?}` answers `{ticket, state, ahead, since, granted?, reason?}` at once, or with
+  `wait_ms` (at most 600 s) once the ticket holds or the wait ends. A ticket is 32 hex digits the
+  hab makes. The connection that last took a ticket holds it; its close releases it. A
+  `pane_token` (the pane's `GFF_HAB` token, as `content.show` takes it) names the pane: the pane's
+  exit or close releases the ticket, and `heavy.status` names the pane's session.
+  `heavy.release` of an unknown ticket is no error. Capability `heavy`.
+- **A restart.** The CLI keeps the last answer and sends it back with its ticket on a new
+  connection: a ticket the hab does not know holds again at once when it held, else it waits in
+  the place its `since` gives it. A long hold counts from its old `granted`. A waiting CLI whose
+  gff-hab stays away for 2 minutes, and a CLI that finds no gff-hab or one without the
+  capability, runs the command without the lock and says so on stderr. A holding CLI dials
+  again until the command ends.
+- **Signals.** SIGINT and SIGQUIT reach the command from the terminal, as with any foreground
+  job; the CLI passes SIGTERM and SIGHUP on. A signal while waiting releases the ticket and
+  exits with 128 plus the signal. A command that is not found exits 127.
+- **The disk watch** reads both volumes every 30 s. Any volume below the threshold makes the
+  host low; grants come back when every volume has the threshold plus the margin free.
+  `heavy.disk_min_free` 0 never holds runs. The catalog section `heavy` carries `slots`,
+  `holding`, `waiting`, `disk_low` and the volumes; a volume's `free_bytes` there moves only when
+  it changed by 1 GiB or more or the low state changed, so the catalog's generation does not
+  follow every write. `heavy.status` has the latest reading.
+- **Who hears, before groups.** No session coordinates a group until stage B3, so a low-disk
+  episode raises one notice; the coordinator source is a hook B3 fills (the tests name a
+  session through a test seam, and that session gets one channel message per episode). The
+  message names the host, the free space, the volume and the free space that resumes grants;
+  the leftovers of 7.5 come with B4. The long-hold notice is built; its message to coordinators
+  with a member waiting comes with B3.
+- **Where it shows.** gff's status board lists, under Heavy runs, each host whose lock is in use
+  or whose disk is low, from the catalog. The group card's waits line comes with B3.
+
 ---
 
 ## 9. Context supervision and sibling actions
@@ -996,8 +1031,8 @@ setting, with its earlier fixed value as the default. Two homes, by who tunes it
 | `group.fresh_transcript_mb` | Start fresh at this transcript size | integer 1 to 64 MB | 4 (9.1) |
 | `group.handoff_at` | Start fresh at context, for a harness the hab cannot compact | percent 20 to 95 | 60 (9.1) |
 | `heavy.slots` | Heavy runs at once on this host | integer 1 to 8 | 1; this hab only |
-| `heavy.disk_min_free` | Hold heavy runs below this free space | GiB | 10; this hab only |
-| `heavy.long_hold` | Notify when a heavy run holds the lock longer than | 5 minutes to 24 hours | 60 minutes; this hab only (8.1) |
+| `heavy.disk_min_free` | Hold heavy runs below this free space | integer GiB 0 to 4096, 0 = never | 10; this hab only |
+| `heavy.long_hold` | Notify when a heavy run holds the lock longer than | integer minutes 5 to 1440 | 60 minutes; this hab only (8.1) |
 | `group.close_members` | Close idle members at the end | bool | true |
 
 **`[groups]` and `[heavy]` keys**
