@@ -21,7 +21,15 @@ const (
 	ModeFresh  Mode = "fresh"
 	ModeResume Mode = "resume"
 	ModeFork   Mode = "fork"
+	// ModeCapcom and ModeGroup start no session: a run hands one message to the Capcom service
+	// or to a group's coordinator (rounds.md 5.2).
+	ModeCapcom Mode = "capcom"
+	ModeGroup  Mode = "group"
 )
+
+// Messages reports whether a mode's run hands a message to a destination instead of starting
+// or using a session (rounds.md 5.2).
+func (m Mode) Messages() bool { return m == ModeCapcom || m == ModeGroup }
 
 // CatchUp says what a round does with slots missed while the runner slept (rounds.md 8.2).
 type CatchUp string
@@ -54,6 +62,18 @@ const (
 	MaxNameLen     = 64
 	DefaultTimeout = 60 * time.Minute
 	DefaultWait    = 10 * time.Minute
+	// DefaultDebounce and DefaultCooldown are an event round's batch timing (rounds.md 4.5).
+	DefaultDebounce = 30 * time.Second
+	DefaultCooldown = 5 * time.Minute
+	MaxDebounce     = time.Hour
+	MaxCooldown     = 24 * time.Hour
+)
+
+// MinDebounce and MinCooldown bound debounce and cooldown from below (rounds.md 4.5: 5 s and 1
+// minute). Tests lower them; nothing else changes them.
+var (
+	MinDebounce = 5 * time.Second
+	MinCooldown = time.Minute
 )
 
 // Duration is a time.Duration that is written to JSON as text such as "1h0m0s".
@@ -92,11 +112,17 @@ type Round struct {
 	Project string   `json:"project,omitempty"`
 	Cwd     string   `json:"cwd,omitempty"`
 	Target  string   `json:"target,omitempty"`
+	// Group is a group round's group, by id (rounds.md 5.2).
+	Group string `json:"group,omitempty"`
+	// Debounce and Cooldown time an event round's batches (rounds.md 4.5); zero for others.
+	Debounce Duration `json:"debounce,omitempty"`
+	Cooldown Duration `json:"cooldown,omitempty"`
 	// MaxRuns completes the round after this many finished runs; 0 is no limit.
 	MaxRuns   int        `json:"max_runs,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Timeout   Duration   `json:"timeout"`
-	// Wait is how long a resume run waits for the lock; zero for the other modes.
+	// Wait is how long a resume run waits for the lock, or a group run for its delivery; zero
+	// for the other modes.
 	Wait     Duration `json:"wait,omitempty"`
 	CatchUp  CatchUp  `json:"catch_up"`
 	OnFinish OnFinish `json:"on_finish,omitempty"`
@@ -211,10 +237,48 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 		if r.Cwd != "" {
 			return fieldErr("cwd", "a %s round works in its target's folder", r.Mode)
 		}
+	case ModeCapcom, ModeGroup:
+		// A message round: the prompt goes with the events to a destination (rounds.md 3, Field
+		// rules (watchers)).
+		if r.Prompt == "" {
+			return fieldErr("prompt", "required")
+		}
+		for _, f := range []struct {
+			name string
+			set  bool
+		}{{"harness", r.Harness != ""}, {"model", r.Model != ""}, {"harness_args", len(r.HarnessArgs) > 0},
+			{"command", len(r.Command) > 0}, {"project", r.Project != ""}, {"cwd", r.Cwd != ""},
+			{"target", r.Target != ""}, {"on_finish", r.OnFinish != ""}} {
+			if f.set {
+				return fieldErr(f.name, "a %s round takes none", r.Mode)
+			}
+		}
+		if r.Mode == ModeGroup && r.Group == "" {
+			return fieldErr("group", "required for a group round")
+		}
 	case "":
 		return fieldErr("mode", "required")
 	default:
-		return fieldErr("mode", "%q: want fresh, resume or fork", r.Mode)
+		return fieldErr("mode", "%q: want fresh, resume, fork, capcom or group", r.Mode)
+	}
+	if r.Group != "" && r.Mode != ModeGroup {
+		return fieldErr("group", "for group rounds only")
+	}
+	if t.Kind == TriggerEvent {
+		switch {
+		case r.Debounce == 0:
+			r.Debounce = Duration(DefaultDebounce)
+		case time.Duration(r.Debounce) < MinDebounce || time.Duration(r.Debounce) > MaxDebounce:
+			return fieldErr("debounce", "%s: want %s to %s", time.Duration(r.Debounce), MinDebounce, MaxDebounce)
+		}
+		switch {
+		case r.Cooldown == 0:
+			r.Cooldown = Duration(DefaultCooldown)
+		case time.Duration(r.Cooldown) < MinCooldown || time.Duration(r.Cooldown) > MaxCooldown:
+			return fieldErr("cooldown", "%s: want %s to %s", time.Duration(r.Cooldown), MinCooldown, MaxCooldown)
+		}
+	} else if r.Debounce != 0 || r.Cooldown != 0 {
+		return fieldErr("debounce", "debounce and cooldown are for event triggers only")
 	}
 
 	if r.MaxRuns < 0 {
@@ -234,7 +298,7 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 	case r.Timeout < 0:
 		return fieldErr("timeout", "must be positive")
 	}
-	if r.Mode == ModeResume {
+	if r.Mode == ModeResume || r.Mode == ModeGroup {
 		switch {
 		case r.Wait == 0:
 			r.Wait = Duration(DefaultWait)
@@ -242,7 +306,7 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 			return fieldErr("wait", "must be positive")
 		}
 	} else if r.Wait != 0 {
-		return fieldErr("wait", "for resume rounds only")
+		return fieldErr("wait", "for resume and group rounds only")
 	}
 	switch r.CatchUp {
 	case "":
@@ -253,11 +317,11 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 	}
 	switch r.OnFinish {
 	case "":
-		if r.Mode != ModeResume {
+		if r.Mode == ModeFresh || r.Mode == ModeFork {
 			r.OnFinish = OnFinishClose
 		}
 	case OnFinishClose, OnFinishKeep:
-		if r.Mode == ModeResume {
+		if r.Mode != ModeFresh && r.Mode != ModeFork {
 			return fieldErr("on_finish", "for fresh and fork rounds only")
 		}
 	default:
@@ -318,7 +382,31 @@ type Run struct {
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	// Result is the first MaxResultBytes of the final agent message.
 	Result string `json:"result,omitempty"`
+	// Events is an event run's batch size: the events it serves, dropped ones included
+	// (rounds.md 4.5). Zero for a run with no batch.
+	Events int `json:"events,omitempty"`
+	// Destination and Message are a capcom or group run's destination (the Capcom home host, or
+	// the coordinator's address) and its channel message id (rounds.md 5.2).
+	Destination string `json:"destination,omitempty"`
+	Message     string `json:"message,omitempty"`
+	// Outcome is a capcom run's second answer, set once after the run ended (rounds.md 5.2).
+	Outcome *Outcome `json:"outcome,omitempty"`
 }
+
+// Outcome is Capcom's second answer to a round message: told, quiet, acted or unseen, and when
+// the turn that took it ended (rounds.md 5.2, capcom-service.md 9.5).
+type Outcome struct {
+	Word string    `json:"word"`
+	At   time.Time `json:"at"`
+}
+
+// Outcome words. The set is open: a newer service may send another word, which is kept.
+const (
+	OutcomeTold   = "told"
+	OutcomeQuiet  = "quiet"
+	OutcomeActed  = "acted"
+	OutcomeUnseen = "unseen"
+)
 
 // TruncateResult cuts a final agent message to MaxResultBytes on a UTF-8 boundary.
 func TruncateResult(s string) string {

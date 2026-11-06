@@ -125,6 +125,13 @@ type RunUpdate struct {
 	Result string
 	// Network is set when the harness reported a network or sign-in error (rounds.md 8.3).
 	Network bool
+	// Destination and Message name a capcom or group run's destination and its channel message
+	// (rounds.md 5.2); empty leaves them as they are.
+	Destination string
+	Message     string
+	// KeepBatch puts an ending run's events back into the round's pending batch, so the next
+	// run carries them: a capcom or group run whose destination was not there (rounds.md 4.5).
+	KeepBatch bool
 	// TargetGone ends a resume or fork run whose target session's record was removed: the
 	// round completes with ReasonTargetGone and one notice; the run counts for nothing. A run
 	// whose session is not the round's target now (an edit re-targeted it) completes nothing.
@@ -146,6 +153,14 @@ type SchedulerConfig struct {
 	NewTicker func() (ticks <-chan time.Time, stop func())
 	// Logf receives one line per store error and per trigger that no longer compiles.
 	Logf func(format string, a ...any)
+	// Limits bound event batches (rounds.md 4.7); a zero field takes its default.
+	Limits Limits
+}
+
+// WakeSink is a Sink that also hears hab.woke: a wake the scheduler detected, once its settle
+// passed (rounds.md 4.3). The first reading after start is not a wake for it.
+type WakeSink interface {
+	Woke(slept time.Duration)
 }
 
 type compiled struct {
@@ -165,6 +180,7 @@ type event struct {
 	deleted *Entry
 	run     *Run
 	notice  *Notice
+	woke    *time.Duration
 }
 
 // Scheduler is the rounds scheduler (rounds.md 7.2, 8, 10.1). It is safe for concurrent use.
@@ -191,6 +207,21 @@ type Scheduler struct {
 
 	events []event
 	starts []Run
+
+	// Event rounds (rounds.md 4.5): pend holds each round's pending batch, the newest in memory;
+	// pendDirty the rounds whose batch is not saved yet, saved at most once per
+	// Limits.StateSaveEvery (pendSaved) and in the write that makes a run.
+	pend      map[string]*Pending
+	pendDirty map[string]bool
+	pendSaved time.Time
+	pendTimer *time.Timer
+	dueTimer  *time.Timer
+	dueAt     time.Time
+	// wokePending holds a detected wake (not the first reading) until its settle passes; then
+	// hab.woke goes to the sink with wokeSlept.
+	wokePending bool
+	wokeSlept   time.Duration
+	closed      bool
 }
 
 // NewScheduler loads the rounds and every live run from the store, and recomputes each future
@@ -212,15 +243,18 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 	} else if cfg.WakeSettle < 0 {
 		cfg.WakeSettle = 0
 	}
+	cfg.Limits = cfg.Limits.withDefaults()
 	s := &Scheduler{
-		cfg:     cfg,
-		store:   cfg.Store,
-		runs:    cfg.Store.Runs(),
-		scheds:  map[string]compiled{},
-		live:    map[string]*Run{},
-		owed:    map[string]bool{},
-		retry:   map[string]retryPlan{},
-		retried: map[string]bool{},
+		cfg:       cfg,
+		store:     cfg.Store,
+		runs:      cfg.Store.Runs(),
+		scheds:    map[string]compiled{},
+		live:      map[string]*Run{},
+		owed:      map[string]bool{},
+		retry:     map[string]retryPlan{},
+		retried:   map[string]bool{},
+		pend:      map[string]*Pending{},
+		pendDirty: map[string]bool{},
 	}
 	live, err := s.runs.Live()
 	if err != nil {
@@ -233,6 +267,10 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 	s.mu.Lock()
 	now := cfg.Clock.Now()
 	for _, e := range s.store.List() {
+		if p := e.State.Pending; p != nil && p.Len() > 0 {
+			c := clonePending(p)
+			s.pend[e.Round.ID] = &c
+		}
 		c := s.compile(e.Round)
 		if c.err != nil || e.State.NextSlot == nil || !e.State.NextSlot.After(now) {
 			continue
@@ -244,7 +282,7 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 	}
 	for _, id := range sortedIDs(s.live) {
 		r := s.live[id]
-		if r.State != RunQueued && r.SessionID == "" {
+		if r.State != RunQueued && r.SessionID == "" && r.Message == "" {
 			s.endLocked(r, RunUpdate{State: RunFailed, Reason: ReasonStartLost}, now, false)
 		}
 	}
@@ -324,7 +362,12 @@ func (s *Scheduler) Run(ctx context.Context) {
 // is the wall time of the reading before; a slot after it came due on time.
 func (s *Scheduler) observeLocked() (now, prev time.Time, wake bool) {
 	now, mono := s.cfg.Clock.Now(), s.cfg.Clock.Mono()
-	wake = !s.observed || now.Sub(s.lastWall)-(mono-s.lastMono) > WakeGap
+	gap := now.Sub(s.lastWall) - (mono - s.lastMono)
+	wake = !s.observed || gap > WakeGap
+	if s.observed && wake {
+		// hab.woke, once the settle passes (rounds.md 4.3): never for the first reading.
+		s.wokePending, s.wokeSlept = true, gap
+	}
 	prev = s.lastWall
 	if !s.observed {
 		prev = now
@@ -365,6 +408,12 @@ func (s *Scheduler) UpdateRun(runID string, u RunUpdate) error {
 	if !u.State.Final() {
 		if u.SessionID != "" {
 			run.SessionID = u.SessionID
+		}
+		if u.Destination != "" {
+			run.Destination = u.Destination
+		}
+		if u.Message != "" {
+			run.Message = u.Message
 		}
 		// A live run's reason says why it is in its state (a blocked run's dialog); the next
 		// live update replaces it, and an empty one clears it.
@@ -585,9 +634,27 @@ func (s *Scheduler) manualLocked(id string, now time.Time) (*Run, error) {
 		State:   RunQueued,
 		Created: now,
 	}
-	ne, err := s.store.QueueRun(run, func(st *RoundState) { st.LastRun = run.Number })
+	// Run now on an event round takes the pending batch, or runs with none; it starts no
+	// cooldown (rounds.md 4.5).
+	took, err := s.takeBatchLocked(id, &run)
 	if err != nil {
 		return nil, err
+	}
+	ne, err := s.store.QueueRun(run, func(st *RoundState) {
+		st.LastRun = run.Number
+		if took {
+			st.Pending = nil
+		}
+	})
+	if err != nil {
+		if took {
+			s.store.RemoveEvents(id, run.ID)
+		}
+		return nil, err
+	}
+	if took {
+		delete(s.pend, id)
+		delete(s.pendDirty, id)
 	}
 	s.live[run.ID] = &run
 	c := run
@@ -611,6 +678,10 @@ func (s *Scheduler) unlockAndFlush() {
 	s.mu.Unlock()
 	for _, ev := range evs {
 		switch {
+		case ev.woke != nil:
+			if ws, ok := s.cfg.Sink.(WakeSink); ok {
+				ws.Woke(*ev.woke)
+			}
 		case ev.round != nil:
 			s.cfg.Sink.RoundChanged(*ev.round)
 		case ev.deleted != nil:
@@ -764,6 +835,17 @@ func (s *Scheduler) evaluateLocked(now, prev time.Time, wake bool) {
 			delete(s.retry, id)
 		}
 	}
+	for id := range s.pend {
+		if !have[id] {
+			delete(s.pend, id)
+			delete(s.pendDirty, id)
+		}
+	}
+	if s.wokePending && !now.Before(s.settleUntil) {
+		s.wokePending = false
+		slept := s.wokeSlept
+		s.events = append(s.events, event{woke: &slept})
+	}
 }
 
 func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
@@ -799,6 +881,10 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 		if notStarted(live) {
 			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonExpired}, now, true)
 		}
+		return
+	}
+	if e.Round.Trigger.Kind == TriggerEvent {
+		s.evaluateEvents(e, now, live)
 		return
 	}
 	// A next slot at or before the last served one (an edit or a zone change while the clock
@@ -926,6 +1012,9 @@ func (s *Scheduler) startLocked(now time.Time) {
 		t := now
 		r.State, r.StartedAt = RunRunning, &t
 		s.saveRun(r)
+		if r.Trigger == TriggerEvent {
+			s.setState(r.RoundID, func(st *RoundState) { st.LastEventStart = &t })
+		}
 		s.starts = append(s.starts, *r)
 		running++
 	}
@@ -967,9 +1056,19 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time, internal boo
 		run.SessionID = u.SessionID
 	}
 	run.Result = TruncateResult(u.Result)
+	if u.Destination != "" {
+		run.Destination = u.Destination
+	}
+	if u.Message != "" {
+		run.Message = u.Message
+	}
 	t := now
 	run.EndedAt = &t
 	s.saveRun(run)
+	if u.KeepBatch && run.Events > 0 {
+		s.returnBatchLocked(run, now)
+	}
+	s.store.PruneEvents(run.RoundID, s.cfg.Limits.EventFilesKeep)
 
 	e, ok := s.store.Get(run.RoundID)
 	if !ok || internal {
