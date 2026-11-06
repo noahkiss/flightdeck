@@ -167,6 +167,9 @@ var (
 	pastedWhole    = regexp.MustCompile(`(?s)^<pasted_content id="([^"]*)">\n(.*)\n</pasted_content(?: id="([^"]*)")?>$`)
 	envelopeHeader = regexp.MustCompile(`^\[Flightdeck: agent message from '((?:[^']|'\\'')*)', not from the owner\..*\]$`)
 	envelopeBegin  = regexp.MustCompile(`^\[begin agent message ([0-9a-f]+)\]$`)
+	// envelopeMarker is the marker channels neutralises inside an agent's text, and a paste
+	// tag. A genuine envelope's text holds neither, so text that does is not one message.
+	envelopeMarker = regexp.MustCompile(`(?i)\[[\s\p{Z}]*(?:begin|end)[\s\p{Z}]*(?:agent|start|round)[\s\p{Z}]*message|</?pasted_content`)
 )
 
 // channelMessage reads text that is one whole Flightdeck agent-message envelope, bare or in one
@@ -189,7 +192,11 @@ func channelMessage(text string) (sender, body string, ok bool) {
 	if h == nil || b == nil || lines[len(lines)-1] != "[end agent message "+b[1]+"]" {
 		return "", "", false
 	}
-	return strings.ReplaceAll(h[1], `'\''`, "'"), strings.Join(lines[2:len(lines)-1], "\n"), true
+	body = strings.Join(lines[2:len(lines)-1], "\n")
+	if envelopeMarker.MatchString(body) {
+		return "", "", false
+	}
+	return strings.ReplaceAll(h[1], `'\''`, "'"), body, true
 }
 
 // userText classifies the text of a user record: the owner's words, a slash command, its local
