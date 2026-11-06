@@ -217,14 +217,33 @@ func (s *Service) history(ctx context.Context, p api.LogbookHistoryParams, hide 
 			return api.LogbookHistory{}, apiErr(err)
 		}
 	}
-	ops, err := s.st.History(ctx, p.ID)
-	if err != nil {
-		return api.LogbookHistory{}, apiErr(err)
-	}
+	var ops []logbook.FoldedOp
 	out := api.LogbookHistory{Ops: []api.LogbookOp{}}
+	if p.FoldedAfter != nil {
+		// Read the highest number first: an op folded between the two reads comes again next.
+		last, err := s.st.LastFold(ctx)
+		if err != nil {
+			return api.LogbookHistory{}, apiErr(err)
+		}
+		if ops, err = s.st.FoldedAfter(ctx, p.ID, *p.FoldedAfter); err != nil {
+			return api.LogbookHistory{}, apiErr(err)
+		}
+		out.LastFold = last
+		for len(ops) > 0 && ops[len(ops)-1].Fold > last {
+			ops = ops[:len(ops)-1]
+		}
+	} else {
+		all, err := s.st.History(ctx, p.ID)
+		if err != nil {
+			return api.LogbookHistory{}, apiErr(err)
+		}
+		for _, o := range all {
+			ops = append(ops, logbook.FoldedOp{Op: o})
+		}
+	}
 	for _, o := range ops {
 		lo := api.LogbookOp{ID: o.ID().String(), At: stamp(o.Wall), Kind: string(o.Kind), Record: o.Record, Field: o.Field,
-			Value: api.RawJSON(o.Value), By: actor(o.Actor), Folded: o.Known()}
+			Value: api.RawJSON(o.Value), By: actor(o.Actor), Folded: o.Known(), Fold: o.Fold}
 		for _, p := range o.Prev {
 			lo.Prev = append(lo.Prev, p.String())
 		}

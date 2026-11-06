@@ -1,0 +1,25 @@
+{
+  "data": {
+    "at": "at-7",
+    "created": "created-8",
+    "from": "from-4",
+    "id": "id-3",
+    "reason": "reason-6",
+    "state": "declined",
+    "to": "to-5",
+    "x_unknown_field": "later"
+  },
+  "id": "id-11",
+  "revision": 9,
+  "seq": 10,
+  "type": "channel.message",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

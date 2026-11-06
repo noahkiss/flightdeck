@@ -1,0 +1,198 @@
+{
+  "hosts": [
+    {
+      "catalog": {
+        "actions": [
+          {
+            "command": "command-24",
+            "name": "name-23",
+            "x_unknown_field": "later"
+          }
+        ],
+        "agents": [
+          {
+            "harness": "harness-34",
+            "project": "project-35",
+            "session": "session-33",
+            "since": "since-36",
+            "state": "exited",
+            "x_unknown_field": "later"
+          }
+        ],
+        "always_on": true,
+        "at": "at-9",
+        "capabilities": [
+          {
+            "declared": true,
+            "detected": true,
+            "name": "name-19",
+            "x_unknown_field": "later"
+          }
+        ],
+        "capcom": {
+          "assignment": 39,
+          "home": "home-40",
+          "service": "service-41",
+          "sessions": [
+            {
+              "harness": "harness-44",
+              "name": "name-43",
+              "session": "session-42",
+              "standing": true,
+              "x_unknown_field": "later"
+            }
+          ],
+          "x_unknown_field": "later"
+        },
+        "device_id": "device_id-6",
+        "generation": 8,
+        "groups": [
+          {
+            "coordinator": {
+              "capcom": true,
+              "device": "device-61",
+              "name": "name-63",
+              "session": "session-62",
+              "x_unknown_field": "later"
+            },
+            "generation": 64,
+            "id": "id-58",
+            "state": "state-60",
+            "title": "title-59",
+            "x_unknown_field": "later"
+          }
+        ],
+        "harnesses": [
+          {
+            "name": "name-17",
+            "version": "version-18",
+            "x_unknown_field": "later"
+          }
+        ],
+        "heavy": {
+          "disk_low": true,
+          "holding": 53,
+          "slots": 52,
+          "volumes": [
+            {
+              "free_bytes": 56,
+              "path": "path-55",
+              "total_bytes": 57,
+              "x_unknown_field": "later"
+            }
+          ],
+          "waiting": 54,
+          "x_unknown_field": "later"
+        },
+        "host": "host-7",
+        "peers": [
+          "peers-37"
+        ],
+        "projects": [
+          {
+            "folders": [
+              {
+                "branch": "branch-30",
+                "dirty": true,
+                "head": "head-31",
+                "last_commit": "last_commit-32",
+                "path": "path-29",
+                "x_unknown_field": "later"
+              }
+            ],
+            "name": "name-25",
+            "remote": "remote-26",
+            "root_commit": "root_commit-27",
+            "summary": "summary-28",
+            "x_unknown_field": "later"
+          }
+        ],
+        "rounds": [
+          {
+            "completed": true,
+            "id": "id-45",
+            "last_run": "taken_over",
+            "last_run_at": "last_run_at-51",
+            "mode": "group",
+            "name": "name-46",
+            "next_slot": "next_slot-50",
+            "paused": true,
+            "project": "project-48",
+            "remote": "remote-49",
+            "trigger": "trigger-47",
+            "x_unknown_field": "later"
+          }
+        ],
+        "services": [
+          {
+            "health": "health-22",
+            "name": "name-20",
+            "url": "url-21",
+            "x_unknown_field": "later"
+          }
+        ],
+        "system": {
+          "arch": "arch-12",
+          "cores": 13,
+          "memory_bytes": 14,
+          "os": "os-10",
+          "os_version": "os_version-11",
+          "x_unknown_field": "later"
+        },
+        "toolchains": [
+          {
+            "name": "name-15",
+            "version": "version-16",
+            "x_unknown_field": "later"
+          }
+        ],
+        "watches": [
+          "watches-38"
+        ],
+        "x_unknown_field": "later"
+      },
+      "label": "label-4",
+      "own": true,
+      "seen_at": "seen_at-5",
+      "stale": true,
+      "x_unknown_field": "later"
+    }
+  ],
+  "projects": [
+    {
+      "key": "key-65",
+      "locations": [
+        {
+          "device_id": "device_id-69",
+          "folders": [
+            {
+              "branch": "branch-72",
+              "dirty": true,
+              "head": "head-73",
+              "last_commit": "last_commit-74",
+              "path": "path-71",
+              "x_unknown_field": "later"
+            }
+          ],
+          "label": "label-70",
+          "stale": true,
+          "x_unknown_field": "later"
+        }
+      ],
+      "name": "name-66",
+      "remote": "remote-67",
+      "root_commit": "root_commit-68",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

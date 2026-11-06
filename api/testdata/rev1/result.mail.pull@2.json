@@ -1,0 +1,71 @@
+{
+  "items": [
+    {
+      "kind": "status",
+      "message": {
+        "at": "at-13",
+        "from": {
+          "device_id": "device_id-5",
+          "host": "host-6",
+          "session": "session-7",
+          "x_unknown_field": "later"
+        },
+        "id": "id-4",
+        "reply_to": "reply_to-12",
+        "round": {
+          "deadline": "deadline-28",
+          "events": [
+            {
+              "at": "at-20",
+              "data": {
+                "data": 24,
+                "x_unknown_field": "later"
+              },
+              "kind": "kind-21",
+              "level": "level-23",
+              "title": "title-22",
+              "x_unknown_field": "later"
+            }
+          ],
+          "last_ok": "last_ok-27",
+          "level": "level-26",
+          "name": "name-15",
+          "omitted": 25,
+          "prompt": "prompt-19",
+          "round": "round-14",
+          "run": "run-16",
+          "slot": "slot-18",
+          "trigger": "trigger-17",
+          "x_unknown_field": "later"
+        },
+        "text": "text-11",
+        "to": {
+          "device_id": "device_id-8",
+          "host": "host-9",
+          "session": "session-10",
+          "x_unknown_field": "later"
+        },
+        "x_unknown_field": "later"
+      },
+      "status": {
+        "at": "at-31",
+        "id": "id-29",
+        "outcome": "outcome-32",
+        "reason": "reason-30",
+        "state": "declined",
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

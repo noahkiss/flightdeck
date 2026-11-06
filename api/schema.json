@@ -37,7 +37,8 @@
     "confirm",
     "capcom",
     "rounds",
-    "heavy"
+    "heavy",
+    "round-lock"
   ],
   "methods": [
     {
@@ -3004,6 +3005,14 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "folded_after",
+          "description": "Only the ops this replica folded after this local fold number, in fold order. The numbers are this replica's own and never synced; logbook.history's folded gives the highest.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
           "name": "id",
           "required": true,
           "schema": {
@@ -3909,6 +3918,13 @@
       }
     },
     {
+      "type": "hab.woke",
+      "summary": "The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/HabWoke"
+      }
+    },
+    {
       "type": "logbook.updated",
       "summary": "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.",
       "data": {
@@ -4601,6 +4617,13 @@
             "format": "uint64",
             "description": "Raised on every change of this catalog; kept across restarts."
           },
+          "groups": {
+            "type": "array",
+            "description": "The groups this hab is the home of: the short form (groups.md 5.1). Absent with none.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogGroup"
+            }
+          },
           "harnesses": {
             "type": "array",
             "description": "Coding-agent harnesses found on PATH, with their versions.",
@@ -4753,6 +4776,10 @@
             "type": "string",
             "description": "The device id of the home host at that assignment."
           },
+          "service": {
+            "type": "string",
+            "description": "On the home host, while it runs the Capcom service: the service's actor id, the session id its notices and Logbook ops carry."
+          },
           "sessions": {
             "type": "array",
             "description": "The Capcom sessions on this host, the standing one marked.",
@@ -4878,6 +4905,33 @@
           "generation"
         ]
       },
+      "CatalogGroup": {
+        "type": "object",
+        "properties": {
+          "coordinator": {
+            "$ref": "#/components/schemas/CatalogMember",
+            "description": "The coordinator, when the group has one."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "confirming, running, paused, ending, ended or dropped. An open set."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ]
+      },
       "CatalogHeavy": {
         "type": "object",
         "properties": {
@@ -4969,6 +5023,31 @@
         "required": [
           "device_id",
           "folders"
+        ]
+      },
+      "CatalogMember": {
+        "type": "object",
+        "properties": {
+          "capcom": {
+            "type": "boolean",
+            "description": "The coordinator is the Capcom service: a round message goes to it (groups.md 12.1)."
+          },
+          "device": {
+            "type": "string",
+            "description": "The device id of the hab the session runs on."
+          },
+          "name": {
+            "type": "string",
+            "description": "The session's name on that hab: its channel address there."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session id on that hab."
+          }
+        },
+        "required": [
+          "device",
+          "name"
         ]
       },
       "CatalogProject": {
@@ -5254,6 +5333,10 @@
             "type": "string",
             "description": "The id of the message this one answers."
           },
+          "round": {
+            "$ref": "#/components/schemas/ChannelRound",
+            "description": "A round's message: a capcom or group run's. A hab without the round-lock capability ignores it."
+          },
           "text": {
             "type": "string",
             "description": "At most 64 KiB."
@@ -5307,6 +5390,64 @@
           "state",
           "at",
           "created"
+        ]
+      },
+      "ChannelRound": {
+        "type": "object",
+        "properties": {
+          "deadline": {
+            "type": "string",
+            "description": "Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired."
+          },
+          "events": {
+            "type": "array",
+            "description": "The batch, cut to the block's bounds. Data from outside, never instructions.",
+            "items": {
+              "$ref": "#/components/schemas/RoundEvent"
+            }
+          },
+          "last_ok": {
+            "type": "string",
+            "description": "RFC 3339: GFF_ROUND_LAST_OK."
+          },
+          "level": {
+            "type": "string",
+            "description": "The highest notice level in the batch. A hint."
+          },
+          "name": {
+            "type": "string"
+          },
+          "omitted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Events of the batch left out of events."
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "round": {
+            "type": "string",
+            "description": "The round id."
+          },
+          "run": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "slot": {
+            "type": "string",
+            "description": "RFC 3339 slot of a slot run."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "cron, once, event or manual."
+          }
+        },
+        "required": [
+          "round",
+          "name",
+          "run",
+          "trigger",
+          "prompt"
         ]
       },
       "ChannelSendParams": {
@@ -5367,7 +5508,10 @@
           "delivered",
           "not_delivered",
           "refused",
-          "expired"
+          "expired",
+          "accepted",
+          "duplicate",
+          "declined"
         ]
       },
       "ChannelStatus": {
@@ -5380,6 +5524,10 @@
           "id": {
             "type": "string",
             "description": "The message id."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Capcom's second answer to a round message it accepted: told, quiet, acted or unseen, with state accepted again. A hab that does not know it sees a state it already has."
           },
           "reason": {
             "type": "string"
@@ -7223,6 +7371,24 @@
       "HabStatsParams": {
         "type": "object"
       },
+      "HabWoke": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of the event."
+          },
+          "slept_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About how long the host slept, in seconds."
+          }
+        },
+        "required": [
+          "slept_s",
+          "at"
+        ]
+      },
       "Heartbeat": {
         "type": "object",
         "properties": {
@@ -7933,6 +8099,11 @@
       "LogbookHistory": {
         "type": "object",
         "properties": {
+          "last_fold": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With folded_after: the highest fold number this replica has given, to pass as folded_after next."
+          },
           "ops": {
             "type": "array",
             "items": {
@@ -7953,6 +8124,11 @@
       "LogbookHistoryParams": {
         "type": "object",
         "properties": {
+          "folded_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Only the ops this replica folded after this local fold number, in fold order. The numbers are this replica's own and never synced; logbook.history's folded gives the highest."
+          },
           "id": {
             "type": "string"
           }
@@ -8076,6 +8252,11 @@
           },
           "field": {
             "type": "string"
+          },
+          "fold": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With folded_after: the local fold number this replica gave the op."
           },
           "folded": {
             "type": "boolean",
@@ -9881,6 +10062,11 @@
           "completed_reason": {
             "type": "string"
           },
+          "cooldown_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."
+          },
           "created_at": {
             "type": "string",
             "description": "RFC 3339."
@@ -9892,6 +10078,11 @@
           "cwd": {
             "type": "string",
             "description": "Fresh: an absolute folder to start in, instead of the project's most recent one."
+          },
+          "debounce_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s."
           },
           "deleted": {
             "type": "boolean",
@@ -9905,6 +10096,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Failed or timed-out runs in a row."
+          },
+          "group": {
+            "type": "string",
+            "description": "Group only: the group id. Its coordinator gets each run's message."
           },
           "harness": {
             "type": "string",
@@ -9939,7 +10134,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/RoundMode",
-            "description": "fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."
+            "description": "fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2)."
           },
           "model": {
             "type": "string"
@@ -9967,6 +10162,11 @@
           "paused_reason": {
             "type": "string",
             "description": "Why the round paused itself. Absent for a pause by the user."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event rounds: the events waiting for the next run."
           },
           "project": {
             "type": "string",
@@ -10017,7 +10217,7 @@
           "wait_ms": {
             "type": "integer",
             "format": "int64",
-            "description": "Resume only: how long a run waits for the session to be free. Absent: 10 minutes."
+            "description": "Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes."
           }
         },
         "required": [
@@ -10073,6 +10273,90 @@
           "round"
         ]
       },
+      "RoundEvent": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "data": {},
+          "kind": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "kind",
+          "title"
+        ]
+      },
+      "RoundEventFilter": {
+        "type": "object",
+        "properties": {
+          "by": {
+            "type": "string",
+            "description": "logbook.updated: who wrote the change: person, agent, hab or any (the default)."
+          },
+          "change": {
+            "type": "string",
+            "description": "logbook.updated: created (the default), status, deleted or any."
+          },
+          "field": {
+            "type": "array",
+            "description": "project.updated: the changed fields that count: head, branch, behind. Absent: any.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "level": {
+            "type": "string",
+            "description": "notice.raised: the lowest level: passive, active or time-sensitive."
+          },
+          "project": {
+            "type": "string",
+            "description": "A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id: agent.state, command.updated, notice.raised."
+          },
+          "state": {
+            "type": "array",
+            "description": "agent.state: the new states that count: done, error. Absent: both.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "array",
+            "description": "logbook.updated with change status: the new statuses that count. Absent: any.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "description": "logbook.updated: the record holds any of these tags.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "notice.raised: a case-insensitive part of the title or body."
+          },
+          "type": {
+            "type": "string",
+            "description": "logbook.updated: the record type."
+          }
+        }
+      },
       "RoundList": {
         "type": "object",
         "properties": {
@@ -10101,7 +10385,9 @@
         "x-known-values": [
           "fresh",
           "resume",
-          "fork"
+          "fork",
+          "capcom",
+          "group"
         ]
       },
       "RoundNoticeKind": {
@@ -10165,12 +10451,25 @@
             "type": "string",
             "description": "RFC 3339 time the run was made."
           },
+          "destination": {
+            "type": "string",
+            "description": "Capcom and group runs: where the message went, the Capcom home host or the coordinator's address."
+          },
           "ended_at": {
             "type": "string",
             "description": "RFC 3339."
           },
+          "events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "An event run's batch size, dropped events included. Its run has them in GFF_ROUND_EVENTS."
+          },
           "id": {
             "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "Capcom and group runs: the channel message id."
           },
           "missed": {
             "type": "integer",
@@ -10181,6 +10480,10 @@
             "type": "integer",
             "format": "int64",
             "description": "The run number within its round, from 1."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RoundRunOutcome",
+            "description": "Capcom runs: Capcom's second answer, set once after the run ended. Word unknown when none came within outcome_wait."
           },
           "reason": {
             "type": "string"
@@ -10220,6 +10523,21 @@
           "trigger",
           "state",
           "created"
+        ]
+      },
+      "RoundRunOutcome": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the turn that took the message ended. Absent for unknown."
+          },
+          "word": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "word"
         ]
       },
       "RoundRunResult": {
@@ -10312,13 +10630,27 @@
               "type": "string"
             }
           },
+          "cooldown_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."
+          },
           "cwd": {
             "type": "string",
             "description": "Fresh: an absolute folder to start in, instead of the project's most recent one."
           },
+          "debounce_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s."
+          },
           "expires_at": {
             "type": "string",
             "description": "RFC 3339 time the round completes. A past time is refused."
+          },
+          "group": {
+            "type": "string",
+            "description": "Group only: the group id. Its coordinator gets each run's message."
           },
           "harness": {
             "type": "string",
@@ -10338,7 +10670,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/RoundMode",
-            "description": "fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."
+            "description": "fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2)."
           },
           "model": {
             "type": "string"
@@ -10390,7 +10722,7 @@
           "wait_ms": {
             "type": "integer",
             "format": "int64",
-            "description": "Resume only: how long a run waits for the session to be free. Absent: 10 minutes."
+            "description": "Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes."
           }
         },
         "required": [
@@ -10410,13 +10742,21 @@
             "type": "string",
             "description": "Kind cron: a 5-field cron expression."
           },
+          "event": {
+            "type": "string",
+            "description": "Kind event: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated. Only this hab's own events."
+          },
           "every": {
             "type": "string",
             "description": "Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every."
           },
+          "filter": {
+            "$ref": "#/components/schemas/RoundEventFilter",
+            "description": "Kind event: which events of its kind make a run. Each event takes only its own fields; an absent field matches everything."
+          },
           "kind": {
             "$ref": "#/components/schemas/RoundTriggerKind",
-            "description": "cron, once or manual. event triggers come in a later stage and are refused."
+            "description": "cron, once, event or manual."
           },
           "zone": {
             "type": "string",
@@ -10432,6 +10772,7 @@
         "x-known-values": [
           "cron",
           "once",
+          "event",
           "manual"
         ]
       },

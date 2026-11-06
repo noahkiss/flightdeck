@@ -139,7 +139,7 @@ func liveRounds(h hosts.Host, stale bool, since time.Time) []RoundRow {
 	var out []RoundRow
 	for _, x := range h.Structure.Rounds {
 		r := RoundRow{RoundKey: RoundKey{Host: h.Label, Round: x.ID}, Name: x.Name, Mode: x.Mode,
-			Trigger: rounds.TriggerWords(string(x.Trigger.Kind), x.Trigger.Cron, x.Trigger.Zone, x.Trigger.At),
+			Trigger: rounds.TriggerWords(string(x.Trigger.Kind), x.Trigger.Cron, x.Trigger.Zone, x.Trigger.At, x.Trigger.Event),
 			Zone:    x.Trigger.Zone, Project: projects[x.Project], Next: parseTime(x.NextSlot),
 			Paused: x.Paused, Completed: x.Completed, TriggerError: x.TriggerError, Stale: stale, Since: since,
 			HostStatus: h.Status}

@@ -202,6 +202,7 @@ var Events = []EventDef{
 	{"confirm.closed", "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.", Confirmation{}},
 	{"round.updated", "A round was created, changed, paused, completed or deleted (data.deleted); the id is the round id (rounds.md 13). Host scope only. Not ephemeral: the rounds are in the host snapshot.", Round{}},
 	{"round.run_updated", "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.", RoundRun{}},
+	{"hab.woke", "The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.", HabWoke{}},
 	{"logbook.updated", "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.", LogbookUpdated{}},
 	{"logbook.conflict", "A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.", LogbookConflict{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
@@ -259,7 +260,7 @@ var Enums = map[string][]string{
 	// Sets added for the mesh (mesh.md 4.3).
 	"PeerState": {"online", "connecting", "offline", "refused", "update_needed"},
 	// Sets added for channels (mesh.md 6.5).
-	"ChannelState": {"queued", "handed", "delivered", "not_delivered", "refused", "expired"},
+	"ChannelState": {"queued", "handed", "delivered", "not_delivered", "refused", "expired", "accepted", "duplicate", "declined"},
 	"MailKind":     {"message", "status"},
 	"MeshReason":   {"mail", "logbook"},
 	// Sets added for worktrees (spec 3.10).
@@ -280,8 +281,8 @@ var Enums = map[string][]string{
 	// Sets added for Capcom (capcom.md 2.1).
 	"SessionKind": {"capcom"},
 	// Sets added for rounds (rounds.md 3, 7.1).
-	"RoundMode":        {"fresh", "resume", "fork"},
-	"RoundTriggerKind": {"cron", "once", "manual"},
+	"RoundMode":        {"fresh", "resume", "fork", "capcom", "group"},
+	"RoundTriggerKind": {"cron", "once", "event", "manual"},
 	"RoundCatchUp":     {"once", "skip"},
 	"RoundOnFinish":    {"close", "keep"},
 	"RoundNotify":      {"failures", "always", "never"},
@@ -341,5 +342,7 @@ var Translators = map[int]Translator{}
 // (capcom.md 7). "rounds" means the round.* methods and the round.updated and
 // round.run_updated events work, the host snapshot carries the rounds, and a run session
 // carries Session.round (rounds.md 13). "heavy" means heavy.take, heavy.release and
-// heavy.status work, and the catalog carries the heavy section (groups.md 8).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy"}
+// heavy.status work, and the catalog carries the heavy section (groups.md 8). "round-lock"
+// means the hab delivers a channel message with the round mark under the round lock and
+// expires it at its deadline; its catalog lists the word too (rounds.md 5.2).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock"}

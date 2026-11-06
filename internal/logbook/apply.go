@@ -379,6 +379,14 @@ func advance(ctx context.Context, tx txn, origin string) (uint64, uint64, error)
 			return 0, 0, err
 		}
 	}
+	if applied > g.applied {
+		// Each op gets a local fold number the first time it folds (rounds.md 4.3, folded since).
+		// A rebuild folds it again and keeps its number.
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO folds(origin, seq) SELECT origin, seq FROM ops
+			WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq`, origin, g.applied, applied); err != nil {
+			return 0, 0, err
+		}
+	}
 	return g.applied, applied, nil
 }
 

@@ -1,0 +1,116 @@
+{
+  "data": {
+    "catch_up": "skip",
+    "command": [
+      "command-26"
+    ],
+    "completed": true,
+    "completed_reason": "completed_reason-48",
+    "cooldown_ms": 38,
+    "created_at": "created_at-40",
+    "created_by": "created_by-39",
+    "cwd": "cwd-30",
+    "debounce_ms": 37,
+    "deleted": true,
+    "expires_at": "expires_at-33",
+    "failures": 45,
+    "group": "group-36",
+    "harness": "harness-23",
+    "harness_args": [
+      "harness_args-25"
+    ],
+    "id": "id-3",
+    "last_ok": "last_ok-44",
+    "last_run": {
+      "created": "created-57",
+      "destination": "destination-62",
+      "ended_at": "ended_at-59",
+      "events": 61,
+      "id": "id-50",
+      "message": "message-63",
+      "missed": 54,
+      "number": 51,
+      "outcome": {
+        "at": "at-65",
+        "word": "word-64",
+        "x_unknown_field": "later"
+      },
+      "reason": "reason-55",
+      "result": "result-60",
+      "round": "round-52",
+      "session": "session-56",
+      "slot": "slot-53",
+      "started_at": "started_at-58",
+      "state": "taken_over",
+      "trigger": "manual",
+      "x_unknown_field": "later"
+    },
+    "last_slot": "last_slot-43",
+    "max_runs": 32,
+    "mode": "group",
+    "model": "model-24",
+    "name": "name-5",
+    "next_slot": "next_slot-42",
+    "notify": "never",
+    "on_finish": "keep",
+    "paused": true,
+    "paused_reason": "paused_reason-47",
+    "pending": 66,
+    "project": "project-27",
+    "project_dir": "project_dir-28",
+    "project_remote": "project_remote-29",
+    "prompt": "prompt-22",
+    "revision": 4,
+    "skips": 46,
+    "target": "target-31",
+    "timeout_ms": 34,
+    "trigger": {
+      "at": "at-9",
+      "cron": "cron-6",
+      "event": "event-10",
+      "every": "every-7",
+      "filter": {
+        "by": "by-21",
+        "change": "change-18",
+        "field": [
+          "field-13"
+        ],
+        "level": "level-15",
+        "project": "project-11",
+        "session": "session-12",
+        "state": [
+          "state-14"
+        ],
+        "status": [
+          "status-19"
+        ],
+        "tags": [
+          "tags-20"
+        ],
+        "text": "text-16",
+        "type": "type-17",
+        "x_unknown_field": "later"
+      },
+      "kind": "manual",
+      "x_unknown_field": "later",
+      "zone": "zone-8"
+    },
+    "trigger_error": "trigger_error-49",
+    "updated_at": "updated_at-41",
+    "wait_ms": 35,
+    "x_unknown_field": "later"
+  },
+  "id": "id-69",
+  "revision": 67,
+  "seq": 68,
+  "type": "round.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
