@@ -3047,10 +3047,12 @@ kept, the TTL, the bound). `go test -race -run TestSummary ./internal/push/`: th
 answered line with the body and actions unchanged; none for a hiding device, a plan or a
 question; nothing sent when every device hides details; a summary that does not fit, holds a
 control character or fails leaves the title of before; the harness's summary passed on; three
-requests in one batch waiting together; the late replacement once, passive, same collapse id and
+requests in one batch waiting together, and one arriving mid-wait waiting from its own arrival;
+none asked for a device presence holds; the late replacement once, passive, same collapse id and
 actions, and none after the request resolved. `go test -race -run TestPushSummaries
 ./cmd/gff-hab`: gff-hab with a fake endpoint: the title, the bearer key from the key command and
-in no log line, and a denied folder and a config with no section sending nothing.
+in no log line, and a denied folder, a request with no folder and a config with no section
+sending nothing.
 
 **Built choices.** Code: `internal/summary` (config, client, cache, key), `internal/push/summary.go`
 (the wait, the late replacement), `cmd/gff-hab/push.go` (the read-scope check). The key command

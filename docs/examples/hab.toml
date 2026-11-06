@@ -67,8 +67,8 @@ model = "qwen3:4b"
 # The command that prints the API key, as an argv with no shell (as push's key_command,
 # docs/push.md). Leave it out for a local server that needs no key.
 # key_command = ["pass", "show", "flightdeck/summaries-key"]
-# "off" (the default), "minimal", "low", "medium", "high", or "default" to send no
-# reasoning_effort for a model that refuses the field.
+# "off" (the default), "minimal", "low", "medium", "high", or "default" to send neither
+# reasoning_effort nor max_tokens, for an endpoint that refuses one (OpenAI's own models).
 thinking = "off"
 # How long a banner waits for its summary. Leave it out for 1.5s; 0.2s to 5s.
 # timeout = "1.5s"
