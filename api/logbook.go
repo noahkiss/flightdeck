@@ -36,6 +36,8 @@ type LogbookFindParams struct {
 	General bool   `json:"general,omitempty" doc:"As in logbook.list."`
 	Deleted bool   `json:"deleted,omitempty" doc:"As in logbook.list."`
 	Flagged bool   `json:"flagged,omitempty" doc:"As in logbook.list."`
+	// Added by stage 9 (logbook.md 13).
+	Semantic bool `json:"semantic,omitempty" doc:"Rank by meaning through vector search, on this hab when it has the logbook-vectors capability, else on an online peer that has it; with none, unavailable: no always-on host with vector search. Needs words."`
 }
 
 type LogbookListParams struct {

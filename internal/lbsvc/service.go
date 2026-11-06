@@ -46,8 +46,14 @@ type Config struct {
 	PaneWrites int
 	// PaneChanges is the pane change limit per minute; 0 is PaneChanges.
 	PaneChanges int
-	Now         func() time.Time
-	Logf        func(format string, args ...any)
+	// Vectors answers a semantic find on this hab: the ids of the k records closest to the words,
+	// closest first. Nil: this hab has no vector index (13).
+	Vectors func(ctx context.Context, words string, k int) ([]string, error)
+	// Forward sends a semantic find to an online peer with vector search, and reports false when
+	// there is none. Nil: none. A call that came over a peer link is never forwarded.
+	Forward func(ctx context.Context, p api.LogbookFindParams) (api.LogbookRecords, bool, error)
+	Now     func() time.Time
+	Logf    func(format string, args ...any)
 }
 
 // Service serves the verbs over one store.
@@ -129,9 +135,45 @@ func (s *Service) Find(ctx context.Context, p api.LogbookFindParams) (api.Logboo
 }
 
 func (s *Service) find(ctx context.Context, p api.LogbookFindParams, hide []string) (api.LogbookRecords, error) {
-	return s.search(ctx, hide, p.Words, api.LogbookFilter{Type: p.Type, Status: p.Status, Project: p.Project, Tag: p.Tag,
-		Host: p.Host, Author: p.Author, Session: p.Session, Since: p.Since, General: p.General, Deleted: p.Deleted, Flagged: p.Flagged, Limit: p.Limit}, false)
+	f := api.LogbookFilter{Type: p.Type, Status: p.Status, Project: p.Project, Tag: p.Tag,
+		Host: p.Host, Author: p.Author, Session: p.Session, Since: p.Since, General: p.General, Deleted: p.Deleted, Flagged: p.Flagged, Limit: p.Limit}
+	if !p.Semantic {
+		return s.search(ctx, hide, p.Words, f, false)
+	}
+	if strings.TrimSpace(p.Words) == "" {
+		return api.LogbookRecords{}, invalid("a semantic find needs words")
+	}
+	var ids []string
+	switch {
+	case s.cfg.Vectors != nil:
+		var err error
+		if ids, err = s.cfg.Vectors(ctx, p.Words, SemanticCandidates); err != nil {
+			return api.LogbookRecords{}, control.Errorf(api.ErrorKindUnavailable, "vector search: %v", err)
+		}
+	case s.cfg.Forward != nil && !control.PeerCall(ctx):
+		res, ok, err := s.cfg.Forward(ctx, p)
+		if err != nil {
+			return api.LogbookRecords{}, err
+		}
+		if !ok {
+			return api.LogbookRecords{}, control.Errorf(api.ErrorKindUnavailable, "%s", NoVectors)
+		}
+		ids = []string{}
+		for _, r := range res.Records {
+			ids = append(ids, r.ID)
+		}
+	default:
+		return api.LogbookRecords{}, control.Errorf(api.ErrorKindUnavailable, "%s", NoVectors)
+	}
+	// The ranking comes from the index; this replica's filters and private rule apply to it.
+	return s.searchIDs(ctx, hide, ids, f)
 }
+
+// NoVectors is the answer to a semantic find when no hab can run it (13).
+const NoVectors = "no always-on host with vector search"
+
+// SemanticCandidates is how many ranked ids a semantic find filters.
+const SemanticCandidates = logbook.MaxLimit
 
 // List lists records, newest change first.
 func (s *Service) List(ctx context.Context, p api.LogbookListParams) (api.LogbookRecords, error) {
@@ -147,8 +189,16 @@ func (s *Service) ready(ctx context.Context, p api.LogbookReadyParams, hide []st
 	return s.search(ctx, hide, "", api.LogbookFilter{Project: p.Project, Limit: p.Limit}, true)
 }
 
+func (s *Service) searchIDs(ctx context.Context, hide, ids []string, f api.LogbookFilter) (api.LogbookRecords, error) {
+	return s.query(ctx, hide, "", ids, f, false)
+}
+
 func (s *Service) search(ctx context.Context, hide []string, words string, f api.LogbookFilter, ready bool) (api.LogbookRecords, error) {
-	q := logbook.Query{Hide: hide, Words: words, Type: f.Type, Status: f.Status, Project: f.Project, Tag: f.Tag, Host: f.Host,
+	return s.query(ctx, hide, words, nil, f, ready)
+}
+
+func (s *Service) query(ctx context.Context, hide []string, words string, ids []string, f api.LogbookFilter, ready bool) (api.LogbookRecords, error) {
+	q := logbook.Query{IDs: ids, Hide: hide, Words: words, Type: f.Type, Status: f.Status, Project: f.Project, Tag: f.Tag, Host: f.Host,
 		Author: f.Author, Session: f.Session, General: f.General, Flagged: f.Flagged, Ready: ready, Deleted: f.Deleted, Limit: f.Limit}
 	if f.Limit < 0 {
 		return api.LogbookRecords{}, invalid("limit is a positive number")

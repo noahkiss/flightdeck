@@ -122,6 +122,9 @@ func (c *conn) handleLogbook(m message) {
 	go func() {
 		ctx, cancel := context.WithTimeout(c.ctx, maxReadTime)
 		defer cancel()
+		if c.peer != nil {
+			ctx = WithPeerCall(ctx)
+		}
 		res, err := call(ctx)
 		seq := c.currentSeq()
 		if err != nil {

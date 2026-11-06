@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -5116,6 +5116,8 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
     public var host: String?
     public var limit: Int?
     public var project: String?
+    /// Rank by meaning through vector search, on this hab when it has the logbook-vectors capability, else on an online peer that has it; with none, unavailable: no always-on host with vector search. Needs words.
+    public var semantic: Bool?
     /// As in logbook.list.
     public var session: String?
     /// RFC 3339 time.
@@ -5134,6 +5136,7 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
         case host = "host"
         case limit = "limit"
         case project = "project"
+        case semantic = "semantic"
         case session = "session"
         case since = "since"
         case status = "status"
@@ -5142,7 +5145,7 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
         case words = "words"
     }
 
-    public init(author: String? = nil, deleted: Bool? = nil, flagged: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
+    public init(author: String? = nil, deleted: Bool? = nil, flagged: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, semantic: Bool? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
         self.author = author
         self.deleted = deleted
         self.flagged = flagged
@@ -5150,6 +5153,7 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
         self.host = host
         self.limit = limit
         self.project = project
+        self.semantic = semantic
         self.session = session
         self.since = since
         self.status = status

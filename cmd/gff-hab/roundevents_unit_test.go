@@ -200,7 +200,7 @@ func TestRoundMatcherLogbook(t *testing.T) {
 	t.Cleanup(func() { lst.Close() })
 	var svc *roundsService
 	var mu sync.Mutex
-	lb, stop, err := startLogbookVerbs(ctx, lst, func() {}, func(e structure.Event) {
+	lb, stop, err := startLogbookVerbs(ctx, lst, nil, func() {}, func(e structure.Event) {
 		mu.Lock()
 		s := svc
 		mu.Unlock()
