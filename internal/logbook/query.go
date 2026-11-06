@@ -27,7 +27,10 @@ type Query struct {
 	Flagged bool // only records with a flag: a conflict and the like (10.2 conflicts)
 	Ready   bool // open tasks and issues with no open blocker (10.2 ready)
 	Deleted bool // include deleted records
-	Limit   int  // default 50
+	// Hide leaves out the records of these projects, by canonical id, and the project records
+	// themselves: a private project in an agent's read outside it (12.1).
+	Hide  []string
+	Limit int // default 50
 }
 
 // Item is one line of a Search answer.
@@ -100,6 +103,10 @@ func (s *Store) Search(ctx context.Context, q Query) ([]Item, bool, error) {
 	}
 	if !q.Deleted {
 		add(`r.deleted = 0`)
+	}
+	for _, h := range q.Hide {
+		add(`coalesce((SELECT canonical FROM aliases WHERE project = r.project), r.project) != ?
+			AND NOT (r.type = 'project' AND coalesce((SELECT canonical FROM aliases WHERE project = r.id), r.id) = ?)`, h, h)
 	}
 	if q.SinceMS > 0 {
 		add(`coalesce((SELECT max(o.wall) FROM ops o WHERE o.root = r.root AND o.known = 1), r.created_wall) >= ?`, q.SinceMS)

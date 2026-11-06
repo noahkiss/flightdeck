@@ -86,9 +86,11 @@ var fields = map[string]fieldSpec{
 	// decision after it is refused; fixed at create.
 	"expires":    {kind: scalarString, types: []string{TypeProposal}},
 	"identities": {kind: setField, types: []string{TypeProject}},
-	"tags":       {kind: setField},
-	"links":      {kind: setField},
-	"notes":      {kind: logField},
+	// private hides a project from agents outside it (12.1, stage 5).
+	"private": {kind: scalarBool, types: []string{TypeProject}},
+	"tags":    {kind: setField},
+	"links":   {kind: setField},
+	"notes":   {kind: logField},
 }
 
 // fieldFor reports the field's spec when this build knows it for the type.
@@ -113,7 +115,7 @@ func mutable(createType, field string) bool {
 	case TypeProposal:
 		return field == "status" || field == "decided_by" || field == "deleted"
 	case TypeProject:
-		return field == "title" || field == "body" || field == "deleted"
+		return field == "title" || field == "body" || field == "deleted" || field == "private"
 	}
 	if field == "type" {
 		return createType == TypeTask || createType == TypeIssue

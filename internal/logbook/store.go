@@ -17,7 +17,7 @@ import (
 
 // foldVersion names the folded tables' shape and this build's fold rules. A file folded by
 // another version is rebuilt from its ops at open (4.4): no migrations.
-const foldVersion = 3
+const foldVersion = 4
 
 // ErrNotFound means the record or op is not on this replica.
 var ErrNotFound = errors.New("logbook: not found")
@@ -233,7 +233,7 @@ func (s *Store) init(ctx context.Context, origin string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+foldedSchema+keysSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+foldedSchema+keysSchema+foldersSchema); err != nil {
 		return fmt.Errorf("logbook: schema: %w", err)
 	}
 	m, err := readMeta(ctx, tx)

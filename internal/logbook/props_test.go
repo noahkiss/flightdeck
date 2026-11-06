@@ -534,6 +534,12 @@ func (w *world) steps(r *replica) []Step {
 			return []Step{set(id, "type", TypeTask), set(id, "assignee", "s1")}
 		case TypeGuide:
 			return []Step{set(id, "pinned", rng.Intn(2) == 0)}
+		case TypeProject:
+			// Stage 5: the private mark, or an identity that may join it with another project.
+			if rng.Intn(2) == 0 {
+				return []Step{set(id, "private", rng.Intn(2) == 0)}
+			}
+			return []Step{add(id, "identities", fmt.Sprintf("forge.example/o/r%d", rng.Intn(6)))}
 		}
 	case 8:
 		ops, err := r.History(context.Background(), id)
