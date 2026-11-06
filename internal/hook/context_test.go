@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/harness"
 )
@@ -144,16 +145,21 @@ func TestContextHabDown(t *testing.T) {
 	}
 }
 
-// TestContextEvents names which events carry which habit.
+// TestContextEvents names which events carry which habit, and which ask with none: Claude
+// Code's PostToolUse, for the context nudge.
 func TestContextEvents(t *testing.T) {
-	for _, c := range []struct{ h, ev, want string }{
-		{"claude", "SessionStart", "brief"}, {"claude", "UserPromptSubmit", "reminder"}, {"claude", "Stop", "closeout"},
-		{"codex", "SessionStart", "brief"}, {"codex", "UserPromptSubmit", "reminder"}, {"codex", "Stop", "closeout"},
-		{"opencode", "session.created", ""}, {"opencode", "session.idle", ""}, {"claude", "PreToolUse", ""},
-		{"claude", "SessionEnd", ""}, {"pi", "SessionStart", ""},
+	for _, c := range []struct {
+		h, ev, want string
+		ok          bool
+	}{
+		{"claude", "SessionStart", "brief", true}, {"claude", "UserPromptSubmit", "reminder", true}, {"claude", "Stop", "closeout", true},
+		{"codex", "SessionStart", "brief", true}, {"codex", "UserPromptSubmit", "reminder", true}, {"codex", "Stop", "closeout", true},
+		{"claude", "PostToolUse", "", true}, {"codex", "PostToolUse", "", false},
+		{"opencode", "session.created", "", false}, {"opencode", "session.idle", "", false}, {"claude", "PreToolUse", "", false},
+		{"claude", "SessionEnd", "", false}, {"pi", "SessionStart", "", false},
 	} {
 		got, ok := ContextEvent(c.h, c.ev)
-		if got != c.want || ok != (c.want != "") {
+		if got != c.want || ok != c.ok {
 			t.Errorf("%s %s: %q %v", c.h, c.ev, got, ok)
 		}
 	}
@@ -161,5 +167,106 @@ func TestContextEvents(t *testing.T) {
 	js, _ := Config("opencode", "")
 	if strings.Contains(js, "client.session") || strings.Contains(js, "noReply") || !strings.Contains(js, `stdout: "ignore"`) {
 		t.Errorf("the opencode plugin still adds the brief:\n%s", js)
+	}
+}
+
+// TestContextNudge: Claude Code's PostToolUse asks for context with no flag, so an existing
+// config asks too, and prints the hab's text as additionalContext; none due prints nothing; an
+// event that is no context event posts as usual and is never asked; with no handler set the post
+// answers 204 and the sink still gets the envelope.
+func TestContextNudge(t *testing.T) {
+	reg := newTestPanes()
+	sock := filepath.Join(shortDir(t), "hook.sock")
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{}
+	s := NewServer(reg, rec.sink, t.Logf)
+	go s.Serve(l)
+	t.Cleanup(func() { s.Close() })
+	tok := reg.mint("pane-1")
+	vars := env(map[string]string{Env: Addr(sock, tok)})
+	ctx := context.Background()
+	run := func(event string) string {
+		var out bytes.Buffer
+		err := Run(ctx, Invocation{Harness: "claude", Event: event, Stdin: strings.NewReader(`{"session_id":"s1"}`), Getenv: vars, Stdout: &out})
+		if err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+		return out.String()
+	}
+	if out := run("PostToolUse"); out != "" {
+		t.Fatalf("no handler set, printed %q", out)
+	}
+	var mu sync.Mutex
+	note := ""
+	var asked []string
+	s.SetContext(func(_ context.Context, pane string, env harness.Envelope) string {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, pane+" "+env.Event)
+		return note
+	})
+	if out := run("PostToolUse"); out != "" {
+		t.Fatalf("none due, printed %q", out)
+	}
+	mu.Lock()
+	note = "Context is at 52%."
+	mu.Unlock()
+	out := run("PostToolUse")
+	var got struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.HookSpecificOutput.HookEventName != "PostToolUse" ||
+		got.HookSpecificOutput.AdditionalContext != note || !strings.HasSuffix(out, "\n") {
+		t.Fatalf("output %q: %v", out, err)
+	}
+	// PreToolUse is no context event: a plain post, never asked.
+	if out := run("PreToolUse"); out != "" {
+		t.Fatalf("PreToolUse printed %q", out)
+	}
+	mu.Lock()
+	if strings.Join(asked, ",") != "pane-1 PostToolUse,pane-1 PostToolUse" {
+		t.Fatalf("asked %v", asked)
+	}
+	mu.Unlock()
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.got) != 4 {
+		t.Fatalf("sink got %d envelopes, want 4", len(rec.got))
+	}
+}
+
+// TestAgentRoute: agent.compact reaches the agent handler with its pane; with none set it is
+// unavailable.
+func TestAgentRoute(t *testing.T) {
+	reg := newTestPanes()
+	sock := filepath.Join(shortDir(t), "hook.sock")
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(reg, func(string, harness.Envelope) string { return "" }, t.Logf)
+	go s.Serve(l)
+	t.Cleanup(func() { s.Close() })
+	addr := Addr(sock, reg.mint("pane-9"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var ce *control.Error
+	if err := Call(ctx, addr, "agent.compact", api.CompactParams{}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
+		t.Fatalf("no handler: %v", err)
+	}
+	s.SetAgent(func(_ context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
+		var p api.CompactParams
+		json.Unmarshal(params, &p)
+		return api.Compaction{ID: method, Pane: pane, FollowUp: p.FollowUp != ""}, nil, nil
+	})
+	var c api.Compaction
+	if err := Call(ctx, addr, "agent.compact", api.CompactParams{FollowUp: "go on"}, &c); err != nil || c.Pane != "pane-9" || c.ID != "agent.compact" || !c.FollowUp {
+		t.Fatalf("agent.compact: %+v %v", c, err)
 	}
 }

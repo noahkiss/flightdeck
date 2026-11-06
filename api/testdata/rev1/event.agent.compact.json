@@ -1,0 +1,26 @@
+{
+  "data": {
+    "at": "at-9",
+    "follow_up": true,
+    "harness": "harness-6",
+    "id": "id-3",
+    "pane": "pane-4",
+    "reason": "reason-8",
+    "session": "session-5",
+    "state": "state-7",
+    "x_unknown_field": "later"
+  },
+  "id": "id-12",
+  "revision": 10,
+  "seq": 11,
+  "type": "agent.compact",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

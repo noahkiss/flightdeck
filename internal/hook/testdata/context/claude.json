@@ -1,5 +1,5 @@
 {
-  "note": "Written by hand. Claude Code hook payloads (2.1) for the three habits of logbook.md 11.3, the text gff-hab answers, and the exact hook output gff-hab hook prints: SessionStart and UserPromptSubmit add context, Stop blocks once with a reason. A compact start and a resume carry the brief too. Events that are no context event print nothing.",
+  "note": "Written by hand. Claude Code hook payloads (2.1) for the three habits of logbook.md 11.3, the text gff-hab answers, and the exact hook output gff-hab hook prints: SessionStart, UserPromptSubmit and PostToolUse add context (PostToolUse carries no habit, only the context nudge of harness-adapters.md), Stop blocks once with a reason. A compact start and a resume carry the brief too. Events that are no context event print nothing.",
   "cases": [
     {"event": "SessionStart", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "startup"},
      "text": "Logbook brief for app (proj-aaaaaaaa): 0 untriaged, 0 flagged.\n\n## Ready\ntask-aaaaaaaa  open  fix \"the\" build\n",
@@ -16,6 +16,11 @@
      "text": "Before you stop: this session changed files and recorded nothing in Logbook. Record what you learned with `gff lb` (a finding, a task's status, a note), or say there is nothing to record.",
      "output": "{\"decision\":\"block\",\"reason\":\"Before you stop: this session changed files and recorded nothing in Logbook. Record what you learned with `gff lb` (a finding, a task's status, a note), or say there is nothing to record.\"}\n"},
     {"event": "PostToolUse", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "PostToolUse", "tool_name": "Edit", "tool_input": {"file_path": "/work/app/a.go"}},
+     "text": "Context is at 52%. Write a handoff for your work so far, then run gff agent compact with a follow-up that points at it.",
+     "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Context is at 52%. Write a handoff for your work so far, then run gff agent compact with a follow-up that points at it.\"}}\n"},
+    {"event": "PostToolUse", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": {"file_path": "/work/app/a.go"}},
+     "text": "", "output": ""},
+    {"event": "PreToolUse", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": {"file_path": "/work/app/a.go"}},
      "text": "never asked", "output": ""}
   ]
 }

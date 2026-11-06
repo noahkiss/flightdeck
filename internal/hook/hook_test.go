@@ -237,6 +237,10 @@ func TestConfig(t *testing.T) {
 					t.Errorf("%s PermissionRequest timeout %d", h.name, g[0].Hooks[0].Timeout)
 				}
 			}
+			if strings.Contains(g[0].Hooks[0].Command, "-context") {
+				// The context events need no flag: an older gff-hab would refuse one and post nothing.
+				t.Errorf("%s %s runs with -context: %s", h.name, ev, g[0].Hooks[0].Command)
+			}
 			if len(g) != 1 || len(g[0].Hooks) != 1 || g[0].Hooks[0].Type != "command" ||
 				g[0].Hooks[0].Command != want || g[0].Hooks[0].Timeout <= 0 {
 				t.Errorf("%s %s: %+v", h.name, ev, g)
