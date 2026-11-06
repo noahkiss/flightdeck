@@ -313,7 +313,7 @@ accepted ideas into tasks.
 | 4.10 | Adopt a session started elsewhere | Paseo | Bring a harness session started in a plain terminal into Flightdeck by its resume id | An owner moving in keeps their running work | new task: "Adopt an outside session by resume id" (Part 4) |
 | 4.11 | Clipboard images over SSH | herdr | `gff` forwards a pasted image to the remote pane's agent | Screenshots reach a remote agent from the desktop client too | task-g1uwtlsb, or new task in Part 5 |
 | 4.12 | Speech on the hab | Paseo | The phone streams audio; the hab transcribes with Parakeet | No 440 MB model on the phone; old phones get the good engine | task-h011ghy9; the default engine since 2026-11-01 (`voice.md`) |
-| 4.13 | Save before logout and restart | herdr | Watch the Mac's logout and restart signals and checkpoint 15 to 20 s before agents are killed | The reboot restore (`gff-client.md` 6.2) has fresh layouts and resume ids | new task: "hab: checkpoint on Mac logout and shutdown" (Part 1) |
+| 4.13 | Save before logout and restart | herdr | Watch the Mac's logout and restart signals and checkpoint 15 to 20 s before agents are killed | The reboot restore (`gff-client.md` 6.2) has fresh layouts and resume ids | Built 2026-11-06 (`hab-holder.md` 2.11): state is saved at each change, so SIGTERM with a 15 s deadline is enough; no OS watcher |
 | 4.14 | Agents start agents on other hosts | Paseo | An MCP tool lets an agent start a session on a named host | Capcom and teammates can place work on the right machine | task-6iwat66b, task-ph00sdci |
 
 **Top five**, by value for the cost: 4.2 (idempotency keys), 4.3 (state resets), 4.4 (plan

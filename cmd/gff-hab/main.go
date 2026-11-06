@@ -1356,6 +1356,11 @@ func serve(args []string) error {
 	go func() {
 		sig := <-sigs
 		logger.Printf("%v: shutting down", sig)
+		// A logout, restart or shutdown ends the holder's programs too, maybe first
+		// (hab-holder.md 2.11). Write what the restore needs before anything slower, and exit
+		// within the deadline whatever hangs.
+		shutdownWatchdog(shutdownDeadline, logger.Printf, os.Exit)
+		resumes.flush()
 		s.Close() // sends closing (shutdown) to every client and waits for it to flush
 		if ds != nil {
 			ds.Close() // clients resume each stream from its offset (spec 7.4)
@@ -1372,6 +1377,20 @@ func serve(args []string) error {
 	}
 	<-stopped
 	return nil
+}
+
+// shutdownDeadline bounds gff-hab's planned stop, from the signal to the exit. It is below
+// launchd's default 20 s exit timeout, and far below systemd's 90 s stop timeout, which a hung
+// stop would otherwise add to the machine's shutdown (hab-holder.md 2.11).
+const shutdownDeadline = 15 * time.Second
+
+// shutdownWatchdog calls exit(1) once d has passed, after a log line. The process normally exits
+// first, which ends the timer with it.
+func shutdownWatchdog(d time.Duration, logf func(string, ...any), exit func(int)) *time.Timer {
+	return time.AfterFunc(d, func() {
+		logf("shutdown did not finish in %v; exiting", d)
+		exit(1)
+	})
 }
 
 // connect bridges stdin and stdout to the local socket. It copies bytes and parses nothing

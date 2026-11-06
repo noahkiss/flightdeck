@@ -92,6 +92,9 @@ func (b *resumeBook) Close() {
 	<-b.done
 }
 
+// flush writes what is pending now, before a shutdown's slower steps (hab-holder.md 2.11).
+func (b *resumeBook) flush() { b.apply() }
+
 func (b *resumeBook) poke() {
 	select {
 	case b.kick <- struct{}{}:

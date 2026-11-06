@@ -267,6 +267,60 @@ Two weak points we fix (section 2.6):
   user.
 - Socket paths stay short: macOS limits a socket path to 104 bytes.
 
+### 2.11 Logout, restart and shutdown
+
+herdr saves its state when the Mac says it will log out or power off, 15 to 20 s before agents
+are killed (`landscape.md` idea 4.13). The goal is the same here: the restore after a reboot
+(`gff-client.md` 6.2) finds current session records and resume ids.
+
+**What each OS gives.**
+
+| OS | Event | What our jobs get |
+|---|---|---|
+| macOS logout, restart or shutdown | launchd stops the `gui/<uid>` domain | SIGTERM to every job at about the same time, in no order we control; SIGKILL after the job's `ExitTimeOut` (logic job: launchd's default, 20 s; holder: 30 s, 5.3) |
+| macOS, GUI apps only | `NSWorkspaceWillPowerOffNotification` before the jobs stop | Nothing: the hab is not a GUI app, and listening needs AppKit and cgo, which only `internal/vt/ghostty` may use |
+| Linux shutdown or reboot | systemd stops the user manager's units | SIGTERM to each unit, in parallel; SIGKILL after `TimeoutStopSec` (default 90 s) |
+| Linux logout | With lingering on (5.2), nothing stops | Nothing |
+| Linux, logind | `PrepareForShutdown` on D-Bus, and delay inhibitor locks | Nothing used: a D-Bus client buys no time over SIGTERM, see below |
+
+**What must be saved, and when it is.**
+
+| State | Where | Written |
+|---|---|---|
+| Sessions, names, projects (the structure) | gff-hab's state file | At each change |
+| Each session's start and native resume id | `<state>/resume.json` | By a worker at once after each change; flushed first on SIGTERM |
+| Rounds and runs | `<state>/rounds/state.json` | At each change |
+| Screen checkpoints with OSC 133 marks | `<state>/checkpoints/` | On SIGTERM (`Link.Close`). After a reboot no holder lists those panes, so gff-hab removes them: they matter for a gff-hab restart, not a reboot |
+| `gff`'s workspace (tabs, layout, views) | The client's workspace file | At most once a second on change, and on SIGTERM, SIGHUP or SIGINT (`gff-client.md` 5.6) |
+
+So by the time any signal arrives, everything a reboot restore reads is on disk, or one write
+away. The holder has nothing to save: its shutdown (2.8) hangs up and reaps its programs, says
+bye and removes its registry entry.
+
+**Order.** The holder may end its programs before gff-hab has its signal. gff-hab then sees each
+program exit and marks its session exited, which is what the restore shows anyway. Neither
+order loses a record or a resume id.
+
+**Deadline.** gff-hab's planned stop finishes within 15 s of the signal: below launchd's 20 s,
+and well below systemd's 90 s, which a hung stop would add to the machine's shutdown. On the
+signal gff-hab first flushes the resume book, then closes clients (at most 10 s), then
+checkpoints and hands over. Past 15 s it logs one line and exits with status 1.
+
+**No OS watchers.** A watcher pays only when it fires before programs die, so it can save first.
+Every row above is saved at change time, so an earlier warning has nothing left to save. They
+stay out until a state appears that is costly to write at each change.
+
+**Built (task-2ldmxmy7).** The resume book's flush first on SIGTERM and the 15 s deadline in
+gff-hab. Tests: `TestLogoutCheckpoint` sends SIGTERM to a real holder and gff-hab together, holder
+first and gff-hab first, right after a rename and a new native id; after a new holder and gff-hab
+start, the name is current, both sessions show exited, nothing started on its own, and
+`session.resume` starts the agent with the newest id. `TestShutdownWatchdog` and
+`TestResumeBookFlush` cover the two pieces.
+
+**Follow-up.** A fresh round run that a shutdown ends counts as failed ("ended by SIGHUP" when
+gff-hab sees the exit, "host restarted" when the next gff-hab finds the pane gone) and raises its
+notice. Telling a host shutdown apart needs the holder to say so before it hangs up.
+
 ---
 
 ## 3. Protocol needs
