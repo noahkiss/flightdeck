@@ -407,3 +407,27 @@ func TestSummaryHideDuringWait(t *testing.T) {
 		t.Fatalf("details in banner: %q", body)
 	}
 }
+
+// Trust banners keep their title and action category when summaries are enabled.
+func TestSummaryTrustUnchanged(t *testing.T) {
+	s := &summarizer{line: "Wrong title?"}
+	r := summaryRig(t, s, time.Second)
+	r.store.Register("dev-phone", phone, Production, []string{KindTrust}, false)
+	st := state(api.AgentStatusBlocked)
+	st.Kind, st.Source, st.Trust = api.BlockedKindTrust, api.StateSourceScreen, &api.TrustPrompt{Folder: "/work/new-app"}
+	r.n.State(st)
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 1 || alertField(pa[0], "title") != "Trust this folder?" {
+		t.Fatalf("trust banner: %v", pa)
+	}
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	pa = alerts(r.prod.requests(), phone)
+	if len(pa) != 2 || alertField(pa[1], "title") != "Trust prompt answered" {
+		t.Fatalf("answered trust banner: %v", pa)
+	}
+	if s.calls.Load() != 0 {
+		t.Fatalf("trust summarized: %d", s.calls.Load())
+	}
+}
