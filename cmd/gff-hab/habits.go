@@ -60,24 +60,10 @@ func (h *habitService) Context(ctx context.Context, pane string, env harness.Env
 		return ""
 	}
 	k, s, inSession := h.key(pane)
-	project, identity := "", ""
-	if inSession {
-		if pr, ok := h.store.Project(s.Project); ok {
-			identity = lbsvc.Identity(pr.Remote, pr.RootCommit)
-		}
-		project = logbookProject(ctx, h.svc, h.store, h.host, s.Project)
-	}
+	project, identity := h.project(ctx, s, inSession)
 	switch habit {
 	case habits.Brief:
-		if !h.on(habit, project, identity) {
-			return ""
-		}
-		res, err := h.svc.Dispatch(ctx, api.LogbookActor{}, &lbsvc.Pane{ID: pane, Session: s.ID, Host: h.host, Project: project}, "logbook.brief", nil)
-		if err != nil {
-			h.logf("logbook: the brief for pane %s: %v", pane, err)
-			return ""
-		}
-		return res.(api.LogbookBrief).Text
+		return h.brief(ctx, pane, s, project, identity)
 	case habits.Reminder:
 		// The prompt counts whether or not the reminder is on.
 		if h.tracker.Prompt(k) && h.on(habit, project, identity) {
@@ -94,4 +80,40 @@ func (h *habitService) Context(ctx context.Context, pane string, env harness.Env
 		}
 	}
 	return ""
+}
+
+// project is a session's Logbook project id and its identity; none outside a session.
+func (h *habitService) project(ctx context.Context, s api.Session, inSession bool) (project, identity string) {
+	if !inSession {
+		return "", ""
+	}
+	if pr, ok := h.store.Project(s.Project); ok {
+		identity = lbsvc.Identity(pr.Remote, pr.RootCommit)
+	}
+	return logbookProject(ctx, h.svc, h.store, h.host, s.Project), identity
+}
+
+// brief is the brief for a pane's session when the habit is on for its project, else "".
+func (h *habitService) brief(ctx context.Context, pane string, s api.Session, project, identity string) string {
+	if !h.on(habits.Brief, project, identity) {
+		return ""
+	}
+	res, err := h.svc.Dispatch(ctx, api.LogbookActor{}, &lbsvc.Pane{ID: pane, Session: s.ID, Host: h.host, Project: project}, "logbook.brief", nil)
+	if err != nil {
+		h.logf("logbook: the brief for pane %s: %v", pane, err)
+		return ""
+	}
+	return res.(api.LogbookBrief).Text
+}
+
+// OpencodeBrief is the brief gff-hab adds to a new opencode session through the pane's server
+// (11.4): as at a hook's session start, but none for a round's run session, whose run owns its
+// turns (rounds.md 7).
+func (h *habitService) OpencodeBrief(ctx context.Context, pane string) string {
+	_, s, inSession := h.key(pane)
+	if inSession && s.Round != nil {
+		return ""
+	}
+	project, identity := h.project(ctx, s, inSession)
+	return h.brief(ctx, pane, s, project, identity)
 }

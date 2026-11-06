@@ -38,7 +38,9 @@ type ocFake struct {
 	sessionErr  bool     // session.get fails
 	sessionHang bool     // session.get answers only when the caller gives up
 	docFail     bool
-	onInfo      func(f *ocFake) // runs inside server.info, once
+	synthFail   bool              // session.synthetic fails
+	synth       map[string]string // session id: the last synthetic text posted
+	onInfo      func(f *ocFake)   // runs inside server.info, once
 	subs        map[chan string]bool
 	streams     int
 	reqs        []string
@@ -108,6 +110,26 @@ func (f *ocFake) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		io.WriteString(w, `{"data":[`+last+`],"cursor":{}}`)
+	case strings.HasSuffix(path, "/synthetic") && r.Method == http.MethodPost:
+		var b struct {
+			Text, Description string
+			Resume            *bool
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		f.mu.Lock()
+		fail := f.synthFail
+		if !fail && b.Resume != nil && !*b.Resume {
+			if f.synth == nil {
+				f.synth = map[string]string{}
+			}
+			f.synth[strings.TrimSuffix(strings.TrimPrefix(path, "/api/session/"), "/synthetic")] = b.Text
+		}
+		f.mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		io.WriteString(w, `{"data":{"type":"synthetic","delivery":"steer"}}`)
 	case strings.HasPrefix(path, "/api/session/"):
 		f.mu.Lock()
 		fail, hang := f.sessionErr, f.sessionHang
@@ -726,5 +748,71 @@ func TestOpencodePaneReport(t *testing.T) {
 	}
 	if _, err := os.Stat(report); !os.IsNotExist(err) {
 		t.Fatalf("the report outlived the wrapper: %v", err)
+	}
+}
+
+// TestOpencodeBrief: the Logbook brief goes to each new top-level session of a pane's server
+// once, as a synthetic message with resume false (logbook.md 11.4): not again for a repeated
+// created event or after a reconnect, not to a child session, nothing when the brief is empty (a
+// round's run session, the habit off), and a failed post is logged once and not tried again.
+func TestOpencodeBrief(t *testing.T) {
+	x := newOcTest(t)
+	var mu sync.Mutex
+	asked := map[string]int{}
+	text := "the brief"
+	x.o.SetBrief(func(_ context.Context, pane string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if pane != x.pane {
+			t.Errorf("brief for pane %s", pane)
+		}
+		asked[pane]++
+		return text
+	})
+	x.follow()
+	waitUntil(t, "the stream", func() bool { return x.f.streamCount() > 0 })
+	x.emitSeen()
+	const post1 = "POST /api/session/ses_1/synthetic"
+	x.f.emit("session.created", `{"sessionID":"ses_1","version":"2.2.5"}`)
+	waitUntil(t, "the brief posted", func() bool { return x.f.requests(post1) == 1 })
+	x.f.mu.Lock()
+	got := x.f.synth["ses_1"]
+	x.f.mu.Unlock()
+	if got != "the brief" {
+		t.Fatalf("synthetic text %q", got)
+	}
+	// A repeated created event, a reconnect and a child session post nothing more.
+	x.f.emit("session.created", `{"sessionID":"ses_1","version":"2.2.5"}`)
+	x.reconnect()
+	x.f.emit("session.created", `{"sessionID":"ses_c","parentID":"ses_1","version":"2.2.5"}`)
+	x.emitSeen()
+	// An empty brief (a round's run session, the habit off) posts nothing.
+	mu.Lock()
+	text = ""
+	mu.Unlock()
+	x.f.emit("session.created", `{"sessionID":"ses_2","version":"2.2.5"}`)
+	waitUntil(t, "the empty brief asked", func() bool { mu.Lock(); defer mu.Unlock(); return asked[x.pane] == 2 })
+	// A failed post is logged once and not tried again.
+	mu.Lock()
+	text = "the brief"
+	mu.Unlock()
+	x.f.set(func(f *ocFake) { f.synthFail = true })
+	x.f.emit("session.created", `{"sessionID":"ses_3","version":"2.2.5"}`)
+	waitUntil(t, "the failure logged", func() bool { return x.logs.count("the Logbook brief for session ses_3") == 1 })
+	x.f.emit("session.created", `{"sessionID":"ses_3","version":"2.2.5"}`)
+	x.emitSeen()
+	time.Sleep(200 * time.Millisecond)
+	for _, r := range []string{"POST /api/session/ses_c/synthetic", "POST /api/session/ses_2/synthetic"} {
+		if n := x.f.requests(r); n != 0 {
+			t.Fatalf("%s: %d posts", r, n)
+		}
+	}
+	if n, m := x.f.requests(post1), x.f.requests("POST /api/session/ses_3/synthetic"); n != 1 || m != 1 {
+		t.Fatalf("posts: ses_1 %d, ses_3 %d", n, m)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if asked[x.pane] != 3 {
+		t.Fatalf("brief asked %d times, want 3 (ses_1, ses_2, ses_3)", asked[x.pane])
 	}
 }

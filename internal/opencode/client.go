@@ -48,6 +48,7 @@ var Operations = []Operation{
 	{"session.active", http.MethodGet, "/api/session/active"},
 	{"session.message.list", http.MethodGet, "/api/session/{sessionID}/message"},
 	{"session.prompt", http.MethodPost, "/api/session/{sessionID}/prompt"},
+	{"session.synthetic", http.MethodPost, "/api/session/{sessionID}/synthetic"},
 	{"permission.request.list", http.MethodGet, "/api/permission/request"},
 	{"session.permission.reply", http.MethodPost, "/api/session/{sessionID}/permission/{requestID}/reply"},
 }
@@ -338,6 +339,17 @@ func (c *Client) Prompt(ctx context.Context, session, text string) error {
 	}
 	return c.call(ctx, "session.prompt", http.MethodPost, "/api/session/"+session+"/prompt", nil,
 		map[string]any{"text": text}, nil)
+}
+
+// Synthetic adds text to a session as a synthetic message that starts no turn (resume false):
+// the server keeps it in the session's inbox and the agent reads it with the next prompt.
+// description is the label clients show for it.
+func (c *Client) Synthetic(ctx context.Context, session, text, description string) error {
+	if err := checkID("session", session); err != nil {
+		return err
+	}
+	return c.call(ctx, "session.synthetic", http.MethodPost, "/api/session/"+session+"/synthetic", nil,
+		map[string]any{"text": text, "description": description, "resume": false}, nil)
 }
 
 // Decisions a permission reply takes.

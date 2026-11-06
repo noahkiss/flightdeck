@@ -1,9 +1,8 @@
 {
-  "note": "Written by hand. opencode 2.x events as the plugin hands them to gff-hab hook. Only session.created carries a habit, the brief, which gff-hab hook prints as plain text for the plugin to add to the session. The reminder and the closeout are not supported for opencode in the first build (logbook.md 11.3).",
+  "note": "Written by hand. opencode 2.x events as the plugin hands them to gff-hab hook. None carries a habit: gff-hab adds the brief at session.created through the pane's opencode server (logbook.md 11.4), so gff-hab hook prints nothing and the hab's context handler is never asked. The reminder and the closeout are not supported for opencode in the first build (logbook.md 11.3).",
   "cases": [
     {"event": "session.created", "payload": {"type": "session.created", "properties": {"info": {"id": "ses_0aaaaaaaa", "directory": "/work/app", "title": "New session"}}},
-     "text": "Logbook brief for app (proj-aaaaaaaa): 0 untriaged, 0 flagged.\n",
-     "output": "Logbook brief for app (proj-aaaaaaaa): 0 untriaged, 0 flagged.\n"},
+     "text": "never asked", "output": ""},
     {"event": "session.idle", "payload": {"type": "session.idle", "properties": {"sessionID": "ses_0aaaaaaaa"}},
      "text": "never asked", "output": ""}
   ]

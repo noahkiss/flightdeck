@@ -977,6 +977,8 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
   A session with a parent (a subagent from opencode's task tool) never binds: only its
   permission requests and replies apply, as a subagent's. Parents come from `session.created`,
   else from `GET /api/session/:id`.
+- **Logbook brief.** At a top-level `session.created`, gff-hab posts the session's Logbook brief
+  to `/api/session/:id/synthetic` with `resume: false`: no turn starts (logbook.md 11.4).
 - **Input.** `session.send` posts the text to `/api/session/:id/prompt` under the same gates
   as the other harnesses (idle, done or error; no open request; one send at a time). No session
   yet (a fresh TUI) answers `unavailable`: type the first message in the terminal. A

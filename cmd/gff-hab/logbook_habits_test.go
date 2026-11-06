@@ -78,8 +78,9 @@ func TestLogbookHabits(t *testing.T) {
 	if out, _ := habitHook(t, inPane, "codex", "SessionStart", start); out != string(hook.ContextOutput("codex", "SessionStart", brief.Text)) {
 		t.Fatalf("codex brief: %q", out)
 	}
-	if out, _ := habitHook(t, inPane, "opencode", "session.created", `{"type":"session.created","properties":{"info":{"id":"ses_1"}}}`); out != brief.Text {
-		t.Fatalf("opencode brief: %q", out)
+	// opencode's brief goes through its server (TestOpencodeBrief), never through the hook.
+	if out, _ := habitHook(t, inPane, "opencode", "session.created", `{"type":"session.created","properties":{"info":{"id":"ses_1"}}}`); out != "" {
+		t.Fatalf("opencode brief through the hook: %q", out)
 	}
 	// The brief through the CLI in the pane is the same text: the pane's project by default.
 	if out, _ := lbOK(t, inPane, "brief"); out != brief.Text {

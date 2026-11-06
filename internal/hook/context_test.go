@@ -124,10 +124,11 @@ func TestContextHabDown(t *testing.T) {
 	if got := run("claude", "SessionStart", `{"session_id":"s","cwd":"/work/app"}`, fb); got != string(ContextOutput("claude", "SessionStart", "brief from the file\n")) {
 		t.Fatalf("claude brief from the file: %q", got)
 	}
-	if got := run("opencode", "session.created", `{"type":"session.created","properties":{"info":{"id":"ses_1"}}}`, fb); got != "brief from the file\n" {
+	// opencode's brief goes through its server (logbook.md 11.4): its hook never reads the file.
+	if got := run("opencode", "session.created", `{"type":"session.created","properties":{"info":{"id":"ses_1"}}}`, fb); got != "" {
 		t.Fatalf("opencode brief from the file: %q", got)
 	}
-	if len(dirs) != 2 || dirs[0] != "/work/app" || dirs[1] != "" {
+	if len(dirs) != 1 || dirs[0] != "/work/app" {
 		t.Fatalf("folders %q", dirs)
 	}
 	for _, ev := range []string{"UserPromptSubmit", "Stop"} {
@@ -135,7 +136,7 @@ func TestContextHabDown(t *testing.T) {
 			t.Fatalf("%s with gff-hab down printed %q", ev, got)
 		}
 	}
-	if len(dirs) != 2 {
+	if len(dirs) != 1 {
 		t.Fatalf("the reminder or closeout read the file: %q", dirs)
 	}
 	if got := run("claude", "SessionStart", `{}`, func(context.Context, string) (string, error) { return "", errors.New("no file") }); got != "" {
@@ -148,7 +149,7 @@ func TestContextEvents(t *testing.T) {
 	for _, c := range []struct{ h, ev, want string }{
 		{"claude", "SessionStart", "brief"}, {"claude", "UserPromptSubmit", "reminder"}, {"claude", "Stop", "closeout"},
 		{"codex", "SessionStart", "brief"}, {"codex", "UserPromptSubmit", "reminder"}, {"codex", "Stop", "closeout"},
-		{"opencode", "session.created", "brief"}, {"opencode", "session.idle", ""}, {"claude", "PreToolUse", ""},
+		{"opencode", "session.created", ""}, {"opencode", "session.idle", ""}, {"claude", "PreToolUse", ""},
 		{"claude", "SessionEnd", ""}, {"pi", "SessionStart", ""},
 	} {
 		got, ok := ContextEvent(c.h, c.ev)
@@ -156,8 +157,9 @@ func TestContextEvents(t *testing.T) {
 			t.Errorf("%s %s: %q %v", c.h, c.ev, got, ok)
 		}
 	}
+	// The opencode plugin only posts events: gff-hab adds the brief through the server.
 	js, _ := Config("opencode", "")
-	if !strings.Contains(js, "client.session.prompt") || !strings.Contains(js, "noReply: true") || !strings.Contains(js, `stdout: brief ? "pipe" : "ignore"`) {
-		t.Errorf("the opencode plugin does not add the brief:\n%s", js)
+	if strings.Contains(js, "client.session") || strings.Contains(js, "noReply") || !strings.Contains(js, `stdout: "ignore"`) {
+		t.Errorf("the opencode plugin still adds the brief:\n%s", js)
 	}
 }

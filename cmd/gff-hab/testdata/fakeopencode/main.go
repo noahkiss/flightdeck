@@ -5,7 +5,7 @@
 // the end comes right after the URL. Any other argv is the TUI: it records its argv
 // and waits for $DIR/end. Everything it does is driven by files in $DIR: each line the test
 // appends to $DIR/emit is sent as an event, $DIR/active lists the sessions that run, prompts go
-// to $DIR/prompts, and permission replies to $DIR/replies.
+// to $DIR/prompts, synthetic messages to $DIR/synthetic, and permission replies to $DIR/replies.
 package main
 
 import (
@@ -204,6 +204,15 @@ func serve() {
 		io.WriteString(w, `{"data":{}}`)
 		s.send(fmt.Sprintf(`{"type":"session.inbox.delivered","created":%d,"data":{"sessionID":%q}}`, time.Now().UnixMilli(), r.PathValue("id")))
 		s.send(fmt.Sprintf(`{"type":"session.execution.started","created":%d,"data":{"sessionID":%q}}`, time.Now().UnixMilli(), r.PathValue("id")))
+	})
+	mux.HandleFunc("POST /api/session/{id}/synthetic", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text   string `json:"text"`
+			Resume *bool  `json:"resume"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		appendLine("synthetic", fmt.Sprintf("%s: resume=%v: %q", r.PathValue("id"), body.Resume != nil && *body.Resume, body.Text))
+		io.WriteString(w, `{"data":{"type":"synthetic","delivery":"steer"}}`)
 	})
 	mux.HandleFunc("POST /api/session/{id}/permission/{req}/reply", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

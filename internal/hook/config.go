@@ -93,30 +93,21 @@ func opencodePlugin(command string) string {
 	cmd, _ := json.Marshal(command)
 	return `// gff-hab hook plugin for opencode. Save it as a plugin file, for example
 // .opencode/plugin/gff-hab.js in a project or the plugin directory of your opencode config.
-// It posts the events below to gff-hab and does nothing outside a pane gff-hab owns. At
-// session.created it adds the Logbook brief gff-hab answers to the session.
+// It posts the events below to gff-hab and does nothing outside a pane gff-hab owns.
 const EVENTS = new Set(` + string(events) + `)
 
-export const GffHab = async ({ client }) => ({
+export const GffHab = async () => ({
   event: async ({ event }) => {
     if (!process.env.GFF_HAB || !EVENTS.has(event.type)) return
     try {
-      const brief = event.type === "session.created"
       // Stamp the time here: each event spawns its own process, and those may run out of order.
       const proc = Bun.spawn([` + string(cmd) + `, "hook", "-t", String(Date.now()), "opencode", event.type], {
         stdin: "pipe",
-        stdout: brief ? "pipe" : "ignore",
+        stdout: "ignore",
         stderr: "ignore",
       })
       proc.stdin.write(JSON.stringify(event))
       proc.stdin.end()
-      if (!brief) return
-      // The Logbook brief, added to the new session as context that asks for no reply.
-      const text = await new Response(proc.stdout).text()
-      const id = event.properties?.info?.id
-      if (text && id) {
-        await client.session.prompt({ path: { id }, body: { noReply: true, parts: [{ type: "text", text, synthetic: true }] } })
-      }
     } catch {}
   },
 })

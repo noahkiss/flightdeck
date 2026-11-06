@@ -71,6 +71,7 @@ type opencodeServers struct {
 	dirty func(pane string, relist bool)
 
 	mu      sync.Mutex
+	brief   func(ctx context.Context, pane string) string // the Logbook brief for a new session; nil: none
 	panes   map[string]*ocPane
 	pending map[string]pendingPane // recorded panes the link does not follow yet
 }
@@ -99,6 +100,7 @@ type ocPane struct {
 	reqOrder []string          // request ids, oldest first
 	docOK    bool              // the OpenAPI document was checked
 	docErr   string            // the last document fetch error logged
+	briefed  map[string]bool   // sessions the brief went to, or was tried for
 }
 
 // ocRecord is a pane's record file.
@@ -241,7 +243,8 @@ func (o *opencodeServers) added(pane string) {
 func (o *opencodeServers) follow(pane string, u hp.UUID, r ocRecord) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &ocPane{password: o.password(u), serverPath: o.serverPath(pane), cancel: cancel, done: make(chan struct{}),
-		session: r.Session, children: map[string]bool{}, running: map[string]bool{}, requests: map[string]string{}}
+		session: r.Session, children: map[string]bool{}, running: map[string]bool{}, requests: map[string]string{},
+		briefed: map[string]bool{}}
 	o.mu.Lock()
 	if old := o.panes[pane]; old != nil {
 		old.cancel()
@@ -605,6 +608,9 @@ func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e o
 		p.mu.Lock()
 		p.children[sid] = d.ParentID != ""
 		p.mu.Unlock()
+		if d.ParentID == "" && sid != "" {
+			o.postBrief(ctx, pane, p, sid)
+		}
 	}
 	s := harness.OpencodeSession{}
 	if sid != "" {
@@ -645,6 +651,52 @@ func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e o
 	}
 	o.apply(pane, p, t, u)
 }
+
+// SetBrief sets what gives the Logbook brief for a pane's new session.
+func (o *opencodeServers) SetBrief(fn func(ctx context.Context, pane string) string) {
+	o.mu.Lock()
+	o.brief = fn
+	o.mu.Unlock()
+}
+
+// postBrief adds the Logbook brief to a new top-level session of a pane's server as a synthetic
+// message that starts no turn (logbook.md 11.4). Once per session: a failed post is logged and
+// not tried again. It runs beside the event stream, so a slow brief or server holds no event.
+func (o *opencodeServers) postBrief(ctx context.Context, pane string, p *ocPane, sid string) {
+	o.mu.Lock()
+	brief := o.brief
+	o.mu.Unlock()
+	if brief == nil {
+		return
+	}
+	p.mu.Lock()
+	if p.briefed[sid] {
+		p.mu.Unlock()
+		return
+	}
+	p.briefed[sid] = true
+	c := p.client
+	p.mu.Unlock()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, opencodeTimeout+briefBuild)
+		defer cancel()
+		text := brief(ctx, pane)
+		if text == "" {
+			return
+		}
+		pctx, pcancel := context.WithTimeout(ctx, opencodeTimeout)
+		defer pcancel()
+		if err := c.Synthetic(pctx, sid, text, "Logbook brief"); err != nil {
+			o.logf("opencode: pane %s: the Logbook brief for session %s: %v", pane, sid, err)
+		}
+	}()
+}
+
+// briefBuild bounds building the brief for an opencode session.
+const briefBuild = 5 * time.Second
 
 // remember records the session of a permission request, dropping the oldest past the bound.
 // It runs under p.mu.

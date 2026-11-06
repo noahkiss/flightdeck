@@ -1328,6 +1328,7 @@ func serve(args []string) error {
 	}
 	habitSvc := &habitService{svc: lbVerbs, store: store, host: *hostID, tracker: habits.New(nil), value: setSvc.Value,
 		off: &habits.OffFile{Path: cpath}, logf: logger.Printf}
+	ocs.SetBrief(habitSvc.OpencodeBrief) // the brief for opencode goes through its server (logbook.md 11.4)
 	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) string {
 		if usages.Hook(env) {
 			return "" // a status-line input: usage only

@@ -243,8 +243,8 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 
 // ContextEvent names the habit a harness's event carries (logbook.md 11.3): the brief at a
 // session's start (Claude Code and Codex SessionStart, which also fires after a compaction and on
-// resume; opencode's session.created), the reminder at a prompt and the closeout at a stop
-// (Claude Code and Codex only).
+// resume), the reminder at a prompt and the closeout at a stop. opencode carries none: gff-hab
+// adds its brief through the pane's server (logbook.md 11.4).
 func ContextEvent(harness, event string) (habit string, ok bool) {
 	switch harness {
 	case detect.KindClaude, detect.KindCodex:
@@ -255,10 +255,6 @@ func ContextEvent(harness, event string) (habit string, ok bool) {
 			return "reminder", true
 		case "Stop":
 			return "closeout", true
-		}
-	case detect.KindOpencode:
-		if event == "session.created" {
-			return "brief", true
 		}
 	}
 	return "", false

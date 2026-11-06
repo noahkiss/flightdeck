@@ -78,6 +78,8 @@ func TestCalls(t *testing.T) {
 			io.WriteString(w, `{"data":[{"id":"msg_2","type":"user","text":"hi"}],"cursor":{"previous":"p","next":"n1"}}`)
 		case r.URL.Path == "/api/session/ses_a/prompt":
 			io.WriteString(w, `{"data":{"id":"msg_3","type":"user"}}`)
+		case r.URL.Path == "/api/session/ses_a/synthetic":
+			io.WriteString(w, `{"data":{"id":"msg_4","type":"synthetic","delivery":"steer"}}`)
 		case r.URL.Path == "/api/session/ses_a/permission/per_1/reply":
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/api/session/ses_a/permission/per_2/reply":
@@ -109,6 +111,12 @@ func TestCalls(t *testing.T) {
 	}
 	if err := c.Prompt(ctx, "ses_a", "line one\nline \"two\""); err != nil {
 		t.Fatal(err)
+	}
+	if err := c.Synthetic(ctx, "ses_a", "the brief", "Logbook brief"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Synthetic(ctx, "../x", "the brief", "Logbook brief"); err == nil {
+		t.Fatal("Synthetic accepted a bad id")
 	}
 	if err := c.Reply(ctx, "ses_a", "per_1", ReplyOnce, ""); err != nil {
 		t.Fatal(err)
@@ -142,6 +150,8 @@ func TestCalls(t *testing.T) {
 		"GET /api/session/ses_a/message?limit=100&order=desc",
 		"GET /api/session/ses_a/message?cursor=n1&limit=100",
 		`POST /api/session/ses_a/prompt {"text":"line one\nline \"two\""}`,
+		// The body opencode 2.2.5 takes: resume false, so the brief starts no turn.
+		`POST /api/session/ses_a/synthetic {"description":"Logbook brief","resume":false,"text":"the brief"}`,
 		`POST /api/session/ses_a/permission/per_1/reply {"decision":"once"}`,
 		`POST /api/session/ses_a/permission/per_2/reply {"decision":"reject","message":"no"}`,
 		`POST /api/session/ses_b/permission/per_1/reply {"decision":"once"}`,
