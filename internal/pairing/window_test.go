@@ -369,6 +369,41 @@ func TestExpiresWhileAsking(t *testing.T) {
 	}
 }
 
+// TestDeviceLeavesWhileAsking: the phone drops while the owner is asked; the question ends, the
+// window closes as declined and nothing is admitted.
+func TestDeviceLeavesWhileAsking(t *testing.T) {
+	asked := make(chan struct{})
+	ended := make(chan struct{})
+	f := open(t, time.Minute, func(ctx context.Context, _ Device) (bool, error) {
+		close(asked)
+		<-ctx.Done()
+		close(ended)
+		return false, ctx.Err()
+	})
+	c, err := dial(f, phoneKey(t), f.hostPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _, err := c.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := ch.SendRequest("subsystem", true, ssh.Marshal(struct{ Name string }{Subsystem})); !ok || err != nil {
+		t.Fatalf("subsystem: %v %v", ok, err)
+	}
+	fmt.Fprintln(ch, request(EncodeToken(f.w.Offer().Token), "phone"))
+	<-asked
+	c.Close()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the question outlived the device")
+	}
+	if _, err := f.wait(t); !errors.Is(err, ErrDeclined) || f.admits.Load() != 0 {
+		t.Fatalf("err %v admits %d", err, f.admits.Load())
+	}
+}
+
 func TestDeclinedAtPrompt(t *testing.T) {
 	f := open(t, time.Minute, func(context.Context, Device) (bool, error) { return false, nil })
 	as, status := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)

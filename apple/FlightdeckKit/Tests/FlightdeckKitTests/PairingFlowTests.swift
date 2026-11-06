@@ -233,6 +233,28 @@ final class PairingFlowTests: XCTestCase {
         }
     }
 
+    func testStalledWindowTimesOut() async throws {
+        let key = try testKey()
+        let s = TestPairServer()
+        s.silent = true
+        s.pairHandler = { _, _, _ in }
+        try await s.start()
+        defer { s.stop() }
+        var t = fastPairing()
+        t.firstAnswer = .milliseconds(500)
+        let start = Date()
+        await XCTAssertThrowsAsync(try await Pairing.pair(code(s), key: key, keyID: "device", name: "x", kind: .phone, timing: t) { _ in }) {
+            XCTAssertEqual($0 as? PairingFailed, PairingFailed("the hab did not answer in time"))
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testEndpointsRefuseFormatCharacters() {
+        XCTAssertNil(SSHEndpoint.parse("box\u{202E}.lan"))
+        XCTAssertNil(SSHEndpoint.parse("box\u{0007}"))
+        XCTAssertNotNil(SSHEndpoint.parse("box.lan:22"))
+    }
+
     func testCancelClosesTheConnection() async throws {
         let key = try testKey()
         let s = TestPairServer()
@@ -308,6 +330,27 @@ final class PairingFlowTests: XCTestCase {
         try Data(other.utf8).write(to: f)
         XCTAssertEqual(try runScript(home: home, line: line, key: key.publicKey), .added)
         XCTAssertEqual(try String(contentsOf: f, encoding: .utf8), other + "\n" + line + "\n")
+    }
+
+    func testScriptQuotesWhatItIsGiven() throws {
+        let key = try testKey()
+        let home = try tempHome()
+        // A line with quotes and a break: written as one line, never run.
+        let line = "x' ; touch \"$HOME/pwned\" ; echo '\nsecond"
+        XCTAssertEqual(try runScript(home: home, line: line, key: key.publicKey), .added)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("pwned").path))
+        XCTAssertEqual(try String(contentsOf: home.appendingPathComponent(".ssh/authorized_keys"), encoding: .utf8), "x' ; touch \"$HOME/pwned\" ; echo 'second\n")
+    }
+
+    func testCommentedKeyIsNotPresent() throws {
+        let key = try testKey()
+        let home = try tempHome()
+        let ssh = home.appendingPathComponent(".ssh")
+        try FileManager.default.createDirectory(at: ssh, withIntermediateDirectories: true)
+        let f = ssh.appendingPathComponent("authorized_keys")
+        try Data("# \(String(openSSHPublicKey: key.publicKey))\n".utf8).write(to: f)
+        let line = PasswordSetup.keyLine(publicKey: key.publicKey, command: "gff-hab connect", name: "phone")
+        XCTAssertEqual(try runScript(home: home, line: line, key: key.publicKey), .added)
     }
 
     func testScriptFollowsALink() throws {

@@ -1,6 +1,7 @@
 package pairing
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -114,7 +115,18 @@ func (w *Window) pair(conn *ssh.ServerConn, c net.Conn, key ssh.PublicKey, fp st
 	c.SetDeadline(w.deadline.Add(5 * time.Second))
 	answer(Answer{V: 1, State: "waiting"})
 	dev := Device{Name: req.Name, Kind: req.Kind, Key: key, Fingerprint: fp, Remote: remote}
-	yes, err := w.cfg.Confirm(w.ctx, dev)
+	// A device that leaves while the owner is asked ends the question: the owner must never
+	// admit a key the phone did not stay to store. It counts as a no, so the token is spent.
+	ask, cancel := context.WithCancel(w.ctx)
+	defer cancel()
+	go func() {
+		conn.Wait()
+		cancel()
+	}()
+	yes, err := w.cfg.Confirm(ask, dev)
+	if err != nil && ask.Err() != nil && w.ctx.Err() == nil {
+		w.refuse(remote, fp, "the device left before it was confirmed")
+	}
 	w.mu.Lock()
 	if w.done || w.ctx.Err() != nil {
 		// The window closed while the owner was asked.

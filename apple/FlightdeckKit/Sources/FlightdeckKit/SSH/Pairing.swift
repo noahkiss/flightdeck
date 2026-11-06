@@ -238,10 +238,28 @@ public enum Pairing {
             throw PairingHostKeyMismatch(endpoint: e.endpoint, presented: e.presented)
         }
         defer { conn.close() }
-        let stream = try await conn.openSession(.subsystem(subsystem), onEnd: {}, onFirstData: nil)
-        defer { stream.close() }
+        // The subsystem request and the request line share the first
+        // answer's bound: a window that takes auth and then says nothing is
+        // closed.
+        let late = Flag()
+        let opening = Task {
+            try await Task.sleep(for: timing.firstAnswer)
+            late.set()
+            conn.close()
+        }
         return try await withTaskCancellationHandler {
-            try await stream.write(requestLine(token: code.token, name: name, kind: kind))
+            let stream: SSHChannelStream
+            do {
+                stream = try await conn.openSession(.subsystem(subsystem), onEnd: {}, onFirstData: nil)
+                defer { opening.cancel() }
+                try await stream.write(requestLine(token: code.token, name: name, kind: kind))
+            } catch {
+                opening.cancel()
+                if Task.isCancelled { throw CancellationError() }
+                if late.isSet { throw PairingFailed("the hab did not answer in time") }
+                throw error
+            }
+            defer { stream.close() }
             var reader = LineReader(stream: stream)
             var answer = try await reader.next(within: timing.firstAnswer)
             if answer == .waiting {
@@ -257,7 +275,6 @@ public enum Pairing {
                 throw PairingFailed("the hab said waiting twice")
             }
         } onCancel: {
-            stream.close()
             conn.close()
         }
     }

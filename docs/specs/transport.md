@@ -477,6 +477,7 @@ the key without trusting a value the phone could copy.
 | Lifetime | At most five minutes (`-timeout`, capped at five). Closed after one pairing, a `declined` answer or Ctrl-C. Refused tokens never close it |
 | Banner | The library's default, `SSH-2.0-Go`: it names no product, so a scan does not learn it found a pairing window |
 | Commit point | Once the owner said yes and the key is being written, that write decides the outcome. A window that expires, or a Ctrl-C, during the write waits for it: the phone and the terminal both hear paired (or failed), never expired, so the terminal never says nothing paired while the key is in the file |
+| Device gone | A device that drops its connection while the owner is asked ends the question, as a no: the window closes as declined and the token is spent. The owner never admits a key the phone did not stay to store |
 | One use | The token pairs one device. A no at the prompt burns it too: someone else may have scanned the code, so the owner runs `gff-hab pair` again |
 | Limits | At most two connections at once from one source address, and sixteen in all; 10 s to finish the SSH handshake; 20 s from auth to the request; one request per connection; one device waits for the owner at a time (another gets `busy`); the owner has until the window closes |
 | Wrong tokens | Counted per source address. After ten, that address's new connections are closed at once, until the window ends. A wrong token never closes the window and never ends a confirmation already shown: with a 128-bit token the count buys no guessing protection, and closing would let anyone on the network end the owner's pairing |
@@ -583,7 +584,9 @@ the last line has none, appends the line with `>>`, and sets the file to 0600. A
 rename, keeps every other byte and follows a link. The line is `restrict,command="<command>"
 <key> flightdeck: <device name> (paired <date>)`; the command is the entry's, else
 `gff-hab connect`, and may hold no quote, backslash or control character. The app then tests a key
-login with one `hab.ping` and stores the entry. Limits: no StrictModes check (a refused key login
+login with one `hab.ping` and stores the entry. A key already in a line that is not a comment
+counts as present, and the app says so. The script quotes every value it is given for `sh`.
+Limits: no StrictModes check (a refused key login
 afterwards names the user and key); no retry when the file changes during the append.
 
 Decision: settled for the first build (owner decisions 2026-11-02). The subsystem, not

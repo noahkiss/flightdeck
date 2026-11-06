@@ -396,11 +396,20 @@ public final class SSHSetup {
         return r
     }
 
-    /// Tests a paired entry with one `hab.ping`, then stores and connects it.
+    /// A paired hab whose answer had no sshd host key, waiting for the owner
+    /// to trust one. The hab already holds this device's key and the token is
+    /// spent, so Settings offers to finish it. Kept in memory only.
+    public var unfinishedPairing: SSHHabEntry?
+
+    /// Stores a paired entry and connects it, then tests it with one
+    /// `hab.ping`. The entry is stored first: the hab already admitted the key,
+    /// so a failed first connection must not lose it (the hab refuses to pair
+    /// the same key again). A failed test throws with the entry kept.
     public func finishPairing(_ e: SSHHabEntry) async throws {
         guard SSHFingerprint.isValid(e.hostKeyFingerprint) else { throw TransportError("no trusted host key") }
+        if unfinishedPairing?.id == e.id { unfinishedPairing = nil }
+        if entry(id: e.id) != e { try add(e) }
         _ = try await test(e)
-        try add(e)
     }
 
     // MARK: - Password setup (transport.md 6.1.6)

@@ -53,15 +53,21 @@ public enum PasswordSetup {
     /// missing `~/.ssh` at 0700, and leaves the file at 0600. A key already in
     /// the file is left alone.
     static func script(line: String, key: NIOSSHPublicKey) -> String {
-        let k = String(openSSHPublicKey: key)
+        // Quoted for sh whatever the caller passes: ' becomes '\'' and a line
+        // break cannot reach the file as a second line.
+        func q(_ s: String) -> String {
+            "'" + s.filter { !$0.isNewline && $0 != "\0" }.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        let k = q(String(openSSHPublicKey: key))
+        let l = q(line)
         return """
         umask 077
         d="$HOME/.ssh"
         f="$d/authorized_keys"
-        key='\(k)'
-        line='\(line)'
+        key=\(k)
+        line=\(l)
         if [ ! -d "$d" ]; then mkdir -m 700 "$d" || { echo 'flightdeck: error could not make ~/.ssh'; exit 3; }; fi
-        if [ -f "$f" ] && grep -qF -- "$key" "$f"; then echo 'flightdeck: present'; exit 0; fi
+        if [ -f "$f" ] && grep -v '^[[:space:]]*#' "$f" | grep -qF -- "$key"; then echo 'flightdeck: present'; exit 0; fi
         if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then printf '\\n' >> "$f" || { echo 'flightdeck: error could not write the file'; exit 3; }; fi
         printf '%s\\n' "$line" >> "$f" || { echo 'flightdeck: error could not write the file'; exit 3; }
         chmod 600 "$f"
@@ -104,24 +110,24 @@ public enum PasswordSetup {
             check: .pinned(hostKeyFingerprint), timing: timing
         )
         defer { conn.close() }
-        let stream = try await conn.openSession(.exec("sh -s"), onEnd: {}, onFirstData: nil)
-        defer { stream.close() }
+        // One bound over the whole exchange: a host that never answers the
+        // exec request, or never ends, is closed.
+        let timer = Task {
+            try await Task.sleep(for: .seconds(20))
+            conn.close()
+        }
+        defer { timer.cancel() }
         return try await withTaskCancellationHandler {
+            let stream = try await conn.openSession(.exec("sh -s"), onEnd: {}, onFirstData: nil)
+            defer { stream.close() }
             try await stream.write(Data(script(line: line, key: key).utf8))
             await stream.closeWrite()
             var out = Data()
-            let s = stream
-            let timer = Task {
-                try await Task.sleep(for: .seconds(20))
-                s.close()
-            }
-            defer { timer.cancel() }
             while out.count < maxOutput, let d = try await stream.read() {
                 out.append(d)
             }
             return try outcome(out)
         } onCancel: {
-            stream.close()
             conn.close()
         }
     }

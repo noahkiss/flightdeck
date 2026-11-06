@@ -16,6 +16,7 @@ public struct SSHSettingsView: View {
     @Bindable var setup: SSHSetup
     @State private var adding = false
     @State private var pairing = false
+    @State private var finishing: SSHHabEntry?
     @State private var confirmNewKey = false
     @State private var message: String?
 
@@ -50,6 +51,9 @@ public struct SSHSettingsView: View {
                 }
                 Button("Add a hab by address") { adding = true }
                 Button("Pair with a code") { pairing = true }
+                if let u = setup.unfinishedPairing {
+                    Button("Finish pairing with \(u.label ?? u.destination)") { finishing = u }
+                }
             }
             #if os(iOS)
             if !setup.entries.isEmpty {
@@ -91,6 +95,11 @@ public struct SSHSettingsView: View {
         .sheet(isPresented: $pairing) {
             NavigationStack {
                 PairingView(setup: setup, offer: nil) { pairing = false }
+            }
+        }
+        .sheet(item: $finishing) { e in
+            NavigationStack {
+                PairingView(setup: setup, offer: nil, resume: e) { finishing = nil }
             }
         }
         .confirmationDialog("Make a new key?", isPresented: $confirmNewKey, titleVisibility: .visible) {
@@ -376,7 +385,11 @@ struct AddHabView: View {
                 // The password is used once and dropped, pass or fail.
                 let p = password
                 password = ""
-                _ = try await setup.installKey(d, hostKeyFingerprint: fp, password: p, keyID: keyID, command: entry.command, deviceName: PairingDevice.name)
+                let r = try await setup.installKey(d, hostKeyFingerprint: fp, password: p, keyID: keyID, command: entry.command, deviceName: PairingDevice.name)
+                if r == .present {
+                    // Said so (transport.md 6.1.6); the test below shows whether that line works.
+                    self.error = "The key was already on the host; its line was left as it is."
+                }
             }
             _ = try await setup.test(entry)
             try setup.add(entry)
@@ -415,6 +428,8 @@ enum PairingDevice {
 struct PairingView: View {
     let setup: SSHSetup
     @State var offer: PairingCode?
+    /// A paired hab whose host key is still to trust (`SSHSetup.unfinishedPairing`).
+    var resume: SSHHabEntry? = nil
     let done: () -> Void
 
     @State private var text = ""
@@ -431,6 +446,8 @@ struct PairingView: View {
         case waiting(String)
         /// Paired, but the answer had no sshd host key: compare and trust.
         case hostKey(SSHHabEntry, String, String) // entry, fingerprint, OpenSSH line
+        /// Paired, but the host key probe failed.
+        case probeFailed(SSHHabEntry)
         case testing
         /// Paired, but the first connection failed: the key is on the host,
         /// so try the connection again rather than pairing again.
@@ -442,6 +459,8 @@ struct PairingView: View {
             if let o = offer {
                 habSection(o)
                 stepSections(o)
+            } else if resume != nil {
+                stepSections(nil)
             } else {
                 #if os(iOS)
                 Section {
@@ -487,6 +506,7 @@ struct PairingView: View {
         .onAppear {
             setup.loadKey()
             if name.isEmpty { name = PairingDevice.name }
+            if let r = resume, step == .ready { probeHost(r) }
         }
         .onDisappear { task?.cancel() }
     }
@@ -506,9 +526,66 @@ struct PairingView: View {
     }
 
     @ViewBuilder
-    private func stepSections(_ o: PairingCode) -> some View {
+    private func stepSections(_ o: PairingCode?) -> some View {
         switch step {
         case .ready:
+            if let o { readySections(o) }
+        case .connecting:
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("Connecting to the hab")
+                }
+            }
+        case .waiting(let code):
+            Section {
+                VStack(spacing: 12) {
+                    Text(code)
+                        .font(.system(size: 64, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityLabel(code.map { String($0) }.joined(separator: " "))
+                    Text("Type these on \(o?.label ?? "the hab") to confirm")
+                        .font(.callout)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } footer: {
+                Text("Upper and lower case count.")
+            }
+        case .hostKey(let e, let fp, _):
+            Section {
+                Text(fp).font(.caption.monospaced()).textSelection(.enabled)
+                Button("Trust this host key") { trust(e, fp) }
+            } header: {
+                Text("Host key of \(e.destination)")
+            } footer: {
+                Text("The hab sent no SSH host key. Compare with ssh-keygen -lf on the host's key, for example /etc/ssh/ssh_host_ed25519_key.pub.")
+            }
+        case .probeFailed(let e):
+            Section {
+                Button("Try again") { probeHost(e) }
+            } footer: {
+                Text("This device is paired with \(e.destination), but its host key could not be read.")
+            }
+        case .testing:
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("Checking the connection")
+                }
+            }
+        case .retry(let e):
+            Section {
+                Button("Try the connection again") { finish(e) }
+            } footer: {
+                Text("This device is paired with \(e.destination) and the hab is saved. It keeps trying in the background.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func readySections(_ o: PairingCode) -> some View {
             Section {
                 TextField("Device name", text: $name)
                     .autocorrectionDisabled()
@@ -531,52 +608,6 @@ struct PairingView: View {
             } footer: {
                 Text("For a host that cannot run gff-hab pair.")
             }
-        case .connecting:
-            Section {
-                HStack {
-                    ProgressView()
-                    Text("Connecting to the hab")
-                }
-            }
-        case .waiting(let code):
-            Section {
-                VStack(spacing: 12) {
-                    Text(code)
-                        .font(.system(size: 64, weight: .semibold, design: .monospaced))
-                        .textSelection(.enabled)
-                        .accessibilityLabel(code.map { String($0) }.joined(separator: " "))
-                    Text("Type these on \(o.label ?? "the hab") to confirm")
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            } footer: {
-                Text("Upper and lower case count.")
-            }
-        case .hostKey(let e, let fp, _):
-            Section {
-                Text(fp).font(.caption.monospaced()).textSelection(.enabled)
-                Button("Trust this host key") { trust(e, fp) }
-            } header: {
-                Text("Host key of \(e.destination)")
-            } footer: {
-                Text("The hab sent no SSH host key. Compare with ssh-keygen -lf on the host's key, for example /etc/ssh/ssh_host_ed25519_key.pub.")
-            }
-        case .testing:
-            Section {
-                HStack {
-                    ProgressView()
-                    Text("Checking the connection")
-                }
-            }
-        case .retry(let e):
-            Section {
-                Button("Try the connection again") { finish(e) }
-            } footer: {
-                Text("This device is paired with \(e.destination). The hab already has its key.")
-            }
-        }
     }
 
     private func read(_ s: String) {
@@ -601,8 +632,9 @@ struct PairingView: View {
                     }
                 }
                 if r.needsHostKey {
-                    let key = try await setup.probe(SSHDestination(user: r.entry.user, endpoint: r.entry.endpoints[0]), keyID: r.entry.keyID)
-                    step = .hostKey(r.entry, SSHFingerprint.of(key), String(openSSHPublicKey: key))
+                    // The hab holds the key now: keep the entry until a host key is trusted.
+                    setup.unfinishedPairing = r.entry
+                    probeHost(r.entry)
                     return
                 }
                 finish(r.entry)
@@ -611,6 +643,21 @@ struct PairingView: View {
                 if Task.isCancelled { return }
                 self.error = "\(error)"
                 step = .ready
+            }
+        }
+    }
+
+    private func probeHost(_ e: SSHHabEntry) {
+        error = nil
+        step = .connecting
+        task = Task {
+            do {
+                let key = try await setup.probe(SSHDestination(user: e.user, endpoint: e.endpoints[0]), keyID: e.keyID)
+                step = .hostKey(e, SSHFingerprint.of(key), String(openSSHPublicKey: key))
+            } catch {
+                if Task.isCancelled { return }
+                self.error = "\(error)"
+                step = .probeFailed(e)
             }
         }
     }

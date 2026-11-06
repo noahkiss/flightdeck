@@ -2111,8 +2111,15 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
     `device_id` the key that signed; the user is 1 to 64 printable ASCII characters with no `@`,
     quote, backslash or leading `-`; one to eight endpoints that parse. Host key lines of another
     type, or that do not parse, are skipped (at most 16 read).
-  - When the first `hab.ping` after pairing fails, the sheet offers "Try the connection again":
-    the key is already on the host and the token is spent, so pairing again would fail.
+  - A `paired` answer with a host key is stored at once, before the first `hab.ping`: the key is
+    already on the host and the token is spent, and the hab refuses to pair the same key again.
+    When that ping fails, the sheet says so and offers "Try the connection again"; the entry stays
+    on the board and retries like any hab.
+  - A `paired` answer with no usable host key is kept in memory until the owner trusts the probed
+    key; Settings › SSH offers "Finish pairing with <hab>". Limit: quitting the app first loses
+    it; `gff-hab devices revoke` on the hab, then pair again.
+  - The subsystem request and the request line share the first answer's 25 s bound, so a window
+    that takes auth and then stalls is closed.
 - **Background action.** `HabActions` registers a notification category with a "Ping hab" action
   that needs unlock, and is the notification delegate from launch. The action loads the entry and
   key, runs one `hab.ping` on its own connection (`HabOneShot`: open, hello, call, close, 20 s

@@ -20,7 +20,10 @@ public struct SSHEndpoint: Codable, Sendable, Hashable, CustomStringConvertible 
     /// Parses `host`, `host:port`, `[v6]:port` or a bare IPv6 address.
     public static func parse(_ s: String, defaultPort: Int = 22) -> SSHEndpoint? {
         let t = s.trimmingCharacters(in: .whitespaces)
-        guard !t.isEmpty, !t.contains(where: { $0.isWhitespace || $0 == "/" || $0 == "@" }) else { return nil }
+        guard !t.isEmpty, !t.contains(where: { $0.isWhitespace || $0 == "/" || $0 == "@" }),
+              // Shown to the user: no control or format characters (bidi overrides).
+              !t.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || $0.properties.generalCategory == .format })
+        else { return nil }
         if t.hasPrefix("[") {
             guard let close = t.firstIndex(of: "]") else { return nil }
             let host = String(t[t.index(after: t.startIndex)..<close])

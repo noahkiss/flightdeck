@@ -18,6 +18,8 @@ final class TestPairServer: @unchecked Sendable {
     var pairHandler: PairHandler?
     /// The `HOME` the shell runs with.
     var home: URL?
+    /// Never answer the subsystem request: a window that takes auth, then stalls.
+    var silent = false
 
     private let lock = NSLock()
     private var channel: Channel?
@@ -110,6 +112,7 @@ final class TestPairServer: @unchecked Sendable {
             switch event {
             case let s as SSHChannelRequestEvent.SubsystemRequest:
                 server.record { $0._subsystems.append(s.subsystem) }
+                if server.silent { return }
                 let ok = mode == nil && s.subsystem == Pairing.subsystem && server.pairHandler != nil
                 if ok { mode = "pair" }
                 if s.wantReply { ch.triggerUserOutboundEvent(ok ? ChannelSuccessEvent() : ChannelFailureEvent(), promise: nil) }

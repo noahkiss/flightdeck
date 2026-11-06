@@ -27,7 +27,8 @@ cleanup() {
 	wait 2>/dev/null || true
 	rm -rf "$DIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 if nc -z "$ADDR" "$PORT" 2>/dev/null; then
 	echo "port $PORT on $ADDR is in use; set FLIGHTDECK_PAIR_LIVE_PORT" >&2
