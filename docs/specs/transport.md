@@ -346,7 +346,7 @@ app's `NIOSSHTransport` (`app.md` 10.6). What the spike left open:
 | Live check on a Mac | `apple/scripts/ssh-live-check.sh`: a throwaway loopback sshd running a fresh `gff-hab connect` with a holder. Host key probe, changed key refused, one-shot ping 213 ms, connect to online (hello and subscribe) 271 ms, a live pane's output over a second channel on the same connection 120 ms. An imported passphrase-protected Ed25519 key (`app.md` 10.7): one-shot ping 136 ms. an Apple silicon laptop under load; software key, because the screen was locked |
 | iOS build | The same path runs in the iOS simulator (software key, NIOPosix sockets) against the same sshd: process start to the first hab reply 552 to 625 ms over four cold starts, load average near 25 |
 | iPhone device run | Not run yet. The phone was locked and the Mac had no iOS development signing (no Xcode account, no development profile for the bundle id). Cold start on a real network is still to measure |
-| QR pairing | The code format is fixed (6.1) and parsed. The hab side is built as `gff-hab pair` (6.1, task-99pfhjlg, 2026-11-02); the app's half of the exchange (6.1.2) is not, so the app still stops after reading the code and offers the by-hand path |
+| QR pairing | The code format is fixed (6.1) and parsed. The hab side is built as `gff-hab pair` (6.1, task-99pfhjlg, 2026-11-02); the app's half (6.1.2) is built too (task-3th1o91q, 2026-11-06, `app.md` 18.8), checked end to end by `apple/scripts/pair-live-check.sh` |
 | Background action | A local notification action runs one `hab.ping` over the carrier and disconnects (`app.md` 10.6). Not yet run on a device |
 
 ---
@@ -565,7 +565,7 @@ On yes: one line naming the device and the file, exit 0. On no, expiry or Ctrl-C
 why, exit 1. The device name is printed after cleaning and through the
 sanitiser of 6.1.3, so a name cannot move the cursor or change colours.
 
-#### 6.1.6 The password fallback (app side, not built)
+#### 6.1.6 The password fallback (app side)
 
 For a host where gff-hab cannot run the window (no gff-hab yet, or a host that is not a hab), the
 app keeps a hidden fallback, like `ssh-copy-id`: Add a hab by address, then "Set up with a
@@ -574,6 +574,17 @@ host key, appends its key line to `~/.ssh/authorized_keys` with the rules of 6.1
 prefix, `restrict`, append only, mode 0600), checks a key login, and forgets the password. It never
 stores the password and never uses password auth again. A host with password auth off (the owner's
 choice for his machines) cannot use it; it pairs by QR or takes the key by hand (`app.md` 18.8).
+
+Built (task-3th1o91q): `PasswordSetup` in the app. The host key is trusted first, so the password
+goes only to the pinned key, and only once. Over one exec channel the app runs `sh -s` and sends
+a short POSIX script on its input, so any login shell works. The script makes a missing `~/.ssh`
+at 0700. It leaves a key already in the file alone and says so. Otherwise it adds a newline when
+the last line has none, appends the line with `>>`, and sets the file to 0600. Appending, not a
+rename, keeps every other byte and follows a link. The line is `restrict,command="<command>"
+<key> flightdeck: <device name> (paired <date>)`; the command is the entry's, else
+`gff-hab connect`, and may hold no quote, backslash or control character. The app then tests a key
+login with one `hab.ping` and stores the entry. Limits: no StrictModes check (a refused key login
+afterwards names the user and key); no retry when the file changes during the append.
 
 Decision: settled for the first build (owner decisions 2026-11-02). The subsystem, not
 keyboard-interactive, because the app's SSH library has no keyboard-interactive client.

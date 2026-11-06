@@ -2096,10 +2096,23 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   remote PATH.
 - **Pairing codes.** `PairingCode` parses the `flightdeck://pair` link (`transport.md` 6.1) from
   the camera, pasted text or an opened link (the iOS app registers the `flightdeck` URL scheme).
-  It shows the hab id and endpoints, then says the hab cannot pair yet and offers "Add the key by
-  hand" with the label and device id filled in. `PairingCode(offer:)` builds the link from a
-  `devices.pair` result for the hab side later. The hab side now exists as `gff-hab pair`; the
-  exchange the app still needs is in 18.8.
+  `PairingCode(offer:)` builds the link from a `devices.pair` result for the hab side later.
+- **QR pairing** (18.8, task-3th1o91q). `Pairing` in `SSH/Pairing.swift` runs the exchange and
+  `PairingView` shows it. Built choices:
+  - The SSH user at the window is `flightdeck`; the window takes any.
+  - Only one key is offered at the window: the first the key source gives. During a key move
+    (`transport.md` 7.2) that is the new key, so the four characters shown and the key admitted
+    are one.
+  - The device name is a field, filled with `UIDevice.name` (iOS) or the Mac's name, cleaned as the
+    window cleans it. `kind` is `tablet` on an iPad, `desktop` on a Mac, else `phone`.
+  - Limits: 25 s from the request to the first answer, 330 s from `waiting` to the last (the window
+    lives five minutes), answer lines up to 64 KiB. Closing the sheet closes the connection.
+  - The `paired` answer is checked before anything is stored: `hab.id` must be the code's id,
+    `device_id` the key that signed; the user is 1 to 64 printable ASCII characters with no `@`,
+    quote, backslash or leading `-`; one to eight endpoints that parse. Host key lines of another
+    type, or that do not parse, are skipped (at most 16 read).
+  - When the first `hab.ping` after pairing fails, the sheet offers "Try the connection again":
+    the key is already on the host and the token is spent, so pairing again would fail.
 - **Background action.** `HabActions` registers a notification category with a "Ping hab" action
   that needs unlock, and is the notification delegate from launch. The action loads the entry and
   key, runs one `hab.ping` on its own connection (`HabOneShot`: open, hello, call, close, 20 s
@@ -2114,8 +2127,13 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   before auth (also through `HabConnection`), the probe, a refused key, control and data on one
   connection, the session limit, a fresh connection per control stream, staggered endpoints, the
   one-shot call and a pane stream over a data channel. `SSHPairingTests` cover the code parser,
-  endpoints, fingerprints against `ssh-keygen`, keys and the entry file. `SSHLiveTests` run
-  against a real sshd through `apple/scripts/ssh-live-check.sh`.
+  endpoints, fingerprints against `ssh-keygen`, keys and the entry file. `PairingFlowTests` cover
+  the pairing codec and answer checks, the exchange against an in-process window (a wrong host
+  key stops before any key or token is sent; each refusal; bad, missing and late answers; cancel),
+  and the password setup (its script run by the real `/bin/sh` in a temporary home, and over an
+  in-process sshd that takes passwords). `SSHLiveTests` run against a real sshd through
+  `apple/scripts/ssh-live-check.sh`; `LivePairTests` pair with a real `gff-hab pair` window
+  through `apple/scripts/pair-live-check.sh`.
 
 ### 10.7 Built choices: imported SSH keys (task-1csglxtc)
 
@@ -3235,7 +3253,10 @@ What the app builds for QR pairing:
    by address.
 
 The hidden password setup (`transport.md` 6.1.6) sits under Add a hab by address as "Set up with
-a password". Not built in this stage.
+a password", a small button at the end of the form.
+
+Built (task-3th1o91q, 2026-11-06): every step above, on iPhone, iPad and the Mac (the Mac reads
+the code by paste or link; it has no scanner). Built choices are in 10.6.
 
 ### 18.9 Sealed push payloads
 

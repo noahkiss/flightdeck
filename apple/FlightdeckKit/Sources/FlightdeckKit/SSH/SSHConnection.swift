@@ -51,6 +51,17 @@ final class SSHConnection: @unchecked Sendable {
 
     /// Opens a session channel and runs `command` on it.
     func openSession(command: String, onEnd: @escaping @Sendable () -> Void, onFirstData: (@Sendable () -> Void)?) async throws -> SSHChannelStream {
+        try await openSession(.exec(command), onEnd: onEnd, onFirstData: onFirstData)
+    }
+
+    /// What a session channel asks the host to run.
+    enum SessionRequest {
+        case exec(String)
+        case subsystem(String)
+    }
+
+    /// Opens a session channel with an exec or subsystem request.
+    func openSession(_ request: SessionRequest, onEnd: @escaping @Sendable () -> Void, onFirstData: (@Sendable () -> Void)?) async throws -> SSHChannelStream {
         let stream = SSHChannelStream(onEnd: onEnd, onFirstData: onFirstData)
         let parent = channel
         let execReply = parent.eventLoop.makePromise(of: Void.self)
@@ -78,7 +89,12 @@ final class SSHConnection: @unchecked Sendable {
             onEnd()
             throw error
         }
-        child.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true), promise: nil)
+        switch request {
+        case .exec(let command):
+            child.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true), promise: nil)
+        case .subsystem(let name):
+            child.triggerUserOutboundEvent(SSHChannelRequestEvent.SubsystemRequest(subsystem: name, wantReply: true), promise: nil)
+        }
         do {
             try await execReply.futureResult.get()
         } catch {
@@ -91,9 +107,6 @@ final class SSHConnection: @unchecked Sendable {
 
     /// Dials one endpoint: TCP, key exchange, host key check, auth.
     static func dial(_ ep: SSHEndpoint, user: String, key: SSHKeySource, check: HostKeyCheck, timing: SSHTiming) async throws -> SSHConnection {
-        let loop = MultiThreadedEventLoopGroup.singleton.next()
-        let watcher = ConnectionWatcher(ready: loop.makePromise(of: Void.self))
-        let hostKeys = HostKeyValidator(check: check, endpoint: ep.description)
         // Unlock the key here, off the event loop: a Face ID prompt must not
         // hold the loop every hab shares. The probe never signs.
         var signing: [(fingerprint: String, key: NIOSSHPrivateKey)] = []
@@ -104,7 +117,21 @@ final class SSHConnection: @unchecked Sendable {
                 throw DeviceKeys.explain(error)
             }
         }
-        let auth = ClientKeyAuth(user: user, fingerprint: key.fingerprint, keys: signing, probe: check == .probe)
+        let c = try await dial(ep, user: user, auth: ClientKeyAuth(user: user, fingerprint: key.fingerprint, keys: signing, probe: check == .probe), check: check, timing: timing)
+        // Auth succeeded with the key offered last; a key move records it.
+        if let fp = c.offered { key.accepted(fingerprint: fp) }
+        return c
+    }
+
+    /// The fingerprint of the key the host took, for a key-auth dial.
+    var offered: String?
+
+    /// Dials one endpoint with a ready user-auth delegate: TCP, key
+    /// exchange, host key check (always before auth), auth.
+    static func dial(_ ep: SSHEndpoint, user: String, auth: NIOSSHClientUserAuthenticationDelegate, check: HostKeyCheck, timing: SSHTiming) async throws -> SSHConnection {
+        let loop = MultiThreadedEventLoopGroup.singleton.next()
+        let watcher = ConnectionWatcher(ready: loop.makePromise(of: Void.self))
+        let hostKeys = HostKeyValidator(check: check, endpoint: ep.description)
         let bootstrap = ClientBootstrap(group: loop)
             .connectTimeout(.nanoseconds(Int64(timing.connectTimeout.components.seconds) * 1_000_000_000 + timing.connectTimeout.components.attoseconds / 1_000_000_000))
             .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_NODELAY), value: 1)
@@ -145,9 +172,9 @@ final class SSHConnection: @unchecked Sendable {
             throw error
         }
         timer.cancel()
-        // Auth succeeded with the key offered last; a key move records it.
-        if let fp = auth.lastOffered { key.accepted(fingerprint: fp) }
-        return SSHConnection(channel: ch, endpoint: ep, hostKey: hostKeys.presented)
+        let conn = SSHConnection(channel: ch, endpoint: ep, hostKey: hostKeys.presented)
+        conn.offered = (auth as? ClientKeyAuth)?.lastOffered
+        return conn
     }
 
     static func describe(_ error: Error) -> String {

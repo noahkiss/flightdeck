@@ -86,6 +86,15 @@ final class SSHChannelStream: ByteStream, @unchecked Sendable {
         }
     }
 
+    /// Ends the remote command's input (SSH EOF); output stays readable.
+    func closeWrite() async {
+        let ch: Channel? = lock.withLock { closing || finished ? nil : channel }
+        try? await ch?.close(mode: .output).get()
+    }
+
+    /// The remote command's exit status, once the host sent it.
+    var exit: Int? { lock.withLock { exitStatus } }
+
     func close() {
         lock.lock()
         if closing {

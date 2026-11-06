@@ -370,6 +370,58 @@ public final class SSHSetup {
         }
     }
 
+    // MARK: - QR pairing (app.md 18.8)
+
+    /// Runs the pairing exchange with a code. `waiting` gets the fingerprint
+    /// whose last four characters the owner types on the hab. The result is
+    /// not stored yet: `finishPairing` tests and stores it.
+    public func pair(_ code: PairingCode, name: String, kind: Pairing.Kind, keyID: String = DeviceKeys.defaultID, waiting: @escaping @Sendable (String) -> Void) async throws -> Pairing.Result {
+        let key: any SSHKeySource
+        do {
+            // During a key move the default key offers the new key first.
+            if keyID == DeviceKeys.defaultID, loadKey() != nil, let src = try keys.signingSource(keyID: keyID, entry: "") {
+                key = src
+            } else {
+                key = try self.key(keyID)
+            }
+        } catch let e as MissingKey {
+            throw e
+        } catch {
+            throw DeviceKeys.explain(error)
+        }
+        var t = Pairing.Timing()
+        t.ssh = timing
+        let r = try await Pairing.pair(code, key: key, keyID: keyID, name: name, kind: kind, timing: t, waiting: waiting)
+        log.notice("paired with \(code.deviceID, privacy: .public)")
+        return r
+    }
+
+    /// Tests a paired entry with one `hab.ping`, then stores and connects it.
+    public func finishPairing(_ e: SSHHabEntry) async throws {
+        guard SSHFingerprint.isValid(e.hostKeyFingerprint) else { throw TransportError("no trusted host key") }
+        _ = try await test(e)
+        try add(e)
+    }
+
+    // MARK: - Password setup (transport.md 6.1.6)
+
+    /// Adds this device's key to a host with the account password, once,
+    /// over the host key the owner trusted. The password is not kept.
+    public func installKey(_ dest: SSHDestination, hostKeyFingerprint: String, password: String, keyID: String, command: String?, deviceName: String) async throws -> PasswordSetup.Outcome {
+        let pub: NIOSSHPublicKey
+        if keyID == DeviceKeys.defaultID {
+            guard loadKey() != nil else { throw TransportError(keyError ?? "no device key") }
+            // During a key move, the key that stays.
+            pub = (try? keys.nextKey())?.publicKey ?? deviceKey!.publicKey
+        } else {
+            pub = try key(keyID).publicKey
+        }
+        let line = PasswordSetup.keyLine(publicKey: pub, command: try PasswordSetup.forcedCommand(command), name: deviceName)
+        let r = try await PasswordSetup.install(dest, hostKeyFingerprint: hostKeyFingerprint, password: password, line: line, key: pub, timing: timing)
+        log.notice("password setup on \(dest.endpoint.description, privacy: .public): \(r == .added ? "added" : "present", privacy: .public)")
+        return r
+    }
+
     // MARK: - Pairing links
 
     /// Opens a `flightdeck://pair` link: parses it and shows the pairing sheet.

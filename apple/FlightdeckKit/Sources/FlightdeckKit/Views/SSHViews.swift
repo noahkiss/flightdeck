@@ -205,6 +205,10 @@ struct AddHabView: View {
     @State private var error: String?
     /// The destination the shown host key came from.
     @State private var probed: SSHDestination?
+    /// "Set up with a password" (transport.md 6.1.6): add the key with the
+    /// account password once, instead of by hand.
+    @State private var usePassword = false
+    @State private var password = ""
 
     enum Step: Equatable {
         case form
@@ -247,9 +251,13 @@ struct AddHabView: View {
             } header: {
                 Text(setup.importedKeys.isEmpty ? "This device's key" : "Key")
             } footer: {
-                Text(keyID == DeviceKeys.defaultID
-                    ? "Add this line to ~/.ssh/authorized_keys for that user on the host."
-                    : "A host that already trusts this key needs nothing more. Otherwise add this line to ~/.ssh/authorized_keys for that user on the host.")
+                if usePassword {
+                    Text("The app signs in once with the account password, adds this key to ~/.ssh/authorized_keys, and forgets the password.")
+                } else {
+                    Text(keyID == DeviceKeys.defaultID
+                        ? "Add this line to ~/.ssh/authorized_keys for that user on the host."
+                        : "A host that already trusts this key needs nothing more. Otherwise add this line to ~/.ssh/authorized_keys for that user on the host.")
+                }
             }
             Section {
                 TextField(NIOSSHTransport.defaultCommand, text: $command)
@@ -266,7 +274,14 @@ struct AddHabView: View {
             if case .confirm(let fp, _) = step {
                 Section {
                     Text(fp).font(.caption.monospaced()).textSelection(.enabled)
-                    Button("Trust this host key") { Task { await trust() } }
+                    if usePassword {
+                        SecureField("Password for \(probed?.user ?? "the user")", text: $password)
+                            .textContentType(.password)
+                        Button("Trust this host key and add the key") { Task { await trust() } }
+                            .disabled(password.isEmpty)
+                    } else {
+                        Button("Trust this host key") { Task { await trust() } }
+                    }
                     Button("Cancel", role: .cancel) { step = .form }
                 } header: {
                     Text("Host key")
@@ -277,9 +292,17 @@ struct AddHabView: View {
             if let error {
                 Section { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             }
+            if !usePassword && step == .form {
+                Section {
+                    Button("Set up with a password") { usePassword = true }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Add a hab")
+        .onDisappear { password = "" }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", action: done)
@@ -349,6 +372,12 @@ struct AddHabView: View {
         step = .testing
         error = nil
         do {
+            if usePassword {
+                // The password is used once and dropped, pass or fail.
+                let p = password
+                password = ""
+                _ = try await setup.installKey(d, hostKeyFingerprint: fp, password: p, keyID: keyID, command: entry.command, deviceName: PairingDevice.name)
+            }
             _ = try await setup.test(entry)
             try setup.add(entry)
             done()
@@ -359,9 +388,30 @@ struct AddHabView: View {
     }
 }
 
-/// Pair with a hab's code: scan it, or paste the code or link. The hab's
-/// side of pairing (`devices.pair`) is not built yet, so after reading the
-/// code this offers the by-hand path.
+/// This device's name and kind, as the pairing request sends them.
+@MainActor
+enum PairingDevice {
+    static var name: String {
+        #if os(iOS)
+        return UIDevice.current.name
+        #else
+        return Host.current().localizedName ?? "Mac"
+        #endif
+    }
+
+    static var kind: Pairing.Kind {
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad ? .tablet : .phone
+        #else
+        return .desktop
+        #endif
+    }
+}
+
+/// Pair with a hab's code (app.md 18.8): scan it, or paste the code or
+/// link, then run the exchange with the hab's pairing window. While the
+/// owner confirms on the hab, the last four characters of this device's key
+/// fingerprint show large.
 struct PairingView: View {
     let setup: SSHSetup
     @State var offer: PairingCode?
@@ -370,26 +420,28 @@ struct PairingView: View {
     @State private var text = ""
     @State private var error: String?
     @State private var scanning = false
+    @State private var name = ""
+    @State private var step: Step = .ready
+    @State private var task: Task<Void, Never>?
+
+    enum Step: Equatable {
+        case ready
+        case connecting
+        /// The owner is asked; the code to type on the hab.
+        case waiting(String)
+        /// Paired, but the answer had no sshd host key: compare and trust.
+        case hostKey(SSHHabEntry, String, String) // entry, fingerprint, OpenSSH line
+        case testing
+        /// Paired, but the first connection failed: the key is on the host,
+        /// so try the connection again rather than pairing again.
+        case retry(SSHHabEntry)
+    }
 
     var body: some View {
         Form {
             if let o = offer {
-                Section("Hab") {
-                    if let l = o.label { LabeledContent("Label", value: l) }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Hab id").font(.caption).foregroundStyle(.secondary)
-                        Text(o.deviceID).font(.caption.monospaced()).textSelection(.enabled)
-                    }
-                    ForEach(o.endpoints, id: \.self) { ep in
-                        Text(ep.description).font(.callout.monospaced())
-                    }
-                }
-                Section {
-                    Text("This hab cannot pair yet. Add this device's key to the host by hand.")
-                    NavigationLink("Add the key by hand") {
-                        AddHabView(setup: setup, prefill: AddHabPrefill(host: o.endpoints.first?.host ?? "", label: o.label, deviceID: o.deviceID), done: done)
-                    }
-                }
+                habSection(o)
+                stepSections(o)
             } else {
                 #if os(iOS)
                 Section {
@@ -419,14 +471,110 @@ struct PairingView: View {
                 }
             }
             if let error {
-                Section { Text(error).foregroundStyle(.red).font(.callout) }
+                Section { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Pair with a code")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Close", action: done)
+                Button(step == .ready ? "Close" : "Cancel") {
+                    task?.cancel()
+                    done()
+                }
+            }
+        }
+        .onAppear {
+            setup.loadKey()
+            if name.isEmpty { name = PairingDevice.name }
+        }
+        .onDisappear { task?.cancel() }
+    }
+
+    @ViewBuilder
+    private func habSection(_ o: PairingCode) -> some View {
+        Section("Hab") {
+            if let l = o.label { LabeledContent("Label", value: l) }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Hab id").font(.caption).foregroundStyle(.secondary)
+                Text(o.deviceID).font(.caption.monospaced()).textSelection(.enabled)
+            }
+            ForEach(o.endpoints, id: \.self) { ep in
+                Text(ep.description).font(.callout.monospaced())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stepSections(_ o: PairingCode) -> some View {
+        switch step {
+        case .ready:
+            Section {
+                TextField("Device name", text: $name)
+                    .autocorrectionDisabled()
+            } header: {
+                Text("This device")
+            } footer: {
+                Text("The hab shows this name when it asks to confirm.")
+            }
+            Section {
+                Button("Pair this device") { start(o) }
+                    .disabled(setup.deviceKey == nil)
+                if setup.deviceKey == nil, let e = setup.keyError {
+                    Text(e).foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                NavigationLink("Add the key by hand") {
+                    AddHabView(setup: setup, prefill: AddHabPrefill(host: o.endpoints.first?.host ?? "", label: o.label, deviceID: o.deviceID), done: done)
+                }
+            } footer: {
+                Text("For a host that cannot run gff-hab pair.")
+            }
+        case .connecting:
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("Connecting to the hab")
+                }
+            }
+        case .waiting(let code):
+            Section {
+                VStack(spacing: 12) {
+                    Text(code)
+                        .font(.system(size: 64, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                        .accessibilityLabel(code.map { String($0) }.joined(separator: " "))
+                    Text("Type these on \(o.label ?? "the hab") to confirm")
+                        .font(.callout)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } footer: {
+                Text("Upper and lower case count.")
+            }
+        case .hostKey(let e, let fp, _):
+            Section {
+                Text(fp).font(.caption.monospaced()).textSelection(.enabled)
+                Button("Trust this host key") { trust(e, fp) }
+            } header: {
+                Text("Host key of \(e.destination)")
+            } footer: {
+                Text("The hab sent no SSH host key. Compare with ssh-keygen -lf on the host's key, for example /etc/ssh/ssh_host_ed25519_key.pub.")
+            }
+        case .testing:
+            Section {
+                HStack {
+                    ProgressView()
+                    Text("Checking the connection")
+                }
+            }
+        case .retry(let e):
+            Section {
+                Button("Try the connection again") { finish(e) }
+            } footer: {
+                Text("This device is paired with \(e.destination). The hab already has its key.")
             }
         }
     }
@@ -437,6 +585,56 @@ struct PairingView: View {
             error = nil
         } catch {
             self.error = "\(error)"
+        }
+    }
+
+    private func start(_ o: PairingCode) {
+        error = nil
+        step = .connecting
+        let n = name
+        task = Task {
+            do {
+                let r = try await setup.pair(o, name: n, kind: PairingDevice.kind) { fp in
+                    let code = Pairing.confirmCode(fp)
+                    Task { @MainActor in
+                        if step == .connecting { step = .waiting(code) }
+                    }
+                }
+                if r.needsHostKey {
+                    let key = try await setup.probe(SSHDestination(user: r.entry.user, endpoint: r.entry.endpoints[0]), keyID: r.entry.keyID)
+                    step = .hostKey(r.entry, SSHFingerprint.of(key), String(openSSHPublicKey: key))
+                    return
+                }
+                finish(r.entry)
+            } catch is CancellationError {
+            } catch {
+                if Task.isCancelled { return }
+                self.error = "\(error)"
+                step = .ready
+            }
+        }
+    }
+
+    private func trust(_ e: SSHHabEntry, _ fp: String) {
+        guard case .hostKey(_, _, let line) = step else { return }
+        var entry = e
+        entry.hostKeyFingerprint = fp
+        entry.hostKey = line
+        finish(entry)
+    }
+
+    private func finish(_ e: SSHHabEntry) {
+        error = nil
+        step = .testing
+        task = Task {
+            do {
+                try await setup.finishPairing(e)
+                done()
+            } catch {
+                if Task.isCancelled { return }
+                self.error = "\(error)"
+                step = .retry(e)
+            }
         }
     }
 }
