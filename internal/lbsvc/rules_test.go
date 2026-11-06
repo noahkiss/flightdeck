@@ -289,3 +289,25 @@ func TestPaneSourceSession(t *testing.T) {
 		t.Fatalf("source with no session: %+v", g.Record.Source)
 	}
 }
+
+// A proposal from a pane may create a named record and set its status in one batch: the
+// status check knows the record comes from the same draft.
+func TestProposalCreatesAndSetsStatus(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	pane := Pane{ID: "pane-1", Session: "sess-1", Harness: "claude", Host: "box-a", Propose: true}
+	c := create("task", "review it")
+	c.ID = "task-review01"
+	w, err := r.svc.WritePane(ctx, pane, api.LogbookWriteParams{Propose: true, Changes: []api.LogbookChange{c, set("task-review01", "status", "doing")}})
+	if err != nil {
+		t.Fatalf("create and set in one proposal: %v", err)
+	}
+	if w.Proposal == "" {
+		t.Fatalf("no proposal: %+v", w)
+	}
+	// An add to a record the hab does not hold still does not count as creating it.
+	add := api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: "task-absent01", Field: "tags", Value: api.RawJSON(`"x"`)}
+	if _, err := r.svc.WritePane(ctx, pane, api.LogbookWriteParams{Propose: true, Changes: []api.LogbookChange{add, set("task-absent01", "status", "doing")}}); kindOf(err) != api.ErrorKindInvalid {
+		t.Fatalf("add then set of an absent record: %v", err)
+	}
+}

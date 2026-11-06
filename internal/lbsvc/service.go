@@ -376,12 +376,12 @@ func (s *Service) paneChecks(ctx context.Context, session string, changes []api.
 			if c.Type == logbook.TypeProject {
 				return invalid("change %d: %s", i+1, projectsHint)
 			}
+			if c.ID != "" {
+				created[c.ID] = true
+			}
 		case api.LogbookChangeOpAdd, api.LogbookChangeOpRemove:
 			if c.Identity != "" {
 				return invalid("change %d: a project's identities are the user's to change: %s", i+1, projectsHint)
-			}
-			if c.ID != "" {
-				created[c.ID] = true
 			}
 		case api.LogbookChangeOpSet:
 			if err := s.paneSet(ctx, c.ID, c.Field, created[c.ID], strict); err != nil {
