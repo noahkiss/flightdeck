@@ -138,12 +138,16 @@ func memberDefaults(ss api.Session, s api.ConfirmStart) (api.GroupRole, string) 
 
 // groupHook answers the group methods from a pane (groups.md 15.2): the pane's session is the
 // coordinator of a new group, and the sender of a report or a note. Only the coordinator amends,
-// closes or retries.
-func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
+// closes or retries. eventTurn reports whether a route is the Capcom engine's in an event turn,
+// which may not start, change or end a group (capcom-service.md 9.4); nil: never.
+func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane string) bool) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		ss, ok := store.SessionByPane(pane)
 		if !ok {
 			return nil, nil, control.Errorf(api.ErrorKindInvalid, "this pane is not a session; a group's calls come from a session")
+		}
+		if groupWrite(method) && eventTurn != nil && eventTurn(pane) {
+			return nil, nil, control.Errorf(api.ErrorKindDenied, "%s is refused in a turn an event started: ask the user first", method)
 		}
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
 		coordinator := func(id string) error {
@@ -261,7 +265,7 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			if err := coordinator(p.Group); err != nil {
 				return nil, nil, err
 			}
-			g, err := svc.Close(ctx, p.Group)
+			g, err := svc.CloseAsCoordinator(ctx, p.Group)
 			return api.GroupResult{Group: g}, nil, err
 		default: // group.retry
 			var p api.GroupRetryParams
@@ -275,4 +279,15 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			return api.GroupResult{Group: g}, nil, err
 		}
 	}
+}
+
+// groupWrite reports whether a group method starts, changes or ends a group: the coordinator's
+// writes, which an event turn may not make (capcom-service.md 5.1, 9.4). group.get and
+// group.list read; reports and notes come from members.
+func groupWrite(method string) bool {
+	switch method {
+	case "group.create", "group.amend", "group.close", "group.retry":
+		return true
+	}
+	return false
 }

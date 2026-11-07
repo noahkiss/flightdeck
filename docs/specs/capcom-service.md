@@ -496,7 +496,7 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
 | Read tools, `suggest_host`, `confirmation_read` | `gff-hab mcp` (`capcom.md` 4, 5.5) | Unchanged |
 | `hand_off`, `start_session`, `set_up_project`, `file_record`, `logbook_write` | `gff-hab mcp` (`capcom.md` 6.4, 6.5) | Refused in an event turn (9.4), except an action a Capcom job allows (9.6, from A9) |
 | `channel_send` | `gff-hab mcp` (`mesh.md` 6.6) | Through the token route (3.3). `channel_wait` is not offered: every message to Capcom arrives as an input (9.1) |
-| The coordinator's group tools: `group_create`, `group_status`, `group_amend`, `group_close`, `group_retry`, `member_compact`, `member_handoff` | `gff-hab mcp` (`groups.md` 15.2, from stage B8) | Refused in an event turn, as `start_session` is (9.4), except under a Capcom job's `group` action (9.6) |
+| The coordinator's group tools: `group_create`, `group_status`, `group_amend`, `group_close`, `group_retry`, `member_compact`, `member_handoff` | `gff-hab mcp` (`groups.md` 15.2, from stage B8) | The writes are refused in an event turn, as `start_session` is (9.4), except under a Capcom job's `group` action (9.6). `group_status` is a read. Built in B8 (`groups.md` 12.1) |
 | Personal tools (8) | `gff-hab mcp`, only on a Capcom route | Refused on any pane's route |
 | `WebSearch`, `WebFetch` | The SDK's own | Web fetch rules in 5.3 |
 | `ListMcpResourcesTool`, `ReadMcpResourceTool` | The SDK's own, for MCP resources | Only while `flightdeck` is the only MCP server in `init` (E27) |
@@ -527,6 +527,7 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
 | A read tool, a search, a personal read | None | 5.1 |
 | A hand-off | None; a record card in the thread | `capcom.md` 6, O4 |
 | A session start or project set-up | The hab's confirmation when `confirm.start_elsewhere` is on | `capcom.md` 6.1 |
+| A group plan or an amend | The plan's one confirmation while `confirm.group_plan` is on, as for any coordinator | `groups.md` 3.2, 12.1 |
 | A Logbook record | A proposal, reviewed later | `capcom.md` 6.2 |
 | A calendar event or reminder | A card with one "Add" tap | 8.5, decision 5 |
 | A web fetch of a URL the turn has not seen | An approval card | 5.3 |
@@ -731,7 +732,7 @@ stays native").
 | `tools` | One quiet line per turn, "read 3 transcripts, searched the web"; tap lists each call | `tool` |
 | `agent` | A quiet line "Report from <address>", tap for the text | A channel message to `capcom` |
 | `round` | A quiet line "Round <name>: 3 events", tap for the prompt and the events, shown as data from outside | A round message (9.5) |
-| `card` | Hand-off record, confirmation, approval, calendar or reminder card, proposal line | The hab's cards (`capcom.md` 6.3, `app.md` 4.8, 7.9) and 8.5 |
+| `card` | Hand-off record, confirmation, approval, calendar or reminder card, proposal line, a group card that opens the group's card (`groups.md` 12.1) | The hab's cards (`capcom.md` 6.3, `app.md` 4.8, 7.9), 8.5 and `group_create` |
 | `note` | A one-line Flightdeck note: "Noted: …", "Pacing usage until 14:00", "Capcom restarted" | gff-hab |
 | `divider` | A thin rule with "Earlier messages summarised" or "New conversation"; tap shows the summary | 6.2, 6.3, 7.5 |
 

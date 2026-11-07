@@ -1004,6 +1004,25 @@ defines the internals. Each row is **shared**: a change on either side updates b
   (5.7).
 - Capcom has no shell. The heavy-run lock and the lane do not need one from the coordinator.
 
+Built (task-itwl1sbg, B8):
+
+- Capcom's engine already serves every `gff-hab mcp` tool under its `mcp__flightdeck__*` allow
+  rule, so the group tools needed no engine change. Their calls reach the hab on the engine's
+  pane route as the Capcom session, which is the coordinator. Its group's coordinator address
+  is `capcom`, not `<host>/capcom`.
+- A report to a Capcom coordinator goes into the thread at once as an agent item, whatever the
+  engine's state; it never waits in the inbox.
+- `group_create` from Capcom puts one card into the thread, type `group`, its ref the group id,
+  before the plan's confirmation is asked. The app opens the group's card from it. The plan's
+  confirmation is the same one any coordinator's plan raises.
+- In an event turn the hab refuses `group_create`, `group_amend`, `group_close` and
+  `group_retry` with `denied`, "ask the user first". `group_status` reads, as 9.4 allows. The
+  Capcom job exception (`capcom-service.md` 9.6) comes with A9.
+- A close by the user (`group.close` on the API) sends the coordinator one message with the
+  result: items landed, dropped and not landed, and the leftovers (7.5). A Capcom coordinator
+  sums it up in the thread, as its manual says. A close by the coordinator's own `group_close`
+  sends none: the tool's answer is the record.
+
 ### 12.2 The usage governor (Part 14 G) — shared
 
 As in section 10: a consumer per group, a check before a new turn, an event on change, and

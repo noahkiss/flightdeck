@@ -450,9 +450,9 @@ public struct CapcomAuthorKind: RawRepresentable, Codable, Sendable, Hashable {
 
 public struct CapcomCard: Codable, Sendable, Hashable {
     public var choices: [String]
-    /// approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review.
+    /// approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card.
     public var ref: String?
-    /// approval, confirmation, handoff, calendar, reminder, proposal or memory.
+    /// approval, confirmation, handoff, calendar, reminder, proposal, memory or group.
     public var type: String
 
     enum CodingKeys: String, CodingKey {

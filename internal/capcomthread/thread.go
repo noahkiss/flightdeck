@@ -111,8 +111,11 @@ type Card struct {
 }
 
 // CardMemory is the card type of a "Noted" line (6.4), and ChoiceUndo its one choice.
+// CardGroup is the card of an agent group Capcom coordinates (groups.md 12.1): its ref is the
+// group id, and it takes no answer.
 const (
 	CardMemory = "memory"
+	CardGroup  = "group"
 	ChoiceUndo = "undo"
 )
 

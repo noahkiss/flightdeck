@@ -13,7 +13,10 @@ func TestServiceManual(t *testing.T) {
 	if strings.Contains(ServiceManual, fileJob) || !strings.Contains(ServiceManual, "the tag capcom") || !strings.Contains(ServiceManual, "## Memory") {
 		t.Fatalf("service manual:\n%s", ServiceManual)
 	}
-	if !strings.Contains(Manual, fileJob) {
+	if strings.Contains(ServiceManual, watchLimit) || !strings.Contains(ServiceManual, "group_create") || !strings.Contains(ServiceManual, "group_close") {
+		t.Fatalf("service manual without the group tools (groups.md 12.1):\n%s", ServiceManual)
+	}
+	if !strings.Contains(Manual, fileJob) || !strings.Contains(Manual, watchLimit) {
 		t.Fatal("the pane manual lost its filing rule")
 	}
 	dir := t.TempDir()
