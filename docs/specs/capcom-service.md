@@ -379,10 +379,10 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | Type (hab to engine) | Fields |
 |---|---|
 | `hello` | `credential {kind: "oauth_token"\|"api_key"\|"login", value}` (`login`, Codex only, has no value: the CLI reads the user's own login), `device`, `last_item`, `sdk_session` (the session to resume, or empty), `reseed` (a re-seed to open with instead: `switch`, `new` or `restart_failed`; 4.5), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms, route_backoff_max_ms, summary_max_chars, precompact_timeout_ms}` |
-| `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}]}` |
+| `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}], send_now}` (`send_now` true for a message sent with "Send now", 10.1) |
 | `interrupt` | none |
 | `reseed` | `reason` |
-| `pace` | `pace: "ok"\|"small"\|"wait"`, `until` |
+| `pace` | `pace: "ok"\|"small"\|"wait"` and `until` for a user turn, `event_pace: "ok"\|"wait"` and `event_until` for an event turn (10.1). gff-hab sends it after each `ready`, before any `input`, and on each change |
 | `approval.answer` | `request`, `allow` (bool), `message` |
 | `shutdown` | none |
 | `context` | `request` (the `context.request` it answers; absent for a quiet update), `for` (`reseed`, `compact`, `quiet`), `summary`, `through` (the newest item `recent` holds, else the summary's), `recent: [{id, kind, author, time, text}]`, and for `reseed` `seed {logbook, messages: [{id, kind, author, time, text}], open: [line]}` |
@@ -1192,6 +1192,48 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   smallest current model), `max_turn_usd` (passed as `maxBudgetUsd` per turn, default 2).
   Ranges in 19.2.
 
+**Built (stage G, task-k0ydtgae).** The governor is `internal/governor` in gff-hab; Capcom is its
+first consumer.
+
+- **The share.** The plan basis reads the consumer's account's weekly window (`7d`, with a
+  start). On day d of the window (0 the first day) the share is `pace_daily_share` × (d + 1), at
+  most 100%. The use is the window's used percentage: the whole account's, since a reading names
+  no consumer. The level is the use as a percentage of the share. User turns go to the small
+  model at `pace_small_at` and wait at `pace_wait_at`; event turns wait at `pace_event_stop`.
+- **Until.** A wait lasts until the start of the first later window day whose share takes the
+  level under the step, else until the window resets. A window whose reset passed with no reading
+  since counts as 0% used. The governor rechecks at each reading, each turn's end, the next window
+  day and local midnight.
+- **Readings.** The engine's `usage` messages are the SDK's `rate_limit_info`: `unifiedWindows`
+  (a window per key, `utilization` a fraction, `resetsAt` Unix seconds) and the top-level window
+  `rateLimitType` names. gff-hab stores them as a usage account with the harness `claude` and the
+  key `usage.Key(host, "claude", <state>/capcom/engine)`, so `usage.list` shows Capcom's own
+  account.
+- **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
+  reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
+  until local midnight. Today's tokens and cost are kept in `<state>/governor.json`, so a
+  restart keeps them.
+- **Unpaced.** With no weekly window (no reading yet, or an API key with no `daily_usd`) Capcom
+  is listed with basis `none` and every pace is `ok`; its tokens are counted.
+- **The engine.** It keeps the newest `pace`; with none, every turn runs. Before a new turn: at
+  `ok` the main model, at `small` the small model (`small_model`, else the alias `haiku`), set
+  with the SDK's `setModel`; at `wait` the items stay with the engine, untaken, until a new
+  `pace`. The head item's kind gives the turn's origin. An event that waits does not hold a user
+  message after it: the user turn takes both. Input that arrives during a running turn joins it.
+- **The note.** The first user message during a wait gets the note "Pacing usage until
+  <time>" in the thread, once per wait. The note is not model input.
+- **Send now.** `session.send` with `send_now: true` (the long-press menu; the app's half is
+  task-7vm076x0) marks the item. While user turns wait, a marked item runs at once on the small
+  model, with the items waiting before it.
+- **The catalog.** The `governor` section lists each consumer: basis, the two paces with their
+  ends, the use and the share (`plan`), the spend and the cap in cents (`usd`), and today's
+  tokens. gff's status board shows each consumer that is not at `ok`, or is unpaced, under
+  "Usage pacing".
+- **Groups.** A group registers as its own consumer, `group:<id>`, with its policy, its account
+  and an `OnChange` that hears each change of its answer (`groups.md` 10). Stage G builds and
+  tests only the Capcom consumer and a governor test of a group consumer; the group wiring is
+  Part 15 B3's follow-up.
+
 ### 10.2 Terms
 
 - **The user's subscription by default.** The engine authenticates with the long-lived OAuth
@@ -1518,10 +1560,11 @@ One app preference (`app.md` 20.4), since the app decides what it sends:
 | `token_retry` | 5 minutes | 30 s to 24 hours | 10.2 |
 | `wake_retry` | 10 s | 1 s to 5 minutes; one retry | 14 |
 | `pace_daily_share` | 15% of the weekly window a day | 1% to 100% | 10.1 |
-| `pace_event_stop`, `pace_small_at`, `pace_wait_at` | 80%, 100%, 120% of the share | 10% to 500% each, in that order; a set out of order is logged and all three defaults run | 10.1 |
+| `pace_event_stop`, `pace_small_at`, `pace_wait_at` | 80%, 100%, 120% of the share | 10% to 500% each, in that order (equal allowed); a set out of order is logged and all three defaults run | 10.1 |
 
 The four `pace_*` keys are Capcom's inputs to the usage governor (task-k0ydtgae, stage G), which
-reads them; the governor's own rules stay in its task.
+reads them at each recheck; its rules are in 10.1. Each takes a number (`15`) or a string
+(`"15%"`).
 
 ### 19.3 Fixed values kept
 
