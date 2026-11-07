@@ -72,6 +72,12 @@ name = "vault-backed"
 transport = "stdio"
 command = "server"
 env = { KEY = { secret = "provider:item/field" }, OTHER = { command = ["print-it", "x"] } }
+
+[[mcp.provider]]
+name = "provider"
+command = ["vault-cli", "read"]
+env = ["VAULT_ADDR"]
+timeout = 5
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +101,13 @@ env = { KEY = { secret = "provider:item/field" }, OTHER = { command = ["print-it
 
 	bad := map[string]string{
 		"unknown key":         "[mcp]\nwrit = [\"codex\"]\n",
+		"unknown provider":    "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\nenv = { A = { secret = \"nope:r\" } }\n",
+		"provider no command": "[[mcp.provider]]\nname = \"p\"\ncommand = []\n",
+		"provider bad name":   "[[mcp.provider]]\nname = \"p q\"\ncommand = [\"x\"]\n",
+		"provider timeout":    "[[mcp.provider]]\nname = \"p\"\ncommand = [\"x\"]\ntimeout = 301\n",
+		"provider env":        "[[mcp.provider]]\nname = \"p\"\ncommand = [\"x\"]\nenv = [\"A-B\"]\n",
+		"provider twice":      "[[mcp.provider]]\nname = \"p\"\ncommand = [\"x\"]\n[[mcp.provider]]\nname = \"p\"\ncommand = [\"y\"]\n",
+		"provider key":        "[[mcp.provider]]\nname = \"p\"\ncommand = [\"x\"]\nshell = true\n",
 		"unknown server key":  "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\ncwdd = \"/\"\n",
 		"secret literal":      "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\nenv = { API_KEY = \"abc\" }\n",
 		"secret header":       "[[mcp.server]]\nname = \"a\"\ntransport = \"http\"\nurl = \"https://x.example\"\nheaders = { Authorization = \"Bearer abc\" }\n",
@@ -165,7 +178,6 @@ func TestRenderShapes(t *testing.T) {
 		{instructions.Opencode, Server{Name: "a", Transport: Stdio, Command: "x", Args: []string{"{env:HOME}"}}, "{env:"},
 		{instructions.Codex, Server{Name: "a", Transport: Stdio, Command: "x", Env: map[string]Value{"A": {Env: "B"}}}, "own name"},
 		{instructions.Codex, Server{Name: "a", Transport: HTTP, URL: "https://x.example", Headers: map[string]Value{"X-Key": {Env: "B", Prefix: "Key "}}}, "bearer"},
-		{instructions.Claude, Server{Name: "a", Transport: Stdio, Command: "x", Env: map[string]Value{"K": {Secret: "p:r"}}}, "launch"},
 		{instructions.Pi, Server{Name: "a", Transport: Stdio, Command: "x"}, "no renderer"},
 	}
 	for _, c := range refused {
@@ -447,6 +459,10 @@ name = "later"
 transport = "stdio"
 command = "x"
 env = { KEY = { secret = "provider:ref" } }
+
+[[mcp.provider]]
+name = "provider"
+command = ["fake-provider"]
 `
 
 func TestRendererCodex(t *testing.T) {

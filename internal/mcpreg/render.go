@@ -99,7 +99,9 @@ type Renderer struct {
 	Host   string    // this host's id, for the servers' hosts lists
 	Force  []string  // owned servers a write may replace or remove though edited by hand
 	Claude ClaudeCLI // runs Claude's own config writer; nil runs "claude"
-	Now    func() time.Time
+	// Launcher is the gff-hab a server with secrets runs through (spec 8.5).
+	Launcher Launcher
+	Now      func() time.Time
 }
 
 // ClaudeCLI runs `claude <args>` and returns its combined output.
@@ -315,7 +317,7 @@ func (r *Renderer) Plan(h Harness) Plan {
 		if !s.applies(h, r.Host) {
 			continue
 		}
-		e, err := render(h, s)
+		e, err := r.render(h, s)
 		if err != nil {
 			desired[s.Name] = ServerPlan{Name: s.Name, Action: NotRendered, Reason: err.Error()}
 			continue

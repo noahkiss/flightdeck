@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -25,15 +26,46 @@ type notRendered struct{ reason string }
 
 func (n notRendered) Error() string { return n.reason }
 
-// render builds a server's entry for one harness, or a notRendered error.
-func render(h Harness, s Server) (entry, error) {
-	for _, m := range []map[string]Value{s.Env, s.Headers} {
-		for _, v := range m {
-			if v.NeedsLaunch() {
-				return entry{}, notRendered{"needs secret resolution at launch (gff-hab mcp launch), which a later stage builds"}
-			}
+// Launcher names the gff-hab that resolves secrets at launch (spec 8.5), as a rendered entry
+// runs it: `<Program> mcp launch -config <Config> <name>`, or `mcp header` for http.
+type Launcher struct {
+	Program string // the gff-hab program; "" means "gff-hab", found on the harness's PATH
+	Config  string // the registry's config file, an absolute path
+}
+
+func (l Launcher) argv(verb, name string) []string {
+	prog := l.Program
+	if prog == "" {
+		prog = "gff-hab"
+	}
+	return []string{prog, "mcp", verb, "-config", l.Config, name}
+}
+
+func needsLaunch(m map[string]Value) bool {
+	for _, v := range m {
+		if v.NeedsLaunch() {
+			return true
 		}
 	}
+	return false
+}
+
+// render builds a server's entry for one harness, or a notRendered error. A server with a
+// secret or command value renders as the launcher (stdio) or with the header helper (http).
+func (r *Renderer) render(h Harness, s Server) (entry, error) {
+	if needsLaunch(s.Env) || needsLaunch(s.Headers) {
+		if r.Launcher.Config == "" || !filepath.IsAbs(r.Launcher.Config) {
+			return entry{}, notRendered{"needs secret resolution at launch, and the launcher has no absolute config path"}
+		}
+		if s.Transport == Stdio {
+			return r.renderLaunch(h, s)
+		}
+		return r.renderHelper(h, s)
+	}
+	return render(h, s)
+}
+
+func render(h Harness, s Server) (entry, error) {
 	switch h {
 	case instructions.Claude:
 		return renderClaude(s)
@@ -270,4 +302,92 @@ func normalize(v any) any {
 func entryDigest(v any) string {
 	sum := sha256.Sum256([]byte(canonical(v)))
 	return hex.EncodeToString(sum[:])
+}
+
+// renderLaunch renders a stdio server whose values resolve at launch: the harness runs the
+// launcher, which resolves them and execs the server (spec 8.5). The entry holds no value; the
+// launcher sets the env and the folder itself.
+func (r *Renderer) renderLaunch(h Harness, s Server) (entry, error) {
+	argv := r.Launcher.argv("launch", s.Name)
+	var e entry
+	switch h {
+	case instructions.Claude:
+		for _, a := range argv {
+			if strings.Contains(a, "${") {
+				return entry{}, notRendered{"the launcher's path holds ${, which Claude would expand"}
+			}
+		}
+		e.value = map[string]any{"type": "stdio", "command": argv[0], "args": strs(argv[1:])}
+		if s.Timeout > 0 {
+			e.notes = append(e.notes, "Claude has no per-server timeout; timeout left out")
+		}
+	case instructions.Codex:
+		e.value = map[string]any{"command": argv[0], "args": strs(argv[1:])}
+		if names := r.Config.launchEnvNames(s); len(names) > 0 {
+			e.value["env_vars"] = strs(names)
+		}
+		if s.Timeout > 0 {
+			e.value["startup_timeout_sec"] = s.Timeout
+		}
+	case instructions.Opencode:
+		for _, a := range argv {
+			if strings.Contains(a, "{env:") || strings.Contains(a, "{file:") {
+				return entry{}, notRendered{"the launcher's path holds {env: or {file:, which opencode would expand"}
+			}
+		}
+		e.value = map[string]any{"type": "local", "command": strs(argv)}
+		if s.Timeout > 0 {
+			e.value["timeout"] = s.Timeout * 1000
+		}
+	default:
+		return entry{}, notRendered{"no renderer for " + string(h) + " yet"}
+	}
+	e.notes = append(e.notes, "secrets resolved at launch by gff-hab mcp launch")
+	return e, nil
+}
+
+// renderHelper renders an http server with secret or command headers: the plain and env
+// headers as usual, and the harness's header helper running `gff-hab mcp header` for the rest
+// (spec 8.5). opencode has no helper.
+func (r *Renderer) renderHelper(h Harness, s Server) (entry, error) {
+	rest := s
+	rest.Headers = map[string]Value{}
+	for k, v := range s.Headers {
+		if !v.NeedsLaunch() {
+			rest.Headers[k] = v
+		}
+	}
+	helper := shellJoin(r.Launcher.argv("header", s.Name))
+	var key string
+	switch h {
+	case instructions.Claude:
+		key = "headersHelper"
+	case instructions.Codex:
+		key = "http_headers_helper"
+	case instructions.Opencode:
+		return entry{}, notRendered{"opencode has no header helper; reference the header with env instead"}
+	default:
+		return entry{}, notRendered{"no renderer for " + string(h) + " yet"}
+	}
+	e, err := render(h, rest)
+	if err != nil {
+		return e, err
+	}
+	e.value[key] = helper
+	e.notes = append(e.notes, "secret headers resolved at connect by gff-hab mcp header")
+	return e, nil
+}
+
+// shellJoin quotes argv as one POSIX shell command line: each word with a character outside a
+// safe set goes in single quotes.
+func shellJoin(argv []string) string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		if a != "" && strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:@%+=,") == "" {
+			out[i] = a
+		} else {
+			out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(out, " ")
 }
