@@ -70,8 +70,9 @@ type LinkConfig struct {
 	OnTurnEnded func(result string)
 	// OnTurnUsage hears each turn's origin, tokens and cost (10.1). Nil: none.
 	OnTurnUsage func(origin string, input, output int64, costUSD float64)
-	// OnUsage hears each usage reading the engine sends (10.1). Nil: none.
-	OnUsage func(reading json.RawMessage)
+	// OnUsage hears each usage reading the engine sends (10.1), with the engine kind the
+	// sending connection's ready named. Nil: none.
+	OnUsage func(engine string, reading json.RawMessage)
 	Logf    func(string, ...any)
 	// Limits are the context manager's limits (6, 19.2); nil: the defaults.
 	Limits func() ContextLimits
@@ -114,6 +115,7 @@ type conn struct {
 	sent   string // the newest item id sent on this connection
 	resume string // the SDK session hello named, "" for none
 	ready  bool
+	engine string // the engine kind its ready named
 	done   chan struct{}
 }
 
@@ -342,6 +344,7 @@ func (l *Link) handle(c *conn, m Message) {
 			l.st.Turn, l.st.Origin = t.Turn, t.Origin
 		}
 		c.ready = true
+		c.engine = m.Engine
 		noResume := c.resume != "" && !l.st.Has(CapResumeByID)
 		l.mu.Unlock()
 		l.paceMu.Unlock()
@@ -465,7 +468,10 @@ func (l *Link) handle(c *conn, m Message) {
 		}
 	case TUsage:
 		if l.cfg.OnUsage != nil && len(m.Reading) > 0 {
-			l.cfg.OnUsage(m.Reading)
+			l.mu.Lock()
+			engine := c.engine
+			l.mu.Unlock()
+			l.cfg.OnUsage(engine, m.Reading)
 		}
 	case TSummary:
 		l.storeSummary(m.Text, m.Through)

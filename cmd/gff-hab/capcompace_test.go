@@ -140,6 +140,56 @@ func TestCapcomCodexPace(t *testing.T) {
 	}
 }
 
+// A switch from the Claude engine to the Codex engine (capcom-service.md 10.1): the governor
+// moves to the Codex account, which has no reading yet, so Capcom is unpaced until the Codex
+// engine's first reading; then usage.list holds both of Capcom's accounts.
+func TestCapcomPaceEngineSwitch(t *testing.T) {
+	e := newServiceEnv(t, "pace_daily_share = 10\n")
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	engine := func(kind string) {
+		t.Helper()
+		waitUntil(t, "the "+kind+" engine", func() bool {
+			st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+			return st.Connected && st.Engine == kind
+		})
+	}
+	engine("claude")
+	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
+	var g api.GovernorConsumer
+	waitUntil(t, "the wait on claude", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" && g.UsedPct == 25 })
+
+	// The switch, as the owner makes it: pause, edit the config, resume.
+	run(t, "capcom", "pause", "-socket", e.sock)
+	waitUntil(t, "the engine paused", func() bool {
+		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.State == "paused" && !st.Connected
+	})
+	if err := os.WriteFile(e.config, []byte("[capcom]\nengine = \"codex\"\nauth = \"login\"\nrestart_delay = \"1s\"\npace_daily_share = 10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "capcom", "resume", "-socket", e.sock)
+	engine("codex")
+	waitUntil(t, "unpaced on the codex account", func() bool { g, _ = governorOf(t, e); return g.Basis == "none" && g.Pace == "ok" })
+
+	run(t, "capcom", "say", "-socket", e.sock, "usage 30")
+	waitUntil(t, "the wait on codex", func() bool { g, _ = governorOf(t, e); return g.Basis == "plan" && g.UsedPct == 30 })
+	var list api.UsageReadings
+	call(t, c, "usage.list", api.UsageListParams{}, &list)
+	got := map[string]int{}
+	for _, a := range list.Accounts {
+		for _, w := range a.Windows {
+			if w.Name == "7d" {
+				got[a.Harness] = w.UsedPct
+			}
+		}
+	}
+	if len(list.Accounts) != 2 || got["claude"] != 25 || got["codex"] != 30 {
+		t.Fatalf("usage.list after the switch: %+v", list.Accounts)
+	}
+}
+
 // The governor after a gff-hab restart and a pace_* edit (capcom-service.md 10.1): the last
 // weekly reading is kept in governor.json, so the wait holds with no new reading; a user message
 // rechecks with the config read again, so an edit that lifts the wait gives no pacing note; and

@@ -167,14 +167,13 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		OnReady:     func() { e.sup.Ready() },
 		OnTurnEnded: func(result string) { e.sup.TurnEnded(result) },
 		OnTurnUsage: func(origin string, in, out int64, usd float64) { e.pace.turn(origin, in, out, usd) },
-		OnUsage:     func(r json.RawMessage) { e.pace.reading(r) },
+		OnUsage:     func(engine string, r json.RawMessage) { e.pace.reading(engine, r) },
 		Logf:        s.logf,
 		Limits:      func() capcomengine.ContextLimits { return contextLimits(config().Limits) },
 		Logbook:     e.logbookPart,
 		EngineKind:  func() string { return config().Engine },
 	})
 	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, host: s.host, dir: capcomengine.EngineDir(dir),
-		engine: func() string { return e.link.Status().Engine },
 		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
 	job := s.job
 	if job == nil {

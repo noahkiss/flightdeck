@@ -14,7 +14,7 @@ func TestLinkPace(t *testing.T) {
 	h := newHarness(t)
 	var mu sync.Mutex
 	var readings, turns []string
-	h.link.cfg.OnUsage = func(r json.RawMessage) { mu.Lock(); readings = append(readings, string(r)); mu.Unlock() }
+	h.link.cfg.OnUsage = func(_ string, r json.RawMessage) { mu.Lock(); readings = append(readings, string(r)); mu.Unlock() }
 	h.link.cfg.OnTurnUsage = func(origin string, in, out int64, usd float64) {
 		mu.Lock()
 		turns = append(turns, origin)
