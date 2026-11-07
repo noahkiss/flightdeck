@@ -83,7 +83,7 @@ type served struct {
 	stopped bool // stop ran; only the test goroutine touches it
 }
 
-// startServe runs `gff-hab serve` and waits until its socket answers.
+// startServe runs `gff-hab serve` and waits until its socket answers a hello.
 func startServe(t *testing.T, sock, state string) *served {
 	t.Helper()
 	return startServeWith(t, sock, state, nil)
@@ -113,8 +113,7 @@ func startServeOut(t *testing.T, sock, state string, env []string, stderr io.Wri
 	t.Cleanup(func() { s.stop(t) })
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if c, err := control.Dial(sock); err == nil {
-			c.Close()
+		if answers(sock) {
 			return s
 		}
 		if time.Now().After(deadline) {
@@ -122,6 +121,22 @@ func startServeOut(t *testing.T, sock, state string, env []string, stderr io.Wri
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// answers says whether a gff-hab answers a hello on sock. A dial alone proves nothing after a
+// SIGKILL: a child the killed gff-hab forked but had not yet exec'd still holds its listener, so
+// a dial lands in that listener's backlog, and the connection is reset (Linux) or closed
+// (macOS) once the child execs.
+func answers(sock string) bool {
+	c, err := control.Dial(sock)
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = c.Hello(ctx, api.ClientInfo{Name: "test", Version: "0", Kind: api.ClientKindApp}, "", "")
+	return err == nil
 }
 
 func (s *served) stop(t *testing.T) {
