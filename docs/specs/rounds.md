@@ -1422,15 +1422,20 @@ it.
 | `[rounds] max_watchers`, the other limit keys of 4.7, `[rounds.secrets.<name>]` | Hab config | The watcher cap (default 16), the watcher and batch limits (4.7) and the secret sets (4.4) |
 | notice `round.kind` `paused` | Body | Gains the watcher's last exit when the watcher's pause raised it (10.2) |
 
-CLI (`gff round`, also the agent kit's MCP tools with the same verbs). Until the agent kit
-(Part 4) gives agents the `gff` verbs, the same commands ship as `gff-hab round`, beside
-`gff-hab send` and `gff-hab show`, with the same doors: `-socket` or `-via` for the control
-connection, and from a pane the hook endpoint named by `$GFF_HAB`, which names the calling
-session for `--target self` and `created_by`.
+CLI (`gff round`, also the agent kit's MCP tools with the same verbs). The commands ship as
+`gff-hab round`, beside `gff-hab send` and `gff-hab show`, with the same doors: `-socket` or
+`-via` for the control connection, and from a pane the hook endpoint named by `$GFF_HAB`, which
+names the calling session for `--target self` and `created_by`. `gff round` runs
+`gff-hab round` with the same arguments (stage 10).
 
 Decision: build the CLI as `gff-hab round` first. Reason: the agent-facing commands that exist
 today live in gff-hab and reach the hab from a pane through `$GFF_HAB`; the agent kit renames
 them all at once (`mesh.md` 6.5 did the same for channels).
+
+Decision (stage 10): `gff round` replaces itself with `gff-hab round` (found beside gff, in
+`GFF Hab.app` beside it, else on PATH), rather than a second copy of the verbs. Reason: one
+implementation, which the MCP round tools share; the verbs need gff-hab's pane door and peer
+list anyway.
 
 | Command | What it does |
 |---|---|
@@ -1729,12 +1734,30 @@ choice open:
   endpoint would pass. The hab that answers must present the pinned device id. Every verb
   takes it. Decision: the CLI dials, not the hab over its peer link. Reason: the user's
   edit then reaches the runner with the user's own SSH access, as `-via` does, and no hab
-  forwards `round.*` for another; a hab-to-hab path for rounds belongs with the agent kit's
-  confirmation (stage 10).
-- **-host is refused from a pane, and with -via.** From a pane it is an agent's round on
-  another host, which waits for `confirm.start_elsewhere` in the agent kit (Q1, stage 10); a
-  direct dial would also skip the pane route's narrowing. With `-via` the peer list's endpoints
-  are the remote hab's, not this machine's.
+  forwards `round.*` for another; the one hab-to-hab path for rounds is the agent kit's
+  confirmation (stage 10, below).
+- **-host from a pane is add only, and -host is refused with -via.** From a pane, `round add
+  -host` is an agent's round on another host: it goes through `confirm.start_elsewhere` (Q1,
+  below). Every other verb with `-host` is refused from a pane: a direct dial would skip the
+  confirmation and the pane route's narrowing; `round ls -all` reads every host's rounds. With
+  `-via` the peer list's endpoints are the remote hab's, not this machine's.
+- **The agent kit (stage 10).** `gff-hab mcp` serves the round tools `round_ls` (`all`, `host`:
+  from the catalog), `round_show`, `round_runs`, `round_add`, `round_edit`, `round_rm`,
+  `round_pause`, `round_unpause` and `round_run`, with the CLI's flags as arguments (`_` for
+  `-`; `command` and `harness_args` are arrays), through the same door as the other tools; the
+  manual (`gff-hab mcp --skill`) has a Round tools section and a rule line. A round on the
+  agent's own hab is made at once through the pane route, with the session as `created_by`, and
+  no card. A round on another host (`round add -host`, `round_add` with `host`) is a
+  `confirm.request` of kind `round` (`capcom.md` 6.1): the requesting hab checks that the host is
+  a peer online with `rounds`, that the round is `fresh` with no target (a target is a session on
+  the agent's own hab), and fills in the trigger in plain words and the project's name from the
+  peer's catalog. With the setting off the hab makes the round at once and the card is a record;
+  on, the card waits up to 60 minutes and the tool waits 45 s, as `start_session` does; a cancel
+  or an expiry makes nothing. The hab, never the agent, makes a confirmed round, with
+  `round.create` over the peer link it dialed; the runner records no `created_by`, so the round
+  is the owner's to edit; a lost answer is unknown. The card takes no edits. A round's name that
+  no round has is tried as its id, so `gff round rm "$GFF_ROUND"` works; the pane route's
+  narrowing is unchanged, so only the round's creator removes it.
 - **The project on the peer.** `add -host` with `-project` takes a folder on the peer, as `-via`
   does; with no `-project` it names the project by the remote of this folder's project in this
   hab's catalog (`-remote` gives one by hand). `round.create` with `project_remote` takes a
@@ -1903,7 +1926,7 @@ fresh-eyes reviewer before they close.
 | 7 | App | Rounds list, round page, history, badges, actions, round notifications (Swift; the app lead) | task-xhpsgzkr |
 | 8 | gff client | Badges, the filter and the board's Rounds list | task-cpazgcsj |
 | 9 | Event triggers, `capcom` and `group` modes (the swarm study's D2) | The six events in 4.3 with their filters, `hab.woke`, the event batch (4.5), no self-loops; the `capcom` and `group` modes (5.2); the channel `round` mark and the lock on the receiving hab | task-awkgh5h1 |
-| 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere` | task-ybb4c3ed |
+| 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere`. Built (13, The agent kit) | task-ybb4c3ed |
 | 11 | Watchers (the swarm study's D3) | The `watch` trigger: `gff-hab watch-pane`, supervision, backoff, the exit pause, restart at wake, event lines, the cursor, dedup keys, secret sets; `--watch`, export and apply; the watcher's state on the round; a mail watcher example | task-qhdhg0x2 |
 | 12 | Module watchers (owner, 2026-11-06, W3) | `watch.module`, `every`, `args`; the manifest's `watch = true` (a new bridge version) and its install line; the `watch(ctx)` export and `ctx.call` in the module runtime and the module host's call loop; the `modules.md` changes of the 5.2 interface table; `act` refused in `watch`; the cursor, events, failures, pause, wake and removal rules of 4.4; the round page's call log; `--watch-module`, export, apply and `move` | task-3yn2kc07 |
 | — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12) | Planned when Logbook is built |

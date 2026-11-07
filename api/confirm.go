@@ -43,17 +43,28 @@ type ConfirmSetup struct {
 	Bootstrap  string `json:"bootstrap,omitempty" doc:"The bootstrap command the project declares. Filled by the hab."`
 }
 
-// ConfirmResult is what a finished start made.
+// ConfirmRound is the round a confirmation would create on another host (rounds.md 12 Q1): an
+// agent's round on its own hab needs no confirmation and gets no card.
+type ConfirmRound struct {
+	Host    string    `json:"host" doc:"The runner: a peer label from the peer list. This hab is refused: a round here is made with round.create."`
+	Round   RoundSpec `json:"round" doc:"The round as the runner's round.create will get it. A fresh round only: a resume or fork target is a session on this hab."`
+	RunNow  bool      `json:"run_now,omitempty" doc:"Also start one run once the round is made."`
+	Trigger string    `json:"trigger,omitempty" doc:"The trigger in plain words, such as every 1h or cron 0 9 * * 1-5 in UTC. Filled by the hab."`
+	Project string    `json:"project,omitempty" doc:"The project's name, from the catalog, when the hab knows it. Filled by the hab."`
+}
+
+// ConfirmResult is what a finished start or round made.
 type ConfirmResult struct {
 	Host    string `json:"host" doc:"The target hab, as this hab labels it."`
-	Session string `json:"session" doc:"The new session's id on the target hab."`
-	Name    string `json:"name,omitempty" doc:"The new session's name."`
-	Pane    string `json:"pane" doc:"The new session's pane id."`
+	Session string `json:"session" doc:"The new session's id on the target hab. Empty for a round."`
+	Name    string `json:"name,omitempty" doc:"The new session's name, or the round's."`
+	Pane    string `json:"pane" doc:"The new session's pane id. Empty for a round."`
+	Round   string `json:"round,omitempty" doc:"Kind round: the new round's id on the runner."`
 	// Address comes with the spawn verb. Optional, so a newer client reads an older hab.
 	Address string `json:"address,omitempty" doc:"The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."`
 }
 
-// Confirmation is one start or set-up an agent asked for: an open question to the user, or,
+// Confirmation is one start, set-up or round an agent asked for: an open question to the user, or,
 // with confirm.start_elsewhere off, a record of what ran (capcom.md 6.1).
 type Confirmation struct {
 	ID     string        `json:"id" doc:"128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab."`
@@ -66,12 +77,13 @@ type Confirmation struct {
 	// Group comes with stage B3 of agent groups (groups.md 3.2). Optional, so an older client
 	// shows a kind group card as an action.
 	Group      *ConfirmGroup  `json:"group,omitempty" doc:"Kind group: the plan the confirmation starts, or the change an amend adds."`
+	Round      *ConfirmRound  `json:"round,omitempty" doc:"Kind round: the round as it will be made, or was."`
 	Created    string         `json:"created" doc:"RFC 3339 time the hab took the request."`
 	ExpiresAt  string         `json:"expires_at,omitempty" doc:"RFC 3339 time an open confirmation expires, 60 minutes after it opened. An expired one never runs."`
 	Closed     string         `json:"closed,omitempty" doc:"RFC 3339 time it closed."`
 	AnsweredBy string         `json:"answered_by,omitempty" doc:"The client id that answered it."`
 	Edited     bool           `json:"edited,omitempty" doc:"The user changed the action before confirming it."`
-	Result     *ConfirmResult `json:"result,omitempty" doc:"State done: what the start made."`
+	Result     *ConfirmResult `json:"result,omitempty" doc:"State done: what the start or round made."`
 	Reason     string         `json:"reason,omitempty" doc:"States failed and unknown: why, with the target hab's error. State expired or cancelled: a short note."`
 }
 
@@ -80,6 +92,7 @@ type ConfirmRequestParams struct {
 	Start  *ConfirmStart `json:"start,omitempty" doc:"Kind start."`
 	Setup  *ConfirmSetup `json:"setup,omitempty" doc:"Kind setup."`
 	Group  *ConfirmGroup `json:"group,omitempty" doc:"Kind group: only gff-hab's group.create and group.amend ask for it, never a pane."`
+	Round  *ConfirmRound `json:"round,omitempty" doc:"Kind round."`
 	From   string        `json:"from,omitempty" doc:"The requesting session's name on this hab. The hook endpoint fills it from the pane's token."`
 	WaitMS int           `json:"wait_ms,omitempty" doc:"Wait up to this long for the answer; 0 answers at once. At most 120000. With no answer by then, the answer reaches the requesting session later as a message from Flightdeck."`
 }
@@ -105,7 +118,7 @@ type ConfirmEdits struct {
 type ConfirmAnswerParams struct {
 	ID     string        `json:"id"`
 	Choice ConfirmChoice `json:"choice"`
-	Edits  *ConfirmEdits `json:"edits,omitempty" doc:"With choice confirm: the user's changes."`
+	Edits  *ConfirmEdits `json:"edits,omitempty" doc:"With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made."`
 }
 
 // ConfirmationResult answers confirm.answer and confirm.get.

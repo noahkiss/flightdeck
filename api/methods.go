@@ -155,7 +155,7 @@ var Methods = []Method{
 	{"logbook.decide", "Decide a pending proposal (logbook.md 9.2). approve applies its draft, or the edits given, as the proposing agent's write with approved_by set to this device, in one batch with the decision; each record it makes links to the proposal with from. reject records the decision only. The first decision stands; one made elsewhere later is flagged decided_twice (5.6). Refused on the pane route: only a person decides. Needs the logbook capability.", LogbookDecideParams{}, LogbookWritten{}},
 	{"logbook.projects", "The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.", LogbookProjectsParams{}, LogbookProjects{}},
 	{"logbook.status", "This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.", LogbookStatusParams{}, LogbookStatus{}},
-	{"confirm.request", "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.", ConfirmRequestParams{}, ConfirmRequested{}},
+	{"confirm.request", "Ask for a start, a set-up, or a round on another host: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.", ConfirmRequestParams{}, ConfirmRequested{}},
 	{"confirm.answer", "Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.", ConfirmAnswerParams{}, ConfirmationResult{}},
 	{"confirm.list", "The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.", ConfirmListParams{}, ConfirmList{}},
 	{"confirm.get", "One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.", ConfirmGetParams{}, ConfirmationResult{}},
@@ -295,7 +295,7 @@ var Enums = map[string][]string{
 	// Sets added for the read tools (capcom.md 4).
 	"ReadHostState": {"ok", "partial", "offline", "update_needed", "error"},
 	// Sets added for confirmations (capcom.md 6.1).
-	"ConfirmKind":   {"start", "setup", "group"},
+	"ConfirmKind":   {"start", "setup", "group", "round"},
 	"ConfirmState":  {"open", "running", "done", "failed", "cancelled", "expired", "unknown"},
 	"ConfirmChoice": {"confirm", "cancel"},
 	// Sets added for Capcom (capcom.md 2.1).

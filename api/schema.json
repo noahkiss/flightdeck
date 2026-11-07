@@ -3358,7 +3358,7 @@
     },
     {
       "name": "confirm.request",
-      "summary": "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.",
+      "summary": "Ask for a start, a set-up, or a round on another host: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -3380,6 +3380,13 @@
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/ConfirmKind"
+          }
+        },
+        {
+          "name": "round",
+          "description": "Kind round.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmRound"
           }
         },
         {
@@ -3429,7 +3436,7 @@
         },
         {
           "name": "edits",
-          "description": "With choice confirm: the user's changes.",
+          "description": "With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made.",
           "schema": {
             "$ref": "#/components/schemas/ConfirmEdits"
           }
@@ -7005,7 +7012,7 @@
           },
           "edits": {
             "$ref": "#/components/schemas/ConfirmEdits",
-            "description": "With choice confirm: the user's changes."
+            "description": "With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made."
           },
           "id": {
             "type": "string"
@@ -7097,7 +7104,8 @@
         "x-known-values": [
           "start",
           "setup",
-          "group"
+          "group",
+          "round"
         ]
       },
       "ConfirmList": {
@@ -7150,6 +7158,10 @@
           "kind": {
             "$ref": "#/components/schemas/ConfirmKind"
           },
+          "round": {
+            "$ref": "#/components/schemas/ConfirmRound",
+            "description": "Kind round."
+          },
           "setup": {
             "$ref": "#/components/schemas/ConfirmSetup",
             "description": "Kind setup."
@@ -7198,21 +7210,54 @@
           },
           "name": {
             "type": "string",
-            "description": "The new session's name."
+            "description": "The new session's name, or the round's."
           },
           "pane": {
             "type": "string",
-            "description": "The new session's pane id."
+            "description": "The new session's pane id. Empty for a round."
+          },
+          "round": {
+            "type": "string",
+            "description": "Kind round: the new round's id on the runner."
           },
           "session": {
             "type": "string",
-            "description": "The new session's id on the target hab."
+            "description": "The new session's id on the target hab. Empty for a round."
           }
         },
         "required": [
           "host",
           "session",
           "pane"
+        ]
+      },
+      "ConfirmRound": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The runner: a peer label from the peer list. This hab is refused: a round here is made with round.create."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name, from the catalog, when the hab knows it. Filled by the hab."
+          },
+          "round": {
+            "$ref": "#/components/schemas/RoundSpec",
+            "description": "The round as the runner's round.create will get it. A fresh round only: a resume or fork target is a session on this hab."
+          },
+          "run_now": {
+            "type": "boolean",
+            "description": "Also start one run once the round is made."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "The trigger in plain words, such as every 1h or cron 0 9 * * 1-5 in UTC. Filled by the hab."
+          }
+        },
+        "required": [
+          "host",
+          "round"
         ]
       },
       "ConfirmSetup": {
@@ -7382,7 +7427,11 @@
           },
           "result": {
             "$ref": "#/components/schemas/ConfirmResult",
-            "description": "State done: what the start made."
+            "description": "State done: what the start or round made."
+          },
+          "round": {
+            "$ref": "#/components/schemas/ConfirmRound",
+            "description": "Kind round: the round as it will be made, or was."
           },
           "setup": {
             "$ref": "#/components/schemas/ConfirmSetup",

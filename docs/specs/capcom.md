@@ -443,6 +443,10 @@ produces several, and a list is faster to judge than a string of interruptions.
   it. An agent cannot confirm its own action: no tool answers a confirmation.
 - A confirmation the hab could not finish (a lost peer mid-start) is reported as unknown. Capcom
   inspects the target before it offers a retry, as Paseo does.
+- A round an agent makes on another host is one more kind, `round` (`rounds.md` 12 Q1, built in
+  rounds stage 10): the same setting, wait, expiry and record. Its card takes confirm or cancel
+  and no edits; the owner edits the round once it is made. A round on the agent's own hab makes
+  no card at all.
 
 ### 6.2 Proposals and review
 
@@ -472,6 +476,7 @@ produces several, and a list is faster to judge than a string of interruptions.
 | Hand-off (a record, not a question) | Target agent, host, harness, state, how delivery went (now, queued, outbox), the message |
 | Session start | Host, project, folder, branch, harness, model if set, the seed |
 | Project set-up | Host, repository, branch, the bootstrap command the project declares |
+| Round on another host | Runner host, round name, mode, the trigger in plain words, project, harness and model if set, the prompt or command, run now |
 | Proposal | Kind, project, title, body, source quote |
 
 ### 6.4 Built choices (task-ph00sdci)

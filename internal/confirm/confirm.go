@@ -1,5 +1,5 @@
-// Package confirm keeps the confirmations of one hab (capcom.md 6.1, mesh.md 7): the starts
-// and set-ups an agent asks for. With confirm.start_elsewhere on, a start on another host
+// Package confirm keeps the confirmations of one hab (capcom.md 6.1, mesh.md 7): the starts,
+// set-ups and rounds on other hosts an agent asks for (rounds.md 12 Q1). With confirm.start_elsewhere on, a start on another host
 // opens a confirmation and waits for the user's answer; nothing runs
 // until a client confirms it, and an open one expires after 60 minutes and never runs. With
 // the setting off, the start runs at once and the confirmation is a record. Either way the hab,
@@ -76,9 +76,23 @@ type GroupRunner interface {
 	GroupClosed(c api.Confirmation)
 }
 
+// RoundRunner checks and makes the rounds an agent asks for on another host (rounds.md 12 Q1).
+// A round on the agent's own hab never comes here: it needs no confirmation and gets no card.
+type RoundRunner interface {
+	// CheckRound checks a round before it opens or runs: the host is a peer, online, with
+	// rounds; the round is a fresh one with a name. It returns the round with its trigger
+	// words and project filled in. An error that is a *control.Error keeps its kind.
+	CheckRound(r api.ConfirmRound) (api.ConfirmRound, error)
+	// RunRound makes the round on its runner. An error wrapping ErrUnknown leaves the outcome
+	// unknown; any other error is the runner's refusal.
+	RunRound(ctx context.Context, id, from string, r api.ConfirmRound) (api.ConfirmResult, error)
+}
+
 // Config is what New needs. Runner is required.
 type Config struct {
 	Runner Runner
+	// Rounds makes rounds on other hosts. Nil: kind round answers unavailable.
+	Rounds RoundRunner
 	// Enabled reports confirm.start_elsewhere. Nil: off.
 	Enabled func() bool
 	// GroupPlan reports confirm.group_plan (groups.md 3.2): while it is on, a start with a
@@ -198,11 +212,13 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	case "start":
 	case "group":
 		return s.requestGroup(ctx, p)
+	case "round":
+		return s.requestRound(ctx, p)
 	case "setup":
 		return api.Confirmation{}, control.Errorf(api.ErrorKindUnavailable,
 			"project set-up is not built yet (mesh.md 7, set up elsewhere); set the project up on that host by hand, then start there")
 	default:
-		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "kind %q is not one of start, setup, group", p.Kind)
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "kind %q is not one of start, setup, group, round", p.Kind)
 	}
 	if p.Start == nil {
 		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a start confirmation needs start")
@@ -255,6 +271,31 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	e := &entry{done: make(chan struct{}), ttl: s.cfg.TTL, c: api.Confirmation{
 		ID: id, Kind: "start", From: p.From, Start: &st, Created: stamp(now),
+	}}
+	return s.open1(ctx, e, ask, wait)
+}
+
+// requestRound opens a kind round confirmation (rounds.md 12 Q1): a round an agent asks for on
+// another host. It asks while confirm.start_elsewhere is on; with it off the round is made at
+// once and the card is a record.
+func (s *Service) requestRound(ctx context.Context, p api.ConfirmRequestParams) (api.Confirmation, error) {
+	switch {
+	case p.Round == nil:
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a round confirmation needs round")
+	case s.cfg.Rounds == nil:
+		return api.Confirmation{}, control.Errorf(api.ErrorKindUnavailable, "this hab makes no rounds on other hosts")
+	case p.WaitMS < 0:
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "wait_ms must not be negative")
+	}
+	// Only rounds on another host come here: CheckRound refuses this hab.
+	rd, err := s.cfg.Rounds.CheckRound(*p.Round)
+	if err != nil {
+		return api.Confirmation{}, err
+	}
+	ask := s.cfg.Enabled != nil && s.cfg.Enabled()
+	wait := time.Duration(min(p.WaitMS, int(MaxWait/time.Millisecond))) * time.Millisecond
+	e := &entry{done: make(chan struct{}), ttl: s.cfg.TTL, c: api.Confirmation{
+		ID: newID(), Kind: "round", From: p.From, Round: &rd, Created: stamp(s.cfg.Now()),
 	}}
 	return s.open1(ctx, e, ask, wait)
 }
@@ -388,6 +429,13 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		s.mu.Unlock()
 		return s.answerGroup(client, p, g)
 	}
+	if e.c.Kind == "round" {
+		s.mu.Unlock()
+		if ed := p.Edits; ed != nil && *ed != (api.ConfirmEdits{}) {
+			return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a round's card takes confirm or cancel, with no edits: edit the round once it is made")
+		}
+		return s.confirmed(p.ID, client, false, nil)
+	}
 	start := *e.c.Start
 	auto := start.Name == start.Harness+"-"+e.c.ID[:6]
 	s.mu.Unlock()
@@ -427,16 +475,26 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		}
 	}
 
+	return s.confirmed(p.ID, client, edited, &start)
+}
+
+// confirmed moves an open confirmation to running and runs it. start is the edited start, or
+// nil to keep what the confirmation holds.
+func (s *Service) confirmed(id, client string, edited bool, start *api.ConfirmStart) (api.Confirmation, error) {
 	// The publish lock first, as in Request: confirm.requested with state running goes out
 	// before run can publish confirm.closed, so every client's card drops its buttons first.
 	s.pub.Lock()
 	s.mu.Lock()
-	if e, err = s.answerableLocked(p.ID); err != nil { // another answer won meanwhile
+	e, err := s.answerableLocked(id)
+	if err != nil { // another answer won meanwhile
 		s.mu.Unlock()
 		s.pub.Unlock()
 		return api.Confirmation{}, err
 	}
-	e.c.State, e.c.AnsweredBy, e.c.Edited, e.c.Start = "running", client, edited, &start
+	e.c.State, e.c.AnsweredBy, e.c.Edited = "running", client, edited
+	if start != nil {
+		e.c.Start = start
+	}
 	if e.timer != nil {
 		e.timer.Stop()
 	}
@@ -517,9 +575,13 @@ func (s *Service) run(e *entry) api.Confirmation {
 	id, from, kind := e.c.ID, e.c.From, e.c.Kind
 	var start api.ConfirmStart
 	var group api.ConfirmGroup
-	if kind == "group" {
+	var round api.ConfirmRound
+	switch kind {
+	case "group":
 		group = *e.c.Group
-	} else {
+	case "round":
+		round = *e.c.Round
+	default:
 		start = *e.c.Start
 	}
 	confirmed := !e.c.Record
@@ -527,9 +589,12 @@ func (s *Service) run(e *entry) api.Confirmation {
 	s.mu.Unlock()
 	var res api.ConfirmResult
 	var err error
-	if kind == "group" {
+	switch kind {
+	case "group":
 		res, err = s.cfg.Groups.RunGroup(ctx, id, group, confirmed)
-	} else {
+	case "round":
+		res, err = s.cfg.Rounds.RunRound(ctx, id, from, round)
+	default:
 		res, err = s.cfg.Runner.RunStart(ctx, id, from, start)
 	}
 	s.mu.Lock()
@@ -537,6 +602,8 @@ func (s *Service) run(e *entry) api.Confirmation {
 	switch {
 	case err == nil:
 		note = s.closeLocked(e, "done", "", &res)
+	case errors.Is(err, ErrUnknown) && kind == "round":
+		note = s.closeLocked(e, "unknown", errText(err)+"; check the runner's rounds before you retry", nil)
 	case errors.Is(err, ErrUnknown):
 		note = s.closeLocked(e, "unknown", errText(err)+"; check the target for a session before you retry", nil)
 	default:
@@ -694,6 +761,9 @@ func CheckGroup(s api.ConfirmStart) error {
 
 // Message is the text a requesting session gets when the answer came after its wait.
 func Message(c api.Confirmation) string {
+	if c.Kind == "round" && c.Round != nil {
+		return roundMessage(c)
+	}
 	if c.Kind == "group" && c.Group != nil {
 		what := "the group plan " + c.Group.Plan.Title
 		if c.Group.Amend {
@@ -786,4 +856,20 @@ func (s *Service) Get(id string) (api.Confirmation, error) {
 		}
 	}
 	return api.Confirmation{}, control.Errorf(api.ErrorKindNotFound, "no confirmation %q on this hab", id)
+}
+
+// roundMessage is Message for a round on another host.
+func roundMessage(c api.Confirmation) string {
+	what := fmt.Sprintf("round %s on %s", c.Round.Round.Name, c.Round.Host)
+	switch c.State {
+	case "done":
+		return fmt.Sprintf("Confirmation %s: the owner confirmed %s; it is made there.", c.ID, what)
+	case "cancelled":
+		return fmt.Sprintf("Confirmation %s: the owner cancelled %s. Nothing was made.", c.ID, what)
+	case "expired":
+		return fmt.Sprintf("Confirmation %s: no answer within 60 minutes, so %s expired. Nothing was made.", c.ID, what)
+	case "unknown":
+		return fmt.Sprintf("Confirmation %s: %s has an unknown outcome: %s.", c.ID, what, c.Reason)
+	}
+	return fmt.Sprintf("Confirmation %s: %s failed: %s.", c.ID, what, c.Reason)
 }
