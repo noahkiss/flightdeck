@@ -33,7 +33,7 @@ var groupTools = []kitTool{
 	{Name: "group_retry", Action: true, Doc: "Start a member of your group again: a lead that failed to start, or was closed, or whose worktree setup waited for the owner's yes. Or start the group's lane again after a push the remote refused for a rule stopped it. It asks nothing: the plan's confirmation covers it. Coordinator only.",
 		Args: []toolArg{argGroup, {Name: "member", Type: "string", Doc: "The member's name, from group_status."},
 			{Name: "lane", Type: "string", Doc: "yes: start the stopped lane again, instead of a member."}},
-		run:  runGroupRetry},
+		run: runGroupRetry},
 	{Name: "group_report", Action: true, Doc: "Report to your group's coordinator: one line or a short text, such as done, blocked on X, or a question. Flightdeck delivers it when the coordinator is idle, or keeps it until the coordinator is resumed. Use it rather than channel_send for the group's news.",
 		Args: []toolArg{argGroup, {Name: "text", Type: "string", Required: true, Doc: "At most 4000 characters."}},
 		run:  runGroupReport},
