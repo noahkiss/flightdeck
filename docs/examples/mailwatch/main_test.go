@@ -284,3 +284,27 @@ func TestMailwatchRefusals(t *testing.T) {
 		t.Fatalf("plain text to a remote address: %v", err)
 	}
 }
+
+func TestTitleAndBounds(t *testing.T) {
+	long := strings.Repeat("é", 500)
+	if got := title(long, "billing@example.com"); len([]rune(got)) != titleMax || !strings.HasSuffix(got, "… from billing@example.com") {
+		t.Fatalf("%d runes: %q", len([]rune(got)), got)
+	}
+	if got := title("Short", "a@example.com"); got != "Short from a@example.com" {
+		t.Fatalf("%q", got)
+	}
+	if code([]string{"* OK [UIDNEXT "}, "UIDNEXT") != 0 || code([]string{"* OK [UIDNEXT 7] x"}, "UIDNEXT") != 7 {
+		t.Fatal("code")
+	}
+	// A response over the bound is an error, not an allocation.
+	r, w := net.Pipe()
+	defer r.Close()
+	go func() {
+		w.Write([]byte("* " + strings.Repeat("x", maxResponse+10) + "\r\n"))
+		w.Close()
+	}()
+	c := &client{conn: r, r: bufio.NewReader(r)}
+	if _, err := c.line(); err != errResponse {
+		t.Fatalf("an oversize line: %v", err)
+	}
+}

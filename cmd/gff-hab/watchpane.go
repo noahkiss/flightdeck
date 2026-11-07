@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -54,7 +55,10 @@ type watchPane struct {
 	maxLines int
 	maxBytes int
 	ended    bool // the program's stdout closed
-	dropped  int  // lines dropped here since the last page sent
+	// inflight is how many lines at the head of q are in the page being sent: the buffer bound
+	// never drops them, so the page's answer removes exactly them.
+	inflight int
+	dropped  int // lines dropped here since the last page sent
 	// Drop notes for the pane, paced to one line per watchDropEvery.
 	noteN    int
 	noteWhy  string
@@ -180,17 +184,20 @@ func (w *watchPane) add(line string) {
 	now := w.now()
 	w.tokens = min(w.burst, w.tokens+now.Sub(w.filled).Minutes()*w.rate)
 	w.filled = now
-	if w.tokens < 1 {
-		w.dropLocked("over the rate")
-		return
+	// The rate bounds events (rounds.md 4.4); a cursor line is none and takes no token.
+	if !watchCursorLine(line) {
+		if w.tokens < 1 {
+			w.dropLocked("over the rate")
+			return
+		}
+		w.tokens--
 	}
-	w.tokens--
 	w.q = append(w.q, line)
 	w.qBytes += len(line)
 	over := 0
-	for len(w.q) > 0 && (len(w.q) > w.maxLines || w.qBytes > w.maxBytes) {
-		w.qBytes -= len(w.q[0])
-		w.q = w.q[1:]
+	for len(w.q) > w.inflight && (len(w.q) > w.maxLines || w.qBytes > w.maxBytes) {
+		w.qBytes -= len(w.q[w.inflight])
+		w.q = append(w.q[:w.inflight], w.q[w.inflight+1:]...)
 		over++
 	}
 	for i := 0; i < over; i++ {
@@ -252,6 +259,7 @@ func (w *watchPane) send() {
 		}
 		page := append([]string(nil), w.q[:n]...)
 		dropped := w.dropped
+		w.inflight = n
 		w.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), watchCallTimeout)
@@ -266,6 +274,7 @@ func (w *watchPane) send() {
 		delay = watchRetryFirst
 		w.mu.Lock()
 		w.q = w.q[n:]
+		w.inflight = 0
 		for _, l := range page {
 			w.qBytes -= len(l)
 		}
@@ -312,4 +321,18 @@ func paneSafe(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// watchCursorLine reports whether a line is a cursor line, as rounds.ParseWatchLine reads it: a
+// JSON object with a cursor field.
+func watchCursorLine(line string) bool {
+	if !strings.Contains(line, `"cursor"`) {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &m) != nil {
+		return false
+	}
+	_, ok := m["cursor"]
+	return ok
 }

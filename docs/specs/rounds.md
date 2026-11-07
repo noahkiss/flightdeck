@@ -1849,8 +1849,16 @@ mail watcher example (`docs/examples/mailwatch`). Where this spec left a choice 
   `round.watch_event` on the pane's hook route. gff-hab takes a page only from the round's own
   watcher pane; any other pane gets `denied`, and the control socket refuses the method. While
   gff-hab does not answer (`unavailable`, no socket, a 404 or 5xx) the wrapper keeps the lines
-  and tries again with a backoff. It prints `event: <title>` for each line taken and the paced
-  drop line, with every control character as U+FFFD, since a title comes from outside.
+  and tries again with a backoff. The watcher session's newest pane that gff-hab has not taken
+  up yet (before adoption, or before its start recorded it) gets `unavailable`, so its lines
+  wait. The buffer bound never drops the page being sent. It prints `event: <title>` for each
+  line taken and the paced drop line, with every control character as U+FFFD, since a title
+  comes from outside.
+- **The cursor.** A cursor line takes no rate token: the rate bounds events. A paused or
+  completed round drops cursor lines quietly, as it drops events, so a move or an unpause
+  starts from the cursor of before the pause. A cursor holding a NUL is dropped, since it could
+  not go into the environment. `watch_buffer_lines` is at least 1 and `watch_buffer_bytes` at
+  least 64 KiB, so one line always fits.
 - **Starts and exits.** gff-hab adopts the watchers that survived it once the link reached every
   holder; the others start after the start settle. An adopted watcher counts as this gff-hab's
   first start, so `restarts` counts the starts after it. A secret set's command that fails, or a

@@ -90,3 +90,33 @@ func TestPaneSafe(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// The page being sent is never trimmed by the buffer bound, so its answer removes exactly it.
+func TestWatchPaneInflight(t *testing.T) {
+	w, _, _ := testWatchPane(6000, 6000, 2, 1<<20)
+	w.add("a")
+	w.add("b")
+	w.inflight = 1 // "a" is in the page being sent
+	w.add("c")
+	if strings.Join(w.q, ",") != "a,c" || w.dropped != 1 {
+		t.Fatalf("queue %v, dropped %d", w.q, w.dropped)
+	}
+	w.q, w.inflight = w.q[1:], 0 // the page's answer
+	if strings.Join(w.q, ",") != "c" {
+		t.Fatalf("after the answer %v", w.q)
+	}
+}
+
+// Cursor lines take no rate token.
+func TestWatchPaneCursorRate(t *testing.T) {
+	w, _, _ := testWatchPane(60, 2, 100, 1<<20)
+	for _, l := range []string{`{"title":"1"}`, `{"cursor":"c1"}`, `{"title":"2"}`, `{"cursor":"c2"}`, `{"title":"3"}`} {
+		w.add(l)
+	}
+	if len(w.q) != 4 || w.dropped != 1 {
+		t.Fatalf("queue %v, dropped %d: want the two events and two cursors", w.q, w.dropped)
+	}
+	if watchCursorLine(`{"title":"says \"cursor\" in it"}`) || !watchCursorLine(`{ "cursor" : "x" }`) {
+		t.Fatal("watchCursorLine")
+	}
+}

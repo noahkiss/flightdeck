@@ -269,7 +269,7 @@ func TestWatchSupPauseAfter(t *testing.T) {
 func TestWatchSettings(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "hab.toml")
 	writeFile(t, p, "[rounds]\nmax_watchers = 3\nwatch_backoff_max = \"30s\"\nwatch_backoff_reset = \"5m\"\nwatch_pause_after = 2\n"+
-		"watch_quick_exit = \"10s\"\nwatch_buffer_lines = 50\nwatch_buffer_bytes = 4096\nwatch_rate = 10\nwatch_burst = 4\n"+
+		"watch_quick_exit = \"10s\"\nwatch_buffer_lines = 50\nwatch_buffer_bytes = 65536\nwatch_rate = 10\nwatch_burst = 4\n"+
 		"event_title_max = 80\nevent_key_window = \"2h\"\nevent_keys_max = 9\nevent_data_max = 100\ncursor_max = 128\nsecrets_timeout = \"5s\"\n\n"+
 		"[rounds.secrets.mail]\nvars = { IMAP_USER = \"user-value-1b2c\" }\ncommand = [\"/bin/cat\", \"/nowhere\"]\n\n"+
 		"[rounds.secrets.\"bad name!\"]\nvars = { A = \"name-value-77aa\" }\n\n"+
@@ -283,7 +283,7 @@ func TestWatchSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := rounds.WatchLimits{MaxWatchers: 3, BackoffMax: 30 * time.Second, BackoffReset: 5 * time.Minute, PauseAfter: 2,
-		QuickExit: 10 * time.Second, BufferLines: 50, BufferBytes: 4096, Rate: 10, Burst: 4, TitleMax: 80,
+		QuickExit: 10 * time.Second, BufferLines: 50, BufferBytes: 65536, Rate: 10, Burst: 4, TitleMax: 80,
 		KeyWindow: 2 * time.Hour, KeysMax: 9, DataMax: 100, CursorMax: 128, SecretsTimeout: 5 * time.Second}
 	if s.Watch != want {
 		t.Fatalf("watch limits %+v, want %+v", s.Watch, want)

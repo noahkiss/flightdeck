@@ -101,8 +101,8 @@ var roundLimitKeys = []struct {
 	{"watch_backoff_reset", int64(time.Minute), int64(24 * time.Hour), true},
 	{"watch_pause_after", 1, 100, false},
 	{"watch_quick_exit", int64(5 * time.Second), int64(time.Hour), true},
-	{"watch_buffer_lines", 0, 100000, false},
-	{"watch_buffer_bytes", 0, 64 << 20, false},
+	{"watch_buffer_lines", 1, 100000, false},
+	{"watch_buffer_bytes", rounds.MaxWatchLine, 64 << 20, false},
 	{"watch_rate", 1, 6000, false},
 	{"watch_burst", 1, 6000, false},
 	{"event_title_max", 20, 2000, false},
@@ -2086,7 +2086,14 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 				return nil, nil, bad(err)
 			}
 			// Only the round's own watcher pane posts its lines (rounds.md 4.4, 13).
-			if id, ok := svc.watchers.roundOfPane(pane); !ok || id != p.Round || !filed || ss.Round == nil || !ss.Round.Watcher || ss.Round.Round != p.Round {
+			own := filed && ss.Round != nil && ss.Round.Watcher && ss.Round.Round == p.Round
+			switch id, ok := svc.watchers.roundOfPane(pane); {
+			case ok && id == p.Round && own:
+			case !ok && own && ss.Pane == pane:
+				// The watcher session's newest pane, not yet adopted after a gff-hab start or
+				// not yet recorded by its start: the wrapper keeps its lines and tries again.
+				return nil, nil, control.Errorf(api.ErrorKindUnavailable, "round.watch_event: gff-hab has not taken up this watcher yet")
+			default:
 				return nil, nil, control.Errorf(api.ErrorKindDenied, "round.watch_event: this pane is not the watcher pane of round %s", p.Round)
 			}
 			r, err := svc.WatchEvent(p)

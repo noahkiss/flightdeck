@@ -313,8 +313,12 @@ func TestWatchLinesRefusals(t *testing.T) {
 	if err := h.s.Pause(e.Round.ID); err != nil {
 		t.Fatal(err)
 	}
-	if r := h.lines(e.Round.ID, `{"title":"t"}`, `{"cursor":"c"}`); r[0].Drop != DropPaused || !r[1].Cursor {
+	// A paused round drops its events, and its cursor does not move past them.
+	if r := h.lines(e.Round.ID, `{"title":"t"}`, `{"cursor":"c"}`); r[0].Drop != DropPaused || r[1].Cursor || r[1].Drop != DropPaused || !r[1].Quiet {
 		t.Errorf("paused: %+v", r)
+	}
+	if c := h.s.WatchCursor(e.Round.ID); c != "" {
+		t.Errorf("a paused round took a cursor: %q", c)
 	}
 	// An edit away from watch drops the state.
 	ent := h.entry(e.Round.ID)
@@ -363,5 +367,11 @@ func TestSeedCursor(t *testing.T) {
 	}
 	if err := h.s.SeedCursor(e.Round.ID, strings.Repeat("c", 2000)); err == nil {
 		t.Error("an oversize cursor seeded")
+	}
+	if err := h.s.SeedCursor(e.Round.ID, "a\x00b"); err == nil {
+		t.Error("a cursor with a NUL seeded")
+	}
+	if r := h.lines(e.Round.ID, `{"cursor":"a\u0000b"}`); r[0].Cursor || r[0].Drop == "" {
+		t.Errorf("a cursor line with a NUL: %+v", r)
 	}
 }
