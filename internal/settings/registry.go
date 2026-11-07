@@ -35,6 +35,9 @@ const (
 	HeavySlots       = "heavy.slots"
 	HeavyDiskMinFree = "heavy.disk_min_free" // GiB; 0 never holds runs for disk
 	HeavyLongHold    = "heavy.long_hold"     // minutes
+	// CapcomApprovalMaxAge is the age at which a Capcom approval card expires, in minutes
+	// (capcom-service.md 5.3, 19.1). No 0: an open card holds a re-seed.
+	CapcomApprovalMaxAge = "capcom.approval_max_age"
 )
 
 // DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
@@ -67,6 +70,7 @@ var Defs = []Def{
 	{ID: HeavySlots, Default: json.RawMessage(`1`), check: checkInt(1, 8), integer: true},
 	{ID: HeavyDiskMinFree, Default: json.RawMessage(`10`), check: checkInt(0, 4096), integer: true},
 	{ID: HeavyLongHold, Default: json.RawMessage(`60`), check: checkInt(5, 1440), integer: true},
+	{ID: CapcomApprovalMaxAge, Default: json.RawMessage(`10`), check: checkInt(1, 1440), integer: true},
 }
 
 func mustJSON(v any) json.RawMessage {

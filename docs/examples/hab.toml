@@ -78,6 +78,30 @@ thinking = "off"
 # The harness a new Capcom conversation runs: "claude" (the default), "codex" or "opencode".
 # A conversation keeps its harness when it resumes.
 harness = "claude"
+# The Capcom service (docs/specs/capcom-service.md 3.5, 19.2). Leave engine out to keep the
+# pane Capcom above; "claude" runs the service on the Claude Agent SDK instead.
+# engine = "claude"
+# The login: "oauth_token" (the default: your own subscription, through the long-lived token
+# `claude setup-token` makes) or "api_key". This file never holds a token or a key: name a
+# command that prints it, as an argv with no shell. A hand-run gff-hab serve may take
+# CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) from its own environment instead.
+# auth = "oauth_token"
+# oauth_token_command = ["your-credential-tool", "read", "claude-token"]
+# api_key_command = ["your-credential-tool", "read", "anthropic-key"]
+# model = ""        # the main model; empty for the SDK's default
+# small_model = ""  # event turns' first look and the summary
+# Limits, each with its default; a value outside its range is logged once and the default runs.
+# max_turns = 50              # 1 to 500 model calls a turn
+# max_turn_usd = 2            # above 0; the SDK's spend limit per turn
+# daily_usd = 10              # above 0; none by default (an API key's daily cap)
+# restart_delay = "5s"        # 1s to 10m before a crashed engine starts again
+# crash_limit = 5             # 1 to 100 crashes in crash_window stop the restarts
+# crash_window = "10m"        # 1m to 24h
+# route_backoff_max = "30s"   # 1s to 10m; the engine's reconnect backoff
+# typing_timeout = "10m"      # 1m to 1h of typing with no engine message
+# command_timeout = "30s"     # 1s to 5m for oauth_token_command and api_key_command
+# token_retry = "5m"          # 30s to 24h before a refused credential is read again
+# wake_retry = "10s"          # 1s to 5m before a model call that failed at wake is retried
 
 # The [settings] table: hab-side settings this host locks (docs/specs/app.md 20.5). A setting
 # named here is set by this file: the hab enforces the value and refuses writes from the app,
@@ -102,6 +126,8 @@ harness = "claude"
 # "heavy.disk_min_free" = 10
 # Notify when one heavy run holds the lock longer than this many minutes: 5 to 1440.
 # "heavy.long_hold" = 60
+# Capcom approval cards expire after this many minutes: 1 to 1440 (no 0).
+# "capcom.approval_max_age" = 10
 
 # The [logbook.habits_off] table: turn a recording habit off for one project (docs/specs/logbook.md
 # 11.4). Keys are a Logbook project id or an identity, the git remote as the catalog prints it;

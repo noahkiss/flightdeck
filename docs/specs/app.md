@@ -3484,6 +3484,7 @@ picker never changes them.
 | `heavy.slots` | Heavy runs at once on this host | Agents | integer 1 to 8 | 1 | Hab, this hab only | `groups.md` 8.1 |
 | `heavy.disk_min_free` | Hold heavy runs below this free space | Agents | integer GiB, 0 = never, else 1 to 4096 | 10 | Hab, this hab only | `groups.md` 8.2 |
 | `heavy.long_hold` | Notify when a heavy run holds the lock longer than | Agents | integer minutes 5 to 1440 | 60 | Hab, this hab only | `groups.md` 8.1 |
+| `capcom.approval_max_age` | Capcom approvals expire after | Capcom | integer minutes 1 to 1440; no 0 | 10 | Hab, the home hab | `capcom-service.md` 5.3, 19.1 |
 | `voice.*` | Engines (hab, Parakeet, Apple), summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | As 13.7 | App | 13.7 |
 | `voice.language` | Dictation language | Voice | a language tag, or system | System | App (not built) | 13.4 |
 

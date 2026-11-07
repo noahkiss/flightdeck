@@ -116,3 +116,11 @@ func TestOnce(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// The example file's [capcom] keys parse with no problem.
+func TestServiceConfigExample(t *testing.T) {
+	_, problems, err := LoadServiceConfig(filepath.Join("..", "..", "docs", "examples", "hab.toml"))
+	if err != nil || len(problems) != 0 {
+		t.Fatal(err, problems)
+	}
+}
