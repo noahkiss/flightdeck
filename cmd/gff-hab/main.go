@@ -30,6 +30,7 @@
 //	gff-hab hook -print <harness> [-command name]
 //	gff-hab probe -nonce n -checks grant,... [-request grant]
 //	gff-hab opencode-pane -report path [--] [opencode argv]
+//	gff-hab module-host < module pipe
 //	gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
 //	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-gff-bin path] [-dry-run]
 //	gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -181,6 +182,7 @@ const usage = `usage:
   gff-hab statusline -print claude [-command name] [-wrap command]
   gff-hab probe -nonce n -checks grant,... [-request grant]
   gff-hab opencode-pane -report path [--] [opencode argv]
+  gff-hab module-host < module pipe
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-gff-bin path] [-dry-run]
   gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -208,6 +210,9 @@ func main() {
 	}
 	if os.Args[1] == "opencode-pane" {
 		os.Exit(opencodePaneCmd(os.Args[2:]))
+	}
+	if os.Args[1] == "module-host" {
+		os.Exit(moduleHostCmd(os.Args[2:]))
 	}
 	if os.Args[1] == "watch-pane" {
 		os.Exit(watchPaneCmd(os.Args[2:]))

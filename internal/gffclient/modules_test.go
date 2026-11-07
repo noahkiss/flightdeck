@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -17,13 +18,13 @@ import (
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
-// hostModule is a ModuleSource that runs one module in-process with internal/modhost, as the
-// hab's module host will: an action runs the module's act, then its render, and the new tree
-// arrives through Changed (modules.md 4, 5).
+// hostModule is a ModuleSource that runs one module in a module host process (the built
+// gff-hab module-host, through modhost.Host), as the hab will: an action runs the module's
+// act, then its render, and the new tree arrives through Changed (modules.md 4, 5, 7.4).
 type hostModule struct {
 	t       *testing.T
 	host    string
-	m       *modhost.Module
+	m       modhost.Runner
 	changed chan struct{}
 	callMu  sync.Mutex
 
@@ -38,7 +39,9 @@ func newHostModule(t *testing.T, host, dir string) *hostModule {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := modhost.New(b, modhost.Options{Backends: modhost.Backends{State: &modhost.MemStore{}}})
+	mh := modhost.NewHost(modhost.HostOptions{Command: func() *exec.Cmd { return exec.Command(habBin, "module-host") }})
+	t.Cleanup(func() { mh.Close() })
+	m, err := mh.New(b, modhost.Options{Backends: modhost.Backends{State: &modhost.MemStore{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
