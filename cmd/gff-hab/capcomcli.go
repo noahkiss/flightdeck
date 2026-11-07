@@ -142,7 +142,9 @@ func printItem(out io.Writer, it api.CapcomItem) {
 	if len(t) >= 19 {
 		t = t[11:19]
 	}
-	line := func(who, text string) { fmt.Fprintf(out, "%s %s: %s\n", t, who, strings.ReplaceAll(text, "\n", "\n    ")) }
+	line := func(who, text string) {
+		fmt.Fprintf(out, "%s %s: %s\n", t, who, strings.ReplaceAll(text, "\n", "\n    "))
+	}
 	switch it.Kind {
 	case "message":
 		who := "capcom"
