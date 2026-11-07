@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/noahkiss/flightdeck/internal/personal"
 )
 
 // The engines that can run the Capcom service (capcom-service.md 3.5).
@@ -34,6 +37,10 @@ const (
 // ServiceCapability is the capability a hab that runs the Capcom service sends
 // (capcom-service.md 7.4).
 const ServiceCapability = "capcom-thread"
+
+// DeviceContextCapability is sent with ServiceCapability: device.context.put works and the hab
+// serves the personal tools (capcom-service.md 8).
+const DeviceContextCapability = "device-context"
 
 // Limits are the [capcom] limit keys of capcom-service.md 19.2 that A2 and A4 read, with their
 // defaults applied.
@@ -99,13 +106,40 @@ type ServiceConfig struct {
 	OAuthCommand    []string // an argv that prints the OAuth token
 	APIKeyCommand   []string // an argv that prints an API key
 	Limits          Limits
+	Pace            Pace // the usage governor's inputs (10.1)
 	CredentialInKey bool // the file holds an oauth_token or api_key key: refused
+	// Personal is the personal tools' keys (8, 19.2).
+	Personal Personal
 }
+
+// Pace is Capcom's four pacing numbers, in percent (capcom-service.md 10.1, 19.2): the daily
+// share of the plan's weekly window, and the three steps against that share.
+type Pace struct {
+	DailyShare float64 // pace_daily_share
+	EventStop  float64 // pace_event_stop: event turns wait
+	SmallAt    float64 // pace_small_at: user turns go to the small model
+	WaitAt     float64 // pace_wait_at: user turns wait
+}
+
+// DefaultPace is 19.2's defaults.
+var DefaultPace = Pace{DailyShare: 15, EventStop: 80, SmallAt: 100, WaitAt: 120}
+
+// Personal is the [capcom] keys of the personal tools (8): location_stale and the
+// [capcom.weather], [capcom.maps] and [capcom.places] tables. Keys come from key commands; the
+// file holds none.
+type Personal struct {
+	LocationStale    time.Duration
+	Weather          personal.WeatherConfig
+	Maps             personal.MapsConfig
+	GoogleKeyCommand []string
+}
+
+// DefaultPersonal are 19.2's defaults for the personal tools.
+var DefaultPersonal = Personal{LocationStale: personal.DefaultLocationStale, Weather: personal.WeatherConfig{Cache: 10 * time.Minute}}
 
 // laterKeys are [capcom] keys later stages read (19.2, 8). They are known, so they are not
 // logged as unknown.
-var laterKeys = []string{"harness", "location_stale",
-	"pace_daily_share", "pace_event_stop", "pace_small_at", "pace_wait_at", "weather", "maps", "places"}
+var laterKeys = []string{"harness"}
 
 type durRange struct {
 	key      string
@@ -124,7 +158,7 @@ type intRange struct {
 // unknown key is a problem and is ignored. A file that does not parse is an error, with the
 // defaults.
 func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
-	c := ServiceConfig{Auth: AuthOAuthToken, Limits: DefaultLimits}
+	c := ServiceConfig{Auth: AuthOAuthToken, Limits: DefaultLimits, Pace: DefaultPace, Personal: DefaultPersonal}
 	if path == "" {
 		return c, nil, nil
 	}
@@ -315,12 +349,15 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	l.ReseedQuietAt = min(l.ReseedQuietAt, l.ReseedAt) // the default 25% under a reseed_at of 20%
 	share("reseed_early_at", &l.ReseedEarlyAt, 10, l.ReseedAt*100)
 	l.ReseedEarlyAt = min(l.ReseedEarlyAt, l.ReseedAt)
-	known := map[string]bool{"engine": true, "model": true, "small_model": true, "auth": true, "oauth_token_command": true,
+	c.Personal = loadPersonal(sec, bad)
+	known := map[string]bool{"location_stale": true, "weather": true, "maps": true, "places": true, "engine": true, "model": true, "small_model": true, "auth": true, "oauth_token_command": true,
 		"api_key_command": true, "oauth_token": true, "api_key": true, "max_turns": true, "max_turn_usd": true, "daily_usd": true,
 		"restart_delay": true, "crash_limit": true, "crash_window": true, "route_backoff_max": true, "typing_timeout": true,
 		"command_timeout": true, "token_retry": true, "wake_retry": true,
 		"summary_max_chars": true, "summary_input_chars": true, "summary_quiet": true, "reseed_at": true, "reseed_quiet": true,
-		"reseed_quiet_at": true, "reseed_early_at": true, "seed_messages": true, "seed_messages_chars": true, "seed_logbook_bytes": true, "precompact_timeout": true}
+		"reseed_quiet_at": true, "reseed_early_at": true, "seed_messages": true, "seed_messages_chars": true, "seed_logbook_bytes": true, "precompact_timeout": true,
+		"pace_daily_share": true, "pace_event_stop": true, "pace_small_at": true, "pace_wait_at": true}
+	c.Pace = readPace(sec, bad)
 	for _, k := range laterKeys {
 		known[k] = true
 	}
@@ -335,6 +372,157 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 		bad("unknown key %q; ignored", k)
 	}
 	return c, problems, nil
+}
+
+// readPace reads the four pace_* keys (19.2): each a percentage, as a number (15) or a string
+// ("15%"). A value outside its range is a problem and its default runs. The three steps must
+// rise in order, event_stop then small_at then wait_at (equal is allowed); a set out of order
+// is one problem, and all three defaults run.
+func readPace(sec map[string]any, bad func(string, ...any)) Pace {
+	p := DefaultPace
+	pct := func(key string, dst *float64, min, max float64) {
+		v, ok := sec[key]
+		if !ok {
+			return
+		}
+		x := math.NaN()
+		switch n := v.(type) {
+		case int64:
+			x = float64(n)
+		case float64:
+			x = n
+		case string:
+			if t, cut := strings.CutSuffix(strings.TrimSpace(n), "%"); cut {
+				if f, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
+					x = f
+				}
+			}
+		}
+		if !(x >= min && x <= max) {
+			bad("%s %v: want a percentage from %g to %g, such as %g or \"%g%%\"; using %g", key, v, min, max, *dst, *dst, *dst)
+			return
+		}
+		*dst = x
+	}
+	pct("pace_daily_share", &p.DailyShare, 1, 100)
+	pct("pace_event_stop", &p.EventStop, 10, 500)
+	pct("pace_small_at", &p.SmallAt, 10, 500)
+	pct("pace_wait_at", &p.WaitAt, 10, 500)
+	if !(p.EventStop <= p.SmallAt && p.SmallAt <= p.WaitAt) {
+		bad("pace_event_stop %g, pace_small_at %g, pace_wait_at %g: want them in that order, each at or above the one before; using %g, %g and %g",
+			p.EventStop, p.SmallAt, p.WaitAt, DefaultPace.EventStop, DefaultPace.SmallAt, DefaultPace.WaitAt)
+		p.EventStop, p.SmallAt, p.WaitAt = DefaultPace.EventStop, DefaultPace.SmallAt, DefaultPace.WaitAt
+	}
+	return p
+}
+
+// loadPersonal reads the personal tools' keys (8, 19.2). Each bad value is a problem and its
+// default runs; a key that would hold a credential is refused, naming the command key.
+func loadPersonal(sec map[string]any, bad func(string, ...any)) Personal {
+	p := DefaultPersonal
+	dur := func(tab map[string]any, prefix, key string, dst *time.Duration, lo, hi time.Duration) {
+		v, ok := tab[key]
+		if !ok {
+			return
+		}
+		s, isStr := v.(string)
+		d, err := time.ParseDuration(s)
+		if !isStr || err != nil || d < lo || d > hi {
+			bad("%s%s %v: want a duration from %s to %s; using %s", prefix, key, v, lo, hi, *dst)
+			return
+		}
+		*dst = d
+	}
+	dur(sec, "", "location_stale", &p.LocationStale, time.Minute, 24*time.Hour)
+	// table reads [capcom.<name>]: its known keys, a refusal for a key that would hold a
+	// credential, and one problem per unknown key.
+	table := func(name string, keys ...string) (map[string]any, func(string) []string, func(string) string) {
+		v, ok := sec[name]
+		if !ok {
+			return nil, nil, nil
+		}
+		tab, isTab := v.(map[string]any)
+		if !isTab {
+			bad("%s: want a table, [capcom.%s]; ignored", name, name)
+			return nil, nil, nil
+		}
+		pre := name + " "
+		var unknown []string
+		for k := range tab {
+			switch {
+			case slices.Contains(keys, k):
+			case k == "key" || k == "google_key" || k == "api_key":
+				bad("%s%s: the config file holds no key; set %s_command to an argv that prints it", pre, k, k)
+			default:
+				unknown = append(unknown, k)
+			}
+		}
+		sort.Strings(unknown)
+		for _, k := range unknown {
+			bad("%sunknown key %q; ignored", pre, k)
+		}
+		str := func(k string) string {
+			v, ok := tab[k]
+			if !ok {
+				return ""
+			}
+			s, isStr := v.(string)
+			if !isStr || s == "" {
+				bad("%s%s: want a string; ignored", pre, k)
+				return ""
+			}
+			return s
+		}
+		cmd := func(k string) []string {
+			v, ok := tab[k]
+			if !ok {
+				return nil
+			}
+			return argvOf(v, pre+k, bad)
+		}
+		return tab, cmd, str
+	}
+	if tab, cmd, str := table("weather", "key_command", "key_id", "team_id", "service_id", "cache"); tab != nil {
+		p.Weather.KeyCommand, p.Weather.KeyID, p.Weather.TeamID, p.Weather.ServiceID = cmd("key_command"), str("key_id"), str("team_id"), str("service_id")
+		dur(tab, "weather ", "cache", &p.Weather.Cache, 0, 24*time.Hour)
+	}
+	if tab, cmd, str := table("maps", "key_command", "key_id", "team_id"); tab != nil {
+		p.Maps.KeyCommand, p.Maps.KeyID, p.Maps.TeamID = cmd("key_command"), str("key_id"), str("team_id")
+	}
+	if tab, cmd, _ := table("places", "google_key_command"); tab != nil {
+		p.GoogleKeyCommand = cmd("google_key_command")
+	}
+	// One key may serve both weather and maps (8.4): a [capcom.weather] table with a service_id
+	// and no key of its own takes the Maps key.
+	if len(p.Weather.KeyCommand) == 0 && p.Weather.ServiceID != "" && p.Maps.Configured() {
+		p.Weather.KeyCommand = p.Maps.KeyCommand
+		if p.Weather.KeyID == "" {
+			p.Weather.KeyID = p.Maps.KeyID
+		}
+		if p.Weather.TeamID == "" {
+			p.Weather.TeamID = p.Maps.TeamID
+		}
+	}
+	return p
+}
+
+// argvOf reads an argv value: a list of strings, the first not empty. No shell runs it.
+func argvOf(v any, key string, bad func(string, ...any)) []string {
+	list, isList := v.([]any)
+	out := make([]string, 0, len(list))
+	for _, e := range list {
+		s, isStr := e.(string)
+		if !isStr {
+			isList = false
+			break
+		}
+		out = append(out, s)
+	}
+	if !isList || len(out) == 0 || out[0] == "" {
+		bad("%s: want an argv, a list of strings such as [%q, %q]; no shell runs it", key, "program", "arg")
+		return nil
+	}
+	return out
 }
 
 // Once logs each distinct line once: a config read again at every engine start does not

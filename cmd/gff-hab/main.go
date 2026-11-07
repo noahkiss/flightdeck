@@ -103,6 +103,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
+	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/habkey"
@@ -611,6 +612,21 @@ func serve(args []string) error {
 	}, nil)
 	usages := newUsageService(&usageService{store: usageStore, host: *hostID, logf: logger.Printf})
 	defer usages.Close()
+	// The usage governor (capcom-service.md 10.1): paces Capcom, and later each group
+	// (groups.md 10), from the usage readings. Its section is in the catalog.
+	var govCatalog atomic.Pointer[catalog.Service]
+	gov := governor.New(governor.Config{Account: usageStore.Get, StatePath: filepath.Join(dir, "governor.json"), Logf: logger.Printf,
+		OnChange: func(string, governor.Answer) {
+			if c := govCatalog.Load(); c != nil {
+				c.Poke()
+			}
+		},
+		OnSpent: func(string) {
+			if c := govCatalog.Load(); c != nil {
+				c.Poke() // today's tokens and cost
+			}
+		}})
+	defer gov.Close()
 	caps := []string{"usage", "host-stats"}
 	var acts control.Actions
 	var wts control.Worktrees
@@ -991,11 +1007,21 @@ func serve(args []string) error {
 					}
 				},
 				message: func(it capcomthread.Item, session string) {
-					if n := pushes.live(); n != nil {
-						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event))
+					n := pushes.live()
+					switch {
+					case n == nil:
+					case it.Kind == capcomthread.KindCard && it.Card != nil && it.Card.Event != nil:
+						n.Raise(push.CapcomCard(it.ID, session, it.Text, it.Event))
+					default:
+						var marks []string
+						for _, a := range it.Attribution {
+							marks = append(marks, a.Text)
+						}
+						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event, marks...))
 					}
 				},
-				logf: logger.Printf,
+				logf:     logger.Printf,
+				governor: gov, usage: usageStore,
 			})
 			if err != nil {
 				return fmt.Errorf("capcom service: %w", err)
@@ -1024,7 +1050,7 @@ func serve(args []string) error {
 			}
 			capcomThreadCtl = eng
 			chat = engineChat{next: chat, eng: eng} // chat.page of the service session reads the thread (7.4)
-			caps = append(caps, capcom.ServiceCapability)
+			caps = append(caps, capcom.ServiceCapability, capcom.DeviceContextCapability)
 		}
 		if agentCalls != nil {
 			// The owner's next message carries the context attached to it (capcom.md 8.1).
@@ -1101,6 +1127,7 @@ func serve(args []string) error {
 			}
 			return nil
 		},
+		Governor: gov.Section,
 		Heavy: func() *api.CatalogHeavy {
 			if h := heavyRef.Load(); h != nil {
 				return h.Section()
@@ -1128,6 +1155,7 @@ func serve(args []string) error {
 	}
 	defer cs.Close()
 	cat.Store(cs)
+	govCatalog.Store(cs)
 	if capcomSvc != nil {
 		capcomSvc.copies = cs.Copies
 		// The copies saved by the last run may carry a later assignment than this hab's own.
@@ -1789,6 +1817,7 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	if capcomEng != nil {
 		hooks.SetEngine(capcomEng)
+		hooks.SetPersonal(capcomEng.personal.hook)
 	}
 	if compacts != nil {
 		hooks.SetAgent(compactHook(compacts))

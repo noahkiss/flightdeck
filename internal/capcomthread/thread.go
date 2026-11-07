@@ -96,6 +96,11 @@ type Item struct {
 	Model bool `json:"model,omitempty"`
 	// Read is when the engine took the message (input.taken, 7.3). Zero: not read yet.
 	Read time.Time `json:"read,omitzero"`
+	// SendNow marks a user message sent with "Send now": it runs on the small model while the
+	// usage governor makes user turns wait (capcom-service.md 10.1).
+	SendNow bool `json:"send_now,omitempty"`
+	// Attribution is the data sources' marks a Capcom message shows (8.3).
+	Attribution []Attribution `json:"attribution,omitempty"`
 }
 
 // Card is a card item's content: what kind of card, and the choices it offers.
@@ -108,6 +113,36 @@ type Card struct {
 	// whose Undo rejects the proposal Ref names.
 	Rev      int  `json:"rev,omitempty"`
 	Proposal bool `json:"proposal,omitempty"`
+	// Event is what a calendar or reminder card adds (8.5).
+	Event *CardEvent `json:"event,omitempty"`
+}
+
+// Card types of the personal tools (8.5) and their choices.
+const (
+	CardCalendar  = "calendar"
+	CardReminder  = "reminder"
+	ChoiceAdd     = "add"
+	ChoiceDismiss = "dismiss"
+)
+
+// CardEvent is a calendar event or a reminder a card offers to add.
+type CardEvent struct {
+	Title    string `json:"title"`
+	Start    string `json:"start,omitempty"`
+	End      string `json:"end,omitempty"`
+	AllDay   bool   `json:"all_day,omitempty"`
+	Due      string `json:"due,omitempty"`
+	Location string `json:"location,omitempty"`
+	Notes    string `json:"notes,omitempty"`
+	URL      string `json:"url,omitempty"`
+	TZ       string `json:"tz,omitempty"`
+}
+
+// Attribution is a data source's mark that shows with a reply (8.3).
+type Attribution struct {
+	Source string `json:"source"`
+	Text   string `json:"text"`
+	URL    string `json:"url"`
 }
 
 // CardMemory is the card type of a "Noted" line (6.4), and ChoiceUndo its one choice.

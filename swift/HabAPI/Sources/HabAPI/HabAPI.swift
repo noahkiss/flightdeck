@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -418,6 +418,27 @@ public struct CapcomAttached: Codable, Sendable, Hashable {
     }
 }
 
+public struct CapcomAttribution: Codable, Sendable, Hashable {
+    /// weather: Apple Weather.
+    public var source: String
+    /// The mark's text, such as Apple Weather.
+    public var text: String
+    /// The data sources page the mark links to.
+    public var url: String
+
+    enum CodingKeys: String, CodingKey {
+        case source = "source"
+        case text = "text"
+        case url = "url"
+    }
+
+    public init(source: String, text: String, url: String) {
+        self.source = source
+        self.text = text
+        self.url = url
+    }
+}
+
 public struct CapcomAuthor: Codable, Sendable, Hashable {
     /// agent: the sender's channel address.
     public var address: String?
@@ -450,6 +471,8 @@ public struct CapcomAuthorKind: RawRepresentable, Codable, Sendable, Hashable {
 
 public struct CapcomCard: Codable, Sendable, Hashable {
     public var choices: [String]
+    /// calendar and reminder: what Add writes (capcom-service.md 8.5).
+    public var event: CapcomCardEvent?
     /// approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card.
     public var ref: String?
     /// approval, confirmation, handoff, calendar, reminder, proposal, memory or group.
@@ -457,12 +480,14 @@ public struct CapcomCard: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case choices = "choices"
+        case event = "event"
         case ref = "ref"
         case type = "type"
     }
 
-    public init(choices: [String], ref: String? = nil, type: String) {
+    public init(choices: [String], event: CapcomCardEvent? = nil, ref: String? = nil, type: String) {
         self.choices = choices
+        self.event = event
         self.ref = ref
         self.type = type
     }
@@ -503,6 +528,46 @@ public struct CapcomCardAnswered: Codable, Sendable, Hashable {
         self.item = item
         self.note = note
         self.seq = seq
+    }
+}
+
+public struct CapcomCardEvent: Codable, Sendable, Hashable {
+    public var allDay: Bool?
+    /// reminder: RFC 3339, or a date (YYYY-MM-DD).
+    public var due: String?
+    /// calendar: RFC 3339, or a date (YYYY-MM-DD) for an all-day event, the last day included.
+    public var end: String?
+    public var location: String?
+    public var notes: String?
+    /// calendar: RFC 3339, or a date (YYYY-MM-DD) for an all-day event.
+    public var start: String?
+    public var title: String
+    /// The time zone the times are meant in, from the device context; absent: the times carry their offset.
+    public var tz: String?
+    public var url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case allDay = "all_day"
+        case due = "due"
+        case end = "end"
+        case location = "location"
+        case notes = "notes"
+        case start = "start"
+        case title = "title"
+        case tz = "tz"
+        case url = "url"
+    }
+
+    public init(allDay: Bool? = nil, due: String? = nil, end: String? = nil, location: String? = nil, notes: String? = nil, start: String? = nil, title: String, tz: String? = nil, url: String? = nil) {
+        self.allDay = allDay
+        self.due = due
+        self.end = end
+        self.location = location
+        self.notes = notes
+        self.start = start
+        self.title = title
+        self.tz = tz
+        self.url = url
     }
 }
 
@@ -589,6 +654,8 @@ public struct CapcomItem: Codable, Sendable, Hashable {
     public var answer: CapcomAnswer?
     /// The attachment ids of images, in order: attachment.get reads their thumbnails.
     public var attachments: [String]?
+    /// Capcom message: the data sources whose mark shows with it, such as Apple Weather (capcom-service.md 8.3).
+    public var attribution: [CapcomAttribution]?
     public var author: CapcomAuthor
     public var card: CapcomCard?
     /// The attached context that went with a user message.
@@ -614,6 +681,7 @@ public struct CapcomItem: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case answer = "answer"
         case attachments = "attachments"
+        case attribution = "attribution"
         case author = "author"
         case card = "card"
         case context = "context"
@@ -629,9 +697,10 @@ public struct CapcomItem: Codable, Sendable, Hashable {
         case turn = "turn"
     }
 
-    public init(answer: CapcomAnswer? = nil, attachments: [String]? = nil, author: CapcomAuthor, card: CapcomCard? = nil, context: [CapcomContextItem]? = nil, event: Bool? = nil, id: String, images: [String]? = nil, kind: CapcomItemKind, read: String? = nil, summary: String? = nil, text: String? = nil, time: String, tools: [CapcomToolCall]? = nil, turn: String? = nil) {
+    public init(answer: CapcomAnswer? = nil, attachments: [String]? = nil, attribution: [CapcomAttribution]? = nil, author: CapcomAuthor, card: CapcomCard? = nil, context: [CapcomContextItem]? = nil, event: Bool? = nil, id: String, images: [String]? = nil, kind: CapcomItemKind, read: String? = nil, summary: String? = nil, text: String? = nil, time: String, tools: [CapcomToolCall]? = nil, turn: String? = nil) {
         self.answer = answer
         self.attachments = attachments
+        self.attribution = attribution
         self.author = author
         self.card = card
         self.context = context
@@ -897,6 +966,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var deviceId: String
     /// Raised on every change of this catalog; kept across restarts.
     public var generation: UInt64
+    /// The usage governor's answer for each consumer this hab paces. Absent with none.
+    public var governor: CatalogGovernor?
     /// The groups this hab is the home of: the short form (groups.md 5.1). Absent with none.
     public var groups: [CatalogGroup]?
     /// Coding-agent harnesses found on PATH, with their versions.
@@ -928,6 +999,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case capcom = "capcom"
         case deviceId = "device_id"
         case generation = "generation"
+        case governor = "governor"
         case groups = "groups"
         case harnesses = "harnesses"
         case heavy = "heavy"
@@ -941,7 +1013,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, governor: CatalogGovernor? = nil, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -950,6 +1022,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.capcom = capcom
         self.deviceId = deviceId
         self.generation = generation
+        self.governor = governor
         self.groups = groups
         self.harnesses = harnesses
         self.heavy = heavy
@@ -1180,6 +1253,19 @@ public struct CatalogGetResult: Codable, Sendable, Hashable {
         self.catalog = catalog
         self.generation = generation
         self.seq = seq
+    }
+}
+
+public struct CatalogGovernor: Codable, Sendable, Hashable {
+    /// By id.
+    public var consumers: [GovernorConsumer]
+
+    enum CodingKeys: String, CodingKey {
+        case consumers = "consumers"
+    }
+
+    public init(consumers: [GovernorConsumer]) {
+        self.consumers = consumers
     }
 }
 
@@ -3383,6 +3469,87 @@ public struct Device: Codable, Sendable, Hashable {
     }
 }
 
+public struct DeviceCalendar: Codable, Sendable, Hashable {
+    public var events: [DeviceEvent]
+    /// The start of the window the snapshot covers, RFC 3339.
+    public var from: String
+    /// When the phone read the calendars, RFC 3339.
+    public var time: String
+    /// The end of the window the snapshot covers, RFC 3339.
+    public var to: String
+
+    enum CodingKeys: String, CodingKey {
+        case events = "events"
+        case from = "from"
+        case time = "time"
+        case to = "to"
+    }
+
+    public init(events: [DeviceEvent], from: String, time: String, to: String) {
+        self.events = events
+        self.from = from
+        self.time = time
+        self.to = to
+    }
+}
+
+public struct DeviceContextPutParams: Codable, Sendable, Hashable {
+    public var calendar: DeviceCalendar?
+    /// Why the device shares no calendar: off or no_permission. The hab drops the snapshot this device sent.
+    public var calendarOff: String?
+    public var location: DeviceLocation?
+    /// Why the device shares no location: off (the capcom.share_location preference) or no_permission. The hab drops the fix this device sent.
+    public var locationOff: String?
+    /// The device's IANA time zone, such as Europe/Berlin.
+    public var tz: String?
+
+    enum CodingKeys: String, CodingKey {
+        case calendar = "calendar"
+        case calendarOff = "calendar_off"
+        case location = "location"
+        case locationOff = "location_off"
+        case tz = "tz"
+    }
+
+    public init(calendar: DeviceCalendar? = nil, calendarOff: String? = nil, location: DeviceLocation? = nil, locationOff: String? = nil, tz: String? = nil) {
+        self.calendar = calendar
+        self.calendarOff = calendarOff
+        self.location = location
+        self.locationOff = locationOff
+        self.tz = tz
+    }
+}
+
+public struct DeviceEvent: Codable, Sendable, Hashable {
+    public var allDay: Bool?
+    /// The calendar's title.
+    public var calendar: String?
+    /// RFC 3339.
+    public var end: String
+    public var location: String?
+    /// RFC 3339.
+    public var start: String
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case allDay = "all_day"
+        case calendar = "calendar"
+        case end = "end"
+        case location = "location"
+        case start = "start"
+        case title = "title"
+    }
+
+    public init(allDay: Bool? = nil, calendar: String? = nil, end: String, location: String? = nil, start: String, title: String) {
+        self.allDay = allDay
+        self.calendar = calendar
+        self.end = end
+        self.location = location
+        self.start = start
+        self.title = title
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct DeviceKind: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
@@ -3407,6 +3574,37 @@ public struct DeviceList: Codable, Sendable, Hashable {
     public init(devices: [Device], seq: UInt64) {
         self.devices = devices
         self.seq = seq
+    }
+}
+
+public struct DeviceLocation: Codable, Sendable, Hashable {
+    /// Horizontal accuracy in metres.
+    public var accuracy: Double
+    /// The ISO 3166-1 alpha-2 country code from the reverse geocoder: weather alerts need it.
+    public var country: String?
+    public var lat: Double
+    public var lon: Double
+    /// The place name from the phone's reverse geocoder, such as a neighbourhood and city.
+    public var place: String?
+    /// When the phone took the fix, RFC 3339.
+    public var time: String
+
+    enum CodingKeys: String, CodingKey {
+        case accuracy = "accuracy"
+        case country = "country"
+        case lat = "lat"
+        case lon = "lon"
+        case place = "place"
+        case time = "time"
+    }
+
+    public init(accuracy: Double, country: String? = nil, lat: Double, lon: Double, place: String? = nil, time: String) {
+        self.accuracy = accuracy
+        self.country = country
+        self.lat = lat
+        self.lon = lon
+        self.place = place
+        self.time = time
     }
 }
 
@@ -3628,6 +3826,63 @@ public struct FileReadParams: Codable, Sendable, Hashable {
         self.limit = limit
         self.offset = offset
         self.path = path
+    }
+}
+
+public struct GovernorConsumer: Codable, Sendable, Hashable {
+    /// plan: the plan's weekly window; usd: today's result cost against the daily dollar cap; none: unpaced, with no reading, its tokens counted. An open set.
+    public var basis: String
+    /// usd: the daily dollar cap, in US cents.
+    public var capCents: Int?
+    /// The next event turn's pace: ok or wait. An open set.
+    public var eventPace: String
+    /// RFC 3339 UTC time a wait of event turns ends.
+    public var eventUntil: String?
+    /// capcom, or group:<id>.
+    public var id: String
+    /// Today's input tokens, by the hab's local day.
+    public var inputTokens: Int?
+    /// Today's output tokens.
+    public var outputTokens: Int?
+    /// The next user turn's pace: ok, small (the small model) or wait. An open set.
+    public var pace: String
+    /// plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100.
+    public var sharePct: Int?
+    /// usd: today's reported cost, in US cents.
+    public var spentCents: Int?
+    /// RFC 3339 UTC time a wait of user turns ends.
+    public var until: String?
+    /// plan: the weekly window's used percentage, the whole account's.
+    public var usedPct: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case basis = "basis"
+        case capCents = "cap_cents"
+        case eventPace = "event_pace"
+        case eventUntil = "event_until"
+        case id = "id"
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case pace = "pace"
+        case sharePct = "share_pct"
+        case spentCents = "spent_cents"
+        case until = "until"
+        case usedPct = "used_pct"
+    }
+
+    public init(basis: String, capCents: Int? = nil, eventPace: String, eventUntil: String? = nil, id: String, inputTokens: Int? = nil, outputTokens: Int? = nil, pace: String, sharePct: Int? = nil, spentCents: Int? = nil, until: String? = nil, usedPct: Int? = nil) {
+        self.basis = basis
+        self.capCents = capCents
+        self.eventPace = eventPace
+        self.eventUntil = eventUntil
+        self.id = id
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.pace = pace
+        self.sharePct = sharePct
+        self.spentCents = spentCents
+        self.until = until
+        self.usedPct = usedPct
     }
 }
 
@@ -8147,6 +8402,8 @@ public struct SessionSendParams: Codable, Sendable, Hashable {
     /// A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing.
     public var idempotencyKey: String?
     public var origin: SendOrigin
+    /// The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it.
+    public var sendNow: Bool?
     public var session: String
     public var text: String
 
@@ -8154,14 +8411,16 @@ public struct SessionSendParams: Codable, Sendable, Hashable {
         case attachments = "attachments"
         case idempotencyKey = "idempotency_key"
         case origin = "origin"
+        case sendNow = "send_now"
         case session = "session"
         case text = "text"
     }
 
-    public init(attachments: [String]? = nil, idempotencyKey: String? = nil, origin: SendOrigin, session: String, text: String) {
+    public init(attachments: [String]? = nil, idempotencyKey: String? = nil, origin: SendOrigin, sendNow: Bool? = nil, session: String, text: String) {
         self.attachments = attachments
         self.idempotencyKey = idempotencyKey
         self.origin = origin
+        self.sendNow = sendNow
         self.session = session
         self.text = text
     }
@@ -9502,6 +9761,8 @@ public enum HabMethods {
     public static let capcomResume = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.resume")
     /// Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.
     public static let capcomCardAnswer = HabMethod<CapcomCardAnswerParams, CapcomCardAnswered>(name: "capcom.card.answer")
+    /// Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link; unavailable on a hab that does not hold the Capcom mark. Needs the device-context capability.
+    public static let deviceContextPut = HabMethod<DeviceContextPutParams, Empty>(name: "device.context.put")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
     /// Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.

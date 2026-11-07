@@ -126,6 +126,10 @@ func WriteFolder(dir, harness, exe string, scope ReadScope) error {
 	return writeFiles(dir, files)
 }
 
+// ServiceMCPArgs are gff-hab's arguments as the Capcom service's MCP server: the kit's tools and
+// the personal tools.
+var ServiceMCPArgs = []string{"mcp", "-capcom"}
+
 // WriteServiceFolder writes the Capcom service engine's folder (capcom-service.md 3.4): the
 // Claude files, with the service's manual (ServiceManual) as CLAUDE.md, and the same manual as
 // AGENTS.md, which the Codex engine's CLI reads. The Codex engine takes its MCP server from
@@ -136,8 +140,19 @@ func WriteServiceFolder(dir, exe string, scope ReadScope) error {
 		return err
 	}
 	for i := range files {
-		if files[i].Path == "CLAUDE.md" {
+		switch files[i].Path {
+		case "CLAUDE.md":
 			files[i].Data = []byte(ServiceManual)
+		case ".mcp.json":
+			// The service's MCP server lists the personal tools too (capcom-service.md 8); the
+			// hab serves them only to the engine's token.
+			mcp, err := jsonFile(map[string]any{"mcpServers": map[string]any{
+				MCPServer: map[string]any{"type": "stdio", "command": exe, "args": ServiceMCPArgs},
+			}})
+			if err != nil {
+				return err
+			}
+			files[i].Data = mcp
 		}
 	}
 	files = append(files, File{Path: "AGENTS.md", Data: []byte(ServiceManual)})

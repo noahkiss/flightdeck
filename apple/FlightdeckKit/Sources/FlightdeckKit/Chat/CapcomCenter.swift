@@ -40,6 +40,12 @@ public final class CapcomCenter {
     public internal(set) var standingFailure: String?
     /// An open of the standing conversation is on its way.
     public internal(set) var opening = false
+    /// Add, Edit and Dismiss of calendar and reminder cards, from the thread and the push
+    /// (capcom-service.md 8.5). The app sets its writer and this device's hello label.
+    public let cards = CapcomCardAdder(writer: nil, label: "")
+    /// Sends this device's context to the home hab (capcom-service.md 8.1); nil until the app
+    /// sets its sources, and in tests that do not need it.
+    public var deviceContext: DeviceContextReporter?
     /// Capcom views on screen, one token per view (each window has its own); while any is, the
     /// center opens the standing conversation by itself.
     @ObservationIgnored var viewers: Set<UUID> = []

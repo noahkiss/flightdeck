@@ -117,6 +117,31 @@ harness = "claude"
 # seed_messages_chars = 8000  # 0 to 64,000 characters for those messages; the oldest go first
 # seed_logbook_bytes = 8192   # 0 to 65,536 bytes of Logbook in a seed
 # precompact_timeout = "30s"  # 5s to 5m for the summary before a compaction or a re-seed
+# The usage governor (capcom-service.md 10.1): Capcom's share of your plan's weekly window a
+# day, cumulative, and three steps against that share. Under auth = "api_key", daily_usd above
+# is the share instead. The steps must rise in this order, else all three defaults run.
+# pace_daily_share = 15       # 1 to 100 percent of the weekly window a day
+# pace_event_stop = 80        # 10 to 500 percent of the share: event turns wait
+# pace_small_at = 100         # user turns go to small_model
+# pace_wait_at = 120          # user turns wait, with a note in the thread
+# The personal tools (docs/specs/capcom-service.md 8):
+# location_stale = "30m"      # 1m to 24h; Capcom says how old a fix past this is
+# Weather and places use keys from your Apple Developer account, printed by a command (an argv,
+# no shell). The key stays in gff-hab's memory; this file never holds one. One key with both
+# WeatherKit and MapKit may serve both tables: a [capcom.weather] with only service_id takes the
+# [capcom.maps] key.
+# [capcom.weather]
+# key_command = ["your-credential-tool", "read", "weatherkit-key"]
+# key_id = "ABC123DEFG"
+# team_id = "TEAMID1234"
+# service_id = "com.example.weatherkit"
+# cache = "10m"               # 0 (no cache) to 24h, per place rounded to 2 decimals
+# [capcom.maps]
+# key_command = ["your-credential-tool", "read", "maps-key"]
+# key_id = "ABC123DEFG"
+# team_id = "TEAMID1234"
+# [capcom.places]
+# google_key_command = ["your-credential-tool", "read", "google-places-key"]  # optional: source "google"
 
 # The [settings] table: hab-side settings this host locks (docs/specs/app.md 20.5). A setting
 # named here is set by this file: the hab enforces the value and refuses writes from the app,

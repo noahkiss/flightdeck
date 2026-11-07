@@ -967,6 +967,13 @@ What a group does with it:
 - **A harness with no usage readings** (opencode) is unpaced, not blocked, as the governor task
   says. The card marks such members "unpaced".
 
+Built in Part 14 G (`capcom-service.md` 10.1): `internal/governor` takes a consumer with an id
+(`group:<id>`), a policy (the daily share and the steps, or a daily dollar cap), the usage
+account whose weekly window paces it, and an `OnChange` that hears each change of its answer
+(`ok`, `small` or `wait` until a time) in order. `Check` is the check before a new turn;
+`Spent` records a turn's tokens and cost. A governor test shows a group consumer waiting and
+resuming when the window moves. Wiring groups to it is B3's follow-up.
+
 ---
 
 ## 11. When a group is the wrong tool

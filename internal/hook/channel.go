@@ -55,6 +55,11 @@ var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.l
 // The pane's token names the agent: it can act only on its own pane.
 var AgentMethods = []string{"agent.compact"}
 
+// PersonalMethods are Capcom's personal tools (capcom-service.md 8, E12). The route takes them
+// from the Capcom engine's token only; a pane's call is refused.
+var PersonalMethods = []string{"personal.location", "personal.calendar", "personal.weather", "personal.places", "personal.place",
+	"personal.calendar_add", "personal.reminder_add"}
+
 // ReadHandler answers one read tool call from a pane. An error that is a *control.Error keeps
 // its kind; any other is unavailable.
 type ReadHandler func(ctx context.Context, method string, params json.RawMessage) (result any, err error)
@@ -137,6 +142,14 @@ func (s *Server) SetAgent(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetPersonal sets the handler of the personal tools on the route. With none, each answers
+// unavailable. The handler gets the route id and refuses any but the Capcom engine's.
+func (s *Server) SetPersonal(h ChannelHandler) {
+	s.mu.Lock()
+	s.personal = h
+	s.mu.Unlock()
+}
+
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
 func (s *Server) SetChannels(h ChannelHandler) {
 	s.mu.Lock()
@@ -176,7 +189,10 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known, read, conf, round, lb, ag, grp := false, false, false, false, false, false, false
+	known, read, conf, round, lb, ag, grp, pers := false, false, false, false, false, false, false, false
+	for _, m := range PersonalMethods {
+		pers = pers || m == call.Method
+	}
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
 	}
@@ -233,7 +249,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "only a person decides a proposal (logbook.md 9.2): logbook.decide is not on a pane's route. The user approves or rejects it with gff lb approve or reject, run outside a pane, or in the app")
 		return
 	}
-	if !known && !conf && !round && !lb && !ag && !grp {
+	if !known && !conf && !round && !lb && !ag && !grp && !pers {
 		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods, GroupMethods)
 		return
 	}
@@ -250,8 +266,14 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		h = s.agent
 	case grp:
 		h = s.groups
+	case pers:
+		h = s.personal
 	}
 	s.mu.Unlock()
+	if h == nil && pers {
+		fail(api.ErrorKindUnavailable, "%s is a Capcom personal tool, served only on the Capcom service's route (capcom-service.md 8)", call.Method)
+		return
+	}
 	if h == nil && lb {
 		fail(api.ErrorKindUnavailable, "%s needs Logbook, which this hab is running without", call.Method)
 		return
