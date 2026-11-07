@@ -206,9 +206,15 @@ func TestGoSafe(t *testing.T) {
 	close(stop)
 	wg.Wait()
 	lockFree(h, "contended")
+	// done closes in fn's own defer, before runSafe's recover writes the log line: wait for it.
 	for _, name := range []string{"free", "contended", "contended section"} {
-		if !logged("panic in " + name + ": boom") {
-			t.Errorf("no log for the panic in %s", name)
+		deadline := time.Now().Add(waitLong)
+		for !logged("panic in " + name + ": boom") {
+			if time.Now().After(deadline) {
+				t.Errorf("no log for the panic in %s", name)
+				break
+			}
+			time.Sleep(time.Millisecond)
 		}
 	}
 
