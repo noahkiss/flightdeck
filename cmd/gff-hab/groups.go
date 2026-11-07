@@ -174,6 +174,9 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	for _, p := range problems {
 		cfg.logf("groups: %s", p)
 	}
+	// The lock is held while the records load: a drop below saves, and its save may start a
+	// push that reads the maps this loop still fills.
+	s.mu.Lock()
 	now := cfg.now()
 	for i := range loaded {
 		g := loaded[i]
@@ -198,6 +201,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		// the restart cut short is not lost.
 		s.syncKey[g.ID], s.syncWant[g.ID] = syncKey(g), g.Revision
 	}
+	s.mu.Unlock()
 	for _, id := range s.order {
 		s.kick(id) // the lane follows each pass, so an item cut short in landing runs again
 	}
