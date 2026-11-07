@@ -8703,6 +8703,8 @@ public struct Worktree: Codable, Sendable, Hashable {
     public var path: String
     /// Its folder is gone; worktree.remove prunes the entry.
     public var prunable: Bool?
+    /// Made by worktree.create on this hab, with a setup script that waits for the user's yes (worktree.setup).
+    public var setupPending: Bool?
 
     enum CodingKeys: String, CodingKey {
         case branch = "branch"
@@ -8712,9 +8714,10 @@ public struct Worktree: Codable, Sendable, Hashable {
         case managed = "managed"
         case path = "path"
         case prunable = "prunable"
+        case setupPending = "setup_pending"
     }
 
-    public init(branch: String? = nil, head: String? = nil, locked: Bool? = nil, main: Bool? = nil, managed: Bool? = nil, path: String, prunable: Bool? = nil) {
+    public init(branch: String? = nil, head: String? = nil, locked: Bool? = nil, main: Bool? = nil, managed: Bool? = nil, path: String, prunable: Bool? = nil, setupPending: Bool? = nil) {
         self.branch = branch
         self.head = head
         self.locked = locked
@@ -8722,6 +8725,7 @@ public struct Worktree: Codable, Sendable, Hashable {
         self.managed = managed
         self.path = path
         self.prunable = prunable
+        self.setupPending = setupPending
     }
 }
 

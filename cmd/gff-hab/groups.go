@@ -267,8 +267,15 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 	for i := range full.Members {
 		full.Members[i] = s.resolveMember(full.Members[i])
 	}
-	plan = groups.Normalize(plan, cg.Group)
 	full = groups.Normalize(full, cg.Group)
+	if cg.Amend {
+		// The change's names come from the whole plan, so an automatic name counts the
+		// group's items and members, not the change's alone.
+		plan.Items = slices.Clone(full.Items[len(full.Items)-len(plan.Items):])
+		plan.Members = slices.Clone(full.Members[len(full.Members)-len(plan.Members):])
+	} else {
+		plan = full
+	}
 	if err := groups.Check(full, s.intSetting(settings.GroupMaxWorkers, 2)); err != nil {
 		return cg, false, err
 	}
@@ -443,33 +450,44 @@ func (s *groupsService) filePlan(ctx context.Context, g api.Group, plan api.Grou
 		return "", nil, control.Errorf(api.ErrorKindUnavailable, "groups need Logbook: filing the plan failed: %v", err)
 	}
 	planID := writ.IDs[0]
-	tasks, err := s.fileTasks(ctx, g.ID, planID, project, plan.Items, len(g.Items)-len(plan.Items))
+	tasks, err := s.fileTasks(ctx, g.ID, planID, project, plan.Items, positions(len(g.Items)-len(plan.Items), len(plan.Items)), "")
 	return planID, tasks, err
 }
 
 // fileTasks files one task per item, each a stage of the plan.
-func (s *groupsService) fileTasks(ctx context.Context, group, planID, project string, items []api.GroupPlanItem, first int) ([]string, error) {
+// positions are n item positions from first on.
+func positions(first, n int) []int {
+	p := make([]int, n)
+	for i := range p {
+		p[i] = first + i
+	}
+	return p
+}
+
+// fileTasks files one task per item, linked as the plan record's stages at the items'
+// positions pos. tag tells apart the idempotency keys of filings that start at one position
+// (the card's edits after the create's).
+func (s *groupsService) fileTasks(ctx context.Context, group, planID, project string, items []api.GroupPlanItem, pos []int, tag string) ([]string, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
 	var changes []api.LogbookChange
-	for i, it := range items {
-		body := it.Brief
+	for _, it := range items {
 		changes = append(changes, api.LogbookChange{Op: api.LogbookChangeOpCreate, Type: "task", Project: project, Title: it.Title,
-			Body: body, Tags: []string{"group-" + group}})
-		_ = i
+			Body: it.Brief, Tags: []string{"group-" + group}})
 	}
+	first := pos[0]
 	writ, err := s.cfg.logbook.Write(ctx, s.habActor(""), api.LogbookWriteParams{Changes: changes,
-		IdempotencyKey: fmt.Sprintf("group-tasks-%s-%d", group, first)})
+		IdempotencyKey: fmt.Sprintf("group-tasks-%s-%d%s", group, first, tag)})
 	if err != nil || len(writ.IDs) != len(items) {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "groups need Logbook: filing the tasks failed: %v", err)
 	}
 	var links []api.LogbookChange
 	for i, id := range writ.IDs {
-		links = append(links, api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: planID, Link: &api.LogbookLink{Kind: "stage", To: id, Pos: first + i + 1}})
+		links = append(links, api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: planID, Link: &api.LogbookLink{Kind: "stage", To: id, Pos: pos[i] + 1}})
 	}
 	if _, err := s.cfg.logbook.Write(ctx, s.habActor(""), api.LogbookWriteParams{Changes: links,
-		IdempotencyKey: fmt.Sprintf("group-stages-%s-%d", group, first)}); err != nil {
+		IdempotencyKey: fmt.Sprintf("group-stages-%s-%d%s", group, first, tag)}); err != nil {
 		s.cfg.logf("groups: %s: linking the tasks as stages: %v", group, err)
 	}
 	return writ.IDs, nil
@@ -544,6 +562,8 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		return api.ConfirmResult{}, control.Errorf(api.ErrorKindConflict, "group %s is not waiting for this confirmation", cg.Group)
 	}
 	var newItems []api.GroupPlanItem
+	var newPos []int
+	tag := ""
 	if cg.Amend {
 		for _, it := range cg.Plan.Items {
 			if groups.ItemIndex(*g, it.ID) < 0 {
@@ -553,6 +573,7 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		g.Plan.Items = append(g.Plan.Items, newItems...)
 		g.Plan.Members = append(g.Plan.Members, cg.Plan.Members...)
 		groups.AddPlan(g, api.GroupPlan{Items: newItems, Members: cg.Plan.Members})
+		newPos = positions(len(g.Items)-len(newItems), len(newItems))
 		g.Envelope = s.envelope(*g, cid)
 	} else {
 		var dropped []string
@@ -564,9 +585,16 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		g.Items, g.Members = nil, nil
 		groups.AddPlan(g, cg.Plan)
 		for i := range g.Items {
-			g.Items[i].Task = keep[g.Items[i].ID]
+			t, ok := keep[g.Items[i].ID]
+			g.Items[i].Task = t
 			delete(keep, g.Items[i].ID)
+			if !ok {
+				// An item the user added on the card gets its task too.
+				newItems = append(newItems, cg.Plan.Items[i])
+				newPos = append(newPos, i)
+			}
 		}
+		tag = "-card"
 		for _, t := range keep {
 			dropped = append(dropped, t)
 		}
@@ -577,7 +605,7 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		g.Confirmation = api.GroupConfirmationRef{ID: cid, Outcome: "done"}
 		g.Envelope = s.envelope(*g, cid)
 	}
-	planRec, lbProj, first := g.PlanRecord, "", len(g.Items)-len(newItems)
+	planRec, lbProj := g.PlanRecord, ""
 	s.saveLocked(g)
 	s.mu.Unlock()
 	if len(newItems) > 0 {
@@ -585,11 +613,13 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		if proj, ok := project(cl, g.Plan.Project); ok {
 			lbProj, _ = s.lbProject(ctx, proj)
 		}
-		tasks, err := s.fileTasks(ctx, cg.Group, planRec, lbProj, newItems, first)
+		tasks, err := s.fileTasks(ctx, cg.Group, planRec, lbProj, newItems, newPos, tag)
 		if err == nil {
 			s.mu.Lock()
 			for i, t := range tasks {
-				g.Items[first+i].Task = t
+				if newPos[i] < len(g.Items) {
+					g.Items[newPos[i]].Task = t
+				}
 			}
 			s.saveLocked(g)
 			s.mu.Unlock()
@@ -722,6 +752,21 @@ func (s *groupsService) pass(id string) {
 			m.State, m.Reason = groups.MemberFailed, errText(err)
 			it.State, it.Reason = groups.ItemStalled, "its lead failed to start: "+errText(err)
 			s.tellLocked(g, fmt.Sprintf("Lead %s of item %s failed to start: %s. The item is stalled; group_retry starts it again.", m.Name, it.ID, errText(err)), "Flightdeck")
+		case !groups.Live(*g):
+			// The group ended or was dropped while the member started: it is listed as left
+			// over, and closed like the other idle local members when the setting says so.
+			m.State, m.Session, m.Device, m.Folder, m.Host = groups.MemberRunning, res.Session, res.device, res.folder, res.host
+			g.Leftovers = appendOnce(g.Leftovers, fmt.Sprintf("member %s on %s, folder %s", m.Name, m.Host, m.Folder))
+			s.saveLocked(g)
+			s.mu.Unlock()
+			if res.device == s.cfg.self && s.cfg.closePane != nil && s.boolSetting(settings.GroupCloseMembers, true) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				if err := s.cfg.closePane(ctx, res.Pane); err != nil {
+					s.cfg.logf("groups: %s: closing pane %s: %v", g.ID, res.Pane, err)
+				}
+				cancel()
+			}
+			return
 		default:
 			m.State, m.Session, m.Device, m.Folder, m.Host = groups.MemberRunning, res.Session, res.device, res.folder, res.host
 			s.panes[g.ID+"/"+m.Name] = res.Pane
@@ -759,6 +804,8 @@ func (s *groupsService) claim(task, session string) {
 }
 
 var errSetupWaits = errors.New("its worktree's setup waits for your yes")
+
+var errNoWorktree = errors.New("no worktree on branch")
 
 type started struct {
 	api.SessionCreated
@@ -803,7 +850,20 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 	}
 	if err != nil && strings.Contains(err.Error(), "exists") {
 		// A start tried again after a restart: the branch's worktree is there already.
-		wt, err = s.findWorktree(ctx, caller, src, it.Branch)
+		var ferr error
+		if wt, ferr = s.findWorktree(ctx, caller, src, it.Branch); ferr == nil {
+			err = nil
+		} else if errors.Is(ferr, errNoWorktree) {
+			// The branch is there but its worktree was removed: a new one on the branch.
+			wp.Base = ""
+			if self {
+				wt, err = s.cfg.worktree(ctx, wp)
+			} else {
+				err = caller.Call(ctx, "worktree.create", wp, &wt)
+			}
+		} else {
+			err = ferr
+		}
 	}
 	if err != nil {
 		return started{}, fmt.Errorf("making the worktree on %s: %s", host, errText(err))
@@ -854,10 +914,16 @@ func (s *groupsService) findWorktree(ctx context.Context, caller api.Caller, src
 	}
 	for _, w := range list.Worktrees {
 		if w.Branch == branch {
-			return api.WorktreeCreated{Worktree: w, Setup: api.WorktreeSetup{State: "none"}}, nil
+			// A worktree whose setup still waits for the user's yes waits again; one the
+			// user said yes to (or with no setup) starts.
+			st := api.WorktreeSetup{State: "none"}
+			if w.SetupPending {
+				st = api.WorktreeSetup{State: "pending", Reason: "worktree.setup runs it once the user says yes"}
+			}
+			return api.WorktreeCreated{Worktree: w, Setup: st}, nil
 		}
 	}
-	return api.WorktreeCreated{}, fmt.Errorf("no worktree on branch %s", branch)
+	return api.WorktreeCreated{}, fmt.Errorf("%w %s", errNoWorktree, branch)
 }
 
 // leadSeed is a lead's first message: the group's brief, its item and how to report.

@@ -155,6 +155,17 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			}
 			return nil
 		}
+		// inGroup: the caller is a member of the group (its session record says so), or its
+		// coordinator on the home hab (groups.md 15.2: reports and notes come from members).
+		inGroup := func(id string) error {
+			if ss.Group != nil && ss.Group.ID == id {
+				return nil
+			}
+			if g, err := svc.Get(id); err == nil && g.Coordinator.Session == ss.ID {
+				return nil
+			}
+			return control.Errorf(api.ErrorKindDenied, "session %s is not a member of group %s", ss.Name, id)
+		}
 		switch method {
 		case "group.create":
 			var p api.GroupCreateParams
@@ -198,6 +209,9 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
+			if err := inGroup(p.Group); err != nil {
+				return nil, nil, err
+			}
 			p.From = ss.Name
 			r, err := svc.Report(ctx, p)
 			return r, nil, err
@@ -205,6 +219,12 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			var p api.GroupNoteParams
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
+			}
+			if err := inGroup(p.Group); err != nil {
+				return nil, nil, err
+			}
+			if ss.Group != nil && ss.Group.ID == p.Group && ss.Group.Item != "" && p.Item != ss.Group.Item {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "a member notes its own item %s", ss.Group.Item)
 			}
 			p.From = ss.Name
 			return api.Empty{}, nil, svc.Note(ctx, p)

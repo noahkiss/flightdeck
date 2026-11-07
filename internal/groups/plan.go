@@ -48,11 +48,26 @@ func Normalize(p api.GroupPlan, group string) api.GroupPlan {
 			p.Items[i].Review = "on"
 		}
 	}
+	used := map[string]bool{}
+	for _, m := range p.Members {
+		if m.Name != "" {
+			used[m.Name] = true
+		}
+	}
 	for i := range p.Members {
 		m := &p.Members[i]
-		if m.Name == "" {
-			m.Name = AutoName(m.Harness, group, m.Role, itemPos(p, m.Item))
+		if m.Name != "" {
+			continue
 		}
+		// Two members of one role on one item (two workers, or a lead an amend adds where
+		// one ran) would get one name: the later ones get -2, -3 and on.
+		base := AutoName(m.Harness, group, m.Role, itemPos(p, m.Item))
+		name := base
+		for n := 2; used[name]; n++ {
+			name = fmt.Sprintf("%s-%d", base, n)
+		}
+		m.Name = name
+		used[name] = true
 	}
 	return p
 }

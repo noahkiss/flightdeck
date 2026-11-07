@@ -13825,6 +13825,10 @@
           "prunable": {
             "type": "boolean",
             "description": "Its folder is gone; worktree.remove prunes the entry."
+          },
+          "setup_pending": {
+            "type": "boolean",
+            "description": "Made by worktree.create on this hab, with a setup script that waits for the user's yes (worktree.setup)."
           }
         },
         "required": [

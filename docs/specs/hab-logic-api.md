@@ -1315,7 +1315,7 @@ and removes git worktrees for a project, and runs a project's setup and teardown
 
 | Method | What it does |
 |---|---|
-| `worktree.list` | The repository's working trees, the main one first: `path`, `branch`, `head`, `main`, `locked`, `prunable`, and `managed` (made by `worktree.create` on this hab) |
+| `worktree.list` | The repository's working trees, the main one first: `path`, `branch`, `head`, `main`, `locked`, `prunable`, `managed` (made by `worktree.create` on this hab), and `setup_pending` (managed, with a setup script that waits for the user's yes; `groups.md` 5.8) |
 | `worktree.create` | Make a worktree, copy the files `.worktreeinclude` names, then start the setup script per `setup` (`auto`, the default; `run`; `skip`). Returns `project`, `worktree`, `copied` and `setup` |
 | `worktree.setup` | Start a linked worktree's setup script now: the yes to a pending setup, or a rerun |
 | `worktree.remove` | Run the teardown script, then remove a linked worktree. The branch stays. Uncommitted or untracked changes need `force` |

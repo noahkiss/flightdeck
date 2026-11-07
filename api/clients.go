@@ -740,6 +740,9 @@ type Worktree struct {
 	Locked   bool   `json:"locked,omitempty" doc:"Locked with git worktree lock; worktree.remove refuses it."`
 	Prunable bool   `json:"prunable,omitempty" doc:"Its folder is gone; worktree.remove prunes the entry."`
 	Managed  bool   `json:"managed,omitempty" doc:"Made by worktree.create on this hab."`
+	// SetupPending comes with stage B3 of agent groups (groups.md 5.8). Optional, so an older
+	// hab leaves it out.
+	SetupPending bool `json:"setup_pending,omitempty" doc:"Made by worktree.create on this hab, with a setup script that waits for the user's yes (worktree.setup)."`
 }
 
 // SetupMode says whether worktree.create runs the setup script. A closed set the client sends.

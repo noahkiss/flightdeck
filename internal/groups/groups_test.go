@@ -28,6 +28,19 @@ func TestNormalizeNames(t *testing.T) {
 	if err := Check(p, 2); err != nil {
 		t.Fatal(err)
 	}
+	// Two unnamed workers on one item, and an earlier member already named like the first,
+	// get names of their own.
+	q := plan3()
+	first := AutoName("claude", "3fa9c2deadbeef00", RoleWorker, 1)
+	q.Members = append(q.Members,
+		api.GroupPlanMember{Role: RoleWorker, Item: q.Items[0].ID, Harness: "claude", Name: first},
+		api.GroupPlanMember{Role: RoleWorker, Item: q.Items[0].ID, Harness: "claude"},
+		api.GroupPlanMember{Role: RoleWorker, Item: q.Items[0].ID, Harness: "claude"})
+	q = Normalize(q, "3fa9c2deadbeef00")
+	n := len(q.Members)
+	if q.Members[n-2].Name != first+"-2" || q.Members[n-1].Name != first+"-3" {
+		t.Fatalf("names %q %q", q.Members[n-2].Name, q.Members[n-1].Name)
+	}
 }
 
 func TestCheckRefusals(t *testing.T) {
