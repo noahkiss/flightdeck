@@ -160,8 +160,10 @@ func Submit(g *api.Group, item, head string, now time.Time) (Submitted, error) {
 	if it.State == ItemReview && it.Submitted == head {
 		return Submitted{State: ItemReview, Same: true, Reviewer: it.Reviewer}, nil
 	}
-	if it.State == ItemReady && it.Submitted == head && it.Verdict == nil && it.Reviewer == "" {
-		return Submitted{State: ItemReady, Same: true}, nil
+	if it.State == ItemReady && head == it.Land {
+		// Ready on this commit: the lead submitted it again, or fast-forwarded to the review
+		// branch after a pass with fixes and submitted with no new change.
+		return Submitted{State: ItemReady, Same: true, Reviewer: it.Reviewer}, nil
 	}
 	restart := it.State == ItemReview
 	it.Submitted, it.Submits = head, it.Submits+1

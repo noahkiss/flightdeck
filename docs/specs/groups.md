@@ -651,7 +651,8 @@ gff-hab's group service runs them on the home hab.
   rules (the top `brief_findings`, high and medium only, at most `max_findings`, fixes in place
   unless the plan's `lane.fix_in_place` is false) and the item's brief.
 - **A submit** from `working`, `fix`, `review` or `ready` moves the item to `review` (`ready`
-  with review off, into the lane queue). The same head while in review changes nothing. A new
+  with review off, into the lane queue). The same head while in review, or the commit a ready
+item lands, changes nothing. A new
   head while in review, or after a verdict, starts the review again: a running reviewer gets
   the new head as a message from Flightdeck. A submit does not wait for a verdict.
 - **A verdict** must come while the item is in `review`. `fix_needed` needs at least one

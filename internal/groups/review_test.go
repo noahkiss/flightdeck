@@ -160,6 +160,10 @@ func TestSubmitAndVerdict(t *testing.T) {
 	if line := VerdictLine("a", *g.Items[0].Verdict); !strings.Contains(line, "with the reviewer's fixes") {
 		t.Fatalf("line %q", line)
 	}
+	// The lead fast-forwards to the review head and submits with no new change: nothing moves.
+	if r, _ := Submit(&g, "a", "f1", now); !r.Same || g.Items[0].State != ItemReady {
+		t.Fatalf("a submit of the landing head %+v %+v", r, g.Items[0])
+	}
 	// From ready a new head goes back to review, out of the lane queue.
 	Submit(&g, "a", "c4", now)
 	if g.Items[0].State != ItemReview || len(g.Lane.Queue) != 0 {
