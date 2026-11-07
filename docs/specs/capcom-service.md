@@ -1211,15 +1211,18 @@ first consumer.
   account.
 - **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
   reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
-  until local midnight. Today's tokens and cost are kept in `<state>/governor.json`, so a
+  until local midnight. With the default steps user turns wait at 120% of `daily_usd`, and the
+  turn that crosses it can add up to `max_turn_usd`: set `pace_wait_at = 100` for a hard cap.
+  Today's tokens and cost are kept in `<state>/governor.json`, so a
   restart keeps them.
 - **Unpaced.** With no weekly window (no reading yet, or an API key with no `daily_usd`) Capcom
   is listed with basis `none` and every pace is `ok`; its tokens are counted.
 - **The engine.** It keeps the newest `pace`; with none, every turn runs. Before a new turn: at
   `ok` the main model, at `small` the small model (`small_model`, else the alias `haiku`), set
   with the SDK's `setModel`; at `wait` the items stay with the engine, untaken, until a new
-  `pace`. The head item's kind gives the turn's origin. An event that waits does not hold a user
-  message after it: the user turn takes both. Input that arrives during a running turn joins it.
+  `pace`. Event batches, agent reports and round messages (sent as `agent`) wait at the event
+  step, since no user typed them; the item's kind still gives the turn's origin. An item that
+  waits at the event step does not hold a user message after it: the user turn takes both. Input that arrives during a running turn joins it.
 - **The note.** The first user message during a wait gets the note "Pacing usage until
   <time>" in the thread, once per wait. The note is not model input.
 - **Send now.** `session.send` with `send_now: true` (the long-press menu; the app's half is

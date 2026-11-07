@@ -143,6 +143,7 @@ export class Engine {
   private asks = new ContextAsks();
   private exiting = false;
   private pace: Pace = { user: 'ok', event: 'ok' };
+  private paceGen = 0; // counts pace messages, so a pump that awaited admits again
   private model?: string; // the model the SDK session runs now; undefined: the SDK's default
   private nextOrigin?: 'user' | 'event'; // the origin of the turn the next hand begins
 
@@ -269,6 +270,7 @@ export class Engine {
     const user = m.pace === 'small' || m.pace === 'wait' ? m.pace : 'ok';
     const event = m.event_pace === 'wait' ? 'wait' : 'ok';
     this.pace = { user, event };
+    this.paceGen++;
     void this.pump();
   }
 
@@ -287,9 +289,13 @@ export class Engine {
       if (p.user === 'small') return { origin: 'user', small: true };
       return sendNow ? { origin: 'user', small: true } : null;
     };
-    if (head.kind !== 'event') return userTurn();
-    if (p.event === 'ok') return { origin: 'event', small: p.user !== 'ok' };
-    if (this.pending.some((i) => i.kind !== 'event')) return userTurn();
+    // Paced as events: event batches, and agent reports and round messages (sent as agent),
+    // which no user typed. The turn's origin stays as the item's kind gives it.
+    const paced = (i: Item) => i.kind === 'event' || i.kind === 'agent';
+    const origin = head.kind === 'event' ? 'event' : 'user';
+    if (!paced(head)) return userTurn();
+    if (p.event === 'ok') return { origin, small: p.user !== 'ok' };
+    if (this.pending.some((i) => !paced(i))) return userTurn();
     return null;
   }
 
@@ -319,8 +325,9 @@ export class Engine {
           // A new turn: the governor's pace decides (10.1).
           const a = this.admit();
           if (!a) break;
+          const gen = this.paceGen;
           await this.useModel(a.small);
-          if (!this.ready || this.turn) continue;
+          if (!this.ready || this.turn || gen !== this.paceGen) continue; // admit again
           this.nextOrigin = a.origin;
         }
         const item = this.pending.shift()!;
