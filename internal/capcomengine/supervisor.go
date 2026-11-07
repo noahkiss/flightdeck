@@ -324,13 +324,15 @@ func (s *Supervisor) start(ctx context.Context) {
 		fail("engine environment file: " + err.Error())
 		return
 	}
+	// The build is recorded before the job runs, so a running engine is never recorded as an
+	// older build, even when gff-hab stops between the two.
+	build := s.cfg.Build()
+	s.cfg.Record.Update(func(r *Record) { r.Build = build })
 	p, err := s.cfg.Job.Start(ctx, JobSpec{Argv: argv, Dir: dir, Env: append(s.cfg.BaseEnv(), envs...), Log: filepath.Join(s.cfg.Dir, LogFile)})
 	if err != nil {
 		fail("start the engine job: " + err.Error())
 		return
 	}
-	build := s.cfg.Build()
-	s.cfg.Record.Update(func(r *Record) { r.Build = build })
 	s.mu.Lock()
 	s.proc = p
 	s.lastStart = s.cfg.Now()
