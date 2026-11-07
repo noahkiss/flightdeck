@@ -3539,6 +3539,9 @@ picker never changes them.
 | `heavy.disk_min_free` | Hold heavy runs below this free space | Agents | integer GiB, 0 = never, else 1 to 4096 | 10 | Hab, this hab only | `groups.md` 8.2 |
 | `heavy.long_hold` | Notify when a heavy run holds the lock longer than | Agents | integer minutes 5 to 1440 | 60 | Hab, this hab only | `groups.md` 8.1 |
 | `capcom.approval_max_age` | Capcom approvals expire after | Capcom | integer minutes 1 to 1440; no 0 | 10 | Hab, the home hab | `capcom-service.md` 5.3, 19.1 |
+| `capcom.share_location` | Share location with Capcom | Capcom | bool | On; the first Capcom open asks for the system's location permission | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
+| `capcom.share_calendar` | Share calendar with Capcom, from the calendars picked | Capcom | bool, and a calendar list | On, every calendar | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
+| `capcom.calendar_days` | Days of calendar to share | Capcom | integer 1 to 31 | 7 | App | `capcom-service.md` 8.1, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
 | `group.max_workers` | Workers per lead | Agents | integer 0 to 5 | 2 | Hab, every hab; copied into each member's envelope | `groups.md` 3.3 |
