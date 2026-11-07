@@ -31,6 +31,11 @@ public final class CapcomCenter {
     /// A Capcom reply from a notification that did not reach the hab (7.6): it waits in the
     /// composer once the Capcom view opens.
     public var unsent: String?
+    /// The sites the user allowed with "Allow this site" on the home (capcom-service.md 5.3);
+    /// nil while unknown or when the home runs no Capcom service.
+    public internal(set) var sites: [String]?
+    /// Why the last sites read or removal failed.
+    public internal(set) var sitesFailure: String?
     /// Why the last open of the standing conversation failed; nil after a success.
     public internal(set) var standingFailure: String?
     /// An open of the standing conversation is on its way.

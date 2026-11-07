@@ -367,6 +367,10 @@ public actor FakeHab {
 
     public func setCapcomInterruptUnavailable(_ on: Bool) { capcomInterruptUnavailable = on }
 
+    /// The sites "Allow this site" kept (capcom-service.md 5.3).
+    public private(set) var capcomSites: [String] = []
+    public func setCapcomSites(_ s: [String]) { capcomSites = s }
+
     public func setCapcomProposals(session: String, _ records: [LogbookRecord]) { capcomProposals[session] = records }
     private var nextAnswerFailure: Failure?
 
@@ -1101,6 +1105,17 @@ public actor FakeHab {
             if let b = p.before { older = older.filter { $0.id < b } }
             let page = Array(older.reversed().prefix(limit))
             await reply(c, id: id, result: CapcomThreadPage(items: page, more: older.count > page.count, seq: c.seq))
+        case HabMethods.capcomStatus.name where capcomService:
+            await reply(c, id: id, result: CapcomServiceStatus(connected: true, folder: "/state/capcom/engine", sdkSessions: [], seq: c.seq,
+                                                               session: capcomStanding, sites: capcomSites, state: "running"))
+        case HabMethods.capcomSiteRemove.name where capcomService:
+            guard let p = try? params.decode(CapcomSiteParams.self), capcomSites.contains(p.site) else {
+                await fail(c, id: id, kind: .notFound, hint: "Capcom has no allowed site")
+                break
+            }
+            capcomSites.removeAll { $0 == p.site }
+            await reply(c, id: id, result: CapcomServiceStatus(connected: true, folder: "/state/capcom/engine", sdkSessions: [], seq: c.seq,
+                                                               session: capcomStanding, sites: capcomSites, state: "running"))
         case HabMethods.capcomInterrupt.name:
             guard capcomService, !capcomInterruptUnavailable else {
                 await fail(c, id: id, kind: .unavailable, hint: "capcom.interrupt: no engine is connected")

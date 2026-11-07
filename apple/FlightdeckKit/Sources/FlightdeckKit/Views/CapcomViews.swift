@@ -113,8 +113,36 @@ struct CapcomHostSettingsView: View {
                     }
                 }
             }
+            if let sites = center.sites {
+                Section {
+                    if sites.isEmpty {
+                        Text("None").foregroundStyle(.secondary)
+                    }
+                    ForEach(sites, id: \.self) { s in
+                        HStack {
+                            Text(s)
+                            Spacer()
+                            Button("Remove", systemImage: "minus.circle", role: .destructive) {
+                                Task { await center.removeSite(s) }
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                } header: {
+                    Text("Allowed sites")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Capcom opens pages on these sites without asking.")
+                        if let f = center.sitesFailure {
+                            Text(f).foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
         }
         .onAppear { center.pickerAppeared() }
+        .task { await center.loadSites() }
     }
 }
 
@@ -186,7 +214,13 @@ struct CapcomScreen: View {
             if let m = center.standing {
                 SessionView(model: m, compact: compact, close: close)
                     .id(m.target)
-                    .onAppear { fleet.focus.show(m.target) }
+                    .environment(\.capcomEarlier, center.earlier)
+                    .onAppear {
+                        fleet.focus.show(m.target)
+                        // A reply a notification could not send waits in the composer (7.6).
+                        center.takeUnsent(into: m)
+                        Task { await center.loadEarlier() }
+                    }
                     .onDisappear { fleet.focus.hide(m.target) }
             } else {
                 state
