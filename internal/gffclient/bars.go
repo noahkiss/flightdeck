@@ -155,8 +155,18 @@ func hostWarnings(hs []hosts.Host, own string, now time.Time) []string {
 		if c, ok := gffversion.Compare(h.Welcome.Version, newest); ok && c < 0 {
 			out = append(out, h.Label+" hab "+h.Welcome.Version+" superseded by "+newest)
 		}
+		exited := map[string]bool{}
+		for _, s := range h.Structure.Sessions {
+			if s.State == api.SessionStateExited {
+				exited[s.ID] = true
+			}
+		}
 		n := 0
 		for _, p := range h.Structure.Panes {
+			// A pane kept for an exited program's output no longer runs on the old holder.
+			if exited[p.Session] {
+				continue
+			}
 			if h.Welcome.Build != "" && p.HolderBuild != "" && p.HolderBuild != h.Welcome.Build {
 				n++
 			}

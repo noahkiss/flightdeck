@@ -12636,7 +12636,7 @@
           },
           "version": {
             "type": "string",
-            "description": "gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.1). Optional, so a newer client accepts a welcome from an older revision 1 hab."
+            "description": "gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.3). Optional, so a newer client accepts a welcome from an older revision 1 hab."
           }
         },
         "required": [
