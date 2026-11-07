@@ -100,6 +100,7 @@ type superviseService struct {
 	retryAt map[string]time.Time  // no automatic action before this, by session id
 	ours    map[string]time.Time  // a compaction of ours ended at, by session id: its hook is not counted again
 	fails   map[string]int        // automatic actions failed in a row, by session id
+	ends    map[string]int        // actions ended, by session id
 	stop    chan struct{}
 	wg      sync.WaitGroup
 }
@@ -127,7 +128,7 @@ func newSupervisor(cfg superviseConfig) *superviseService {
 		cfg.tick = superviseTick
 	}
 	return &superviseService{cfg: cfg, byID: map[string]*supAction{}, live: map[string]*supAction{},
-		retryAt: map[string]time.Time{}, ours: map[string]time.Time{}, fails: map[string]int{}, stop: make(chan struct{})}
+		retryAt: map[string]time.Time{}, ours: map[string]time.Time{}, fails: map[string]int{}, ends: map[string]int{}, stop: make(chan struct{})}
 }
 
 // Start runs the reading loop until Stop.
@@ -177,6 +178,12 @@ func supervised(st api.AgentState) bool {
 // pass reads each member once: its context_pct, and the automatic action it is due.
 func (s *superviseService) pass() {
 	for _, ss := range s.cfg.members() {
+		// An action that ends while this pass reads the member makes the reading stale: the
+		// pass leaves the member to the next one (a reading from before a compaction's end
+		// would start a second compaction).
+		s.mu.Lock()
+		ends := s.ends[ss.ID]
+		s.mu.Unlock()
 		st, ok := s.cfg.agents.Get(ss.Pane)
 		if !ok || !supervised(st) || st.State == api.AgentStatusExited || st.State == api.AgentStatusNone {
 			continue
@@ -188,7 +195,7 @@ func (s *superviseService) pass() {
 			continue
 		}
 		s.mu.Lock()
-		busy := s.live[ss.ID] != nil || time.Now().Before(s.retryAt[ss.ID])
+		busy := s.live[ss.ID] != nil || time.Now().Before(s.retryAt[ss.ID]) || s.ends[ss.ID] != ends
 		s.mu.Unlock()
 		if busy {
 			continue
@@ -367,6 +374,7 @@ func (s *superviseService) end(a *supAction, state api.MemberActionState, reason
 	if s.live[a.a.Session] == a {
 		delete(s.live, a.a.Session)
 	}
+	s.ends[a.a.Session]++
 	if a.auto && state != actDone {
 		// A lasting failure backs off, doubling to 30 minutes, so the member is not asked
 		// again every minute (review M4).
