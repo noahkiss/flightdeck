@@ -550,6 +550,8 @@ type Meta struct {
 	// Round and Run name the round and run of a round notification (rounds.md 10.2).
 	Round string `json:"round,omitempty"`
 	Run   string `json:"run,omitempty"`
+	// Item names a Capcom message's thread item (capcom-service.md 7.6).
+	Item string `json:"item,omitempty"`
 	// Context is the Ask action's context item, and CapcomHome the device id of the hab that
 	// runs Capcom, where capcom.open goes. Both absent: no host runs Capcom, and no Ask.
 	Context    *Ask   `json:"capcom_context,omitempty"`

@@ -288,6 +288,7 @@ const (
 	PushKindUsage      PushKind = "usage"
 	PushKindRound      PushKind = "round"
 	PushKindTrust      PushKind = "trust"
+	PushKindCapcom     PushKind = "capcom"
 )
 
 const (

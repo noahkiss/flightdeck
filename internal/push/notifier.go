@@ -90,6 +90,7 @@ type Notice struct {
 	Category string
 	Round    string
 	Run      string
+	Item     string // a Capcom message's thread item (KindCapcom)
 }
 
 // Notifier turns agent state changes into pushes. State is safe to call under any lock: it
@@ -449,12 +450,19 @@ func (n *Notifier) Raise(no Notice) int {
 		}
 		b := NoticeBanner(w, no.Title, no.Body, no.Level)
 		b.Kind, b.Category = kind, no.Category
-		meta := Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID, Round: no.Round, Run: no.Run}
+		if kind == KindCapcom {
+			// A Capcom message keeps its own budget, and reads as a message from Capcom: no
+			// subtitle (capcom-service.md 7.6).
+			b.Body, b.Subtitle = no.Body, ""
+		}
+		meta := Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID, Round: no.Round, Run: no.Run, Item: no.Item}
 		collapse := no.Collapse
 		if collapse == "" {
 			collapse = "n-" + no.ID
 		}
-		meta.Context, meta.CapcomHome = n.ask(no.ID)
+		if kind != KindCapcom {
+			meta.Context, meta.CapcomHome = n.ask(no.ID)
+		}
 		for _, t := range to {
 			// Only an app that registered the Ask categories gets one; any other keeps the
 			// categories it knows. The context rides along either way.

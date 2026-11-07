@@ -94,6 +94,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/aliases"
 	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/capcom"
+	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/confirm"
@@ -975,6 +976,11 @@ func serve(args []string) error {
 				notify: func(title, body string) {
 					if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
 						logger.Printf("capcom: notice: %v", err)
+					}
+				},
+				message: func(it capcomthread.Item, session string) {
+					if n := pushes.live(); n != nil {
+						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event))
 					}
 				},
 				logf: logger.Printf,
