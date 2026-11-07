@@ -18,6 +18,10 @@ var roundReadySeam time.Duration
 // $GFF_TEST_ROUND_QUIET.
 var roundQuietSeam = roundInputWindow
 
+// superviseTickSeam, when set, is context supervision's reading interval instead of
+// superviseTick. Only a build with the testseam tag sets it, from $GFF_TEST_SUPERVISE_TICK.
+var superviseTickSeam time.Duration
+
 // roundCapcomSeam and roundGroupsSeam, when set, make this hab a fake far side of the capcom
 // and group modes (rounds.md 5.2) for end-to-end tests: the first is a file whose first line is
 // the Capcom service's answer to a round message and whose second line may name an outcome

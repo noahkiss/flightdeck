@@ -26,6 +26,11 @@ type Groups interface {
 	Resume(id string) (api.Group, error)
 	Close(ctx context.Context, id string) (api.Group, error)
 	Retry(ctx context.Context, p api.GroupRetryParams) (api.Group, error)
+	// MemberAction and MemberActionGet serve the sibling actions (groups.md 9.4, stage B6):
+	// member.compact, member.handoff and member.action. A call from a peer hab carries its
+	// hello (CallerPeer).
+	MemberAction(ctx context.Context, kind api.MemberActionKind, p api.MemberActionParams) (api.MemberAction, error)
+	MemberActionGet(ctx context.Context, id string) (api.MemberAction, error)
 }
 
 // maxGroupTime bounds one group call: a create waits up to 120 s for its confirmation, and a
@@ -92,6 +97,23 @@ func (c *conn) handleGroups(m message) {
 		if e = c.decodeUp(m, &p); e == nil {
 			call = func(ctx context.Context) (any, error) { return result(gs.Retry(ctx, p)) }
 		}
+	case "member.compact", "member.handoff":
+		var p api.MemberActionParams
+		kind := api.MemberActionKind(strings.TrimPrefix(m.Method, "member."))
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(ctx context.Context) (any, error) {
+				a, err := gs.MemberAction(ctx, kind, p)
+				return api.MemberActionResult{Action: a}, err
+			}
+		}
+	case "member.action":
+		var p api.MemberActionRef
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(ctx context.Context) (any, error) {
+				a, err := gs.MemberActionGet(ctx, p.ID)
+				return api.MemberActionResult{Action: a}, err
+			}
+		}
 	default:
 		e = appErr(api.ErrorKindNotFound, "no method %s", m.Method)
 	}
@@ -102,6 +124,9 @@ func (c *conn) handleGroups(m message) {
 	go func() {
 		ctx, cancel := context.WithTimeout(c.ctx, maxGroupTime)
 		defer cancel()
+		if c.peer != nil {
+			ctx = WithCallerPeer(ctx, *c.peer) // a sibling action forwarded by the asker's hab
+		}
 		res, err := call(ctx)
 		seq := c.currentSeq() // after the call: the events it caused come before its answer
 		if err != nil {
@@ -128,6 +153,9 @@ func withSeq(res any, seq uint64) any {
 	case api.GroupReported:
 		r.Seq = s
 		return r
+	case api.MemberActionResult:
+		r.Seq = s
+		return r
 	case api.Empty:
 		r.Seq = s
 		return r
@@ -135,4 +163,4 @@ func withSeq(res any, seq uint64) any {
 	return res
 }
 
-func isGroupMethod(m string) bool { return strings.HasPrefix(m, "group.") }
+func isGroupMethod(m string) bool { return strings.HasPrefix(m, "group.") || strings.HasPrefix(m, "member.") }

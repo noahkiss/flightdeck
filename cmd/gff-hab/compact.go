@@ -91,6 +91,10 @@ type compactJob struct {
 	ended    chan struct{} // closed on the first end signal
 	sOnce    sync.Once
 	eOnce    sync.Once
+	// A compaction the hab started for a group member (groups.md 9.2, 12.4): guard replaces
+	// the typing guard, and done gets the final state.
+	guard func(pane string) error
+	done  chan api.Compaction
 }
 
 func newCompactService(agents compactAgents, session func(string) (string, bool), send func(context.Context, string, string, func(string) error) error,
@@ -108,6 +112,19 @@ func newCompactService(agents compactAgents, session func(string) (string, bool)
 // Request starts a compaction of pane. It checks the pane and answers at once with state
 // queued; the rest runs on its own.
 func (s *compactService) Request(pane string, p api.CompactParams) (api.Compaction, error) {
+	return s.request(pane, p, nil, nil)
+}
+
+// Start is a compaction the hab starts for a group member's pane (groups.md 9.2, 12.4): the
+// same steps and events as a self-compact, with the hab's follow-up. guard runs under each
+// send's claim, in place of the typing guard; done gets the final state once.
+func (s *compactService) Start(pane, followUp string, guard func(pane string) error) (api.Compaction, <-chan api.Compaction, error) {
+	done := make(chan api.Compaction, 1)
+	c, err := s.request(pane, api.CompactParams{FollowUp: followUp}, guard, done)
+	return c, done, err
+}
+
+func (s *compactService) request(pane string, p api.CompactParams, guard func(string) error, done chan api.Compaction) (api.Compaction, error) {
 	if n := utf8.RuneCountInString(p.FollowUp); n > maxFollowUp {
 		return api.Compaction{}, control.Errorf(api.ErrorKindInvalid, "the follow-up is %d characters; at most %d", n, maxFollowUp)
 	}
@@ -131,7 +148,8 @@ func (s *compactService) Request(pane string, p api.CompactParams) (api.Compacti
 		return api.Compaction{}, control.Errorf(api.ErrorKindConflict, "compaction %s is already pending for this pane", j.c.ID)
 	}
 	j := &compactJob{c: api.Compaction{ID: compactID(), Pane: pane, Session: session, Harness: st.Harness, State: compactQueued,
-		FollowUp: p.FollowUp != "", At: s.stamp()}, followUp: p.FollowUp, started: make(chan struct{}), ended: make(chan struct{})}
+		FollowUp: p.FollowUp != "", At: s.stamp()}, followUp: p.FollowUp, started: make(chan struct{}), ended: make(chan struct{}),
+		guard: guard, done: done}
 	s.jobs[pane] = j
 	c := j.c
 	s.mu.Unlock()
@@ -158,12 +176,16 @@ func (s *compactService) step(j *compactJob, state, reason string) {
 	s.mu.Lock()
 	j.c.State, j.c.Reason, j.c.At = state, reason, s.stamp()
 	c := j.c
-	if state == compactDone || state == compactFailed {
+	final := state == compactDone || state == compactFailed
+	if final {
 		if s.jobs[c.Pane] == j {
 			delete(s.jobs, c.Pane)
 		}
 	}
 	s.mu.Unlock()
+	if final && j.done != nil {
+		j.done <- c
+	}
 	if reason != "" {
 		s.logf("pane %s: compaction %s %s: %s", c.Pane, c.ID, state, reason)
 	} else {
@@ -244,7 +266,11 @@ func (s *compactService) waitAndSend(j *compactJob, text string, limit time.Dura
 				before()
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := s.send(ctx, j.c.Session, text, s.guard)
+			guard := s.guard
+			if j.guard != nil {
+				guard = j.guard
+			}
+			err := s.send(ctx, j.c.Session, text, guard)
 			cancel()
 			if err == nil {
 				return nil

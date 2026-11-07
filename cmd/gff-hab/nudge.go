@@ -32,6 +32,9 @@ const nudgeTail = 256 << 10
 type nudgeService struct {
 	// value reads a hab-side setting (settings.Service.Value).
 	value func(id string) json.RawMessage
+	// member reports whether a pane's session is a group member: supervision runs its context
+	// (groups.md 9.1), so the nudge stays quiet for it. Nil: none is.
+	member func(pane string) bool
 
 	mu    sync.Mutex
 	panes map[string]*nudgePane
@@ -42,6 +45,7 @@ type nudgePane struct {
 	percent float64 // from the status line; -1 when none since the last reset
 	window  int     // the context window size from the status line; 0 when none
 	noted   int     // the highest level noted; 0 for none
+	path    string  // the transcript path the hooks named
 }
 
 func newNudgeService(value func(string) json.RawMessage) *nudgeService {
@@ -87,6 +91,9 @@ func (n *nudgeService) Observe(pane string, env harness.Envelope) {
 	if p.SessionID != "" {
 		np.session = p.SessionID
 	}
+	if p.TranscriptPath != "" {
+		np.path = p.TranscriptPath
+	}
 	switch {
 	case env.Event == hook.StatusLineEvent:
 		if cw := p.ContextWindow; cw != nil {
@@ -100,6 +107,35 @@ func (n *nudgeService) Observe(pane string, env harness.Envelope) {
 	case env.Event == "PreCompact", env.Event == "SessionStart" && p.Source == "compact":
 		np.percent, np.noted = -1, 0
 	}
+}
+
+// Reading is a Claude Code pane's context use for supervision (groups.md 9.1): the status
+// line's percentage, else the transcript's last usage over the window the status line named
+// (or the default). ok false: no reading, such as right after a compaction. path is the
+// transcript the hooks named, "" when none did.
+func (n *nudgeService) Reading(pane string) (pct float64, path string, ok bool) {
+	n.mu.Lock()
+	np := n.panes[pane]
+	if np == nil {
+		n.mu.Unlock()
+		return 0, "", false
+	}
+	pct, window, path := np.percent, np.window, np.path
+	n.mu.Unlock()
+	if pct >= 0 {
+		return pct, path, true
+	}
+	if path == "" {
+		return 0, "", false
+	}
+	if window <= 0 {
+		window = defaultContextWindow
+	}
+	tokens, ok := transcriptContext(path)
+	if !ok {
+		return 0, path, false
+	}
+	return 100 * float64(tokens) / float64(window), path, true
 }
 
 // Forget drops a pane that is gone.
@@ -127,7 +163,7 @@ func nudgeEvent(harnessKind, event string) bool {
 // Context is the nudge's part of the hook server's ContextHandler (joinContext): the note to
 // add, or "".
 func (n *nudgeService) Context(_ context.Context, pane string, env harness.Envelope) string {
-	if !nudgeEvent(env.Harness, env.Event) {
+	if !nudgeEvent(env.Harness, env.Event) || n.member != nil && n.member(pane) {
 		return ""
 	}
 	first := n.settingInt(settings.ContextNudge, 0)

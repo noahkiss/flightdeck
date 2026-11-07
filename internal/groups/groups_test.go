@@ -164,14 +164,15 @@ func TestStoreRoundTrip(t *testing.T) {
 func TestLoadKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "hab.toml")
-	os.WriteFile(p, []byte("[groups]\ninbox_max = 5\ninbox_days = 3\nkeep_ended = 2\ntrust_hold = \"5s\"\n"), 0o600)
+	os.WriteFile(p, []byte("[groups]\ninbox_max = 5\ninbox_days = 3\nkeep_ended = 2\ntrust_hold = \"5s\"\n" +
+		"handoff_note_wait = \"90s\"\nsibling_wait = \"30s\"\n"), 0o600)
 	var logs []string
 	k := LoadKeys(p, func(f string, a ...any) { logs = append(logs, f) })
-	if k.InboxMax != 200 || k.InboxDays != 3 || k.KeepEnded != 48*time.Hour {
+	if k.InboxMax != 200 || k.InboxDays != 3 || k.KeepEnded != 48*time.Hour || k.HandoffNoteWait != 90*time.Second || k.SiblingWait != 10*time.Minute {
 		t.Fatalf("keys %+v", k)
 	}
-	if len(logs) != 1 {
-		t.Fatalf("logged %d lines, want one for inbox_max", len(logs))
+	if len(logs) != 2 {
+		t.Fatalf("logged %d lines, want one for inbox_max and one for sibling_wait", len(logs))
 	}
 	// The example config's keys are the defaults, and nothing in it is logged.
 	logs = nil

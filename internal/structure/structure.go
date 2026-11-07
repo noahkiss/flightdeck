@@ -1145,6 +1145,7 @@ func sessionAPI(ss *sessionRecord) api.Session {
 		ID: ss.ID, Revision: ss.Revision, Name: ss.Name, Project: ss.Project, Pane: ss.Pane,
 		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit), Round: copyRound(ss.Round),
 		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir, Group: copyGroup(ss.Group),
+		ContextPct: copyPct(ss.ContextPct), Compacts: ss.Compacts, Replaced: ss.Replaced,
 	})
 }
 

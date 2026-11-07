@@ -230,6 +230,11 @@ keep_ended = 30
 # whole days (1 to 90). The oldest go first.
 inbox_max = 200
 inbox_days = 7
+# Context supervision of members (docs/specs/groups.md 9): how long a fresh session waits for the
+# member's hand-off note ("1m" to "2h"), and how long a sibling's member_compact or
+# member_handoff waits for a member in use before it is skipped ("1m" to "24h").
+handoff_note_wait = "10m"
+sibling_wait = "10m"
 
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and

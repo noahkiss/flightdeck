@@ -1,0 +1,26 @@
+{
+  "action": {
+    "asker": "asker-12",
+    "at": "at-14",
+    "fresh": "fresh-13",
+    "group": "group-5",
+    "host": "host-8",
+    "id": "id-4",
+    "kind": "kind-9",
+    "member": "member-6",
+    "reason": "reason-11",
+    "session": "session-7",
+    "state": "state-10",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

@@ -1462,3 +1462,24 @@ func (c Client) GroupRetry(ctx context.Context, params GroupRetryParams) (GroupR
 	err := c.Caller.Call(ctx, "group.retry", params, &result)
 	return result, err
 }
+
+// MemberCompact calls member.compact. A sibling action (groups.md 9.4): compact a member's context as supervision does at group.compact_at. The member's hab runs it once the member is not in use, waiting up to [groups] sibling_wait, then it is skipped. Answers at once; a second action on the member while one runs gets conflict. From a pane, only a member of the group or its coordinator asks. Needs the groups capability.
+func (c Client) MemberCompact(ctx context.Context, params MemberActionParams) (MemberActionResult, error) {
+	var result MemberActionResult
+	err := c.Caller.Call(ctx, "member.compact", params, &result)
+	return result, err
+}
+
+// MemberHandoff calls member.handoff. A sibling action (groups.md 9.4): a hand-off note, then a fresh session under the member's name in its worktree; held messages move to it. Waits and answers as member.compact. Needs the groups capability.
+func (c Client) MemberHandoff(ctx context.Context, params MemberActionParams) (MemberActionResult, error) {
+	var result MemberActionResult
+	err := c.Caller.Call(ctx, "member.handoff", params, &result)
+	return result, err
+}
+
+// MemberAction calls member.action. One supervision action by its id, as the member's hab keeps it. Needs the groups capability.
+func (c Client) MemberAction(ctx context.Context, params MemberActionRef) (MemberActionResult, error) {
+	var result MemberActionResult
+	err := c.Caller.Call(ctx, "member.action", params, &result)
+	return result, err
+}

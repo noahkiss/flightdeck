@@ -154,6 +154,9 @@ type CatalogAgent struct {
 	Group      *SessionGroup `json:"group,omitempty" doc:"The session is a member of this group."`
 	ContextPct *int          `json:"context_pct,omitempty" doc:"How full its context window is, in whole percent; absent when unknown."`
 	ID         string        `json:"id,omitempty" doc:"The session's id on its host."`
+	// Compacts and Replaced come with context supervision (groups.md 9, stage B6).
+	Compacts int    `json:"compacts,omitempty" doc:"A member's compactions its hab counted."`
+	Replaced string `json:"replaced,omitempty" doc:"The session this fresh member session replaced."`
 }
 
 type CatalogGetParams struct {

@@ -4245,6 +4245,106 @@
       "x-params": {
         "$ref": "#/components/schemas/GroupRetryParams"
       }
+    },
+    {
+      "name": "member.compact",
+      "summary": "A sibling action (groups.md 9.4): compact a member's context as supervision does at group.compact_at. The member's hab runs it once the member is not in use, waiting up to [groups] sibling_wait, then it is skipped. Answers at once; a second action on the member while one runs gets conflict. From a pane, only a member of the group or its coordinator asks. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name, from group.get.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberActionResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MemberActionParams"
+      }
+    },
+    {
+      "name": "member.handoff",
+      "summary": "A sibling action (groups.md 9.4): a hand-off note, then a fresh session under the member's name in its worktree; held messages move to it. Waits and answers as member.compact. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name, from group.get.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberActionResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MemberActionParams"
+      }
+    },
+    {
+      "name": "member.action",
+      "summary": "One supervision action by its id, as the member's hab keeps it. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "description": "The action id from member.compact or member.handoff.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberActionResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MemberActionRef"
+      }
     }
   ],
   "x-notifications": [
@@ -5619,6 +5719,11 @@
       "CatalogAgent": {
         "type": "object",
         "properties": {
+          "compacts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A member's compactions its hab counted."
+          },
           "context_pct": {
             "type": "integer",
             "format": "int64",
@@ -5638,6 +5743,10 @@
           "project": {
             "type": "string",
             "description": "The project's name. Absent for an unfiled session."
+          },
+          "replaced": {
+            "type": "string",
+            "description": "The session this fresh member session replaced."
           },
           "session": {
             "type": "string",
@@ -10776,6 +10885,112 @@
           "state"
         ]
       },
+      "MemberAction": {
+        "type": "object",
+        "properties": {
+          "asker": {
+            "type": "string",
+            "description": "Who asked: a session name, Flightdeck for supervision's own, or absent for the user."
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of its last change."
+          },
+          "fresh": {
+            "type": "string",
+            "description": "With a done handoff: the new session's id."
+          },
+          "group": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The member's host id."
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "compact or handoff."
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it waits, was skipped or failed; with done, a note such as no hand-off note."
+          },
+          "session": {
+            "type": "string",
+            "description": "The member's session id on its hab when the action began."
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, running, done, skipped or failed."
+          }
+        },
+        "required": [
+          "id",
+          "group",
+          "member",
+          "session",
+          "host",
+          "kind",
+          "state",
+          "at"
+        ]
+      },
+      "MemberActionParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user."
+          },
+          "group": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name, from group.get."
+          }
+        },
+        "required": [
+          "group",
+          "member"
+        ]
+      },
+      "MemberActionRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The action id from member.compact or member.handoff."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "MemberActionResult": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/MemberAction"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "action"
+        ]
+      },
       "MeshChanged": {
         "type": "object",
         "properties": {
@@ -12791,6 +13006,11 @@
       "Session": {
         "type": "object",
         "properties": {
+          "compacts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A group member's compactions that its hab counted toward group.fresh_after_compacts. Absent for none."
+          },
           "context_pct": {
             "type": "integer",
             "format": "int64",
@@ -12828,6 +13048,10 @@
           "project": {
             "type": "string",
             "description": "Project id. Absent means unfiled."
+          },
+          "replaced": {
+            "type": "string",
+            "description": "The session this fresh member session replaced (groups.md 9.3). Absent for any other session."
           },
           "revision": {
             "type": "integer",

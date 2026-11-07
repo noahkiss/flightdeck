@@ -57,7 +57,11 @@ type groupsConfig struct {
 	ready   func(pane string) bool
 	publish func(structure.Event)
 	poke    func() // the catalog's groups section changed
-	now     func() time.Time
+	// supervisor runs this hab's members' context supervision and sibling actions (groups.md
+	// 9); noteName sends a message from Flightdeck to a session on this hab, by name.
+	supervisor *supervisorRef
+	noteName   func(name, text string) error
+	now        func() time.Time
 	logf    func(string, ...any)
 }
 
@@ -1057,6 +1061,16 @@ func (s *groupsService) refresh(id string) {
 			}
 			m := &g.Members[i]
 			m.Agent, m.ContextPct, m.AgentAge = a.State, a.ContextPct, h.SeenAt
+			if m.Compacts != a.Compacts {
+				m.Compacts, changed = a.Compacts, true
+			}
+			if a.ID != "" && m.Session != "" && a.ID != m.Session && m.State == groups.MemberRunning {
+				// A fresh session took the member's name (groups.md 9.3): the record follows it.
+				m.Replaced, m.Session, changed = m.Session, a.ID, true
+				if a.Replaced != "" {
+					m.Replaced = a.Replaced
+				}
+			}
 		}
 	}
 	for i := range g.Members {

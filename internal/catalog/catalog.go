@@ -749,6 +749,7 @@ func agents(st api.Structure) []api.CatalogAgent {
 			// A group member: its home hab reads it from this copy (groups.md 2.2). Only
 			// members carry the context use, so other agents' readings do not churn the catalog.
 			ca.Group, ca.ContextPct, ca.ID = ss.Group, ss.ContextPct, ss.ID
+			ca.Compacts, ca.Replaced = ss.Compacts, ss.Replaced
 		}
 		out = append(out, ca)
 	}
