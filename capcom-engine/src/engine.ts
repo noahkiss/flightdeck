@@ -37,6 +37,17 @@ export const START_CHECK_TEXT = '[flightdeck start check]';
 export interface QueryHandle extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<unknown>;
   close(): void;
+  setModel?(model?: string): Promise<void>;
+}
+
+// The small model when hello names none: the provider's smallest current model, by its alias.
+export const DEFAULT_SMALL_MODEL = 'haiku';
+
+// The governor's answer (capcom-service.md 10.1): the pace of the next user turn and of the
+// next event turn. Until the first pace message, every turn runs.
+export interface Pace {
+  user: 'ok' | 'small' | 'wait';
+  event: 'ok' | 'wait';
 }
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryHandle;
 
@@ -131,6 +142,9 @@ export class Engine {
   private summarizing?: Promise<void>; // the summary call that runs
   private asks = new ContextAsks();
   private exiting = false;
+  private pace: Pace = { user: 'ok', event: 'ok' };
+  private model?: string; // the model the SDK session runs now; undefined: the SDK's default
+  private nextOrigin?: 'user' | 'event'; // the origin of the turn the next hand begins
 
   constructor(d: EngineDeps) {
     this.d = d;
@@ -233,7 +247,7 @@ export class Engine {
         this.setSites(m.sites);
         break;
       case 'pace':
-        // The governor's answers belong to a later stage.
+        this.onPace(m);
         break;
       default:
         // Unknown types are acked and ignored.
@@ -251,14 +265,65 @@ export class Engine {
     void this.pump();
   }
 
+  private onPace(m: Msg): void {
+    const user = m.pace === 'small' || m.pace === 'wait' ? m.pace : 'ok';
+    const event = m.event_pace === 'wait' ? 'wait' : 'ok';
+    this.pace = { user, event };
+    void this.pump();
+  }
+
+  // admit decides whether the pending items may begin a turn now, and on which model
+  // (capcom-service.md 10.1). The head item's kind gives the turn's origin. An event turn that
+  // waits lets a later user message begin a user turn that takes the event with it, so a user
+  // message never waits behind an event; a send-now message runs, with every item before it,
+  // on the small model while user turns wait. null: the items wait for the next pace.
+  private admit(): { origin: 'user' | 'event'; small: boolean } | null {
+    const p = this.pace;
+    const head = this.pending[0];
+    if (!head) return null;
+    const sendNow = this.pending.some((i) => i.send_now);
+    const userTurn = (): { origin: 'user'; small: boolean } | null => {
+      if (p.user === 'ok') return { origin: 'user', small: false };
+      if (p.user === 'small') return { origin: 'user', small: true };
+      return sendNow ? { origin: 'user', small: true } : null;
+    };
+    if (head.kind !== 'event') return userTurn();
+    if (p.event === 'ok') return { origin: 'event', small: p.user !== 'ok' };
+    if (this.pending.some((i) => i.kind !== 'event')) return userTurn();
+    return null;
+  }
+
+  // useModel switches the SDK session's model before a turn begins.
+  private async useModel(small: boolean): Promise<void> {
+    const want = small ? (this.settings.small_model ?? DEFAULT_SMALL_MODEL) : this.settings.model;
+    if (want === this.model || !this.q?.setModel) return;
+    try {
+      await this.q.setModel(want);
+      this.model = want;
+    } catch (e) {
+      this.log(`set the model to ${want ?? 'the default'}: ${(e as Error).message}`);
+    }
+  }
+
   private pumping = false;
   private async pump(): Promise<void> {
     if (this.pumping) return;
     this.pumping = true;
     try {
       while (this.ready && !this.reseedPending && !this.shuttingDown && this.pending.length) {
+        if (this.handed.has(this.pending[0]!.id)) {
+          this.pending.shift();
+          continue;
+        }
+        if (!this.turn) {
+          // A new turn: the governor's pace decides (10.1).
+          const a = this.admit();
+          if (!a) break;
+          await this.useModel(a.small);
+          if (!this.ready || this.turn) continue;
+          this.nextOrigin = a.origin;
+        }
         const item = this.pending.shift()!;
-        if (this.handed.has(item.id)) continue;
         await this.hand(item);
       }
     } finally {
@@ -278,7 +343,8 @@ export class Engine {
     this.uuidItems.set(msg.uuid!, item);
     this.untaken.add(msg.uuid!);
     if (item.kind === 'message' || item.kind === undefined) this.userUrls.addText(item.text ?? '');
-    if (!this.turn) this.beginTurn(originOf(item), [item.id]);
+    if (!this.turn) this.beginTurn(this.nextOrigin ?? originOf(item), [item.id]);
+    this.nextOrigin = undefined;
     this.input.push(msg);
   }
 
@@ -564,6 +630,7 @@ export class Engine {
       return;
     }
     this.q = q;
+    this.model = this.settings.model; // the session starts on the main model (buildOptions)
     // The probe: a message that runs no model call but makes the SDK send
     // its init with the tool list.
     input.push({
