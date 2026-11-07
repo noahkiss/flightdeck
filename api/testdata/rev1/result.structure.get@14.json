@@ -1,0 +1,498 @@
+{
+  "agents": [
+    {
+      "at": "at-54",
+      "error": "error-59",
+      "harness": "harness-40",
+      "hooks": "missing",
+      "kind": "trust",
+      "last": "exited",
+      "pane": "pane-38",
+      "request": {
+        "command": "command-44",
+        "context_line": "context_line-50",
+        "cwd": "cwd-46",
+        "description": "description-49",
+        "expires_at": "expires_at-51",
+        "files": [
+          "files-45"
+        ],
+        "id": "id-42",
+        "input": {
+          "input": 47,
+          "x_unknown_field": "later"
+        },
+        "input_truncated": true,
+        "title": "title-48",
+        "tool": "tool-43",
+        "x_unknown_field": "later"
+      },
+      "revision": 39,
+      "session": "session-41",
+      "source": "spawn",
+      "state": "exited",
+      "trust": {
+        "folder": "folder-52",
+        "x_unknown_field": "later"
+      },
+      "turn": "turn-53",
+      "version": "version-55",
+      "warning": {
+        "reason": "reason-58",
+        "tested": "tested-57",
+        "version": "version-56",
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "confirmations": [
+    {
+      "answered_by": "answered_by-103",
+      "closed": "closed-102",
+      "created": "created-100",
+      "edited": true,
+      "expires_at": "expires_at-101",
+      "from": "from-65",
+      "group": {
+        "amend": true,
+        "group": "group-82",
+        "plan": {
+          "brief": "brief-84",
+          "items": [
+            {
+              "after": "after-90",
+              "brief": "brief-88",
+              "id": "id-86",
+              "review": "review-91",
+              "title": "title-87",
+              "touches": [
+                "touches-89"
+              ],
+              "x_unknown_field": "later"
+            }
+          ],
+          "lane": {
+            "fix_in_place": true,
+            "target": "target-97",
+            "x_unknown_field": "later"
+          },
+          "members": [
+            {
+              "harness": "harness-94",
+              "host": "host-93",
+              "item": "item-92",
+              "model": "model-95",
+              "name": "name-96",
+              "role": "reviewer",
+              "x_unknown_field": "later"
+            }
+          ],
+          "project": "project-85",
+          "title": "title-83",
+          "x_unknown_field": "later"
+        },
+        "trust": "trust-98",
+        "warnings": [
+          "warnings-99"
+        ],
+        "x_unknown_field": "later"
+      },
+      "id": "id-64",
+      "kind": "group",
+      "reason": "reason-109",
+      "record": true,
+      "result": {
+        "address": "address-108",
+        "host": "host-104",
+        "name": "name-106",
+        "pane": "pane-107",
+        "session": "session-105",
+        "x_unknown_field": "later"
+      },
+      "setup": {
+        "bootstrap": "bootstrap-81",
+        "branch": "branch-80",
+        "host": "host-78",
+        "repository": "repository-79",
+        "x_unknown_field": "later"
+      },
+      "start": {
+        "alias": "alias-74",
+        "branch": "branch-69",
+        "folder": "folder-67",
+        "group": "group-75",
+        "harness": "harness-70",
+        "host": "host-66",
+        "item": "item-77",
+        "model": "model-71",
+        "name": "name-72",
+        "project": "project-68",
+        "role": "role-76",
+        "seed": "seed-73",
+        "teammate": true,
+        "x_unknown_field": "later"
+      },
+      "state": "unknown",
+      "x_unknown_field": "later"
+    }
+  ],
+  "groups": [
+    {
+      "confirmation": {
+        "id": "id-200",
+        "outcome": "unknown",
+        "x_unknown_field": "later"
+      },
+      "coordinator": {
+        "address": "address-195",
+        "name": "name-194",
+        "session": "session-193",
+        "x_unknown_field": "later"
+      },
+      "created": "created-254",
+      "ended": "ended-256",
+      "envelope": {
+        "confirmation": "confirmation-249",
+        "group": "group-247",
+        "harnesses": [
+          "harnesses-252"
+        ],
+        "home": "home-248",
+        "hosts": [
+          "hosts-251"
+        ],
+        "max_workers": 253,
+        "project": "project-250",
+        "x_unknown_field": "later"
+      },
+      "generation": 192,
+      "home": "home-191",
+      "id": "id-186",
+      "inbox": [
+        {
+          "at": "at-196",
+          "from": "from-197",
+          "text": "text-198",
+          "x_unknown_field": "later"
+        }
+      ],
+      "items": [
+        {
+          "after": "after-206",
+          "branch": "branch-205",
+          "id": "id-201",
+          "lead": "lead-204",
+          "reason": "reason-209",
+          "review": "review-207",
+          "state": "state-208",
+          "task": "task-203",
+          "title": "title-202",
+          "x_unknown_field": "later"
+        }
+      ],
+      "lane": {
+        "landing": "landing-226",
+        "queue": [
+          "queue-225"
+        ],
+        "x_unknown_field": "later"
+      },
+      "leftovers": [
+        "leftovers-231"
+      ],
+      "members": [
+        {
+          "agent": "exited",
+          "agent_age": "agent_age-220",
+          "attempts": 224,
+          "compacts": 222,
+          "context_pct": 221,
+          "device": "device-213",
+          "folder": "folder-217",
+          "harness": "harness-214",
+          "host": "host-212",
+          "item": "item-216",
+          "model": "model-215",
+          "name": "name-211",
+          "reason": "reason-219",
+          "replaced": "replaced-223",
+          "role": "reviewer",
+          "session": "session-210",
+          "state": "state-218",
+          "x_unknown_field": "later"
+        }
+      ],
+      "pause": {
+        "until": "until-229",
+        "usage": "usage-228",
+        "user": "user-227",
+        "x_unknown_field": "later"
+      },
+      "plan": {
+        "brief": "brief-233",
+        "items": [
+          {
+            "after": "after-239",
+            "brief": "brief-237",
+            "id": "id-235",
+            "review": "review-240",
+            "title": "title-236",
+            "touches": [
+              "touches-238"
+            ],
+            "x_unknown_field": "later"
+          }
+        ],
+        "lane": {
+          "fix_in_place": true,
+          "target": "target-246",
+          "x_unknown_field": "later"
+        },
+        "members": [
+          {
+            "harness": "harness-243",
+            "host": "host-242",
+            "item": "item-241",
+            "model": "model-244",
+            "name": "name-245",
+            "role": "reviewer",
+            "x_unknown_field": "later"
+          }
+        ],
+        "project": "project-234",
+        "title": "title-232",
+        "x_unknown_field": "later"
+      },
+      "plan_record": "plan_record-190",
+      "project": "project-189",
+      "revision": 187,
+      "state": "state-199",
+      "title": "title-188",
+      "updated": "updated-255",
+      "waits": [
+        "waits-230"
+      ],
+      "x_unknown_field": "later"
+    }
+  ],
+  "host": {
+    "id": "id-4",
+    "x_unknown_field": "later"
+  },
+  "panes": [
+    {
+      "cols": 33,
+      "holder_build": "holder_build-32",
+      "id": "id-30",
+      "offset": 36,
+      "owner": "owner-35",
+      "revision": 31,
+      "rows": 34,
+      "session": "session-37",
+      "x_unknown_field": "later"
+    }
+  ],
+  "projects": [
+    {
+      "ahead": 13,
+      "behind": 14,
+      "branch": "branch-11",
+      "head": "head-12",
+      "id": "id-5",
+      "name": "name-7",
+      "remote": "remote-8",
+      "revision": 6,
+      "root_commit": "root_commit-9",
+      "sessions": [
+        "sessions-10"
+      ],
+      "x_unknown_field": "later"
+    }
+  ],
+  "rounds": [
+    {
+      "catch_up": "skip",
+      "command": [
+        "command-137"
+      ],
+      "completed": true,
+      "completed_reason": "completed_reason-160",
+      "cooldown_ms": 149,
+      "created_at": "created_at-152",
+      "created_by": "created_by-151",
+      "cwd": "cwd-141",
+      "debounce_ms": 148,
+      "deleted": true,
+      "expires_at": "expires_at-144",
+      "failures": 157,
+      "group": "group-147",
+      "harness": "harness-134",
+      "harness_args": [
+        "harness_args-136"
+      ],
+      "id": "id-110",
+      "last_ok": "last_ok-156",
+      "last_run": {
+        "created": "created-169",
+        "destination": "destination-174",
+        "ended_at": "ended_at-171",
+        "events": 173,
+        "id": "id-162",
+        "message": "message-175",
+        "missed": 166,
+        "number": 163,
+        "outcome": {
+          "at": "at-177",
+          "word": "word-176",
+          "x_unknown_field": "later"
+        },
+        "reason": "reason-167",
+        "result": "result-172",
+        "round": "round-164",
+        "session": "session-168",
+        "slot": "slot-165",
+        "started_at": "started_at-170",
+        "state": "taken_over",
+        "trigger": "manual",
+        "x_unknown_field": "later"
+      },
+      "last_slot": "last_slot-155",
+      "max_runs": 143,
+      "mode": "group",
+      "model": "model-135",
+      "name": "name-112",
+      "next_slot": "next_slot-154",
+      "notify": "never",
+      "on_finish": "keep",
+      "paused": true,
+      "paused_reason": "paused_reason-159",
+      "pending": 178,
+      "project": "project-138",
+      "project_dir": "project_dir-139",
+      "project_remote": "project_remote-140",
+      "prompt": "prompt-133",
+      "revision": 111,
+      "secrets": "secrets-150",
+      "skips": 158,
+      "target": "target-142",
+      "timeout_ms": 145,
+      "trigger": {
+        "at": "at-116",
+        "cron": "cron-113",
+        "event": "event-117",
+        "every": "every-114",
+        "filter": {
+          "by": "by-129",
+          "change": "change-126",
+          "field": [
+            "field-121"
+          ],
+          "level": "level-123",
+          "project": "project-118",
+          "project_remote": "project_remote-119",
+          "session": "session-120",
+          "state": [
+            "state-122"
+          ],
+          "status": [
+            "status-127"
+          ],
+          "tags": [
+            "tags-128"
+          ],
+          "text": "text-124",
+          "type": "type-125",
+          "x_unknown_field": "later"
+        },
+        "kind": "manual",
+        "watch": {
+          "argv": [
+            "argv-130"
+          ],
+          "cwd": "cwd-131",
+          "kinds": [
+            "kinds-132"
+          ],
+          "x_unknown_field": "later"
+        },
+        "x_unknown_field": "later",
+        "zone": "zone-115"
+      },
+      "trigger_error": "trigger_error-161",
+      "updated_at": "updated_at-153",
+      "wait_ms": 146,
+      "watcher": {
+        "drops": 183,
+        "last_exit": "last_exit-184",
+        "next_start": "next_start-181",
+        "reason": "reason-185",
+        "restarts": 182,
+        "session": "session-179",
+        "started_at": "started_at-180",
+        "state": "stopped",
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "sessions": [
+    {
+      "context_pct": 24,
+      "dir": "dir-25",
+      "exit": {
+        "code": 20,
+        "signal": "signal-21",
+        "x_unknown_field": "later"
+      },
+      "group": {
+        "id": "id-28",
+        "item": "item-29",
+        "role": "reviewer",
+        "x_unknown_field": "later"
+      },
+      "id": "id-15",
+      "kind": "capcom",
+      "model": "model-23",
+      "name": "name-17",
+      "pane": "pane-19",
+      "project": "project-18",
+      "revision": 16,
+      "round": {
+        "round": "round-26",
+        "run": "run-27",
+        "watcher": true,
+        "x_unknown_field": "later"
+      },
+      "state": "exited",
+      "title": "title-22",
+      "x_unknown_field": "later"
+    }
+  ],
+  "settings": [
+    {
+      "default": {
+        "default": 62,
+        "x_unknown_field": "later"
+      },
+      "id": "id-60",
+      "revision": 63,
+      "source": "config",
+      "value": {
+        "value": 61,
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
