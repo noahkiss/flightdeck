@@ -11,6 +11,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -223,5 +224,40 @@ func TestRoundGroupPeers(t *testing.T) {
 	}
 	if n := strings.Count(inputOf(work, "lead"), "[end round message"); n != 1 {
 		t.Errorf("the held message reached the coordinator: %d messages", n)
+	}
+}
+
+// TestRoundCapcomOneWay: a capcom run whose home host can dial this hab, though this hab cannot
+// dial it, is accepted: the home host pulls its mail over its own link, so it is awake, and the
+// run does not end "queued for Capcom" (rounds.md 5.2, the outbox for a sleeping home host).
+func TestRoundCapcomOneWay(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	a := newPeerRoundEnv(t, "bee", "hab-b")
+	b := newPeerRoundEnv(t, "ay", "hab-a")
+	answer := filepath.Join(b.work, "capcom-answer")
+	writeFile(t, answer, "accepted\n")
+	// Only b dials: the stand-in knows no hab-b.
+	standIn := sshStandIn(t, map[string]string{"hab-a": a.sock})
+	b.startWith(t, standIn, "host-b", "GFF_TEST_CAPCOM_SERVICE="+answer)
+	// a lists b at an endpoint it cannot reach, pinned, so b's link in is known as bee.
+	writeFile(t, a.peers, fmt.Sprintf("[[peers]]\nlabel = \"bee\"\nendpoints = [\"hab-b\"]\ndevice_id = %q\n", welcome(t, b.sock).DeviceID))
+	a.startWith(t, standIn, "host-a")
+	waitPeer(t, a.sock, "bee", "b linked in to a", func(p api.Peer) bool { return p.State == api.PeerStateOnline && p.Inbound })
+	ca := a.control()
+	run(t, "capcom", "assign", "-socket", b.sock, "self")
+	waitUntil(t, "a's copy of b shows the Capcom service", func() bool {
+		e, ok := hostEntry(catalogOf(t, ca), "host-b")
+		return ok && hasWord(e.Catalog, capCapcomService) && e.Catalog.Capcom != nil && e.Catalog.Capcom.Home == e.Catalog.DeviceID
+	})
+	a.must(t, "", "add", "cc", "-mode", "capcom", "-manual", "check the builds")
+	a.must(t, "", "run", "cc")
+	r := waitRun(t, a.habEnv, ca, "cc", api.RoundRunStateSucceeded)
+	if r.Reason != reasonAccepted {
+		t.Fatalf("run %+v, want %q", r, reasonAccepted)
+	}
+	if got := taken(t, answer+".got"); len(got) != 1 || got[0].ID != r.Message {
+		t.Fatalf("taken %+v", got)
 	}
 }

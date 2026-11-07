@@ -1346,10 +1346,13 @@ func serve(args []string) error {
 			self:     key.Fingerprint(),
 			catalog:  cs.List,
 			channels: chSvc,
+			// A peer is awake while either link is up: this hab's to it, or its link in, over
+			// which it pulls its mail (mesh.md 6.5). Only then does a capcom run wait for the
+			// home host's answer instead of ending "queued for Capcom" (rounds.md 5.2).
 			peerOnline: func(label string) bool {
-				for _, l := range pm.Links() {
-					if l.Label == label {
-						return l.Online
+				for _, p := range pm.List().Peers {
+					if p.Label == label {
+						return p.State == api.PeerStateOnline
 					}
 				}
 				return false

@@ -1797,6 +1797,10 @@ modes (`internal/rounds/events.go`, `internal/rounds/batch.go`, `cmd/gff-hab/rou
   `round` mark, cut to the block's bounds and to the 64 KiB channel ceiling, oldest first. A
   `group` message carries the deadline. The message id is a hash of the run id, so a runner
   that restarts never sends a second message for one run.
+- **A sleeping home host.** A run ends "queued for Capcom on <label>" only while neither link
+  between the habs is up. A home host whose link to the runner is up pulls its mail over it, so
+  it counts as awake, and the run waits for its answer. An outcome that arrives twice, by push
+  and by pull, is recorded once.
 - **`duplicate`.** The reason is "already accepted by Capcom". A `duplicate` or `declined` run
   gets no outcome.
 - **The timing of `wait`.** The runner's own `wait` timer and the far side's deadline end
