@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/noahkiss/flightdeck/internal/instructions"
 )
@@ -216,10 +218,13 @@ func sortedKeys[V any](m map[string]V) []string {
 func canonical(v any) string {
 	b, err := json.Marshal(normalize(v))
 	if err != nil {
-		return ""
+		// Never equal to anything, so a value we cannot encode fails every comparison.
+		return fmt.Sprintf("\x00unencodable %d", unencodable.Add(1))
 	}
 	return string(b)
 }
+
+var unencodable atomic.Int64
 
 // normalize turns the decoders' types into one set: maps of any, slices of any, float64.
 func normalize(v any) any {
@@ -248,6 +253,12 @@ func normalize(v any) any {
 		return float64(x)
 	case int64:
 		return float64(x)
+	case float64:
+		// TOML has nan and inf; JSON has neither. A tagged string keeps them comparable.
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return fmt.Sprintf("\x00float %v", x)
+		}
+		return x
 	case json.Number:
 		f, _ := x.Float64()
 		return f

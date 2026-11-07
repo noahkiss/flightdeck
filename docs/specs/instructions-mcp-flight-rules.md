@@ -443,21 +443,30 @@ Claude Code, Codex and opencode. pi is accepted in the config and has no rendere
   shows it, and the write changes or removes it only with `-force <name>`. An owned server the
   registry no longer gives this harness and host is removed. An owned entry gone from the file
   is added back when the registry still lists it, with a note. A refused server never stops
-  the others.
+  the others. The record names its target file: a record written for another file (a changed
+  `$CODEX_HOME` or `$CLAUDE_CONFIG_DIR`) owns nothing in this one, and the dry run warns.
+  A write saves the record first, with the digests it is about to write as pending, and clears
+  them once the file is written; a write cut short in between still owns both forms of each
+  entry. A refused rename puts the record back as it was.
 - **Dry run and write (6.5).** The default run prints, per harness, each server's action
   (add, update, remove, keep, or why not), then a unified diff. For Codex and opencode the
   diff is of the whole file; for Claude only of `mcpServers`, since the rest of
-  `~/.claude.json` is private state. `-write <harness>` writes when the `write` list names it;
-  `-dry-run` with `-write` is an error.
+  `~/.claude.json` is private state. In the diff, a quoted value under a key named like a
+  secret shows as `"<hidden>"`, unless it is a reference. `-write <harness>` writes when the
+  `write` list names it; `-dry-run` with `-write` is an error.
 - **Codex edit.** Line-based and format-preserving: each owned server is one
   `[mcp_servers.<name>]` table with inline tables for its maps. Updated tables stay in place;
-  new ones go at the end; removed ones go with their sub-tables. A server defined another way
-  (dotted keys, an inline `mcp_servers`) is refused for that server. Before any write the edit
-  is checked by decoding both texts: every other value must be unchanged and each touched entry
-  must decode to what was rendered.
+  new ones go at the end; removed ones go with their sub-tables. A comment line inside an
+  updated table is kept, above the new table. A file with CRLF line ends gets CRLF in the new
+  tables. A line inside a multi-line string, array or inline table is never a header. A server
+  defined another way (dotted keys, an inline `mcp_servers`) is refused for that server.
+  Before any write the edit is checked by decoding both texts: every other value must be
+  unchanged and each touched entry must decode to what was rendered. `nan` and `inf` take part
+  in that check; a value the check cannot compare fails it.
 - **opencode edit.** A JSONC edit that keeps comments, trailing commas and the rest of the
   text: it replaces, inserts or deletes the member under `mcp.servers`, creating `mcp` and
-  `servers` when absent. The same decode check runs. A duplicate key is refused.
+  `servers` when absent. A leading byte order mark and a file of comments alone are fine. The
+  same decode check runs. A duplicate key is refused.
 - **Claude write.** Per changed server, `claude mcp remove --scope user <name>`, then
   `claude mcp add-json --scope user <name> <json>` (`-claude-bin`, else `claude` on PATH).
   The file is read back after the CLI runs, and the digests come from what Claude stored.

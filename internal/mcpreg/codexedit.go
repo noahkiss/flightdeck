@@ -16,6 +16,7 @@ import (
 type tomlDoc struct {
 	lines    []string // each with its newline, if it had one
 	sections []tomlSection
+	inside   []bool // per line: starts inside a value
 }
 
 type tomlSection struct {
@@ -28,6 +29,7 @@ type tomlSection struct {
 func parseTOMLDoc(text string) (*tomlDoc, error) {
 	d := &tomlDoc{lines: splitLines(text)}
 	inside := multilineStarts(text, len(d.lines))
+	d.inside = inside
 	var heads []int
 	for i, l := range d.lines {
 		if inside[i] {
@@ -76,7 +78,8 @@ func splitLines(text string) []string {
 	return out
 }
 
-// multilineStarts reports, per line, whether the line starts inside a multi-line string.
+// multilineStarts reports, per line, whether the line starts inside a value: a multi-line
+// string, or an array or inline table that spans lines. Such a line is never a header.
 func multilineStarts(text string, n int) []bool {
 	out := make([]bool, n+1)
 	line := 0
@@ -88,7 +91,7 @@ func multilineStarts(text string, n int) []bool {
 		mlLiteral
 		comment
 	)
-	state := none
+	state, depth := none, 0
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		if c == '\n' {
@@ -97,7 +100,7 @@ func multilineStarts(text string, n int) []bool {
 			}
 			line++
 			if line < len(out) {
-				out[line] = state == mlBasic || state == mlLiteral
+				out[line] = state == mlBasic || state == mlLiteral || depth > 0
 			}
 			continue
 		}
@@ -114,6 +117,10 @@ func multilineStarts(text string, n int) []bool {
 				state = basic
 			case c == '\'':
 				state = literal
+			case c == '[' || c == '{':
+				depth++
+			case (c == ']' || c == '}') && depth > 0:
+				depth--
 			}
 		case basic:
 			if c == '\\' {
@@ -226,12 +233,17 @@ func (d *tomlDoc) serverSections(name string) []int {
 // apply returns the text with each named server set to its new section text, or removed when
 // the text is "". Updated servers stay in place; new ones go at the end in name order.
 func (d *tomlDoc) apply(changes map[string]string) string {
+	nl := "\n"
+	if len(d.lines) > 0 && strings.HasSuffix(d.lines[0], "\r\n") {
+		nl = "\r\n"
+	}
 	drop := make([]bool, len(d.lines))
 	insert := map[int]string{} // line index -> text placed before it
 	var tail []string
 	for _, name := range sortedKeys(changes) {
-		text := changes[name]
+		text := strings.ReplaceAll(changes[name], "\n", nl)
 		secs := d.serverSections(name)
+		var comments strings.Builder
 		for k, si := range secs {
 			end := d.sections[si].end
 			if k+1 < len(secs) && secs[k+1] == si+1 {
@@ -240,6 +252,10 @@ func (d *tomlDoc) apply(changes map[string]string) string {
 			}
 			for l := d.sections[si].start; l < end; l++ {
 				drop[l] = true
+				// A comment the user wrote inside the table stays, above the new table.
+				if t := strings.TrimSpace(d.lines[l]); text != "" && !d.inside[l] && strings.HasPrefix(t, "#") {
+					comments.WriteString(strings.TrimRight(d.lines[l], "\r\n") + nl)
+				}
 			}
 		}
 		if text == "" {
@@ -249,7 +265,7 @@ func (d *tomlDoc) apply(changes map[string]string) string {
 			tail = append(tail, text)
 			continue
 		}
-		insert[d.sections[secs[0]].start] = text
+		insert[d.sections[secs[0]].start] = comments.String() + text
 	}
 	var b strings.Builder
 	for i, l := range d.lines {
@@ -263,10 +279,10 @@ func (d *tomlDoc) apply(changes map[string]string) string {
 	out := b.String()
 	for _, t := range tail {
 		if out != "" && !strings.HasSuffix(out, "\n") {
-			out += "\n"
+			out += nl
 		}
-		if out != "" && !strings.HasSuffix(out, "\n\n") {
-			out += "\n"
+		if out != "" && !strings.HasSuffix(out, nl+nl) {
+			out += nl
 		}
 		out += t
 	}
