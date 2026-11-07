@@ -545,14 +545,20 @@ it on the home hab.
   as waiting for the user's yes (`setup_pending`), the item waits again; when the worktree was
   removed, a new one goes on the existing branch.
 - **A start that ends after the group ended** leaves the member listed as left over, and closes
-  it when it is local and `group.close_members` is on.
+  it when `group.close_members` is on.
+- **`group.close`** closes the idle members, with `group.close_members` on: on this hab, and on
+  a peer with `pane.close` over the link this hab dialed. A peer offline keeps its members,
+  listed as left over.
 - **The envelope** lives on each member's session record, so a member's hab decides a later
   start while the home hab sleeps.
 - **Members.** The home hab sees members through the catalog copies (an agent's `group` field)
   every 5 s, also workers a lead started. An agent the record does not list counts only as a
   worker or reviewer on a plan item, on a plan host and in a plan harness; a start from a
-  session that is not a member carries no `group` field. A local lead that closes stalls its item, and the
-  coordinator hears it.
+  session that is not a member carries no `group` field. A lead whose session is closed stalls
+  its item, and the coordinator hears it. On this hab the session record shows it; for a member
+  on a peer, the home hab asks the peer (`structure.get` over the link it dialed) once per
+  catalog copy that no longer lists the member's agent: a session gone is closed, one exited
+  shows exited. A peer offline is not asked; its members stay as they were.
 - **Reports.** From a pane, only a member of the group or its coordinator reports or notes; a
   member notes its own item only. A report goes to a running coordinator as a Flightdeck note, else to the inbox
   (`[groups] inbox_max`, `inbox_days`). Another hab forwards a report over the link to the home
@@ -573,8 +579,7 @@ it on the home hab.
   `group_status`, `group_amend`, `group_close`, `group_retry`, `group_report` and `group_note`.
 - **Not built in B3.** The usage pause has its call but no governor
   (Part 14 G). Reviewers and plan workers stay planned (B7). The scheduler does not wait for a
-  started worktree setup or fetch first (B4). Stall detection covers local leads only, and
-  `group.close` closes local members only. The app's group card and gff's board section come
+  started worktree setup or fetch first (B4). The app's group card and gff's board section come
   later.
 
 ---

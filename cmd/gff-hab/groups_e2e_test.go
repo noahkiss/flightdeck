@@ -543,3 +543,66 @@ func TestGroupSyncOnPeer(t *testing.T) {
 		t.Fatalf("b opened %d confirmations", n)
 	}
 }
+
+// TestGroupPeerStallAndClose (groups.md 14, 5.8): a lead on the peer whose session the user
+// closes stalls its item, and the coordinator hears it; group.close on the home hab closes the
+// peer's idle lead over the link.
+func TestGroupPeerStallAndClose(t *testing.T) {
+	needGit(t)
+	fakes, work := groupFakes(t)
+	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
+		"CLAUDE_CONFIG_DIR="+filepath.Join(work, "claude"), noRaceExitSleep)
+	repo := gitRepo(t, m.a.work, "shop")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	fileProject(t, m.b, repo)
+	startSpawner(t, m.a, work, repo)
+	waitCatalogProject(t, m.a, "shop", 2)
+	var cur api.SettingsResult
+	call(t, m.a.control(), "settings.get", api.SettingsGetParams{IDs: []string{"confirm.group_plan"}}, &cur)
+	call(t, m.a.control(), "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{
+		{ID: "confirm.group_plan", Value: json.RawMessage("false"), Revision: cur.Settings[0].Revision}}}, nil)
+
+	plan := api.GroupPlan{Title: "Add export", Project: "shop",
+		Items: []api.GroupPlanItem{{ID: "ui", Title: "Export button"}, {ID: "api", Title: "Export API"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "ui", Harness: "claude", Host: "bee", Name: "lead-ui"},
+			{Role: "lead", Item: "api", Harness: "claude", Host: "bee", Name: "lead-api"}}}
+	var gc api.GroupCreated
+	call(t, m.a.control(), "group.create", api.GroupCreateParams{Plan: plan, Coordinator: "alice"}, &gc)
+	gid := gc.Group.ID
+	for _, suffix := range []string{"-ui", "-api"} {
+		pid := memberIn(t, work, suffix)
+		waitUntil(t, "the seed in "+suffix, func() bool { return strings.Contains(readIn(work, "in."+pid), "agent group "+gid) })
+	}
+	var g api.Group
+	waitUntil(t, "both leads running and idle", func() bool {
+		g = getGroup(t, m.a, gid)
+		return g.Members[0].Session != "" && g.Members[1].Session != "" && g.Members[0].Agent == "idle" && g.Members[1].Agent == "idle"
+	})
+	ui, apiLead := g.Members[0], g.Members[1]
+
+	// The user closes the ui lead's session on b: the item stalls and the coordinator hears it.
+	call(t, m.b.control(), "session.close", api.SessionRef{Session: ui.Session}, &api.Empty{})
+	waitUntil(t, "the ui item stalled", func() bool {
+		g = getGroup(t, m.a, gid)
+		return g.Items[0].State == "stalled" && g.Members[0].State == "exited"
+	})
+	if g.Items[1].State != "working" {
+		t.Fatalf("the api item %s", g.Items[1].State)
+	}
+	waitUntil(t, "the coordinator told", func() bool {
+		return strings.Contains(readIn(work, "alice-in"), "Lead lead-ui of item ui was closed")
+	})
+
+	// group.close on the home hab closes the idle lead on b.
+	call(t, m.a.control(), "group.close", api.GroupRef{Group: gid}, &api.GroupResult{})
+	waitUntil(t, "the api lead closed on b", func() bool {
+		var ss api.StructureResult
+		call(t, m.b.control(), "structure.get", api.StructureGetParams{}, &ss)
+		for _, s := range ss.Sessions {
+			if s.ID == apiLead.Session {
+				return s.State == "exited"
+			}
+		}
+		return true
+	})
+}
