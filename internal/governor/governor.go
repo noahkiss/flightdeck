@@ -112,8 +112,11 @@ type Config struct {
 	// Account returns a usage account by key. Nil: no account has readings.
 	Account func(key string) (api.UsageAccount, bool)
 	// OnChange hears each consumer whose answer changed, after the consumer's own OnChange,
-	// with no lock held. Nil: none.
+	// with no lock held; also a consumer's first answer and its removal (a zero Answer), which
+	// its own OnChange does not hear. Nil: none.
 	OnChange func(id string, a Answer)
+	// OnSpent hears each Spent, with no lock held: the counters in Section moved. Nil: none.
+	OnSpent func(id string)
 	// StatePath keeps today's counters across a restart. "": in memory only.
 	StatePath string
 	Now       func() time.Time
@@ -142,8 +145,9 @@ type Governor struct {
 }
 
 type change struct {
-	id string
-	a  Answer
+	id    string
+	a     Answer
+	first bool // a consumer's first answer, or its removal: only Config.OnChange hears it
 }
 
 type count struct {
@@ -245,8 +249,8 @@ func (g *Governor) rollLocked() {
 	}
 }
 
-// Register adds a consumer, or replaces one of the same id, and returns its answer. OnChange
-// does not hear the first answer.
+// Register adds a consumer, or replaces one of the same id, and returns its answer. The
+// consumer's own OnChange does not hear the first answer; Config.OnChange does.
 func (g *Governor) Register(c Consumer) Answer {
 	g.mu.Lock()
 	g.consumers[c.ID] = c
@@ -260,8 +264,12 @@ func (g *Governor) Register(c Consumer) Answer {
 // consumer registered again the same day starts from what it spent.
 func (g *Governor) Unregister(id string) {
 	g.mu.Lock()
+	_, had := g.answers[id]
 	delete(g.consumers, id)
 	delete(g.answers, id)
+	if had {
+		g.queue = append(g.queue, change{id: id, first: true})
+	}
 	g.mu.Unlock()
 	g.Recheck()
 }
@@ -298,6 +306,9 @@ func (g *Governor) Spent(id string, input, output int64, usd float64) {
 	c.Output += output
 	g.saveLocked()
 	g.mu.Unlock()
+	if g.cfg.OnSpent != nil {
+		g.cfg.OnSpent(id)
+	}
 	g.Recheck()
 }
 
@@ -325,8 +336,8 @@ func (g *Governor) Recheck() {
 		}
 		old, had := g.answers[id]
 		g.answers[id] = a
-		if had && !old.same(a) {
-			g.queue = append(g.queue, change{id, a})
+		if !had || !old.same(a) {
+			g.queue = append(g.queue, change{id: id, a: a, first: !had})
 		}
 	}
 	if g.stop != nil {
@@ -354,7 +365,7 @@ func (g *Governor) deliverLocked() {
 		g.queue = g.queue[1:]
 		own := g.consumers[c.id].OnChange
 		g.mu.Unlock()
-		if own != nil {
+		if own != nil && !c.first {
 			own(c.a)
 		}
 		if g.cfg.OnChange != nil {

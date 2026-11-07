@@ -127,6 +127,9 @@ func TestShareAccumulates(t *testing.T) {
 	g, c, acc, h := setup(t, "")
 	acc.week("acct", t0, 13)
 	g.Register(capcom(DefaultPolicy))
+	if got := h.take(); len(got) != 1 {
+		t.Fatalf("Config.OnChange heard %v for a new consumer, want its first answer", got)
+	}
 	// Day 1: the share is 15%; 13% is 86.7% of it, past event_stop.
 	a := check(t, g, "capcom", Ok, Wait)
 	if a.Basis != BasisPlan || a.SharePct != 15 || a.UsedPct != 13 {
@@ -162,6 +165,7 @@ func TestStepsAndUntil(t *testing.T) {
 	g, _, acc, h := setup(t, "")
 	acc.week("acct", t0, 15)
 	g.Register(capcom(DefaultPolicy))
+	h.take()
 	check(t, g, "capcom", Small, Wait) // 100% of the share: the small model
 	acc.week("acct", t0, 18)
 	g.Recheck()
@@ -193,6 +197,7 @@ func TestWaitEndsOnItsOwn(t *testing.T) {
 	g, c, acc, h := setup(t, "")
 	acc.week("acct", t0, 18)
 	g.Register(capcom(DefaultPolicy))
+	h.take()
 	a := check(t, g, "capcom", Wait, Wait)
 	c.advance(a.Until.Sub(c.Now()))
 	check(t, g, "capcom", Ok, Ok)
@@ -319,7 +324,8 @@ func TestGroupWaitsAndResumes(t *testing.T) {
 	if a := g.Register(grp); a.Pace != Wait || a.Until.IsZero() {
 		t.Fatalf("group answer %+v", a)
 	}
-	check(t, g, "capcom", Ok, Ok)            // one consumer's cap is not another's
+	check(t, g, "capcom", Ok, Ok) // one consumer's cap is not another's
+	h.take()
 	acc.week("member", t0.Add(time.Hour), 3) // the window moved: a new reading
 	g.Recheck()
 	check(t, g, "group:g1", Ok, Ok)
@@ -329,6 +335,9 @@ func TestGroupWaitsAndResumes(t *testing.T) {
 	g.Unregister("group:g1")
 	if _, ok := g.Check("group:g1"); ok {
 		t.Fatal("an unregistered consumer still answers")
+	}
+	if got := h.take(); len(got) != 1 || got[0] != "group:g1 /" {
+		t.Fatalf("heard %v at the removal", got)
 	}
 }
 
@@ -349,7 +358,7 @@ func TestOnChangeReentrant(t *testing.T) {
 	g.Recheck()
 	acc.week("acct", t0, 15)
 	g.Recheck()
-	if len(got) != 2 || got[0] != Ok || got[1] != Small {
+	if len(got) != 3 || got[0] != Wait || got[1] != Ok || got[2] != Small {
 		t.Fatalf("heard %v", got)
 	}
 }
