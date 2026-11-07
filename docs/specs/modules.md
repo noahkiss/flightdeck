@@ -692,7 +692,16 @@ process.
 
 gff-hab has no module service yet (it comes with install, 10.2), so `gff-hab serve`
 starts no module host. The service will hold one Host, which starts the child when the first
-module is enabled (4).
+module is enabled (4), and one `Managed` per module (8.3). It still needs what this spec leaves
+open:
+
+| Need | Where it is open |
+|---|---|
+| Which modules are enabled, and where their folders and settings live | Install (10.2) writes it; no config section names it yet |
+| When to call refresh: at load, on the `refresh` schedule, on the manifest's `events` (at most one a second), after an act, on a settings change | 5, 8.1; the scheduler is not built |
+| The API: the `modules` capability, the client's vocabulary in its hello, the module list with each module's state, the trees in the snapshot and as events, `module.act`, and a `module.retry` method for the Retry button | 6.6's table names them; only `module.act` has a shape |
+| `gff-hab modules logs <id>` | Needs the running service to read `Managed.Logs` from |
+| A log tail that outlives a gff-hab restart, deleted with the module (12) | The tail is in memory today |
 
 ---
 
@@ -731,6 +740,36 @@ cap.
   button. A success resets the count.
 - The log tail keeps the last 200 lines per module, across reloads. `gff-hab modules logs <id>`
   prints it.
+
+**Built (`modhost.Managed`).** A `Managed` wraps one module's `Runner` with these rules. The
+owner gives it a loader (`Host.New` with the bundle and options); it loads the module at the
+first call, and again after a call stopped it (`ErrStopped`) or after `Reload` (a new version,
+changed settings).
+
+- **What counts.** A `refresh` or `render` error counts one failure, except `ErrHeapPressure`
+  (another module holds the memory), `ClientTooOld` (the client's), a `HostError` with no
+  `Culprit` (the host was down for another reason), `ErrHostClosed` and the caller's own cancel.
+  A failed load counts. An error that stops the module counts even when the caller cancelled,
+  so a module that stops on every call still pauses. An `act` counts only an error that stops the module (`MemoryError`,
+  `InternalError`, a stuck `TimeoutError`), a culprit `HostError` and a failed load. Design call:
+  an act's own exception or timeout goes back to the tap ("Did not finish", 8.1), and the
+  refresh after the act counts. A good act does not reset the count either.
+- **Paused.** At three, every call returns `PausedError` ("Paused after errors: <the last
+  failure>", `errors.Is` finds `ErrPaused`) and runs no module code. `Retry` (the client's
+  button) ends the pause and sets the count to zero; so does `Reload`.
+- **Last good tree.** `Render` keeps each good tree by place and vocabulary, with the time it
+  was made by the hab's clock and a revision that rises with each good tree of the module. A
+  failed or paused render returns the last good tree for its place and vocabulary beside the
+  error. Calls run one at a time and a tree is kept before the next call starts, so a higher
+  revision always holds a later render.
+- **Reload and Retry during a call.** A call that started before a `Reload` or `Retry` and ends
+  after it counts nothing and keeps no tree: it ran the old version, or the failure the person
+  just cleared. Both clear the last failure too.
+- **Changed.** The owner's `Changed` runs after the call's lock is released, so it may call the
+  `Managed` again (a redraw that renders).
+- **Log tail.** The loader gets the tail's log function for `Options.Log`, so `fd.log` lines
+  land in it. The tail also gets one line per counted failure, per pause and per retry,
+  prefixed `gff-hab:`. It lives in memory and survives `Reload`; it is lost when gff-hab stops.
 
 ### 8.4 How the runtime enforces them
 
@@ -783,7 +822,8 @@ cap.
   `ErrHeapPressure`, `ScriptError` (an exception the module did not catch, or a syntax error,
   with its JS name; message and stack cut to 2,000 and 8,000 characters), `TreeError`,
   `ClientTooOld`, `BundleError`, `NewerBridge` and `NewerBlocks`. Counting failures, pausing a
-  module after three and keeping the last good tree (8.3) belong to the module host, stage 5.
+  module after three and keeping the last good tree (8.3) are `modhost.Managed`'s, over any
+  `Runner`.
 
 ---
 
