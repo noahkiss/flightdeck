@@ -23,7 +23,8 @@ type GroupRow struct {
 	ID    string
 	Title string
 	State string
-	// Items and Landed count the plan's items that are not dropped, and those landed.
+	// Items and Landed count the plan's items that are not dropped, and those landed;
+	// Members counts the members started. The catalog's short form counts the same way.
 	Items, Landed, Members int
 	Coordinator            string // the coordinator's name, when known
 	// PausedBy names the pause reasons: "you", "usage", or both.
@@ -125,7 +126,11 @@ func liveGroup(host string, g api.Group) GroupRow {
 		}
 		r.ItemRows = append(r.ItemRows, GroupItemRow{Title: it.Title, State: string(it.State), Lead: it.Lead, Reason: it.Reason})
 	}
-	r.Members = len(g.Members)
+	for _, m := range g.Members {
+		if m.Session != "" {
+			r.Members++ // members started, as the catalog's short form counts them
+		}
+	}
 	return r
 }
 

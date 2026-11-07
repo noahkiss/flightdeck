@@ -348,7 +348,7 @@ public final class ConfirmCenter {
     /// The plan card's draft: the owner's changes, else the plan as it came.
     public func groupDraft(_ card: ConfirmCard) -> GroupPlanDraft? {
         guard let g = card.confirmation.group else { return nil }
-        return groupDrafts[card.id] ?? GroupPlanDraft(g.plan)
+        return groupDrafts[card.id] ?? GroupPlanDraft(g.plan, amend: g.amend == true)
     }
 
     public func setGroupDraft(_ d: GroupPlanDraft, for card: ConfirmCard) {

@@ -251,11 +251,13 @@ public enum GroupText {
         }
     }
 
-    /// The header line's counts: "2 of 3 landed · 4 members".
+    /// The header line's counts: "2 of 3 landed · 4 started". Dropped items and members not
+    /// started yet are left out, as the catalog's short form leaves them out.
     public static func counts(_ g: Group) -> String {
         let landed = g.items.filter { $0.state == "landed" }.count
         let live = g.items.filter { $0.state != "dropped" }.count
-        return "\(landed) of \(live) landed · \(g.members.count) member\(g.members.count == 1 ? "" : "s")"
+        let started = g.members.filter { !($0.session ?? "").isEmpty }.count
+        return "\(landed) of \(live) landed · \(started) started"
     }
 
     /// The member's state as a session row shows it: the agent state once started, else the
