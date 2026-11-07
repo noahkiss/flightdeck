@@ -36,6 +36,7 @@ const (
 	modeSidebar               // keys move in the sidebar
 	modeBoard                 // the status board fills the screen
 	modePrompt                // a line of text or a yes or no, on the bottom bar
+	modeThread                // the Capcom service's thread fills the pane area (capcom.go)
 )
 
 // prompt is a question on the bottom bar.
@@ -68,6 +69,7 @@ type workspaceUI struct {
 	pending  []pendingStart    // startup tabs' programs waiting for their hosts (saved.go)
 	msg      string            // one line on the bottom bar until the next key
 	prompt   *prompt
+	thread   *threadState // the Capcom thread shown in modeThread
 
 	usage   usageBook   // each account's latest usage reading, from every host
 	sys     *sysReading // the last system info reading, or nil
@@ -248,6 +250,8 @@ func (u *workspaceUI) event(hs *hostState, e api.Event) {
 		}
 	case api.EventCatalogUpdated:
 		u.listCatalog(hs)
+	case api.EventCapcomItem, api.EventCapcomTyping:
+		u.threadEvent(hs, e)
 	case api.EventUsageUpdated:
 		var a api.UsageAccount
 		if json.Unmarshal(e.Data, &a) == nil && a.Key != "" {
@@ -480,6 +484,10 @@ func (u *workspaceUI) open(r board.Row, newTab bool) {
 	switch {
 	case r.Offline():
 		u.msg = r.Host + " is offline"
+		return
+	case u.capcomService(r):
+		// The Capcom service has no pane: its thread shows as text (capcom-service.md 7.7).
+		u.openThread(r)
 		return
 	case (r.Pane == "" || r.State == api.SessionStateExited) && r.Session == "":
 		u.msg = r.Name + " has exited"
@@ -725,6 +733,10 @@ func (u *workspaceUI) key(k key) {
 		return
 	}
 	u.msg = ""
+	if u.mode == modeThread && u.thread != nil {
+		u.threadKey(k)
+		return
+	}
 	if u.filterOn {
 		switch k.name {
 		case "enter", "esc":

@@ -1179,7 +1179,7 @@ func (c *client) compose(a arrangement) {
 	c.canvas.clear()
 	var cursorX, cursorY int
 	cursorOn := false
-	board := c.ws && c.ui.mode == modeBoard
+	board := c.ws && (c.ui.mode == modeBoard || c.ui.thread != nil && (c.ui.mode == modeThread || c.ui.mode == modePrompt))
 	if c.ws {
 		cx, cy, on := c.ui.draw()
 		cursorX, cursorY, cursorOn = cx, cy, on
