@@ -32,6 +32,7 @@ type supFake struct {
 	fresh    []string // seeds
 	notes    []string // to the asker
 	note     bool     // the member answers a hand-off ask with group_note
+	stuck    bool     // the member's turn never ends
 	sup      *superviseService
 	settings map[string]string
 }
@@ -78,7 +79,12 @@ func newSupFake(t *testing.T, harnessKind string) *supFake {
 			f.mu.Lock()
 			f.sent = append(f.sent, text)
 			answer := f.note && strings.Contains(text, "hand-off")
+			stuck := f.stuck
 			f.mu.Unlock()
+			if stuck {
+				go f.setState(api.AgentStatusWorking)
+				return nil
+			}
 			go f.turn(answer)
 			return nil
 		},
@@ -385,3 +391,35 @@ func TestCodexContext(t *testing.T) {
 }
 
 func strconvItoa(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// TestSuperviseHandoffNeverMidTurn (review M1, M5): a note written before the ask does not
+// count, and a member whose turn does not end within [groups] handoff_note_wait is never
+// swapped: the action fails, and the next automatic try backs off.
+func TestSuperviseHandoffNeverMidTurn(t *testing.T) {
+	f := newSupFake(t, "claude")
+	f.ss.Compacts, f.stuck = 4, true
+	f.pct = pctOf(45)
+	f.sup.Noted("s1") // before any ask: nothing to count
+	f.sup.Start()
+	var got api.MemberAction
+	waitSup(t, "the action failed", func() bool {
+		f.sup.mu.Lock()
+		defer f.sup.mu.Unlock()
+		for _, a := range f.sup.byID {
+			got = a.a
+		}
+		return got.State == actFailed
+	})
+	if !strings.Contains(got.Reason, "turn did not end") {
+		t.Fatalf("reason %q", got.Reason)
+	}
+	if _, _, fresh, _, _, _ := f.snapshot(); len(fresh) != 0 {
+		t.Fatal("a fresh session started mid-turn")
+	}
+	f.sup.mu.Lock()
+	wait := time.Until(f.sup.retryAt["s1"])
+	f.sup.mu.Unlock()
+	if wait < 50*time.Second {
+		t.Fatalf("retry in %s", wait)
+	}
+}
