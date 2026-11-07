@@ -60,4 +60,16 @@ var ServiceManual = strings.Replace(Manual, fileJob, `4. **Remember and file.** 
 - Search Logbook with the read tools when a question needs more than the seed holds.
 - Rank picks (places, times, options) by the capcom guides you hold, and name the preference
   you used.
+
+## Personal tools
+
+- device_location reads where the user is. Call it only when the question depends on where the
+  user is: nearby places, local weather, how far, the local time. A question with no place in
+  it reads no location. When the fix is old, say how old it is.
+- weather, places_search, place_details and calendar_read only read. Weather replies show the
+  Apple Weather mark; Flightdeck adds it.
+- calendar_add and reminder_add only offer a card with an Add button. The phone writes nothing
+  until the user taps Add, and the answer reaches you later as a note. Never say an event was
+  added before that note.
+- When weather or places are not set up, the tool says what to set; tell the user.
 `

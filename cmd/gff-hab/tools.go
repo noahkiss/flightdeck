@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -76,6 +77,30 @@ func (a toolArgs) num(name string) int64 {
 	return 0
 }
 
+// float reads a number argument; ok is false when it is absent or not a number.
+func (a toolArgs) float(name string) (float64, bool) {
+	var f float64
+	var err error
+	switch v := a[name].(type) {
+	case float64:
+		f = v
+	case int64:
+		f = float64(v)
+	case int:
+		f = float64(v)
+	case json.Number:
+		f, err = v.Float64()
+	case string:
+		f, err = strconv.ParseFloat(v, 64)
+	default:
+		return 0, false
+	}
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
+}
+
 // errWrite is the refusal of an argument a read tool does not take: read tools never write.
 type errWrite struct{ tool, arg string }
 
@@ -103,10 +128,6 @@ func (t kitTool) check(a toolArgs) error {
 			continue
 		}
 		switch x.Type {
-		case "boolean":
-			if _, ok := v.(bool); !ok {
-				return fmt.Errorf("%s: %s must be true or false", t.Name, x.Name)
-			}
 		case "array":
 			l, ok := v.([]any)
 			if !ok {
@@ -130,6 +151,20 @@ func (t kitTool) check(a toolArgs) error {
 				}
 			default:
 				return fmt.Errorf("%s: %s must be a whole number", t.Name, x.Name)
+			}
+		case "number":
+			if _, ok := a.float(x.Name); !ok {
+				return fmt.Errorf("%s: %s must be a number", t.Name, x.Name)
+			}
+		case "boolean":
+			switch b := v.(type) {
+			case bool:
+			case string:
+				if _, err := strconv.ParseBool(b); err != nil {
+					return fmt.Errorf("%s: %s must be true or false", t.Name, x.Name)
+				}
+			default:
+				return fmt.Errorf("%s: %s must be true or false", t.Name, x.Name)
 			}
 		default:
 			if _, ok := v.(string); !ok {
