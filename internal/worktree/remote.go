@@ -15,12 +15,13 @@ func (g Git) RemoteFor(ctx context.Context, dir, identity string) string {
 	return ""
 }
 
-// Fetch fetches every branch of remote into its remote-tracking refs, with no tags.
+// Fetch fetches every branch of remote into its remote-tracking refs, with no tags. The refspec
+// is explicit: a single-branch clone's configured one would leave out the group branches.
 func (g Git) Fetch(ctx context.Context, dir, remote string) error {
-	if remote == "" || strings.HasPrefix(remote, "-") {
+	if remote == "" || strings.HasPrefix(remote, "-") || strings.ContainsAny(remote, ":*") {
 		return fmt.Errorf("%w: remote %q", ErrInvalid, remote)
 	}
-	_, err := g.run(ctx, dir, "fetch", "--quiet", "--no-tags", remote)
+	_, err := g.run(ctx, dir, "fetch", "--quiet", "--no-tags", remote, "+refs/heads/*:refs/remotes/"+remote+"/*")
 	return err
 }
 

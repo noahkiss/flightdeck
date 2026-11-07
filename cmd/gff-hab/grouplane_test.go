@@ -467,7 +467,7 @@ func TestLaneWorktrees(t *testing.T) {
 	waitUntil(t, "a's worktree to go", func() bool {
 		f.svc.refresh("7777777777777777")
 		_, err := os.Stat(wtA)
-		return os.IsNotExist(err)
+		return os.IsNotExist(err) && f.get("7777777777777777").Members[0].WorktreeRemoved
 	})
 	if g := f.get("7777777777777777"); g.Items[0].State != groups.ItemLanded || !g.Members[0].WorktreeRemoved {
 		t.Fatalf("after the close %+v %+v", g.Items[0], g.Members[0])
@@ -489,5 +489,58 @@ func TestLaneWorktrees(t *testing.T) {
 	f.mu.Unlock()
 	if closed != "p-b" {
 		t.Fatalf("closed panes %q", closed)
+	}
+}
+
+// TestLaneWaitsOnce: a lane that cannot run (the remote is gone) waits with one retry armed,
+// however often the scheduler kicks it, and records no attempt per retry.
+func TestLaneWaitsOnce(t *testing.T) {
+	f := newLaneFix(t, "", groups.DefaultKeys)
+	a := f.branch("group/g8/a", "origin/main", "a.txt")
+	if err := os.Rename(f.bare, f.bare+".gone"); err != nil {
+		t.Fatal(err)
+	}
+	f.group("8888888888888888", laneItem{id: "a", head: a})
+	waitUntil(t, "the lane to wait", func() bool { return f.get("8888888888888888").Lane.Waits != "" })
+	for range 20 {
+		f.svc.laneKick("8888888888888888")
+	}
+	time.Sleep(400 * time.Millisecond) // eight retry times
+	f.svc.mu.Lock()
+	armed := len(f.svc.lane.armed)
+	f.svc.mu.Unlock()
+	g := f.get("8888888888888888")
+	if st := g.Items[0].State; armed > 1 || len(g.Items[0].Attempts) != 0 || (st != groups.ItemReady && st != groups.ItemLanding) {
+		t.Fatalf("armed %d, item %+v", armed, g.Items[0])
+	}
+	if err := os.Rename(f.bare+".gone", f.bare); err != nil {
+		t.Fatal(err)
+	}
+	f.waitItem("8888888888888888", "a", groups.ItemLanded)
+}
+
+// TestLaneCloseStopsRun: closing a group while its item's CI runs stops the run: nothing lands
+// after the end, and the item is listed as not landed.
+func TestLaneCloseStopsRun(t *testing.T) {
+	d := t.TempDir()
+	ci, started := filepath.Join(d, "ci.sh"), filepath.Join(d, "started")
+	writeFile(t, ci, fmt.Sprintf("#!/bin/sh\ntouch %q\nwhile :; do sleep 0.1; done\n", started))
+	os.Chmod(ci, 0o700)
+	f := newLaneFix(t, fmt.Sprintf(`{"lane":{"ci":%q}}`, ci), groups.DefaultKeys)
+	a := f.branch("group/g9/a", "origin/main", "a.txt")
+	f.group("9999999999999999", laneItem{id: "a", head: a})
+	waitUntil(t, "CI to start", func() bool { _, err := os.Stat(started); return err == nil })
+	if _, err := f.svc.Close(context.Background(), "9999999999999999"); err != nil {
+		t.Fatal(err)
+	}
+	g := f.get("9999999999999999")
+	if g.State != groups.StateEnded || g.Items[0].State != groups.ItemReady || g.Lane.Landing != "" {
+		t.Fatalf("after close: %s, item %+v, lane %+v", g.State, g.Items[0], g.Lane)
+	}
+	if got := f.subjects(); got != "first" {
+		t.Fatalf("main moved after the close: %s", got)
+	}
+	if !strings.Contains(strings.Join(g.Leftovers, "\n"), "branch group/9999999999999999/a, not landed") {
+		t.Fatalf("leftovers %v", g.Leftovers)
 	}
 }

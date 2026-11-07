@@ -140,6 +140,21 @@ type Submitted struct {
 	Reviewer string
 }
 
+// MaySubmit reports why a submit of an item would be refused for its state, or nil: a lead
+// submits while it works, fixes, is in review or is ready (groups.md 6.2).
+func MaySubmit(g api.Group, item string) error {
+	i := ItemIndex(g, item)
+	if i < 0 {
+		return control.Errorf(api.ErrorKindNotFound, "group %s has no item %q", g.ID, item)
+	}
+	switch it := g.Items[i]; it.State {
+	case ItemWorking, ItemFix, ItemReview, ItemReady:
+		return nil
+	default:
+		return control.Errorf(api.ErrorKindConflict, "item %s is %s; a lead submits while it works, fixes or is in review", it.ID, it.State)
+	}
+}
+
 // Submit takes a lead's submit of head (groups.md 6.2): the item goes to review, or to ready
 // with review off. A submit of another head while a review runs, or after a verdict, starts the
 // review again on the new head; the same head in review changes nothing.
@@ -149,10 +164,8 @@ func Submit(g *api.Group, item, head string, now time.Time) (Submitted, error) {
 		return Submitted{}, control.Errorf(api.ErrorKindNotFound, "group %s has no item %q", g.ID, item)
 	}
 	it := &g.Items[i]
-	switch it.State {
-	case ItemWorking, ItemFix, ItemReview, ItemReady:
-	default:
-		return Submitted{}, control.Errorf(api.ErrorKindConflict, "item %s is %s; a lead submits while it works, fixes or is in review", it.ID, it.State)
+	if err := MaySubmit(*g, item); err != nil {
+		return Submitted{}, err
 	}
 	if head == "" {
 		return Submitted{}, invalid("the submit names no commit: commit on branch %s first", it.Branch)

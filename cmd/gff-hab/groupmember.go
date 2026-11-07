@@ -327,6 +327,15 @@ func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx con
 			if err != nil {
 				return nil, nil, err
 			}
+			// The push replaces the branch on the remote: never while the lane works on it, or
+			// for a submit the home hab would refuse.
+			g, err := memberGroup(ctx, svc, p.Group)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := groups.MaySubmit(g, p.Item); err != nil {
+				return nil, nil, err
+			}
 			if err := memberPush(ctx, store, folderOf, ss, groups.Branch(p.Group, p.Item)); err != nil {
 				return nil, nil, err
 			}
@@ -359,20 +368,18 @@ func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx con
 				fixed.Head = head
 				p.Fixed = &fixed
 			}
-			g, err := svc.Get(p.Group)
+			g, err := memberGroup(ctx, svc, p.Group)
 			if err != nil {
-				var r api.GroupResult
-				if err = svc.forward(ctx, p.Group, "group.get", api.GroupRef{Group: p.Group}, &r); err != nil {
-					return nil, nil, err
-				}
-				g = r.Group
+				return nil, nil, err
 			}
+			inReview := false
 			if ii := groups.ItemIndex(g, p.Item); ii >= 0 && g.Items[ii].Submitted != "" {
 				sub := g.Items[ii].Submitted
 				p.Checked, p.Reviewed = sub, head
 				p.Descends = head != sub && memberGit.IsAncestor(ctx, memberFolder(ctx, folderOf, ss), sub, head)
+				inReview = g.Items[ii].State == groups.ItemReview
 			}
-			if p.Verdict == "pass" && p.Descends && p.Fixed != nil {
+			if p.Verdict == "pass" && p.Descends && p.Fixed != nil && inReview {
 				// A pass with fixes lands the review head: the lane finds it on the remote.
 				if err := memberPush(ctx, store, folderOf, ss, groups.ReviewBranch(p.Group, p.Item)); err != nil {
 					return nil, nil, err
@@ -403,4 +410,16 @@ func groupWrite(method string) bool {
 		return true
 	}
 	return false
+}
+
+// memberGroup reads a group from this hab, or from its home hab.
+func memberGroup(ctx context.Context, svc *groupsService, id string) (api.Group, error) {
+	if g, err := svc.Get(id); err == nil {
+		return g, nil
+	}
+	var r api.GroupResult
+	if err := svc.forward(ctx, id, "group.get", api.GroupRef{Group: id}, &r); err != nil {
+		return api.Group{}, err
+	}
+	return r.Group, nil
 }

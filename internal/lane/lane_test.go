@@ -292,13 +292,28 @@ func TestLaneStacked(t *testing.T) {
 		t.Fatalf("a: %+v", res)
 	}
 	jb := r.job("group/g/b", b)
-	jb.Upstream = a
+	a2 := r.item("group/g/a2", a, "a2.txt") // a later head of a that b does not hold
+	jb.Upstreams = []string{a2, a}
 	res := Run(ctx, jb)
 	if res.Outcome != Landed {
 		t.Fatalf("b: %+v", res)
 	}
 	if got := strings.Join(r.subjects(), ","); got != "add b.txt,add a.txt,move m.txt,first" {
 		t.Fatalf("main log %s", got)
+	}
+}
+
+// A stacked item that holds none of its base's heads goes back: a plain rebase would replay the
+// base's old commits onto the target.
+func TestLaneStackedOnAnOldHead(t *testing.T) {
+	r := newRepo(t, "")
+	a := r.item("group/g/a", "origin/main", "a.txt")
+	b := r.item("group/g/b", a, "b.txt")
+	a2 := r.item("group/g/a2", "origin/main", "a2.txt") // a submitted again from scratch
+	jb := r.job("group/g/b", b)
+	jb.Upstreams = []string{a2}
+	if res := Run(context.Background(), jb); res.Outcome != Back || res.Step != StepRebase || !strings.Contains(res.Output, "no longer has") {
+		t.Fatalf("b: %+v", res)
 	}
 }
 
@@ -349,4 +364,24 @@ func TestParseConfig(t *testing.T) {
 		t.Fatal("a number taken as checks")
 	}
 	_ = worktree.ConfigFile
+}
+
+func TestPushRefusal(t *testing.T) {
+	cases := map[string]refusal{
+		" ! [rejected]        x -> main (non-fast-forward)":                     refusedRace,
+		" ! [rejected]        x -> main (fetch first)":                          refusedRace,
+		" ! [rejected]        x -> b (stale info)":                              refusedRace,
+		" ! [remote rejected] x -> main (cannot lock ref 'refs/heads/main')":    refusedRace,
+		" ! [remote rejected] x -> main (incorrect old value provided)":         refusedRace,
+		" ! [remote rejected] x -> main (failed to update ref)":                 refusedRace,
+		" ! [remote rejected] x -> main (pre-receive hook declined)":            refusedRule,
+		" ! [remote rejected] x -> main (protected branch hook declined)":       refusedRule,
+		"remote: Permission to o/r.git denied to u.":                            refusedRule,
+		"fatal: unable to access 'https://h/r.git/': Could not resolve host: h": refusedOther,
+	}
+	for out, want := range cases {
+		if got := pushRefusal(out); got != want {
+			t.Errorf("%q: %d, want %d", out, got, want)
+		}
+	}
 }
