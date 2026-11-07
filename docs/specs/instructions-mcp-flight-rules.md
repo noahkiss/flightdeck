@@ -420,8 +420,8 @@ Claude Code, Codex and opencode. pi is accepted in the config and has no rendere
     only under its own name and a header only whole or as a bearer token, so another form is
     "not rendered for codex".
   - `{ secret = "<provider>:<reference>" }` or `{ command = ["argv", ...] }`: resolved at
-    launch by `gff-hab mcp launch` or `gff-hab mcp header`. Those commands come in a later
-    stage, so until then the server is "not rendered: needs secret resolution at launch".
+    launch by `gff-hab mcp launch` or `gff-hab mcp header` (8.5). A provider no
+    `[[mcp.provider]]` defines is a config error.
   A URL with a password in it is refused.
 - **Shapes.** Section 7.1 at user scope only; Flightdeck never writes a project file (D3).
   Claude: `type`, `command`, `args`, `env`, or `url` and `headers`; a `cwd` has no Claude key,
@@ -474,6 +474,51 @@ Claude Code, Codex and opencode. pi is accepted in the config and has no rendere
   (0600 for a new file), synced, then renamed over the target. The target is read again just
   before the rename; when it changed since the plan, nothing is written and the run says to
   try again.
+
+### 8.5 Secrets resolved at launch
+
+Built (`internal/mcpreg`, `gff-hab mcp launch`, `gff-hab mcp header`).
+
+- **Where resolution happens.** In the MCP server's own launch, never in gff-hab's start of a
+  harness. The harness runs the launcher, which resolves each value and execs the server, or
+  runs the header helper when it connects. The harness's own environment never holds the
+  value, so no shell command an agent runs can read it; only the server process holds it.
+  gff-hab does not inject secrets into `session.create` or rounds.
+- **No gff-hab needed.** Both commands read the registry from `-config` (else `$GFF_CONFIG`)
+  and the provider from the same file, so they work from a plain terminal, with no gff-hab
+  running and no socket. The rendered entry names the config file by its absolute path.
+- **Provider.** `[[mcp.provider]]` with `name`, `command` (an argv), `env` and `timeout`.
+  `secret = "<provider>:<reference>"` runs the argv with the reference as its last argument;
+  `command = [...]` runs that argv. Each run uses no shell, stdin `/dev/null`, the launcher's
+  environment and its own process group, killed with the group past `timeout` (seconds;
+  default 8, since Claude gives up on a header helper after 10 s; at most 300). Stdout is
+  capped at 64 KiB; one trailing newline goes. Empty output, a NUL byte, or a header value of
+  more than one line is refused. `env` names the variables the provider reads. A stop signal
+  to the launcher (TERM, INT, HUP) kills a provider still running, with its group.
+- **Values.** Held in the launcher's memory only, then in the exec'd server's environment, or
+  in the helper's stdout to the harness. Never logged, written to a file, or put in an error
+  text. An error names the server, the key, the provider and the exit status or timeout. It
+  never quotes the provider's stderr, which may echo a short token that a filter cannot tell
+  from a message. Nor does it quote a secret reference or the variable an env value names,
+  since a user may paste the token itself there. The launcher keeps its whole environment
+  (`gff-hab mcp` serve clears the Capcom credential; launch and header do not).
+- **stdio shape.** `<launcher> mcp launch -config <file> <name>`, where `<launcher>` is the
+  render's `-launcher` (default `gff-hab`, found on the harness's PATH). The launcher sets
+  the server's `env` values and its `cwd` (a relative one against the launcher's folder), so
+  the entry holds neither, and a `cwd` is fine for Claude here. Claude: `type`, `command`, `args`. Codex: `command`, `args`, `env_vars` with each
+  variable an env reference reads and each one the server's providers name, since Codex passes
+  a stdio server only a default set. A `command` value cannot list the variables it reads, so
+  under Codex it sees only that default set; a provider with `env` is the way around. opencode: `type` `local` and `command` as one array. A
+  `timeout` renders as in 8.4.
+- **http shape.** Plain and env headers render as in 8.4. The secret and command headers come
+  from the helper, `<launcher> mcp header -config <file> <name>`, quoted for a POSIX shell:
+  Claude's `headersHelper`, Codex's `http_headers_helper`. The helper prints one JSON object of
+  those headers, resolving them all at once under one 9 s deadline. Claude runs the string
+  through a shell. Codex takes it as a string; whether it uses a shell or splits the words is
+  not confirmed, and the quoting suits either. opencode has no helper, so the server is "not rendered for opencode"; an env
+  reference renders there instead.
+- **Pick-up.** Each new server process or connection resolves again, so a rotated secret
+  needs only a reconnect, not a render.
 
 ---
 

@@ -95,9 +95,9 @@ func (v *Value) UnmarshalTOML(data any) error {
 		case v.Prefix != "" && v.Env == "":
 			return fmt.Errorf("prefix goes only with env")
 		case v.Env != "" && !envName.MatchString(v.Env):
-			return fmt.Errorf("env %q is not a variable name", v.Env)
-		case v.Secret != "" && !strings.Contains(v.Secret, ":"):
-			return fmt.Errorf("secret %q is not <provider>:<reference>", v.Secret)
+			return fmt.Errorf("env is not a variable name")
+		case v.Secret != "" && !validSecretRef(v.Secret):
+			return fmt.Errorf("secret is not <provider>:<reference>")
 		case len(v.Command) > 0 && v.Command[0] == "":
 			return fmt.Errorf("command has an empty program")
 		}
@@ -123,9 +123,21 @@ type Server struct {
 	InstructionsNote string           `toml:"instructions_note"`
 }
 
+// Provider is a secret provider (spec 8.5): a command that prints one secret. A reference
+// "<provider>:<reference>" runs the provider's command with the reference as its last argument.
+type Provider struct {
+	Name    string   `toml:"name"`
+	Command []string `toml:"command"`
+	// Env names variables the command reads from the environment. Codex passes a stdio server
+	// only a default set of variables, so a launcher entry lists these in env_vars.
+	Env     []string `toml:"env"`
+	Timeout int      `toml:"timeout"` // seconds; 0: DefaultSecretTimeout
+}
+
 // Config is the [mcp] table.
 type Config struct {
-	Servers []Server `toml:"server"`
+	Servers   []Server   `toml:"server"`
+	Providers []Provider `toml:"provider"`
 	// Write lists the harnesses whose config the user opted in to writing.
 	Write []string `toml:"write"`
 }
@@ -175,6 +187,29 @@ func (c Config) Validate() error {
 			return fmt.Errorf("mcp server %s: the name is used twice", s.Name)
 		}
 		seen[s.Name] = true
+	}
+	providers := map[string]bool{}
+	for i, p := range c.Providers {
+		label := p.Name
+		if label == "" {
+			label = fmt.Sprintf("%d", i+1)
+		}
+		if err := p.validate(); err != nil {
+			return fmt.Errorf("mcp provider %s: %w", label, err)
+		}
+		if providers[p.Name] {
+			return fmt.Errorf("mcp provider %s: the name is used twice", p.Name)
+		}
+		providers[p.Name] = true
+	}
+	for _, s := range c.Servers {
+		for _, m := range []map[string]Value{s.Env, s.Headers} {
+			for _, k := range sortedKeys(m) {
+				if name := m[k].provider(); name != "" && !providers[name] {
+					return fmt.Errorf("mcp server %s: %s names provider %q, which no [[mcp.provider]] defines", s.Name, k, name)
+				}
+			}
+		}
 	}
 	for _, h := range c.Write {
 		if !knownHarness(h) {
@@ -243,6 +278,59 @@ func (s Server) validate() error {
 		}
 	}
 	return nil
+}
+
+// validSecretRef reports whether a secret reference is "<provider>:<reference>" with both parts.
+// Errors never quote it: a user may paste the secret itself there by mistake.
+func validSecretRef(s string) bool {
+	name, ref, ok := strings.Cut(s, ":")
+	return ok && serverName.MatchString(name) && ref != ""
+}
+
+// MaxSecretTimeout bounds a provider's timeout, in seconds.
+const MaxSecretTimeout = 300
+
+func (p Provider) validate() error {
+	switch {
+	case !serverName.MatchString(p.Name):
+		return fmt.Errorf("name %q: use letters, digits, _ and -", p.Name)
+	case len(p.Command) == 0 || p.Command[0] == "":
+		return fmt.Errorf("command needs a program")
+	case p.Timeout < 0 || p.Timeout > MaxSecretTimeout:
+		return fmt.Errorf("timeout must be 0 to %d seconds", MaxSecretTimeout)
+	}
+	for _, e := range p.Env {
+		if !envName.MatchString(e) {
+			return fmt.Errorf("env %q is not a variable name", e)
+		}
+	}
+	return nil
+}
+
+// provider is the provider a secret reference names, or "".
+func (v Value) provider() string {
+	name, _, _ := strings.Cut(v.Secret, ":")
+	return name
+}
+
+// provider finds a provider by name.
+func (c Config) provider(name string) (Provider, bool) {
+	for _, p := range c.Providers {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Provider{}, false
+}
+
+// Server finds a server by name.
+func (c Config) Server(name string) (Server, bool) {
+	for _, s := range c.Servers {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return Server{}, false
 }
 
 func secretLike(key string) bool {
