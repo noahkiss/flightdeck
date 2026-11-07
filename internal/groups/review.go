@@ -192,6 +192,14 @@ func TakeVerdict(g *api.Group, p api.ReviewVerdictParams, now time.Time) (api.Re
 	if it.State != ItemReview {
 		return api.ReviewVerdictTaken{}, control.Errorf(api.ErrorKindConflict, "item %s is %s; a verdict comes while it is in review", it.ID, it.State)
 	}
+	// The verdict names the head it reviewed (groups.md 6.1): a verdict on an earlier submit
+	// never lets a later one land unreviewed.
+	switch {
+	case p.Checked != it.Submitted:
+		return api.ReviewVerdictTaken{}, control.Errorf(api.ErrorKindConflict, "the lead submitted %s; review it (git reset --hard %s), then give the verdict on it", Short7(it.Submitted), it.Submitted)
+	case p.Reviewed != p.Checked && !p.Descends:
+		return api.ReviewVerdictTaken{}, control.Errorf(api.ErrorKindConflict, "your review branch head %s does not descend from the submitted head %s: run git reset --hard %s, review it, and commit any fixes on top", Short7(p.Reviewed), Short7(it.Submitted), it.Submitted)
+	}
 	v := api.GroupVerdict{Verdict: p.Verdict, Findings: slices.Clone(p.Findings), Head: it.Submitted, At: stamp(now)}
 	if v.Findings == nil {
 		v.Findings = []api.GroupFinding{}
@@ -201,12 +209,10 @@ func TakeVerdict(g *api.Group, p api.ReviewVerdictParams, now time.Time) (api.Re
 		switch {
 		case !FixInPlace(g.Plan):
 			v.FixesIgnored = "the plan does not allow fixes in place; the fixes are ignored"
-		case p.Checked != it.Submitted:
-			v.FixesIgnored = fmt.Sprintf("the review branch was not checked against the submitted head %s; the fixes are ignored", Short7(it.Submitted))
-		case !p.Descends || f.Head == "":
-			v.FixesIgnored = fmt.Sprintf("the review branch head %s does not descend from the submitted head %s; the fixes are ignored", Short7(f.Head), Short7(it.Submitted))
+		case !p.Descends:
+			v.FixesIgnored = fmt.Sprintf("the review branch has no commit past the submitted head %s; the fixes are ignored", Short7(it.Submitted))
 		default:
-			v.FixedHead = f.Head
+			v.FixedHead = p.Reviewed
 		}
 	}
 	it.Verdict, it.IdleSince, it.Stuck = &v, "", ""

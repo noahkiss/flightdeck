@@ -640,10 +640,13 @@ gff-hab's group service runs them on the home hab.
   item says `same_harness`, and the card shows a warning line for it. A plan with two reviewers
   on one item is refused. A user who turns review off on the card drops its reviewer.
 - **The heads.** The member's own hab reads them with git, never the pane: at `lane_submit`
-  the head of `group/<group>/<item>`; at `review_verdict` with fixes, the head the reviewer
-  names (else its review branch's head), and whether it descends from the submitted head. It
-  then forwards the call to the home hab. The home hab takes these fields only from its own
-  route, or over the link from the hab its member runs on; a control connection is refused.
+  the head of `group/<group>/<item>`; at every `review_verdict` the head of the review branch,
+  the submitted head the record names, and whether the first descends from the second. A
+  `fixed.head` other than the review branch's head is refused. It then forwards the call to the
+  home hab. The home hab takes these fields only from its own route, or over the link from the
+  hab its member runs on, when its peer list pins that hab's device id and it is not this hab's
+  own. A control connection is refused. Not built: the home hab pulling the heads over the link
+  it dialed, which a hello that names a pinned device cannot forge.
 - **The review worktree** is `worktree.create` on the reviewer's host, branch
   `group/<group>/<item>-review`, base the submitted commit. The commit must be in that
   repository: a reviewer on another host than its lead needs B4's fetch (12.7).
@@ -655,14 +658,21 @@ gff-hab's group service runs them on the home hab.
 item lands, changes nothing. A new
   head while in review, or after a verdict, starts the review again: a running reviewer gets
   the new head as a message from Flightdeck. A submit does not wait for a verdict.
-- **A verdict** must come while the item is in `review`. `fix_needed` needs at least one
-  finding. Fixes count only when the plan allows them and the reviewer's hab checked them
-  against the current submitted head; otherwise the verdict's `fixes_ignored` says why. The
+- **A verdict** must come while the item is in `review`, on the current submitted head: one
+  checked against an earlier submit, or from a review branch that does not hold the submitted
+  head, is refused with `conflict` and nothing lands. So a pass never lands a head nobody
+  reviewed, and fixes off the submitted head are not taken (6.4's "ignored"). `fix_needed`
+  needs at least one finding. Fixes count only when the plan allows them and the review branch
+  has commits past the submitted head; otherwise the verdict's `fixes_ignored` says why. The
   coordinator gets the one line; the lead gets every finding, or the fast-forward line after a
   pass with fixes, or a short pass line.
 - **Messages into members** on another hab go over the link as `group.message`, which a hab
-  takes only from the group's home hab, as its catalog copy names it, and only into a member of
-  that group.
+  takes only from a pinned peer whose own catalog copy lists itself as the group's home, and
+  only into a member of that group, at most 60,000 bytes. Forwards to the home use the same
+  rule.
+- **The scheduler** skips an item whose start waits for the user's yes to a setup, so one
+  waiting start holds no other lead or reviewer back; `group_retry` tries it again. A reviewer
+  whose agent exited can be retried.
 - **The idle check** runs with the members' refresh (every 5 s): a reviewer idle for
   `[groups] reviewer_idle`, or exited, with no verdict is reported once per submitted head.
 - **Not built in B7.** The fetch before a review worktree (B4). The lane that lands a `ready`
