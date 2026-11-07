@@ -37,8 +37,8 @@ func isCapcomGuide(r api.LogbookRecord) bool {
 }
 
 // guideWrite reports whether every change of a write creates or edits a capcom guide (6.4):
-// a create of a guide with no project and the tag capcom, or a title, body, status or note change, a
-// tag added, or a tag other than capcom removed, on such a guide. Anything else, in any change,
+// a create of a guide with no project and the one tag capcom, or a title, body, status or note
+// change on such a guide. A tag change is reviewed: it changes who reads the guide. Anything else, in any change,
 // leaves the write a proposal.
 func (m *capcomMemory) guideWrite(ctx context.Context, changes []api.LogbookChange) bool {
 	if m == nil || m.svc == nil || len(changes) == 0 {
@@ -64,7 +64,9 @@ func (m *capcomMemory) guideWrite(ctx context.Context, changes []api.LogbookChan
 	for _, c := range changes {
 		switch c.Op {
 		case api.LogbookChangeOpCreate:
-			if c.Type != logbook.TypeGuide || c.Project != "" || !slices.Contains(c.Tags, capcomTag) || len(c.Links) > 0 {
+			// Only the tag capcom: another tag, such as everywhere, would put the guide in other
+			// agents' briefs, which no unreviewed write may do.
+			if c.Type != logbook.TypeGuide || c.Project != "" || !slices.Equal(c.Tags, []string{capcomTag}) || len(c.Links) > 0 {
 				return false
 			}
 			if c.ID != "" {
@@ -72,11 +74,6 @@ func (m *capcomMemory) guideWrite(ctx context.Context, changes []api.LogbookChan
 			}
 		case api.LogbookChangeOpSet:
 			if (c.Field != "title" && c.Field != "body" && c.Field != "status") || !guide(c.ID) {
-				return false
-			}
-		case api.LogbookChangeOpAdd, api.LogbookChangeOpRemove:
-			if c.Tag == "" || c.Link != nil || c.Identity != "" || !guide(c.ID) ||
-				(c.Op == api.LogbookChangeOpRemove && c.Tag == capcomTag) {
 				return false
 			}
 		case api.LogbookChangeOpNote:
@@ -120,6 +117,14 @@ func (e *capcomEngine) noted(ctx context.Context, p api.LogbookWriteParams, res 
 	if res.State != api.LogbookWriteStateApplied {
 		return
 	}
+	// Undo is for a guide this write created (6.4); an edit's line has none, so Undo never deletes
+	// a guide the user had before.
+	created := map[string]bool{}
+	for i, c := range p.Changes {
+		if c.Op == api.LogbookChangeOpCreate && i < len(res.IDs) {
+			created[res.IDs[i]] = true
+		}
+	}
 	seen := map[string]bool{}
 	for _, id := range res.IDs {
 		if seen[id] {
@@ -130,9 +135,12 @@ func (e *capcomEngine) noted(ctx context.Context, p api.LogbookWriteParams, res 
 		if err != nil || !isCapcomGuide(r.Record) {
 			continue
 		}
-		e.addNote(capcomthread.Item{Kind: capcomthread.KindNote, Author: flightdeck, Key: "memory:" + res.Ops[0] + ":" + id,
-			Text: notedLine("Noted", r.Record.Title),
-			Card: &capcomthread.Card{Type: capcomthread.CardMemory, Ref: id, Choices: []string{capcomthread.ChoiceUndo}, Rev: r.Record.Revision}})
+		it := capcomthread.Item{Kind: capcomthread.KindNote, Author: flightdeck, Key: "memory:" + res.Ops[0] + ":" + id,
+			Text: notedLine("Noted", r.Record.Title)}
+		if created[id] {
+			it.Card = &capcomthread.Card{Type: capcomthread.CardMemory, Ref: id, Choices: []string{capcomthread.ChoiceUndo}, Rev: r.Record.Revision}
+		}
+		e.addNote(it)
 	}
 }
 
@@ -185,12 +193,14 @@ func (e *capcomEngine) CardAnswer(ctx context.Context, client string, p api.Capc
 		r, err := m.svc.Get(ctx, api.LogbookGetParams{ID: it.Card.Ref})
 		var ce *control.Error
 		switch {
-		case errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindNotFound, err == nil && r.Record.Deleted:
+		case errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindNotFound:
 			return api.CapcomCardAnswered{}, control.Errorf(api.ErrorKindNotFound, "the record %s is gone: nothing to undo", it.Card.Ref)
 		case err != nil:
 			return api.CapcomCardAnswered{}, err
 		}
-		if r.Record.Revision != it.Card.Rev {
+		// An undo whose delete landed but whose answer did not is retried: the write below, under
+		// the same key, applies nothing again, and the card gets its answer.
+		if r.Record.Revision != it.Card.Rev && !r.Record.Deleted {
 			note = fmt.Sprintf("Deleted %q; it was edited after Capcom noted it", r.Record.Title)
 		}
 		if _, err := m.svc.Write(ctx, person, api.LogbookWriteParams{IdempotencyKey: "capcom-undo:" + it.ID,

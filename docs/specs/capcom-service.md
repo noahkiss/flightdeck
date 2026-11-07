@@ -570,7 +570,8 @@ The engine ends the SDK session and starts a fresh one.
   `context.request {for: reseed}`, sends `summary`, and starts the fresh session. gff-hab
   builds the seed's parts within their caps: the Logbook part within `seed_logbook_bytes`, whole
   lines only; the last `seed_messages` messages, the oldest dropped while they pass
-  `seed_messages_chars` and the last one cut to it; each open card with its id and choices. The
+  `seed_messages_chars` and the last one cut to it; each open card with its id and choices, within `seed_messages_chars` too (an approval card is
+  never open then: one with no answer was left by an engine that is gone, and is left out). The
   seed goes in after the start check as a message with no model call of its own, so it joins
   the first real message. It opens with the line `[flightdeck seed]`, which is no item marker,
   and every line from outside is neutralised as an input's are (4.4). A new conversation's seed
@@ -621,14 +622,17 @@ The engine ends the SDK session and starts a fresh one.
 - **Ranking.** The manual tells Capcom to rank picks (places, times) by the `capcom` guides it
   holds, and to name the preference it used.
 - **As built (A4).** The exception holds only for a `logbook.write` on the engine's route
-  whose every change is one of: a create of a `guide` with no project, the tag `capcom` and no
-  links; a `set` of `title`, `body` or `status`, a note, a tag added, or a tag other than `capcom` removed,
-  on such a guide. A write that asks `propose` stays a proposal. The pane Capcom keeps its
+  whose every change is one of: a create of a `guide` with no project, the one tag `capcom` and
+  no links; a `set` of `title`, `body` or `status`, or a note, on such a guide. A tag change is a
+  proposal: a tag such as `everywhere` would put the guide in other agents' briefs. Only a
+  guide the write created gets an Undo; an edit's "Noted" line has none. A write that asks `propose` stays a proposal. The pane Capcom keeps its
   proposals. The "Noted" line is a `note` item with a card of type `memory`: `ref` is the record
   (or the proposal at Safe), the one choice is `undo`, and the card keeps the record's revision.
   `capcom.card.answer {item, choice: undo}` (7.4) acts as a person from the answering device:
   it deletes the record, or rejects the proposal, then answers the card; a second answer gets
-  `conflict`. When the revision moved, the answer's `note` and a thread note say the edited
+  `conflict`; a retry after a delete that landed answers the card. It runs only on the home host,
+  never over a peer link. A summary whose `through` is older than the stored one is dropped.
+  When the revision moved, the answer's `note` and a thread note say the edited
   record was deleted. A repeated write (the same idempotency key) adds no second line. The
   Logbook part reads as the Capcom session does: the `capcom` guides with their ids, the general
   brief, then the tasks the session filed that are open, doing or blocked. `capcom.open {new}`

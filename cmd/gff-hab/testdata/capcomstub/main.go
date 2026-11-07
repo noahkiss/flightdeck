@@ -12,7 +12,7 @@
 // file $STUB_DIR/crashstart present it exits 3 at once, before it connects.
 //
 // The context manager (capcom-service.md 6): "remember <title>" files a capcom guide on the pane
-// route, "guide <title>" a guide with no tag, "edit <id> <title>" retitles a record; "ctx <n>"
+// route, "guide <title>" a guide with no tag, "everywhere <title>" one tagged capcom and everywhere, "edit <id> <title>" retitles a record; "ctx <n>"
 // ends its turn with context_used n; "compact" asks context.request for a compaction, sends a
 // summary and compacted. A "reseed" asks context.request for a re-seed, writes the context it
 // got to $STUB_DIR/context-<n>.json, sends a summary (none for new) and session.started. A text
@@ -240,10 +240,13 @@ func turns(sock, token string) {
 		used := 0.0
 		verb, arg, _ := strings.Cut(text, " ")
 		switch verb {
-		case "remember", "guide":
+		case "remember", "guide", "everywhere":
 			tags := `,"tags":["capcom"]`
-			if verb == "guide" {
+			switch verb {
+			case "guide":
 				tags = ""
+			case "everywhere":
+				tags = `,"tags":["capcom","everywhere"]`
 			}
 			body := fmt.Sprintf(`{"method":"logbook.write","params":{"idempotency_key":"stub-%s","changes":[{"op":"create","type":"guide","title":%q%s}]}}`, id, arg, tags)
 			reply = "lb: " + routeCall(sock, token, body)

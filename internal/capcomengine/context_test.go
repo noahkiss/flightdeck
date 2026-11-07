@@ -99,7 +99,7 @@ func TestContextReseedAtSetting(t *testing.T) {
 // memory card is not (6.2, 6.4).
 func TestContextSeedCaps(t *testing.T) {
 	lim := DefaultContextLimits
-	lim.SeedMessages, lim.SeedMessagesChars, lim.SeedLogbookBytes = 3, 30, 20
+	lim.SeedMessages, lim.SeedMessagesChars, lim.SeedLogbookBytes = 3, 90, 20
 	asked := 0
 	h := newHarnessWith(t, func(c *LinkConfig) {
 		c.Limits = func() ContextLimits { return lim }
@@ -134,8 +134,8 @@ func TestContextSeedCaps(t *testing.T) {
 	if s == nil || asked != 20 || len(s.Logbook) > 20 || !utf8.ValidString(s.Logbook) {
 		t.Fatalf("logbook part %q (asked %d)", s.Logbook, asked)
 	}
-	// The last 3 messages are 9+15+8 = 32 characters, past 30: the oldest goes.
-	if len(s.Messages) != 2 || s.Messages[0].Text != "six seven eight" || s.Messages[1].Author != "capcom" {
+	// The last 3 messages, 9+15+8 = 32 characters, within 90 (the e2e test drops the oldest).
+	if len(s.Messages) != 3 || s.Messages[0].Text != "four five" || s.Messages[2].Author != "capcom" {
 		t.Fatalf("messages %+v", s.Messages)
 	}
 	if len(s.Open) != 1 || !strings.Contains(s.Open[0], card.ID) || !strings.Contains(s.Open[0], "cf-1") {
@@ -233,5 +233,11 @@ func TestContextNewConversation(t *testing.T) {
 	}
 	if r := h.rec.Get(); r.Summary != "" || r.SummaryThrough < u.ID {
 		t.Fatalf("record %+v", r)
+	}
+	// A quiet update that ends after the new conversation covers less: it is dropped.
+	e.send(Message{Type: TSummary, Text: "the old conversation", Through: "c0"})
+	e.acked(e.seq)
+	if r := h.rec.Get(); r.Summary != "" {
+		t.Fatalf("a stale summary landed: %+v", r)
 	}
 }
