@@ -170,3 +170,17 @@ func TestLaneKeys(t *testing.T) {
 		t.Fatalf("wrong type %+v %v", k, logs)
 	}
 }
+
+func TestUpstreams(t *testing.T) {
+	g := api.Group{Items: []api.GroupItem{
+		{ID: "a", Land: "f", Landed: "r", Submitted: "s", Verdict: &api.GroupVerdict{Head: "s", FixedHead: "f"},
+			Attempts: []api.GroupLaneAttempt{{Rebased: "r"}, {Rebased: "r0"}}},
+		{ID: "b", After: "a"},
+	}}
+	if got := strings.Join(Upstreams(g, g.Items[1]), ","); got != "f,r,s,r0" {
+		t.Fatalf("upstreams %q", got)
+	}
+	if Upstreams(g, g.Items[0]) != nil {
+		t.Fatal("upstreams of an item that stacks on none")
+	}
+}

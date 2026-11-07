@@ -36,13 +36,22 @@ type laneState struct {
 	again   map[string]bool
 	repos   map[string]*sync.Mutex // one lane run at a time per repository
 	tried   map[string]bool        // worktrees whose removal was refused: tried again at the end
+	armed   map[string]bool        // a retry is armed for the group: one at a time
+	runs    map[string]*laneRun    // the run in flight per group: the end of a group stops it
 	ctx     context.Context        // ends at Stop
 	cancel  context.CancelFunc
+}
+
+// laneRun is one lane run in flight.
+type laneRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func (s *groupsService) laneInit() {
 	s.lane.running, s.lane.again = map[string]bool{}, map[string]bool{}
 	s.lane.repos, s.lane.tried = map[string]*sync.Mutex{}, map[string]bool{}
+	s.lane.armed, s.lane.runs = map[string]bool{}, map[string]*laneRun{}
 	s.lane.ctx, s.lane.cancel = context.WithCancel(context.Background())
 }
 
@@ -76,8 +85,15 @@ func (s *groupsService) laneKick(id string) {
 	}()
 }
 
-// laneLater kicks the lane again after d, unless the service stops first.
-func (s *groupsService) laneLater(id string, d time.Duration) {
+// laneLaterLocked kicks the lane again after the retry time, unless the service stops first.
+// One retry at a time is armed per group: every scheduler pass kicks the lane, and each kick
+// during a wait would otherwise start one more retry.
+func (s *groupsService) laneLaterLocked(id string) {
+	if s.closed || s.lane.armed[id] {
+		return
+	}
+	s.lane.armed[id] = true
+	d := s.laneRetryAfter()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -85,6 +101,9 @@ func (s *groupsService) laneLater(id string, d time.Duration) {
 		defer t.Stop()
 		select {
 		case <-t.C:
+			s.mu.Lock()
+			delete(s.lane.armed, id)
+			s.mu.Unlock()
 			s.laneKick(id)
 		case <-s.stop:
 		}
@@ -127,7 +146,7 @@ func (s *groupsService) laneJobLocked(cl api.CatalogList, g *api.Group, it api.G
 	sum := sha256.Sum256([]byte(key))
 	j := laneJob{repo: key, Job: lane.Job{
 		Source: src, Dir: filepath.Join(s.cfg.laneDir, hex.EncodeToString(sum[:8])), Identity: proj.Remote,
-		Target: g.Plan.Lane.Target, Branch: it.Branch, Land: it.Land, Upstream: groups.Upstream(*g, it),
+		Target: g.Plan.Lane.Target, Branch: it.Branch, Land: it.Land, Upstreams: groups.Upstreams(*g, it),
 		Prior: groups.Prior(it), Tries: s.cfg.keys.LaneTries, OutputLines: s.cfg.keys.FixOutputLines,
 		Git: s.cfg.laneGit,
 	}}
@@ -161,12 +180,15 @@ func (s *groupsService) lanePass(id string) {
 				g.Lane.Waits = j.err
 				s.saveLocked(g)
 			}
+			s.laneLaterLocked(id)
 			s.mu.Unlock()
-			s.laneLater(id, laneRetry)
 			return
 		}
 		it.State, g.Lane.Landing = groups.ItemLanding, item
 		s.saveLocked(g)
+		ctx, cancel := context.WithCancel(s.lane.ctx)
+		run := &laneRun{cancel: cancel, done: make(chan struct{})}
+		s.lane.runs[id] = run
 		s.mu.Unlock()
 
 		j.Saved = func(a lane.Attempt) error {
@@ -182,14 +204,55 @@ func (s *groupsService) lanePass(id string) {
 		}
 		l := s.repoLock(j.repo)
 		l.Lock()
-		res := lane.Run(s.lane.ctx, j.Job)
+		res := lane.Run(ctx, j.Job)
 		l.Unlock()
+		ended := ctx.Err() != nil // the end of the group, or Stop, stopped the run
+		cancel()
+		s.mu.Lock()
+		delete(s.lane.runs, id)
+		s.mu.Unlock()
 		if s.lane.ctx.Err() != nil {
+			close(run.done)
 			return // the hab stops: the item stays landing, and the next start runs it again
 		}
-		if !s.laneDone(id, ii, item, res) {
+		if ended && res.Outcome != lane.Landed {
+			s.laneEnded(id, ii, item) // the group ended during the run: nothing more lands
+			close(run.done)
 			return
 		}
+		cont := s.laneDone(id, ii, item, res)
+		close(run.done)
+		if !cont {
+			return
+		}
+	}
+}
+
+// laneEnded puts an item whose run the end of its group stopped back to ready.
+func (s *groupsService) laneEnded(id string, ii int, item string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g := s.groups[id]
+	if g == nil || ii >= len(g.Items) || g.Items[ii].ID != item {
+		return
+	}
+	if g.Items[ii].State == groups.ItemLanding {
+		g.Items[ii].State = groups.ItemReady
+	}
+	if g.Lane.Landing == item {
+		g.Lane.Landing = ""
+	}
+	s.saveLocked(g)
+}
+
+// laneStop stops the group's run in flight, if any, and waits for its outcome to be written.
+func (s *groupsService) laneStop(id string) {
+	s.mu.Lock()
+	run := s.lane.runs[id]
+	s.mu.Unlock()
+	if run != nil {
+		run.cancel()
+		<-run.done
 	}
 }
 
@@ -206,11 +269,15 @@ func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result
 	if target == "" {
 		target = "the target"
 	}
-	at := api.GroupLaneAttempt{At: stampT(s.cfg.now()), Outcome: string(res.Outcome), Step: res.Step}
-	if res.Outcome == lane.Landed {
-		at.Rebased = res.Commit
+	if res.Outcome != lane.Unavailable {
+		// A run that could not run is retried each minute: it records no attempt, so the
+		// record does not grow while the lane waits.
+		at := api.GroupLaneAttempt{At: stampT(s.cfg.now()), Outcome: string(res.Outcome), Step: res.Step}
+		if res.Outcome == lane.Landed {
+			at.Rebased = res.Commit
+		}
+		it.Attempts = append(it.Attempts, at)
 	}
-	it.Attempts = append(it.Attempts, at)
 	lead := groups.MemberIndex(*g, it.Lead)
 	noCI := ""
 	if res.NoCI {
@@ -272,13 +339,6 @@ func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result
 	}
 	s.saveLocked(g)
 	return cont
-}
-
-func (s *groupsService) laneLaterLocked(id string) {
-	if s.closed {
-		return
-	}
-	s.laneLater(id, s.laneRetryAfter())
 }
 
 func (s *groupsService) laneRetryAfter() time.Duration {
@@ -404,6 +464,15 @@ func (s *groupsService) end(id, why string) (api.Group, error) {
 		}
 	}
 	s.saveLocked(g)
+	s.mu.Unlock()
+	// No more lands once the group ends (groups.md 7.5): a run in flight stops, and its outcome
+	// is on the record before the leftovers are listed. A land push already sent counts.
+	s.laneStop(id)
+	s.mu.Lock()
+	if g = s.groups[id]; g == nil {
+		s.mu.Unlock()
+		return api.Group{}, fmt.Errorf("no group %s on this hab", id)
+	}
 	snap := copyGroup(*g)
 	s.mu.Unlock()
 

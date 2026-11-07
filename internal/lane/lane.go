@@ -61,9 +61,11 @@ type Job struct {
 	Target   string // the target branch; "" is the remote's default branch
 	Branch   string // the item's branch
 	Land     string // the commit to land: the submitted head, or the review head after a pass with fixes
-	// Upstream is the head of the item this one stacks on: its commits drop out of the rebase
-	// (groups.md 7.2). "" for an item that stacks on none.
-	Upstream string
+	// Upstreams are the heads the item this one stacks on has had (groups.md 7.2): the newest
+	// that the item's commit holds is where its own commits start, and the ones before it drop
+	// out of the rebase. Empty for an item that stacks on none. When the item holds none of
+	// them, its branch started on a head the base no longer has: it goes back.
+	Upstreams []string
 	// Prior are the rebased heads earlier attempts pushed: one already on the target means the
 	// land push went through before a restart.
 	Prior       []string
@@ -202,8 +204,22 @@ func Run(ctx context.Context, j Job) Result {
 			return unavailable(StepRebase, "check out %.12s: %v", j.Land, err)
 		}
 		args := []string{"rebase", base}
-		if j.Upstream != "" && j.Upstream != j.Land && r.ancestor(ctx, j.Dir, j.Upstream, j.Land) {
-			args = []string{"rebase", "--onto", base, j.Upstream}
+		if len(j.Upstreams) > 0 {
+			up := ""
+			for _, c := range j.Upstreams {
+				if c == "" || c == j.Land || !r.ancestor(ctx, j.Dir, c, j.Land) {
+					continue
+				}
+				if up == "" || r.ancestor(ctx, j.Dir, up, c) {
+					up = c
+				}
+			}
+			if up == "" {
+				res.Outcome, res.Step = Back, StepRebase
+				res.Output = fmt.Sprintf("branch %s started on a head of the item it stacks on that the item no longer has: rebase it on %s and submit again", j.Branch, res.Target)
+				return res
+			}
+			args = []string{"rebase", "--onto", base, up}
 		}
 		if out, err := r.commit(ctx, j.Dir, args...); err != nil {
 			r.git1(ctx, j.Dir, "rebase", "--abort")
@@ -270,8 +286,14 @@ func Run(ctx context.Context, j Job) Result {
 				return res
 			}
 		}
-		// 6. Land: a fast-forward push to the target.
-		out, err = r.git1(ctx, j.Dir, "push", "--porcelain", remote, rebased+":refs/heads/"+res.Target)
+		// 6. Land: a fast-forward push to the target. Once sent it is not cut short: a push
+		// killed half way would leave the lane unsure whether the item landed.
+		if ctx.Err() != nil {
+			return unavailable(StepLand, "stopped: %v", ctx.Err())
+		}
+		pctx, pcancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		out, err = r.git1(pctx, j.Dir, "push", "--porcelain", remote, rebased+":refs/heads/"+res.Target)
+		pcancel()
 		if err == nil {
 			res.Outcome, res.Commit = Landed, rebased
 			return res
@@ -300,16 +322,20 @@ const (
 	refusedRule
 )
 
-// pushRefusal tells a race (the ref moved) from a rule (a protected branch, no permission).
+// pushRefusal tells a race (the ref moved) from a rule (a protected branch, no permission). A
+// server that lost a race on its own ref lock is a race too, not a rule.
 func pushRefusal(out string) refusal {
 	low := strings.ToLower(out)
 	switch {
+	case strings.Contains(low, "[rejected]") && (strings.Contains(low, "non-fast-forward") ||
+		strings.Contains(low, "fetch first") || strings.Contains(low, "stale info")),
+		strings.Contains(low, "[remote rejected]") && (strings.Contains(low, "cannot lock ref") ||
+			strings.Contains(low, "incorrect old value") || strings.Contains(low, "failed to update ref") ||
+			strings.Contains(low, "failed to lock")):
+		return refusedRace
 	case strings.Contains(low, "[remote rejected]"), strings.Contains(low, "protected branch"),
 		strings.Contains(low, "permission"), strings.Contains(low, "denied"):
 		return refusedRule
-	case strings.Contains(low, "[rejected]") && (strings.Contains(low, "non-fast-forward") ||
-		strings.Contains(low, "fetch first") || strings.Contains(low, "stale info")):
-		return refusedRace
 	}
 	return refusedOther
 }
