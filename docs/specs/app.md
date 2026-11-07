@@ -3466,7 +3466,7 @@ every key, so a change never makes a new key.
 | Id | Title | Area | Type | Safe | Balanced | Bypass | Stored | Source |
 |---|---|---|---|---|---|---|---|---|
 | `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | bool | `true` | `false` | `false` | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
-| `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2), the app row comes with B3 | `groups.md` 3.2, 13 Q1 |
+| `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2); B3 reads it on the home hab for each plan and amend; the app row is not built | `groups.md` 3.2, 13 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
@@ -3515,6 +3515,10 @@ picker never changes them.
 | `heavy.disk_min_free` | Hold heavy runs below this free space | Agents | integer GiB, 0 = never, else 1 to 4096 | 10 | Hab, this hab only | `groups.md` 8.2 |
 | `heavy.long_hold` | Notify when a heavy run holds the lock longer than | Agents | integer minutes 5 to 1440 | 60 | Hab, this hab only | `groups.md` 8.1 |
 | `capcom.approval_max_age` | Capcom approvals expire after | Capcom | integer minutes 1 to 1440; no 0 | 10 | Hab, the home hab | `capcom-service.md` 5.3, 19.1 |
+| `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
+| `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
+| `group.max_workers` | Workers per lead | Agents | integer 0 to 5 | 2 | Hab, every hab; copied into each member's envelope | `groups.md` 3.3 |
+| `group.close_members` | Close idle members at the end | Agents | bool | On | Hab, every hab; the home hab reads it | `groups.md` 7.5 |
 | `voice.*` | Engines (hab, Parakeet, Apple), summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | As 13.7 | App | 13.7 |
 | `voice.language` | Dictation language | Voice | a language tag, or system | System | App (not built) | 13.4 |
 
@@ -3602,6 +3606,11 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
 - **The heavy-run lock** (`groups.md` 8, stage B5) reads `heavy.slots`, `heavy.disk_min_free`
   and `heavy.long_hold` at each grant, disk reading and long-hold check, so a change applies at
   once; a raised `heavy.slots` grants at the next check.
+- **Agent groups** (`groups.md` 5.8, stage B3) read `confirm.group_plan` and
+  `group.confirm_max_age` when a plan's or an amend's confirmation opens, `group.max_leads` at
+  each scheduler pass, `group.max_workers` when the envelope is made (a change reaches members
+  started after it), and `group.close_members` at `group.close`. The app's rows for these and
+  for `confirm.group_plan` are not built.
 - **The flag lock.** `-permission-wait` given on the command line, even as 0, or a non-empty
   `$GFF_HAB_PERMISSION_WAIT`, locks `hab.permission_wait` in whole seconds, rounded. A flag wins
   over the config file.

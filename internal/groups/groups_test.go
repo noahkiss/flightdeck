@@ -160,6 +160,11 @@ func TestLoadKeys(t *testing.T) {
 	if len(logs) != 1 {
 		t.Fatalf("logged %d lines, want one for inbox_max", len(logs))
 	}
+	// The example config's keys are the defaults, and nothing in it is logged.
+	logs = nil
+	if k := LoadKeys(filepath.Join("..", "..", "docs", "examples", "hab.toml"), func(f string, a ...any) { logs = append(logs, f) }); k != DefaultKeys || len(logs) != 0 {
+		t.Fatalf("the example: %+v %v", k, logs)
+	}
 }
 
 func TestWarningsAndTrust(t *testing.T) {

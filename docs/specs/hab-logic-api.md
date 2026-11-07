@@ -943,7 +943,11 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   `invalid`, as do a cover whose harness is not the create's, a group id outside lowercase
   letters, digits and `-`, a `branch_prefix` other than `group/<group>/`, and a confirmation
   that is neither 32 hex digits nor `none`. The hab then answers the new pane's folder trust
-  prompt itself when the cover matches (`app.md` 7.10, Group members).
+  prompt itself when the cover matches (`app.md` 7.10, Group members). The optional `group
+  {id, role, item}` and `envelope` (`groups.md` 3.3, 5.8) come only with `trust_cover`, for its
+  group: the new session is a member, and its record keeps the envelope so this hab decides the
+  member's later starts alone. `envelope` with no `group`, or either one for another group, is
+  `invalid`.
 - **`cwd_of`** on `session.create` names a pane: with no `cwd` and no `project_dir`, the new
   pane starts in that pane's working folder (its program's folder, else its shell's last OSC 7
   report, else its session's start folder, else the default) and is filed in that pane's

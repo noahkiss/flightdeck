@@ -177,6 +177,12 @@ disk_resume_margin = 2
 # How long this hab holds a group member's folder trust prompt back while it answers it, before
 # the trust card shows: "1s" to "60s".
 trust_hold = "10s"
+# How long an ended or dropped group's record stays on its home hab, in whole days: 1 to 365.
+keep_ended = 30
+# Reports kept for a coordinator that is not running (10 to 5000), and how long each waits, in
+# whole days (1 to 90). The oldest go first.
+inbox_max = 200
+inbox_days = 7
 
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and
