@@ -2,6 +2,8 @@ package usage
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -57,5 +59,31 @@ func TestSDKReading(t *testing.T) {
 	}
 	if r = SDKReading("claude-k", json.RawMessage(`[1]`), at); len(r.Degrade) != 1 {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// TestCodexEngineReading: the Capcom engine on Codex sends the rollout's newest token_count
+// record of each limit id, hand-written here in the shape of CLI 0.167 (ordinal, credits,
+// individual_limit and the other new fields beside the windows). They read as a rollout's end:
+// the account's own windows first, the plan label, each window read at its record's time, all
+// under the key given, as a Codex account. Another shape is drift that degrades; an empty list
+// gives nothing.
+func TestCodexEngineReading(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "codex-engine-0.167.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := CodexEngineReading(Key("hab-a", "codex", "/state/capcom/engine"), b)
+	golden(t, "codex-engine-0.167.0", result{Account: asAccount(t, r, "/state/capcom/engine"), Drift: r.Drift, Degrade: r.Degrade})
+	if r.Harness != "codex" || r.At.IsZero() {
+		t.Fatalf("%+v", r)
+	}
+	for _, raw := range []string{`{}`, `[1]`, `{"rollout":3}`, `{"status":"allowed","rateLimitType":"seven_day"}`} {
+		if r := CodexEngineReading("codex-k", json.RawMessage(raw)); len(r.Windows) != 0 || len(r.Degrade) != 1 || r.Key != "codex-k" {
+			t.Errorf("%s: %+v", raw, r)
+		}
+	}
+	if r := CodexEngineReading("codex-k", json.RawMessage(`{"rollout":[]}`)); len(r.Windows) != 0 || len(r.Drift) != 0 {
+		t.Errorf("an empty list: %+v", r)
 	}
 }

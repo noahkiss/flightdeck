@@ -22,7 +22,8 @@
 // that starts with "event:" runs as an event turn.
 //
 // With GFF_HAB_CAPCOM_KIND=codex it stands in for the Codex engine (A6): ready names engine
-// codex and only images, interrupt and resume_by_id; "approve" asks no approval; "compact" sends
+// codex and only images, interrupt, resume_by_id and usage_events; "usage <pct>" sends the
+// reading as the Codex engine does, a rollout token_count record; "approve" asks no approval; "compact" sends
 // no compaction; a re-seed announces the fresh session with no id and sends the id at its first
 // turn, as a Codex thread gets its id then. An input that arrives while a turn runs is logged as
 // "input during a turn". A hello with reseed runs that re-seed before any input.
@@ -166,7 +167,7 @@ func session(sock, token string) error {
 			}
 			readyDone = true
 			if codex {
-				send(map[string]any{"type": "ready", "engine": "codex", "version": "1", "capabilities": []string{"images", "interrupt", "resume_by_id"}})
+				send(map[string]any{"type": "ready", "engine": "codex", "version": "1", "capabilities": []string{"images", "interrupt", "resume_by_id", "usage_events"}})
 			} else {
 				send(map[string]any{"type": "ready", "engine": "claude", "version": "1", "capabilities": []string{"images", "interrupt", "mid_turn_input", "approval_callback", "compaction_events", "usage_events", "resume_by_id"}})
 			}
@@ -338,8 +339,21 @@ func turns(sock, token string) {
 			var pct float64
 			if _, err := fmt.Sscanf(text, "usage %g", &pct); err == nil {
 				reset := time.Now().Add(6*24*time.Hour - time.Hour).Unix()
-				send(map[string]any{"type": "usage", "reading": map[string]any{"status": "allowed",
-					"rateLimitType": "seven_day", "utilization": pct / 100, "resetsAt": reset}})
+				if codex {
+					// The Codex engine's reading: the rollout's newest token_count record, as
+					// CLI 0.167 writes it (a five-hour primary and a weekly secondary window).
+					send(map[string]any{"type": "usage", "reading": map[string]any{"rollout": []any{map[string]any{
+						"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "ordinal": 12, "type": "event_msg",
+						"payload": map[string]any{"type": "token_count",
+							"info": map[string]any{"last_token_usage": map[string]any{"input_tokens": 100, "output_tokens": 10}, "model_context_window": 258400},
+							"rate_limits": map[string]any{"limit_id": "codex", "limit_name": nil,
+								"primary":   map[string]any{"used_percent": 1.0, "window_minutes": 300, "resets_at": time.Now().Add(time.Hour).Unix()},
+								"secondary": map[string]any{"used_percent": pct, "window_minutes": 10080, "resets_at": reset},
+								"credits":   nil, "individual_limit": nil, "spend_control_reached": nil, "plan_type": "plus", "rate_limit_reached_type": nil}}}}}})
+				} else {
+					send(map[string]any{"type": "usage", "reading": map[string]any{"status": "allowed",
+						"rateLimitType": "seven_day", "utilization": pct / 100, "resetsAt": reset}})
+				}
 			}
 		case "approve":
 			if codex {

@@ -97,6 +97,49 @@ func TestCapcomServicePace(t *testing.T) {
 	}
 }
 
+// A Capcom on the Codex engine under the user's login (capcom-service.md 10.1): its readings, the
+// rollout's token_count records, land as a Codex account under Capcom's own key, and the
+// governor paces it by that account's weekly window. Under an API key the same reading paces
+// nothing: the plan basis is the login's.
+func TestCapcomCodexPace(t *testing.T) {
+	e := newServiceEnvFor(t, "codex", "")
+	if err := os.WriteFile(e.config, []byte("[capcom]\nengine = \"codex\"\nauth = \"login\"\nrestart_delay = \"1s\"\npace_daily_share = 10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	waitUntil(t, "the engine connected", func() bool {
+		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.Connected && st.Engine == "codex"
+	})
+	var g api.GovernorConsumer
+	waitUntil(t, "capcom in the catalog's governor section", func() bool {
+		var ok bool
+		g, ok = governorOf(t, e)
+		return ok
+	})
+	if g.Basis != "none" {
+		t.Fatalf("governor before a reading: %+v", g)
+	}
+	// Share 2 x 10% = 20%; 25% of the weekly window is 125%: user turns wait.
+	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
+	waitUntil(t, "the wait", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
+	if g.Basis != "plan" || g.UsedPct != 25 || g.SharePct != 20 {
+		t.Fatalf("governor at the wait: %+v", g)
+	}
+	var list api.UsageReadings
+	call(t, c, "usage.list", api.UsageListParams{}, &list)
+	if len(list.Accounts) != 1 {
+		t.Fatalf("usage.list: %+v, want Capcom's account alone", list.Accounts)
+	}
+	a := list.Accounts[0]
+	if a.Harness != "codex" || !strings.HasPrefix(a.Key, "codex-") || a.Label != "Plus" || len(a.Windows) != 2 ||
+		a.Windows[1].Name != "7d" || a.Windows[1].UsedPct != 25 || a.Windows[1].StartsAt == "" {
+		t.Fatalf("Capcom's Codex account: %+v", a)
+	}
+}
+
 // The governor after a gff-hab restart and a pace_* edit (capcom-service.md 10.1): the last
 // weekly reading is kept in governor.json, so the wait holds with no new reading; a user message
 // rechecks with the config read again, so an edit that lifts the wait gives no pacing note; and

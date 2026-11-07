@@ -30,6 +30,58 @@ async function withRig(opts: Parameters<typeof codexRig>[0], f: (r: CodexRig) =>
   }
 }
 
+test('usage: the rollout rate limits go to gff-hab before the turn end, once per change', async () => {
+  const codexLimits = (used: number) => ({
+    limit_id: 'codex',
+    limit_name: null,
+    primary: { used_percent: 12.5, window_minutes: 300, resets_at: 1767268800 },
+    secondary: { used_percent: used, window_minutes: 10080, resets_at: 1767744000 },
+    credits: null,
+    individual_limit: null,
+    spend_control_reached: null,
+    plan_type: 'plus',
+    rate_limit_reached_type: null,
+  });
+  const modelY = { limit_id: 'model-y', limit_name: null, primary: null, secondary: { used_percent: 100, window_minutes: 10080, resets_at: 1767744000 } };
+  await withRig({}, async (r) => {
+    let turn = 0;
+    r.codex.script = async (ctx) => {
+      turn++;
+      if (turn === 1) {
+        await ctx.limits(codexLimits(30), '2026-01-01T10:00:00.000Z');
+        await ctx.limits(modelY, '2026-01-01T10:00:01.000Z');
+        await ctx.limits(codexLimits(40), '2026-01-01T10:00:02.000Z');
+      }
+      if (turn === 3) await ctx.limits(null); // a response with no headers: nothing new
+      if (turn === 4) await ctx.limits(codexLimits(41), '2026-01-01T11:00:00.000Z');
+      ctx.say('ok');
+    };
+    await codexStarted(r);
+    const order = () => r.hab.received.filter((m) => m.type === 'usage' || m.type === 'turn.ended').map((m) => m.type);
+    r.hab.input('it1', 'one');
+    await r.hab.wait('turn.ended');
+    assert.deepEqual(order(), ['usage', 'turn.ended']);
+    const first = r.hab.of('usage')[0]!.reading.rollout;
+    // The newest record of each limit id, oldest first, as the CLI wrote them.
+    assert.deepEqual(
+      first.map((rec: any) => [rec.timestamp, rec.payload.rate_limits.limit_id]),
+      [
+        ['2026-01-01T10:00:01.000Z', 'model-y'],
+        ['2026-01-01T10:00:02.000Z', 'codex'],
+      ],
+    );
+    assert.equal(first[1].payload.rate_limits.secondary.used_percent, 40);
+    assert.equal(first[1].type, 'event_msg');
+    for (const [it, n] of [['it2', 2], ['it3', 3], ['it4', 4]] as const) {
+      r.hab.input(it, 'again');
+      await r.hab.wait('turn.ended', () => r.hab.of('turn.ended').length === n);
+    }
+    const usage = r.hab.of('usage');
+    assert.equal(usage.length, 2); // turns 2 and 3 changed nothing
+    assert.equal(usage[1]!.reading.rollout.at(-1).payload.rate_limits.secondary.used_percent, 41);
+  });
+});
+
 test('the Codex SDK version constant matches the pin', async () => {
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.dependencies['@openai/codex-sdk'], CODEX_SDK_VERSION);
@@ -40,8 +92,8 @@ test('ready declares what Codex has; the start check sees the 5.1 surface', asyn
     const ready = await r.hab.wait('ready');
     assert.equal(ready.engine, 'codex');
     assert.equal(ready.sdk_version, CODEX_SDK_VERSION);
-    assert.deepEqual(ready.capabilities, ['images', 'interrupt', 'resume_by_id']);
-    for (const c of ['mid_turn_input', 'approval_callback', 'compaction_events', 'usage_events']) assert.ok(!CODEX_CAPABILITIES.includes(c));
+    assert.deepEqual(ready.capabilities, ['images', 'interrupt', 'resume_by_id', 'usage_events']);
+    for (const c of ['mid_turn_input', 'approval_callback', 'compaction_events']) assert.ok(!CODEX_CAPABILITIES.includes(c));
     await codexStarted(r);
     assert.equal(r.codex.probes, 1);
     // The probe ran against the loopback endpoint under a throwaway home with a placeholder key.
