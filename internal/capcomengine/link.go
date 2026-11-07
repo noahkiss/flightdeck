@@ -392,11 +392,14 @@ func (l *Link) handle(c *conn, m Message) {
 		if purpose != ForCompact {
 			purpose = ForReseed
 		}
-		out := l.contextFor(purpose)
-		out.Request = m.Request
-		if err := l.send(c, out); err != nil {
-			l.cfg.Logf("capcom: answer context.request: %v", err)
-		}
+		// The Logbook part reads the database: off the read loop, so acks keep flowing.
+		go func() {
+			out := l.contextFor(purpose)
+			out.Request = m.Request
+			if err := l.send(c, out); err != nil {
+				l.cfg.Logf("capcom: answer context.request: %v", err)
+			}
+		}()
 	case TCompacted:
 		th.Add(capcomthread.Item{Kind: capcomthread.KindDivider, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
 			Text: "Earlier messages summarised", Summary: l.cfg.Record.Get().Summary})
