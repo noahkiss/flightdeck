@@ -21,23 +21,23 @@ var argGroup = toolArg{Name: "group", Type: "string", Doc: "The group id from gr
 var groupTools = []kitTool{
 	{Name: "group_create", Action: true, Doc: "Propose an agent group for a task with several separable items: one lead per item, each in its own worktree and branch (group/<group>/<item>), on any host and harness, with a reviewer in another harness. Flightdeck checks the plan, files a Logbook plan with one task per item, and asks the owner one confirmation for the whole plan while the owner's setting is on; the tool waits up to 45 s, then says it is still waiting, and the answer reaches you as a message from Flightdeck. Nothing starts before it. Then leads start in plan order, at most group.max_leads at once. Do not use a group for one change: a single session costs less. You are the coordinator: reports from members come to you as messages from Flightdeck. Run it from your Flightdeck pane.",
 		Args: []toolArg{{Name: "plan", Type: "string", Required: true, Doc: `The plan as JSON: {"title": "...", "brief": "...", "project": "<name or remote from projects>", "items": [{"id": "api", "title": "...", "brief": "...", "after": "<item it stacks on>", "review": "on"}], "members": [{"role": "lead", "item": "api", "host": "<label, absent for this host>", "harness": "claude", "model": "...", "name": "..."}], "lane": {"target": "main"}}. One lead per item; reviewers and workers are optional.`}},
-		run: runGroupCreate},
+		run:  runGroupCreate},
 	{Name: "group_status", Action: true, Doc: "Read an agent group's record: its state, each item's state and lead, each member's host, harness and agent state, the waits, and the reports waiting for the coordinator.",
 		Args: []toolArg{argGroup}, run: runGroupStatus},
 	{Name: "group_amend", Action: true, Doc: "Add items or members to your running group: one confirmation for the change, by the same setting as the plan. Use it for a new item, a new host or a new harness. Coordinator only.",
 		Args: []toolArg{argGroup, {Name: "change", Type: "string", Required: true, Doc: `The items and members to add, as JSON: {"items": [...], "members": [...]}, in the plan's form.`}},
-		run: runGroupAmend},
+		run:  runGroupAmend},
 	{Name: "group_close", Action: true, Doc: "End your group: nothing new starts, and its idle members on the home host are closed when the owner's group.close_members is on. Coordinator only.",
 		Args: []toolArg{argGroup}, run: runGroupClose},
 	{Name: "group_retry", Action: true, Doc: "Start a member of your group again: a lead that failed to start, or was closed, or whose worktree setup waited for the owner's yes. It asks nothing: the plan's confirmation covers it. Coordinator only.",
 		Args: []toolArg{argGroup, {Name: "member", Type: "string", Required: true, Doc: "The member's name, from group_status."}},
-		run: runGroupRetry},
+		run:  runGroupRetry},
 	{Name: "group_report", Action: true, Doc: "Report to your group's coordinator: one line or a short text, such as done, blocked on X, or a question. Flightdeck delivers it when the coordinator is idle, or keeps it until the coordinator is resumed. Use it rather than channel_send for the group's news.",
 		Args: []toolArg{argGroup, {Name: "text", Type: "string", Required: true, Doc: "At most 4000 characters."}},
-		run: runGroupReport},
+		run:  runGroupReport},
 	{Name: "group_note", Action: true, Doc: "Write a progress or hand-off note on your item's Logbook task. Flightdeck writes it, so it lands at once whatever the owner's approval setting.",
 		Args: []toolArg{argGroup, {Name: "item", Type: "string", Required: true, Doc: "The item id."}, {Name: "text", Type: "string", Required: true, Doc: "At most 4000 characters."}},
-		run: runGroupNote},
+		run:  runGroupNote},
 }
 
 // groupWait is how long group_create and group_amend wait for the answer, as start_session.

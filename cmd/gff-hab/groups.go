@@ -54,7 +54,7 @@ type groupsConfig struct {
 	note    func(session, text string) error
 	setting func(id string) json.RawMessage
 	// ready reports whether a pane's agent takes a message now. Nil: once it runs.
-	ready func(pane string) bool
+	ready   func(pane string) bool
 	publish func(structure.Event)
 	poke    func() // the catalog's groups section changed
 	now     func() time.Time
