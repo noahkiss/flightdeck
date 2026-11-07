@@ -114,3 +114,25 @@ test('with no pace message every turn runs on the main model', async () => {
     assert.deepEqual(r.sdk.last.turnModels, ['fake-model']);
   });
 });
+
+test('a send-now turn during a wait takes no message queued after it', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    r.hab.send('pace', { pace: 'wait', until: '2026-11-08T00:00:00Z', event_pace: 'wait' });
+    r.hab.input('i1', 'waits');
+    await sleep(100);
+    r.hab.input('i2', 'now', { send_now: true });
+    r.hab.input('i3', 'after');
+    r.hab.input('a1', 'a report', { kind: 'agent', author: 'bee/bob' });
+    // The fake SDK takes one message a turn: i1, then i2 as the follow-on turn; i3 and a1 wait.
+    await ended(r, 2);
+    await sleep(150);
+    assert.equal(r.hab.of('turn.started').length, 2, 'an item after the send-now one began a turn');
+    assert.equal(r.sdk.last.texts().length, 2, 'the SDK got an item queued after the send-now one');
+    // The pace lifts: the held items run, in order.
+    r.hab.send('pace', { pace: 'ok', event_pace: 'ok' });
+    await ended(r, 4);
+    const t = r.hab.of('turn.started');
+    assert.deepEqual(t.slice(2).map((x) => x.items), [['i3'], ['a1']]);
+  });
+});

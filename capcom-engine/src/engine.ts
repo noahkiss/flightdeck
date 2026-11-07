@@ -43,6 +43,10 @@ export interface QueryHandle extends AsyncIterable<SDKMessage> {
 // The small model when hello names none: the provider's smallest current model, by its alias.
 export const DEFAULT_SMALL_MODEL = 'haiku';
 
+// isPaced: an item paced at the event step: event batches, and agent reports and round
+// messages (sent as agent), which no user typed (10.1).
+const isPaced = (i: Item): boolean => i.kind === 'event' || i.kind === 'agent';
+
 // The governor's answer (capcom-service.md 10.1): the pace of the next user turn and of the
 // next event turn. Until the first pace message, every turn runs.
 export interface Pace {
@@ -291,12 +295,23 @@ export class Engine {
     };
     // Paced as events: event batches, and agent reports and round messages (sent as agent),
     // which no user typed. The turn's origin stays as the item's kind gives it.
-    const paced = (i: Item) => i.kind === 'event' || i.kind === 'agent';
+    const paced = isPaced;
     const origin = head.kind === 'event' ? 'event' : 'user';
     if (!paced(head)) return userTurn();
     if (p.event === 'ok') return { origin, small: p.user !== 'ok' };
     if (this.pending.some((i) => !paced(i))) return userTurn();
     return null;
+  }
+
+  // mayHand says whether the head pending item may go to the SDK now, into the turn admit
+  // began or one already running. While user turns wait, a user item goes only with a send-now
+  // item at or after it, and a paced item only while event turns may run: an item queued after
+  // the last send-now one waits for the next pace, not the send-now turn (10.1).
+  private mayHand(): boolean {
+    if (this.pace.user !== 'wait') return true;
+    const head = this.pending[0]!;
+    if (this.pending.some((i) => i.send_now)) return true;
+    return isPaced(head) && this.pace.event === 'ok';
   }
 
   // useModel switches the SDK session's model before a turn begins.
@@ -330,6 +345,7 @@ export class Engine {
           if (!this.ready || this.turn || gen !== this.paceGen) continue; // admit again
           this.nextOrigin = a.origin;
         }
+        if (!this.mayHand()) break;
         const item = this.pending.shift()!;
         await this.hand(item);
       }
@@ -832,8 +848,11 @@ export class Engine {
       return;
     }
     // Items handed but not taken run as the SDK's next turn.
-    const left = [...this.untaken].map((u) => this.uuidToItem.get(u)!).filter(Boolean);
-    if (left.length) this.beginTurn('user', left);
+    // Only items the pace let through were handed (mayHand), so the turn needs no admit.
+    const untaken = [...this.untaken];
+    const left = untaken.map((u) => this.uuidToItem.get(u)!).filter(Boolean);
+    if (left.length) this.beginTurn(this.uuidItems.get(untaken[0]!)?.kind === 'event' ? 'event' : 'user', left);
+    void this.pump(); // items held during the turn meet the pace of now
   }
 
   private endTurn(result: string): void {
