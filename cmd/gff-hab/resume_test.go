@@ -14,6 +14,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
+	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
 // TestResumeStart: a harness seen with its id resumes it (Claude Code with no transcript starts
@@ -263,5 +264,50 @@ func TestResumeBookConcurrentSaves(t *testing.T) {
 		if e, ok := b.get(id); !ok || e.Harness != "claude" || e.Native != id {
 			t.Fatalf("%s: %+v %v", id, e, ok)
 		}
+	}
+}
+
+// TestResumeLiveCheck: a harness resume asks adopt's live check first: a process list that does
+// not read is unavailable and a process outside that runs the conversation is conflict, both
+// before anything starts; a session with no native id is not checked.
+func TestResumeLiveCheck(t *testing.T) {
+	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"),
+		Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p1", Exit: &api.ExitStatus{}}, structure.HolderPane{ID: "p2", Exit: &api.ExitStatus{}})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	s1, err := st.CreateSession(structure.SessionSpec{Name: "one", Pane: "p1"})
+	if err != nil || s1.State != api.SessionStateExited {
+		t.Fatalf("session: %+v %v", s1, err)
+	}
+	s2, err := st.CreateSession(structure.SessionSpec{Name: "two", Pane: "p2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := testAdopter(t, map[string]string{"CLAUDE_CONFIG_DIR": t.TempDir(), "CODEX_HOME": t.TempDir()}, nil, nil)
+	d.book.started(s1.ID, api.SessionCreateParams{Harness: "claude"})
+	d.book.adopted(s1.ID, "claude", "c1")
+	d.book.started(s2.ID, api.SessionCreateParams{Argv: []string{"sh"}})
+	g := &generalResumer{acts: &actions{store: st}, book: d.book, live: d.outsideLive,
+		folder: func(context.Context, string) string { return "" }}
+
+	d.procs = func(context.Context) ([]outsideProc, error) { return nil, errors.New("no ps") }
+	if _, err := g.Resume(context.Background(), s1.ID); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "process list") {
+		t.Fatalf("process list failed: %v", err)
+	}
+	d.procs = func(context.Context) ([]outsideProc, error) { return []outsideProc{{42, "claude --resume c1"}}, nil }
+	if _, err := g.Resume(context.Background(), s1.ID); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "pid 42") {
+		t.Fatalf("live outside: %v", err)
+	}
+	// Free: the check passes and the resume goes on to the folder, which is not known here.
+	d.procs = func(context.Context) ([]outsideProc, error) { return nil, nil }
+	if _, err := g.Resume(context.Background(), s1.ID); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "folder") {
+		t.Fatalf("free: %v", err)
+	}
+	// A plain command has no conversation: a failing list does not stop it.
+	d.procs = func(context.Context) ([]outsideProc, error) { return nil, errors.New("no ps") }
+	if _, err := g.Resume(context.Background(), s2.ID); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "folder") {
+		t.Fatalf("a shell: %v", err)
 	}
 }

@@ -951,8 +951,14 @@ files it as a new session:
 A registry entry can outlive its process after a crash, and the pid can come back as another
 program. The entry records the process's start (`procStart`: on macOS ps's `lstart` in UTC, on
 Linux the start tick of `/proc/<pid>/stat`). gff-hab reads the pid's start now, in the same
-form, and ignores an entry whose start differs. An entry with no start, or a start that does
-not read, counts as live: a guess never frees a conversation.
+form, and ignores an entry whose start differs. Both sides are parsed first, the tick as a
+number and `lstart` as a time in UTC or in local time. An entry with no start, a start that
+does not read, or a recorded start in a form gff-hab does not parse (another locale, another
+clock) counts as live: a guess never frees a conversation.
+
+A fork (`claude --resume <id> --fork-session`, `codex fork <id>`) reads the conversation and
+writes a new one, so its arguments do not count as running it. On Linux the process list
+comes from `/proc/<pid>/cmdline`, with ps as the fallback; elsewhere from ps.
 
 Known gap: a Codex conversation started as plain `codex` and still open in a terminal shows
 no id in its arguments, and Codex keeps no registry of running sessions. gff-hab does not see
@@ -980,7 +986,8 @@ first.
 |---|---|
 | `transcript` `TestOutside*` | Over hand-written transcripts in a temporary config folder and Codex home: the folder from Claude's records (the one that names the directory wins) and from Codex's `session_meta`, the first typed line (wrappers and tool results skipped), a missing id, the newest-first list with its limit, `sdk-*` transcripts left out of the list, Claude's running-session registry |
 | `cmd/gff-hab` `TestAdoptPlan`, `TestAdoptLive`, `TestAdoptParseProcs` | The harness found by id, an id under both, a bad id, opencode, another harness, a folder gone, a relative `cwd`; the registry with a live and a dead pid, a process whose arguments hold the id, gff-hab's own processes and a `grep` never counted; the book's holder; ps output |
-| `cmd/gff-hab` `TestAdoptReusedPid`, `TestAdoptProcStart` | With fake process readers: a registry entry whose recorded start differs from the pid's start ignored; the same start (also with other spacing), an entry with no start and a start that does not read kept live; a process whose arguments hold the id live whatever the registry says. The start read for the test's own process against `ps -o lstart` in UTC (macOS) or `/proc/self/stat` (Linux), a pid that does not exist, the stat parser with a command name holding `)` |
+| `cmd/gff-hab` `TestAdoptReusedPid`, `TestAdoptStartsDiffer`, `TestAdoptProcStart`, `TestAdoptFork`, `TestAdoptProcfs` | With fake process readers: a registry entry whose recorded start differs from the pid's start ignored; the same start (also with other spacing or in local time), an entry with no start, a start that does not read, another locale and epoch milliseconds kept live; a process whose arguments hold the id live whatever the registry says. The start read for the test's own process against `ps -o lstart` in UTC (macOS) or `/proc/self/stat` (Linux), a pid that does not exist, the stat parser with a command name holding `)`. A Claude Code or Codex fork not counted. The process list from a hand-made procfs (kernel threads skipped; an empty or missing root an error) |
+| `cmd/gff-hab` `TestResumeLiveCheck` | Over a store with a fake holder: a harness resume with a process list that fails is `unavailable`, with a process outside that runs the conversation `conflict`; a plain command is not checked |
 | `cmd/gff-hab` `TestSessionAdopt` | Real holder and gff-hab, a stand-in `claude` on gff-hab's PATH and hand-written transcripts: the list shows the conversation with its folder and title, and one the registry shows live as live; adopt of the live one is `conflict`, of an unknown id `not_found`; adopt starts `claude --resume <id>` in the recorded folder under the given name; a second adopt is refused with `conflict` naming the session; the list leaves it out; after the pane closes and the registry names the conversation with a live pid, `session.resume` is `conflict` and starts nothing; once the entry's start no longer matches the pid, `session.resume` starts it again with `--resume`; the transcript is byte-identical |
 
 ---

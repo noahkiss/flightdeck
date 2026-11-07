@@ -206,14 +206,42 @@ func (d *adopter) runner(v outsideView, harness, id string) int {
 }
 
 // reused says whether a registry entry's pid now names another process: the entry records a
-// process start and the pid's start, read now, differs. An entry with no start, or a start that
-// does not read, counts as the same process: a guess never frees a conversation.
+// process start and the pid's start, read now, differs. An entry with no start, a start that
+// does not read, or a recorded start in a form gff-hab does not parse (another locale, another
+// clock) counts as the same process: a guess never frees a conversation.
 func (d *adopter) reused(r transcript.ClaudeRunning) bool {
 	if r.ProcStart == "" || d.started == nil {
 		return false
 	}
 	now, ok := d.started(r.PID)
-	return ok && strings.Join(strings.Fields(now), " ") != strings.Join(strings.Fields(r.ProcStart), " ")
+	if !ok {
+		return false
+	}
+	return startsDiffer(r.ProcStart, now)
+}
+
+// startsDiffer compares a recorded start with one read now, both in the registry's form: a
+// Linux start tick, or ps's lstart in the C locale. It answers true only when both parse as the
+// same kind and differ. A lstart recorded in local time rather than UTC still matches.
+func startsDiffer(recorded, now string) bool {
+	recorded, now = strings.Join(strings.Fields(recorded), " "), strings.Join(strings.Fields(now), " ")
+	if a, err := strconv.ParseUint(recorded, 10, 64); err == nil {
+		b, err := strconv.ParseUint(now, 10, 64)
+		return err == nil && a != b
+	}
+	tn, err := time.ParseInLocation(time.ANSIC, now, time.UTC)
+	if err != nil {
+		return false
+	}
+	tu, err := time.ParseInLocation(time.ANSIC, recorded, time.UTC)
+	if err != nil {
+		return false
+	}
+	tl, err := time.ParseInLocation(time.ANSIC, recorded, time.Local)
+	if err != nil {
+		return false
+	}
+	return !tn.Equal(tu) && !tn.Equal(tl)
 }
 
 // outsideLive refuses a conversation a process outside the hab runs: conflict when one runs it,
@@ -241,6 +269,13 @@ func runsConversation(args, harness, id string) bool {
 	}
 	if b := filepath.Base(words[0]); b == "gff-hab" || b == "gff" {
 		return false
+	}
+	// A fork (`claude --resume <id> --fork-session`, `codex fork <id>`) reads the conversation
+	// and writes a new one: it is no second writer.
+	for i, w := range words {
+		if w == "--fork-session" || (harness == transcript.HarnessCodex && w == "fork" && i+1 < len(words) && slices.Contains(words[i+1:], id)) {
+			return false
+		}
 	}
 	for _, w := range words {
 		if w != id && strings.Contains(w, harness) {
@@ -342,8 +377,14 @@ func (d *adopter) Outside(ctx context.Context, p api.SessionOutsideParams) ([]ap
 	return out, nil
 }
 
-// listProcs lists every process on the host with its arguments, through ps.
+// listProcs lists every process on the host with its arguments: from procfs where the host has
+// one (Linux), else, or when procfs does not read, through ps.
 func listProcs(ctx context.Context) ([]outsideProc, error) {
+	if procfsRoot != "" {
+		if procs, err := readProcfs(ctx, procfsRoot); err == nil {
+			return procs, nil
+		}
+	}
 	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=", "-o", "args=").Output()
 	if err != nil {
 		return nil, err
