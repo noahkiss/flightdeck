@@ -1213,6 +1213,8 @@ gff agent compact with a follow-up that points at it."
 - **Reset.** A compaction (`PreCompact`, `SessionStart` with `source` `compact`), a new native
   session in the pane, or a percentage back under the first level clears the levels noted.
 - **Off.** With `agent.context_nudge` at 0 the nudge adds nothing to a context event's answer.
+- **Group members.** The nudge adds nothing for a group member's pane: context supervision
+  runs its context (`groups.md` 9.1). Supervision reads the same percentage.
 
 ## Spawn
 

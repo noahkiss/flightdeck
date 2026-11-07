@@ -888,6 +888,52 @@ for another member: tools `member_compact` and `member_handoff`.
 - One supervision action per member at a time. A second request while one runs gets `conflict`.
 - An agent cannot act on a member outside its own group.
 
+### 9.5 Built choices (stage B6, task-humtiqof)
+
+gff-hab's supervisor (`cmd/gff-hab/supervise.go`) runs on every hab with the holder link, for
+that hab's own members.
+
+- **`context_pct`.** The supervisor reads each member every 2 s and stores the reading on its
+  session (`Session.context_pct`), which the catalog copies carry to the home hab. Claude Code:
+  the context nudge's reading (the status line, else the transcript). Codex: the last
+  `token_count` of the rollout, `info.last_token_usage.total_tokens` (else input plus output)
+  over `info.model_context_window`, else the window of the last `task_started`. Codex 0.166
+  writes both; a `token_count` with `info` null is no reading. opencode: no reading and no
+  transcript size yet, so an opencode member is not supervised.
+- **Counting.** Every Claude Code `SessionStart` with source `compact` of a member counts on its
+  session (`Session.compacts`), the member's own and the user's included; a compaction the hab
+  ran counts once, at its end. A fresh session starts at 0. The home hab copies the count into
+  the record.
+- **Triggers.** Claude Code on a hab with self-compact: at `group.compact_at`, a fresh session
+  when the member has `group.fresh_after_compacts` compacts or its transcript is
+  `group.fresh_transcript_mb` or more, else a compact. `group.compact_at` 0 turns compacts off;
+  the member then goes fresh at `group.handoff_at`, as other harnesses do. A member with no
+  reading goes fresh at the transcript size. An automatic action that failed waits a minute
+  before the next try.
+- **The messages** are Flightdeck notes, sent through `session.send`'s path under the rounds
+  lock's guard, never while the member is in use. The compact's ask names the percentage and
+  the `group_note` arguments; the follow-up names the item, its title and its task. The turn
+  counts as ended once the agent worked and came back to its prompt, at most
+  `[groups] handoff_note_wait`. The compaction is self-compact's, started by the hab, with the
+  same `agent.compact` events.
+- **The swap.** The hab holds channel deliveries to the old session, renames it `<name>-<n>`
+  (the first free n) and takes it out of the group (no group, no envelope), starts the new
+  session under the old name in the old one's folder with its harness, model, group, envelope
+  and a trust cover, records `Session.replaced` on it, moves the held messages, then closes the
+  old pane. A failed start puts the old name and group back. The seed is the lead seed of the
+  item from the group record (read from the home hab), then "read the notes on task <id> and
+  continue". A hand-off with no note within `[groups] handoff_note_wait` still swaps, and the
+  action's reason says "no hand-off note". The home hab's record follows the name to the new
+  session and sets `replaced`.
+- **Sibling actions** are `member.compact`, `member.handoff` and `member.action {id}`. The
+  asker's hab finds the member by name in its own sessions, else in the catalog copies, and
+  hands the call over the link; a forwarded call never forwards again. It answers at once with
+  the action (`queued`, `running`, `done`, `skipped`, `failed`). The end reaches a pane's asker
+  as a Flightdeck note: from the member's hab when the asker is local, else from the asker's own
+  hab, which reads `member.action` every 2 s. The user reads `member.action`.
+- **Not built.** Only Claude Code compacts. opencode has no reading. The card's flag for a
+  hand-off with no note is the action's reason only, since the card is not built.
+
 ---
 
 ## 10. Usage pacing
@@ -1077,7 +1123,8 @@ to 3.6.
 | `review.verdict {group, item, verdict, findings, fixed}` | From the reviewer's pane only | B7 |
 | `heavy.take {ticket?}`, `heavy.release {ticket}` | The lock, on a held connection | B5 |
 | `heavy.status` | Holders, waiters, disk state | B5 |
-| `member.compact`, `member.handoff {group, member}` | Sibling actions | B6 |
+| `member.compact`, `member.handoff {group, member}` | Sibling actions; → the action (9.5) | B6 |
+| `member.action {id}` | One action, by the member's hab (9.5) | B6 |
 
 ### 15.2 Agent kit
 
@@ -1158,8 +1205,9 @@ setting, with its earlier fixed value as the default. Two homes, by who tunes it
 **Changes to other specs.** Each stage edits `app.md` 20.3 to 20.5 as it builds a row. Stage
 B2 built the hab's `confirm.group_plan` row (its group starts need the off case) and added it
 to `app.md` 20.3, and built `[groups] trust_hold`; the app's row is not built yet. Stage B3 built the hab rows `group.confirm_max_age`, `group.max_leads`, `group.max_workers` and
-`group.close_members` and the keys `[groups] keep_ended`, `inbox_max` and `inbox_days`; B5 adds the `heavy.*` rows; B6 adds `group.compact_at`,
-`group.fresh_after_compacts`, `group.fresh_transcript_mb` and `group.handoff_at`. Each stage that
+`group.close_members` and the keys `[groups] keep_ended`, `inbox_max` and `inbox_days`; B5 adds the `heavy.*` rows; B6 built `group.compact_at`,
+`group.fresh_after_compacts`, `group.fresh_transcript_mb` and `group.handoff_at`, and the keys
+`[groups] handoff_note_wait` and `sibling_wait`. Each stage that
 reads a `[groups]` or `[heavy]` key adds it to `docs/examples/hab.toml`.
 
 The project's `flightdeck.json` gains `lane.checks`, `lane.ci` and `lane.build_folders`, read

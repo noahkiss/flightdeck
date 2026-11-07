@@ -3519,6 +3519,10 @@ picker never changes them.
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
 | `group.max_workers` | Workers per lead | Agents | integer 0 to 5 | 2 | Hab, every hab; copied into each member's envelope | `groups.md` 3.3 |
 | `group.close_members` | Close idle members at the end | Agents | bool | On | Hab, every hab; the home hab reads it | `groups.md` 7.5 |
+| `group.compact_at` | Compact members at context | Agents | integer percent, 0 = off, else 1 to 99 | 40 | Hab, every hab; each member's hab reads it | `groups.md` 9.1 |
+| `group.fresh_after_compacts` | Start fresh after this many compacts | Agents | integer 1 to 20 | 4 | Hab, every hab; each member's hab reads it | `groups.md` 9.1 |
+| `group.fresh_transcript_mb` | Start fresh at this transcript size | Agents | integer MB 1 to 64 | 4 | Hab, every hab; each member's hab reads it | `groups.md` 9.1 |
+| `group.handoff_at` | Start fresh at context, for a harness the hab cannot compact | Agents | integer percent 20 to 95 | 60 | Hab, every hab; each member's hab reads it | `groups.md` 9.1 |
 | `voice.*` | Engines (hab, Parakeet, Apple), summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | As 13.7 | App | 13.7 |
 | `voice.language` | Dictation language | Voice | a language tag, or system | System | App (not built) | 13.4 |
 
@@ -3609,8 +3613,10 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
 - **Agent groups** (`groups.md` 5.8, stage B3) read `confirm.group_plan` and
   `group.confirm_max_age` when a plan's or an amend's confirmation opens, `group.max_leads` at
   each scheduler pass, `group.max_workers` when the envelope is made (a change reaches members
-  started after it), and `group.close_members` at `group.close`. The app's rows for these and
-  for `confirm.group_plan` are not built.
+  started after it), and `group.close_members` at `group.close`. Context supervision
+  (`groups.md` 9.5, stage B6) reads `group.compact_at`, `group.fresh_after_compacts`,
+  `group.fresh_transcript_mb` and `group.handoff_at` at each reading of a member, every 2 s. The
+  app's rows for these and for `confirm.group_plan` are not built.
 - **The flag lock.** `-permission-wait` given on the command line, even as 0, or a non-empty
   `$GFF_HAB_PERMISSION_WAIT`, locks `hab.permission_wait` in whole seconds, rounded. A flag wins
   over the config file.
