@@ -352,6 +352,28 @@ test('WebFetch of an unseen URL raises an approval card; allow lets it run', asy
   });
 });
 
+test('WebFetch on a site the user allowed raises no card; the sites message changes the list', async () => {
+  await withRig({ hello: { sites: ['example.org'] } }, async (r) => {
+    const verdicts: string[] = [];
+    r.sdk.script = async (ctx) => {
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://www.Example.org/menu', prompt: 'read' }));
+    };
+    await started(r);
+    r.hab.input('a', 'look it up');
+    await r.hab.wait('turn.ended');
+    assert.deepEqual(verdicts, ['allow']);
+    assert.equal(r.hab.of('approval.request').length, 0);
+    // The site is taken off: the next fetch raises a card again.
+    r.hab.send('sites', {});
+    r.hab.input('b', 'again');
+    const req = await r.hab.wait('approval.request');
+    assert.equal(req.input.url, 'https://www.Example.org/menu');
+    r.hab.send('approval.answer', { request: req.request, allow: false, message: '' });
+    await until(() => r.hab.of('turn.ended').length === 2);
+    assert.deepEqual(verdicts, ['allow', 'deny']);
+  });
+});
+
 test('WebFetch: a denied or expired card denies with the hab message', async () => {
   await withRig({}, async (r) => {
     let verdict = '';

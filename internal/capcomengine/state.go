@@ -53,6 +53,8 @@ type Record struct {
 	// session.started adds no second divider. An engine that starts before the id came opens
 	// with a re-seed again.
 	Opening string `json:"opening,omitempty"`
+	// Sites are the hosts the user allowed with "Allow this site" (5.3), lowercase, sorted.
+	Sites []string `json:"sites,omitempty"`
 }
 
 // Current is the SDK session to resume, or "".
@@ -100,6 +102,7 @@ func (s *Store) Get() Record {
 	r := s.rec
 	r.Sessions = append([]SDKSession(nil), s.rec.Sessions...)
 	r.Crashes = append([]time.Time(nil), s.rec.Crashes...)
+	r.Sites = append([]string(nil), s.rec.Sites...)
 	return r
 }
 

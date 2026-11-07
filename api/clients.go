@@ -134,7 +134,7 @@ type AnswerVia string
 type ApprovalAnswerParams struct {
 	Pane    string         `json:"pane"`
 	Request string         `json:"request" doc:"The request id from the pane's agent state."`
-	Choice  ApprovalChoice `json:"choice" doc:"allow or deny a permission; answer a question with text."`
+	Choice  ApprovalChoice `json:"choice" doc:"allow or deny a permission; answer a question with text. allow_site: a Capcom web fetch card only (capcom-service.md 5.3): allow, and keep the URL's site so later fetches on it need no card."`
 	Text    string         `json:"text,omitempty" doc:"With choice answer: the chosen option or free text."`
 	Via     AnswerVia      `json:"via,omitempty"`
 }

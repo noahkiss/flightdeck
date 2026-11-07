@@ -29,6 +29,7 @@ const (
 	TApprovalAnswer = "approval.answer"
 	TShutdown       = "shutdown"
 	TContext        = "context"
+	TSites          = "sites"
 	TAck            = "ack"
 )
 
@@ -176,6 +177,9 @@ type Message struct {
 	// session: the thread's last session was another engine's, or a re-seed's fresh session never
 	// got its id. Set only with no SDKSession.
 	Reseed string `json:"reseed,omitempty"`
+	// hello, sites: the sites the user allowed with "Allow this site" (5.3). A WebFetch of a
+	// URL on one of them needs no card. A sites message with none clears the list.
+	Sites []string `json:"sites,omitempty"`
 
 	// input, input.taken
 	Item json.RawMessage `json:"item,omitempty"`

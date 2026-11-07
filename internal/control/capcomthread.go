@@ -16,6 +16,7 @@ type CapcomThread interface {
 	Resume(ctx context.Context) (api.CapcomServiceStatus, error)
 	// CardAnswer answers a thread card for the client device (6.4, 7.4).
 	CardAnswer(ctx context.Context, client string, p api.CapcomCardAnswerParams) (api.CapcomCardAnswered, error)
+	RemoveSite(site string) (api.CapcomServiceStatus, error)
 }
 
 const hintNoCapcomThread = "%s needs the Capcom service, which this hab is not running: set [capcom] engine on the home host; the capcom-thread capability is absent"
@@ -76,6 +77,24 @@ func (c *conn) dispatchCapcomThread(m message, s api.Seq) (any, *Error) {
 			return nil, appErr(api.ErrorKindInvalid, "capcom.thread.page: limit %d is below 0", p.Limit)
 		}
 		res, err := ct.ThreadPage(p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		res.Seq = s
+		return api.NonNil(res), nil
+	}
+	if m.Method == "capcom.site.remove" {
+		var p api.CapcomSiteParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if ct == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoCapcomThread, m.Method)
+		}
+		if p.Site == "" {
+			return nil, appErr(api.ErrorKindInvalid, "capcom.site.remove: no site")
+		}
+		res, err := ct.RemoveSite(p.Site)
 		if err != nil {
 			return nil, actionErr(m.Method, err)
 		}

@@ -536,13 +536,17 @@ func (e *capcomEngine) DeliverAgent(text string) error {
 
 // Answer answers a Capcom approval card (5.3).
 func (e *capcomEngine) Answer(client string, p api.ApprovalAnswerParams) error {
-	if p.Choice != api.ApprovalChoiceAllow && p.Choice != api.ApprovalChoiceDeny {
-		return control.Errorf(api.ErrorKindInvalid, "a Capcom approval takes allow or deny")
+	switch p.Choice {
+	case api.ApprovalChoiceAllow, api.ApprovalChoiceAllowSite, api.ApprovalChoiceDeny:
+	default:
+		return control.Errorf(api.ErrorKindInvalid, "a Capcom approval takes allow, allow_site or deny")
 	}
-	err := e.link.Answer(p.Request, p.Choice == api.ApprovalChoiceAllow, client)
+	err := e.link.Answer(p.Request, string(p.Choice), client)
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, capcomengine.ErrChoice):
+		return control.Errorf(api.ErrorKindInvalid, "Capcom approval %s does not offer %s: allow_site is for a web fetch card with a URL", p.Request, p.Choice)
 	case errors.Is(err, capcomengine.ErrNotFound), errors.Is(err, capcomthread.ErrConflict):
 		return control.Errorf(api.ErrorKindConflict, "Capcom approval %s is not open: answered already, or expired", p.Request)
 	}
@@ -582,7 +586,7 @@ func (e *capcomEngine) Interrupt() error {
 func (e *capcomEngine) ServiceStatus() (api.CapcomServiceStatus, error) {
 	st, ls, rec := e.sup.Status(), e.link.Status(), e.rec.Get()
 	out := api.CapcomServiceStatus{State: st.State, Reason: st.Reason, Session: e.Session(), Connected: ls.Connected && ls.Ready,
-		Engine: ls.Engine, Version: ls.Version, Turn: ls.Turn, Folder: capcomengine.EngineDir(e.dir), SDKSessions: []api.CapcomSDKSession{}}
+		Engine: ls.Engine, Version: ls.Version, Turn: ls.Turn, Folder: capcomengine.EngineDir(e.dir), SDKSessions: []api.CapcomSDKSession{}, Sites: rec.Sites}
 	for _, s := range rec.Sessions {
 		as := api.CapcomSDKSession{ID: s.ID, Start: s.Start.UTC().Format(time.RFC3339), Why: s.Why}
 		if !s.End.IsZero() {
@@ -591,6 +595,17 @@ func (e *capcomEngine) ServiceStatus() (api.CapcomServiceStatus, error) {
 		out.SDKSessions = append(out.SDKSessions, as)
 	}
 	return out, nil
+}
+
+// RemoveSite serves capcom.site.remove (5.3).
+func (e *capcomEngine) RemoveSite(site string) (api.CapcomServiceStatus, error) {
+	if err := e.link.RemoveSite(site); err != nil {
+		if errors.Is(err, capcomengine.ErrNotFound) {
+			return api.CapcomServiceStatus{}, control.Errorf(api.ErrorKindNotFound, "Capcom has no allowed site %q", site)
+		}
+		return api.CapcomServiceStatus{}, control.Errorf(api.ErrorKindUnavailable, "capcom.site.remove: %v", err)
+	}
+	return e.ServiceStatus()
 }
 
 // Pause serves capcom.pause.

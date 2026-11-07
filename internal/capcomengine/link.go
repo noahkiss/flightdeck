@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -193,6 +195,7 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 	hello.LastItem = l.cfg.Thread.Last()
 	hello.SDKSession, hello.Reseed = l.opening(rec)
 	c.resume = hello.SDKSession
+	hello.Sites = rec.Sites
 	err := l.send(c, hello)
 	if err == nil {
 		err = l.read(c)
@@ -555,14 +558,14 @@ func (l *Link) openApproval(m Message) {
 	th := l.cfg.Thread
 	key := "approval:" + m.Request
 	card, _, err := th.Add(capcomthread.Item{Kind: capcomthread.KindCard, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
-		Key: key, Text: approvalText(m), Card: &capcomthread.Card{Type: "approval", Ref: m.Request, Choices: []string{"allow", "deny"}}})
+		Key: key, Text: approvalText(m), Card: &capcomthread.Card{Type: "approval", Ref: m.Request, Choices: approvalChoices(m)}})
 	if err != nil {
 		l.cfg.Logf("capcom: store an approval card: %v", err)
 		return
 	}
 	if card.Answer != nil {
 		// Answered before a restart; the engine asked again: hand it the answer.
-		l.answerEngine(m.Request, card.Answer.Choice == "allow", answerMessage(card.Answer.Choice))
+		l.answerEngine(m.Request, allows(card.Answer.Choice), answerMessage(card.Answer.Choice))
 		return
 	}
 	// The age counts from the card: a request asked again after a gff-hab restart keeps the
@@ -582,6 +585,44 @@ func (l *Link) openApproval(m Message) {
 	l.changed()
 }
 
+// Choices on an approval card. A WebFetch card with a URL adds "Allow this site" (5.3).
+const (
+	ChoiceAllow     = "allow"
+	ChoiceAllowSite = "allow_site"
+	ChoiceDeny      = "deny"
+)
+
+func approvalChoices(m Message) []string {
+	if m.Tool == "WebFetch" && SiteOf(m.Input) != "" {
+		return []string{ChoiceAllow, ChoiceAllowSite, ChoiceDeny}
+	}
+	return []string{ChoiceAllow, ChoiceDeny}
+}
+
+func allows(choice string) bool { return choice == ChoiceAllow || choice == ChoiceAllowSite }
+
+// SiteOf is the site a WebFetch input's url names: its host, lowercase, with no port and no
+// leading "www.". "" when the input has no http or https URL.
+func SiteOf(input json.RawMessage) string {
+	var in struct {
+		URL string `json:"url"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return ""
+	}
+	return SiteOfURL(in.URL)
+}
+
+// SiteOfURL is SiteOf for a URL string.
+func SiteOfURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	h := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	return strings.TrimPrefix(h, "www.")
+}
+
 func approvalText(m Message) string {
 	if m.Reason != "" {
 		return m.Reason
@@ -591,7 +632,7 @@ func approvalText(m Message) string {
 
 func answerMessage(choice string) string {
 	switch choice {
-	case "allow":
+	case ChoiceAllow, ChoiceAllowSite:
 		return ""
 	case "expired":
 		return "the user did not answer"
@@ -605,16 +646,17 @@ func (l *Link) expire(request string) {
 	}
 }
 
-// Answer answers an open approval: allow or deny. The first answer wins; a later one, or one
-// for a request that is not open, gets capcomthread.ErrConflict or ErrNotFound.
-func (l *Link) Answer(request string, allow bool, by string) error {
-	choice := "deny"
-	if allow {
-		choice = "allow"
-	}
+// Answer answers an open approval: allow, allow_site (a WebFetch card only: allow, and keep
+// the URL's site, 5.3) or deny. The first answer wins; a later one, or one for a request that
+// is not open, gets capcomthread.ErrConflict or ErrNotFound. A choice the card does not offer
+// gets ErrChoice.
+func (l *Link) Answer(request, choice, by string) error {
 	_, err := l.resolve(request, choice, by)
 	return err
 }
+
+// ErrChoice means the card does not offer that choice.
+var ErrChoice = errors.New("capcom: the approval card does not offer that choice")
 
 // ErrNotFound means no approval with that id is open.
 var ErrNotFound = errors.New("capcom: no such approval is open")
@@ -626,6 +668,21 @@ func (l *Link) resolve(request, choice, by string) (capcomthread.Item, error) {
 		l.mu.Unlock()
 		return capcomthread.Item{}, ErrNotFound
 	}
+	site := ""
+	switch choice {
+	case ChoiceAllow, ChoiceDeny, "expired":
+	case ChoiceAllowSite:
+		if a.Tool == "WebFetch" {
+			site = SiteOf(a.Input)
+		}
+		if site == "" {
+			l.mu.Unlock()
+			return capcomthread.Item{}, ErrChoice
+		}
+	default:
+		l.mu.Unlock()
+		return capcomthread.Item{}, ErrChoice
+	}
 	delete(l.approval, request)
 	if a.stop != nil {
 		a.stop()
@@ -633,7 +690,12 @@ func (l *Link) resolve(request, choice, by string) (capcomthread.Item, error) {
 	l.mu.Unlock()
 	it, err := l.cfg.Thread.AnswerCard(a.Item, choice, by)
 	if err == nil {
-		l.answerEngine(request, choice == "allow", answerMessage(choice))
+		if site != "" {
+			// The site reaches the engine before the answer, so the fetch the answer lets
+			// through, and any later one on the site, finds it.
+			l.setSites(func(s []string) []string { return addSite(s, site) })
+		}
+		l.answerEngine(request, allows(choice), answerMessage(choice))
 	}
 	l.changed()
 	return it, err
@@ -649,6 +711,50 @@ func (l *Link) answerEngine(request string, allow bool, msg string) {
 	if err := l.send(c, Message{Type: TApprovalAnswer, Request: request, Allow: &allow, Message: msg}); err != nil {
 		l.cfg.Logf("capcom: answer approval %s: %v", request, err)
 	}
+}
+
+// Sites returns the sites the user allowed (5.3), sorted.
+func (l *Link) Sites() []string { return l.cfg.Record.Get().Sites }
+
+// RemoveSite takes a site off the list; the next fetch of a URL on it raises a card again.
+// ErrNotFound when the list does not hold it.
+func (l *Link) RemoveSite(site string) error {
+	site = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(site)), "www.")
+	if !slices.Contains(l.Sites(), site) {
+		return ErrNotFound
+	}
+	return l.setSites(func(s []string) []string { return slices.DeleteFunc(s, func(x string) bool { return x == site }) })
+}
+
+// setSites changes the kept list and hands the engine the new one.
+func (l *Link) setSites(fn func([]string) []string) error {
+	var sites []string
+	err := l.cfg.Record.Update(func(r *Record) {
+		r.Sites = fn(r.Sites)
+		sites = append([]string(nil), r.Sites...)
+	})
+	if err != nil {
+		l.cfg.Logf("capcom: save the allowed sites: %v", err)
+	}
+	l.mu.Lock()
+	c := l.cur
+	l.mu.Unlock()
+	if c != nil {
+		if serr := l.send(c, Message{Type: TSites, Sites: sites}); serr != nil {
+			l.cfg.Logf("capcom: send the allowed sites: %v", serr)
+		}
+	}
+	l.changed()
+	return err
+}
+
+func addSite(s []string, site string) []string {
+	if slices.Contains(s, site) {
+		return s
+	}
+	s = append(s, site)
+	slices.Sort(s)
+	return s
 }
 
 // Drop forgets every open approval with its card marked expired: the engine that asked is gone

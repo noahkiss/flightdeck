@@ -136,6 +136,7 @@ var Methods = []Method{
 	{"capcom.interrupt", "Stop the Capcom engine's current turn; messages it has not taken wait for the next turn. unavailable when the engine lacks interrupt or none is connected (capcom-service.md 7.4). Needs the capcom-thread capability.", CapcomServiceParams{}, Empty{}},
 	{"capcom.status", "The Capcom service on this hab: the engine job's state, the engine, and the SDK sessions with the engine's folder (capcom-service.md 3.4, 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
 	{"capcom.pause", "Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
+	{"capcom.site.remove", "Take a site off the sites the user allowed with Allow this site; the next web fetch on it raises a card again. not_found when the list does not hold it (capcom-service.md 5.3). Needs the capcom-thread capability.", CapcomSiteParams{}, CapcomServiceStatus{}},
 	{"capcom.resume", "Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
 	{"capcom.card.answer", "Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.", CapcomCardAnswerParams{}, CapcomCardAnswered{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
@@ -259,7 +260,7 @@ var Enums = map[string][]string{
 	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "denied", "invalid"},
 	// Sets added for the clients' calls (spec 3.9).
 	"SendOrigin":      {"typed", "dictated", "voice"},
-	"ApprovalChoice":  {"allow", "deny", "answer"},
+	"ApprovalChoice":  {"allow", "deny", "answer", "allow_site"},
 	"TrustChoice":     {"trust", "exit"},
 	"AnswerVia":       {"app", "banner", "watch", "voice", "terminal"},
 	"ChatKind":        {"user", "agent", "tool", "event", "plan"},

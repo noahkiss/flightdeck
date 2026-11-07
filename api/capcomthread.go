@@ -91,6 +91,12 @@ type CapcomServiceStatus struct {
 	Turn        string             `json:"turn,omitempty" doc:"The running turn. Absent: idle."`
 	Folder      string             `json:"folder" doc:"The engine's folder: a plain terminal resumes its SDK sessions from here."`
 	SDKSessions []CapcomSDKSession `json:"sdk_sessions"`
+	Sites       []string           `json:"sites,omitempty" doc:"The sites the user allowed with Allow this site (5.3): a web fetch on one needs no card. Hosts, lowercase, sorted."`
+}
+
+// CapcomSiteParams names one allowed site.
+type CapcomSiteParams struct {
+	Site string `json:"site" doc:"A host, as capcom.status lists it."`
 }
 
 // CapcomCardAnswerParams answers a card of the Capcom thread (capcom-service.md 7.4).

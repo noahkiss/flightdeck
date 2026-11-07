@@ -257,6 +257,29 @@ func testServiceApproval(t *testing.T, e *serviceEnv, c *control.Client) {
 
 func testServiceRest(t *testing.T, e *serviceEnv, c *control.Client, st api.CapcomServiceStatus, kind string) {
 
+	// "Allow this site" (5.3): the web fetch card offers it, the answer allows the fetch and
+	// keeps the site in capcom.status, and capcom.site.remove takes it off.
+	run(t, "capcom", "say", "-socket", e.sock, "approve")
+	waitUntil(t, "the second approval", func() bool {
+		a, _ := agentOf(t, c, capcomRoute)
+		blocked = a
+		return a.State == api.AgentStatusBlocked && a.Request != nil
+	})
+	if _, err := callJSON[api.Empty](t, c, "approval.answer", api.ApprovalAnswerParams{Pane: capcomRoute, Request: blocked.Request.ID, Choice: api.ApprovalChoiceAllowSite}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the second approved reply", func() bool { return countReplies(threadText(t, c), "approved: true") == 2 })
+	sites, err := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+	if err != nil || strings.Join(sites.Sites, ",") != "example.com" {
+		t.Fatalf("sites after allow_site: %v %v", sites.Sites, err)
+	}
+	if sites, err = callJSON[api.CapcomServiceStatus](t, c, "capcom.site.remove", api.CapcomSiteParams{Site: "example.com"}); err != nil || len(sites.Sites) != 0 {
+		t.Fatalf("remove: %v %v", sites.Sites, err)
+	}
+	if _, err := callJSON[api.CapcomServiceStatus](t, c, "capcom.site.remove", api.CapcomSiteParams{Site: "example.com"}); errKind(err) != api.ErrorKindNotFound {
+		t.Fatalf("a second remove: %v", err)
+	}
+
 	// A tool call on the engine's token reaches the pane route as the Capcom session.
 	run(t, "capcom", "say", "-socket", e.sock, "route")
 	var route string

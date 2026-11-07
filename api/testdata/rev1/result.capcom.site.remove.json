@@ -1,0 +1,32 @@
+{
+  "connected": true,
+  "engine": "engine-7",
+  "folder": "folder-10",
+  "reason": "reason-5",
+  "sdk_sessions": [
+    {
+      "end": "end-14",
+      "id": "id-11",
+      "start": "start-12",
+      "why": "why-13",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "session": "session-6",
+  "sites": [
+    "sites-15"
+  ],
+  "state": "state-4",
+  "turn": "turn-9",
+  "version": "version-8",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

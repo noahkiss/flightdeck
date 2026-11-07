@@ -1370,7 +1370,7 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return c.dispatchSettings(m, s)
 	case "capcom.open", "capcom.attach", "capcom.detach", "capcom.pending", "capcom.assign":
 		return c.dispatchCapcom(m, s)
-	case "capcom.thread.page", "capcom.interrupt", "capcom.status", "capcom.pause", "capcom.resume":
+	case "capcom.thread.page", "capcom.interrupt", "capcom.status", "capcom.pause", "capcom.resume", "capcom.site.remove":
 		return c.dispatchCapcomThread(m, s)
 	case "session.resume":
 		return c.dispatchResume(m, s)

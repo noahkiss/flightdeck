@@ -117,3 +117,20 @@ export function toolSummary(name: string, input: unknown): string {
   const line = (s ? `${short}: ${s}` : short).replace(/\s+/g, ' ').trim();
   return line.length > 120 ? line.slice(0, 119) + '…' : line;
 }
+
+// The site a URL is on, as gff-hab keeps "Allow this site" (5.3): the host,
+// lowercase, with no port, no trailing dot and no leading "www.". Undefined
+// for a URL that is not http or https.
+export function siteOf(raw: string): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+  let h = u.hostname.toLowerCase();
+  if (h.endsWith('.')) h = h.slice(0, -1);
+  if (h.startsWith('www.')) h = h.slice(4);
+  return h || undefined;
+}
