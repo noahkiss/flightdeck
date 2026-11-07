@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/noahkiss/flightdeck/internal/capcom"
 	"io"
 	"os"
 	"os/exec"
@@ -175,6 +176,7 @@ func install(args []string, stdout io.Writer) error {
 	if err := grantsNotice(&c, stdout); err != nil {
 		return err
 	}
+	capcomInstallNotice(hab, stdout)
 	if *dry {
 		if c.Init == service.Launchd {
 			// The plists name the build directory and bundle ids, which come from the bundles.
@@ -330,4 +332,27 @@ func sources(hab, holderBin string, in service.Init) (string, string, error) {
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// capcomInstallNotice says, in one line each, what keeps the Capcom service from running on the
+// installed hab (capcom-service.md 3.1, 10.2): Node.js missing or too old, or no credential
+// command, since install never copies CLAUDE_CODE_OAUTH_TOKEN into the job.
+func capcomInstallNotice(hab string, out io.Writer) {
+	cpath, err := habConfigPath("")
+	if err != nil {
+		return
+	}
+	cfg, _, err := capcom.LoadServiceConfig(cpath)
+	if err != nil || cfg.Engine == capcom.EngineNone {
+		return
+	}
+	if _, err := engineArgv(hab)(); err != nil {
+		fmt.Fprintf(out, "capcom: the service will not start: %v\n", err)
+	}
+	switch {
+	case cfg.Auth == capcom.AuthAPIKey && len(cfg.APIKeyCommand) == 0:
+		fmt.Fprintln(out, "capcom: set [capcom] api_key_command: an installed hab reads the key from it, and install never copies ANTHROPIC_API_KEY into the job")
+	case cfg.Auth != capcom.AuthAPIKey && len(cfg.OAuthCommand) == 0:
+		fmt.Fprintln(out, "capcom: set [capcom] oauth_token_command: an installed hab reads the token from it, and install never copies CLAUDE_CODE_OAUTH_TOKEN into the job")
+	}
 }
