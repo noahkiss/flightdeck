@@ -43,6 +43,7 @@ const mcpRules = `Flightdeck tools: read hosts, projects, running agents, past s
 
 // mcpCmd is `gff-hab mcp [serve] [-socket path] [--skill]`.
 func mcpCmd(args []string, in io.Reader, out io.Writer) error {
+	clearCredentials()
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
 	}
@@ -56,6 +57,16 @@ func mcpCmd(args []string, in io.Reader, out io.Writer) error {
 	}
 	m := &mcpServer{dial: func(ctx context.Context) (caller, func(), error) { return toolCaller(ctx, *sock, os.Getenv) }}
 	return m.serve(in, out)
+}
+
+// clearCredentials removes the Capcom engine's credential from this process's environment
+// (capcom-service.md 16, Q4): the SDK's bundled binary starts gff-hab mcp with its own
+// environment, which holds the token, and nothing here needs it, so no child of gff-hab mcp
+// ever gets it.
+func clearCredentials() {
+	for _, k := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+		os.Unsetenv(k)
+	}
 }
 
 // mcpServer answers MCP messages. dial reaches the hab for one tool call.

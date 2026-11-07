@@ -202,6 +202,13 @@ hab, through its route (3.3), and to the model provider.
 The engine runs as its own init job (launchd or systemd), as each holder does
 (`hab-holder.md`; AGENTS.md "Sessions outlive updates").
 
+As built in A2: under systemd the engine is a transient user unit of its own,
+`<prefix>-gff-hab-capcom.service`, so a restart of gff-hab's unit never ends it. Under launchd,
+and with no init system, it is a plain process in its own process group, with its pid in
+`<state>/capcom/engine.pid`: launchd ends only the logic job's process group, so the engine
+outlives `launchctl kickstart -k` and `bootout` of that job (checked on macOS 27). `gff-hab
+uninstall` stops the engine once the logic job is gone.
+
 | Event | What happens |
 |---|---|
 | gff-hab starts and holds the mark | gff-hab starts the engine job, or adopts one that runs |
@@ -430,6 +437,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | The coordinator's group tools: `group_create`, `group_status`, `group_amend`, `group_close`, `group_retry`, `member_compact`, `member_handoff` | `gff-hab mcp` (`groups.md` 15.2, from stage B8) | Refused in an event turn, as `start_session` is (9.4), except under a Capcom job's `group` action (9.6) |
 | Personal tools (8) | `gff-hab mcp`, only on a Capcom route | Refused on any pane's route |
 | `WebSearch`, `WebFetch` | The SDK's own | Web fetch rules in 5.3 |
+| `ListMcpResourcesTool`, `ReadMcpResourceTool` | The SDK's own, for MCP resources | Only while `flightdeck` is the only MCP server in `init` (E27) |
 
 - Every other SDK built-in tool is in the engine's deny list by name, so the model never sees
   it: `Bash`, `Read`, `Edit`, `Write`, `Glob`, `Grep`, `Agent`, `Skill`, `ToolSearch`,
@@ -440,7 +448,8 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
   shows the error. A new SDK version pin must add the new name to the deny list.
 - The SDK's `tools` option limits the built-in set to `WebSearch` and `WebFetch` (4.4); the
   deny list stays as a second guard.
-- Allow rules: `mcp__flightdeck__*` and `WebSearch`. `WebFetch` is never a bare-name allow
+- Allow rules: `mcp__flightdeck__*`, `WebSearch`, `ListMcpResourcesTool` and
+  `ReadMcpResourceTool`. `WebFetch` is never a bare-name allow
   entry, since that would skip the callback.
 - A `PreToolUse` hook applies 5.3's URL rule to every `WebFetch` call, so a call the SDK
   approves on its own (a preapproved documentation site) cannot skip it: an unseen URL with no
@@ -1089,8 +1098,8 @@ AGENTS.md: "Resuming a session from a plain terminal must always work."
   (18).
 - **One writer.** A terminal resume of the session the engine is using would make two writers.
   The session's details show its SDK session ids, the folder, and the command
-  `gff-hab capcom pause` first. `pause` finishes the turn and stops the engine's use of the
-  session (the job stays, the thread takes messages, the row shows "paused");
+  `gff-hab capcom pause` first. `pause` lets the turn finish, then the engine exits and gff-hab
+  does not start it again (E28); the thread takes messages and the row shows "paused";
   `gff-hab capcom resume` (or the app's Resume) starts the engine on the same id again, and
   reads what the terminal added.
 - Older SDK sessions (before a re-seed) are never touched again and resume freely.
@@ -1236,6 +1245,9 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 | E21 | The first build's event turns read and message only (9.4). Formerly Q3 | Owner, 2026-11-06. Outside text (a mail, a page) cannot start work until a person allows it |
 | E22 | Capcom acts on events through Capcom jobs: rounds in `capcom` mode with a per-job `actions` list a person sets, capped by the levelled `capcom.event_actions`; the dashboard is the Rounds list filtered to `capcom` (9.6, stage A9). Formerly Q3 | Owner, 2026-11-06, asked for tunable acting with a per-job list and a dashboard, and to consider rounds. Rounds already hold every trigger, the store and the list; a second scheduler would duplicate them (9.6) |
 | E23 | Capcom answers each round message a second time, `told`, `quiet`, `acted` or `unseen`, after the turn that took it (9.5) | Owner, 2026-11-06 (`rounds.md` 12 W1): the round's history shows what Capcom did |
+| E26 | `gff-hab mcp` clears `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from its own environment at start, so the credential never reaches a program it runs. Formerly Q4 | Coordinator, 2026-11-07. The process needs no credential; clearing it costs nothing |
+| E27 | `ListMcpResourcesTool` and `ReadMcpResourceTool` are on the surface while `flightdeck` is the only MCP server the SDK's `init` lists (5.1). Formerly Q5 | Coordinator, 2026-11-07. They read only what that server offers; any other unexpected tool still fails the start check |
+| E28 | `gff-hab capcom pause` ends the engine after its turn; gff-hab does not start it again until `gff-hab capcom resume` (11) | Coordinator, 2026-11-07: kept as built in A2. A stopped engine cannot write the session, so a terminal resume has one writer |
 
 ---
 
@@ -1244,15 +1256,7 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 None open. The owner settled Q1 to Q3 on 2026-11-06 (plan-xagejg31 (q)); they are decisions E19
 to E22 in 15.
 
-Found in A2 (to settle before A8):
-
-- **Q4. The credential in the MCP child's environment.** The bundled binary starts `gff-hab mcp`
-  with its own environment, so the token reaches that process's environment (memory, never a
-  file). Options: accept it (the child is gff-hab itself), or have `gff-hab mcp` clear
-  `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from its own environment at start.
-- **Q5. MCP resource tools.** A live `flightdeck` server may add `ListMcpResourcesTool` and
-  `ReadMcpResourceTool` to `init`. The start check refuses any tool outside 5.1. Either add them
-  to 5.1 (they read only what the server offers) or keep refusing them.
+Found in A2 and settled by the coordinator on 2026-11-07: Q4 (E26), Q5 (E27) and pause (E28).
 
 ---
 

@@ -491,7 +491,8 @@ export class Engine {
         if (m.type === 'system' && (m as any).subtype === 'init') {
           if (sawInit) continue;
           sawInit = true;
-          const bad = ((m as any).tools as string[] ?? []).filter((t) => !onSurface(t));
+          const servers = (((m as any).mcp_servers as { name?: string }[]) ?? []).map((x) => x?.name ?? '');
+          const bad = ((m as any).tools as string[] ?? []).filter((t) => !onSurface(t, servers));
           if (bad.length) {
             this.sendError(`start check: tool outside the Capcom surface: ${bad.join(', ')}`, 'start', true);
             await this.exit(1);

@@ -17,15 +17,23 @@ export const DENY_TOOLS: readonly string[] = [
   'NotebookEdit',
 ];
 
+// The SDK's MCP resource tools. They read only what an MCP server offers, so they are on the
+// surface while flightdeck is the only MCP server (5.1, Q5).
+export const RESOURCE_TOOLS: readonly string[] = ['ListMcpResourcesTool', 'ReadMcpResourceTool'];
+
 // Tools allowed with no callback (5.1). WebFetch is never here.
-export const ALLOW_TOOLS: readonly string[] = ['mcp__flightdeck__*', 'WebSearch'];
+export const ALLOW_TOOLS: readonly string[] = ['mcp__flightdeck__*', 'WebSearch', ...RESOURCE_TOOLS];
 
 // The built-in base set. Deny rules match names only, so this keeps a
 // built-in the deny list does not name out of the session.
 export const BASE_TOOLS: readonly string[] = ['WebSearch', 'WebFetch'];
 
-// A tool the start check accepts.
-export function onSurface(tool: string): boolean {
+// A tool the start check accepts. servers are the MCP server names the SDK's init lists: the
+// resource tools pass only when flightdeck is the only one.
+export function onSurface(tool: string, servers: readonly string[] = []): boolean {
+  if (RESOURCE_TOOLS.includes(tool)) {
+    return servers.length > 0 && servers.every((s) => s === 'flightdeck');
+  }
   return tool === 'WebSearch' || tool === 'WebFetch' || tool.startsWith('mcp__flightdeck__');
 }
 
