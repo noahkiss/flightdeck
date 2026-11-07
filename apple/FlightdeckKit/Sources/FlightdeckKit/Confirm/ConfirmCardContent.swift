@@ -53,7 +53,8 @@ public enum ConfirmCardContent {
         add(&out, "Trigger", trigger(r))
         if let p = nonEmpty(r.project) ?? nonEmpty(s.projectRemote) {
             add(&out, "Project", p, mono: r.project?.isEmpty != false)
-        } else if let d = nonEmpty(s.projectDir) ?? nonEmpty(s.cwd) {
+            add(&out, "Folder", s.cwd, mono: true)
+        } else if let d = nonEmpty(s.cwd) ?? nonEmpty(s.projectDir) {
             add(&out, "Folder", d, mono: true)
         }
         add(&out, "Harness", s.harness.map { harnessName($0) })
@@ -81,11 +82,20 @@ public enum ConfirmCardContent {
     /// A group card's top rows: the task, the project, the lane.
     public static func groupFacts(_ g: ConfirmGroup) -> [Fact] {
         var out: [Fact] = []
-        add(&out, "Task", g.plan.title)
+        if g.plan.title.isEmpty {
+            add(&out, "Group", g.group, mono: true)
+        } else {
+            add(&out, "Task", g.plan.title)
+        }
         add(&out, "Project", g.plan.project)
         add(&out, "Target branch", g.plan.lane?.target)
         if g.plan.lane?.fixInPlace == true { add(&out, "Fix in place", "Yes") }
         return out
+    }
+
+    /// The group as a done line names it: its task, else its id. An amend's plan has no title.
+    public static func groupName(_ g: ConfirmGroup) -> String {
+        nonEmpty(g.plan.title) ?? g.group
     }
 
     /// The plan's items in plan order, each with its members. A member whose item the plan

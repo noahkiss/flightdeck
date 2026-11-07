@@ -1364,7 +1364,7 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   then the seed. The byline names the requesting session and the hab.
 - **What a round card shows.** Title "Make a round?" ("Round" for a record). Runner, name,
   mode, trigger (the hab's plain words, else the app's own), project (its catalog name, else
-  the remote, else the folder), harness, model, command, "Run now" when set, then the prompt
+  the remote, else the folder), the folder the run starts in when set, harness, model, command, "Run now" when set, then the prompt
   in six lines. Confirm and Cancel only, no Edit. Done: "Made round <name> on <host>".
 - **What a group card shows.** Title "Start a group?" ("Group start" for a record), or "Change
   the group?" ("Group change") for an amend. Task, project, target branch, fix in place, the
@@ -1373,7 +1373,8 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   A member whose item the plan does not list gets a row under its item id. Then the trust
   rule and the warnings. Confirm and Cancel only: the app does not yet edit a plan
   (`groups.md` 3.2 allows it). Done: "Started group <title> on <host>", or "Changed group
-  <title>" for an amend.
+  <title> on <host>" for an amend. An amend's plan holds only items and members, so its card
+  shows the group id where a start shows the task, and its done line names the group by id.
 - **Edits.** Edit opens fields for host, folder, harness, model and seed. Host is a picker of
   `confirm.list` targets (a target that is not ready shows its reason and cannot be picked),
   or a text field when the hab lists none. Only changed fields go in `edits`; a new host

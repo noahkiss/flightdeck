@@ -34,6 +34,20 @@ final class ConfirmCardContentTests: XCTestCase {
                             warnings: ["boxc is offline"])
     }
 
+    /// An amend as the hab files it: items and members, no title or project.
+    static func bareAmend() -> ConfirmGroup {
+        let m = GroupPlanMember(harness: "codex", item: "api", role: .worker)
+        return ConfirmGroup(amend: true, group: "3fa9c2", plan: GroupPlan(items: [], members: [m, m], project: "", title: ""),
+                            trust: "")
+    }
+
+    func testBareAmend() {
+        let g = Self.bareAmend()
+        XCTAssertEqual(ConfirmCardContent.groupFacts(g), [.init("Group", "3fa9c2", mono: true)])
+        let w = "worker · boxa · \(harnessName("codex"))"
+        XCTAssertEqual(ConfirmCardContent.groupItems(g, home: "boxa"), [.init(id: "api", title: "", notes: [], members: [w, w])])
+    }
+
     static func confirmation(kind: ConfirmKind, state: ConfirmState = .open, record: Bool? = nil,
                              round: ConfirmRound? = nil, group: ConfirmGroup? = nil, result: ConfirmResult? = nil) -> Confirmation {
         Confirmation(created: "2027-01-15T08:00:00Z", group: group, id: "c1", kind: kind, record: record,
@@ -114,6 +128,10 @@ final class ConfirmCardContentTests: XCTestCase {
         XCTAssertEqual(ConfirmCenter.outcome(g), "Started group Tide API v2 on boxa")
         let a = C.confirmation(kind: .group, state: .done, group: C.group(amend: true))
         XCTAssertEqual(ConfirmCenter.outcome(a), "Changed group Tide API v2")
+        // The hab's amend sends only items and members: the group goes by its id.
+        let bare = C.confirmation(kind: .group, state: .done, group: C.bareAmend(),
+                                  result: ConfirmResult(host: "boxa", pane: "", session: ""))
+        XCTAssertEqual(ConfirmCenter.outcome(bare), "Changed group 3fa9c2 on boxa")
         let f = C.confirmation(kind: .round, state: .failed, round: C.round())
         XCTAssertEqual(ConfirmCenter.outcome(f), "Failed")
     }
