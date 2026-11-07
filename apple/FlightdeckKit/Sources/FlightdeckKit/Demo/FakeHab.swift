@@ -275,6 +275,11 @@ public actor FakeHab {
     /// How long each `catalog.get` waits before it answers; nil answers at once.
     private var catalogDelay: Duration?
     public func setCatalogDelay(_ d: Duration?) { catalogDelay = d }
+    /// How long each `capcom.status` waits before it answers; nil answers at once.
+    private var capcomStatusDelay: Duration?
+    public func setCapcomStatusDelay(_ d: Duration?) { capcomStatusDelay = d }
+    /// The `capcom.status` calls received.
+    public private(set) var capcomStatusCalls = 0
     /// The next `catalog.get` calls that fail with `unavailable`.
     private var catalogFailures = 0
     public func failNextCatalogGets(_ n: Int) { catalogFailures = n }
@@ -1117,8 +1122,16 @@ public actor FakeHab {
             let page = Array(older.reversed().prefix(limit))
             await reply(c, id: id, result: CapcomThreadPage(items: page, more: older.count > page.count, seq: c.seq))
         case HabMethods.capcomStatus.name where capcomService:
-            await reply(c, id: id, result: CapcomServiceStatus(connected: true, folder: "/state/capcom/engine", sdkSessions: [], seq: c.seq,
-                                                               session: capcomStanding, sites: capcomSites, state: "running"))
+            capcomStatusCalls += 1
+            if let d = capcomStatusDelay {
+                // Answer later, off this connection's read loop, with the status as it is then.
+                Task {
+                    try? await Task.sleep(for: d)
+                    await self.replyCapcomStatus(c, id: id)
+                }
+                break
+            }
+            await replyCapcomStatus(c, id: id)
         case HabMethods.capcomSiteRemove.name where capcomService:
             guard let p = try? params.decode(CapcomSiteParams.self), capcomSites.contains(p.site) else {
                 await fail(c, id: id, kind: .notFound, hint: "Capcom has no allowed site")
@@ -1425,6 +1438,11 @@ public actor FakeHab {
         } catch {
             await fail(c, id: id, kind: .invalid, hint: "bad \(method) params")
         }
+    }
+
+    private func replyCapcomStatus(_ c: Conn, id: Int) async {
+        await reply(c, id: id, result: CapcomServiceStatus(connected: true, folder: "/state/capcom/engine", sdkSessions: [], seq: c.seq,
+                                                           session: capcomStanding, sites: capcomSites, state: "running"))
     }
 
     private func replyCatalog(_ c: Conn, id: Int) async {

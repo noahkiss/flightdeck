@@ -122,6 +122,27 @@ final class CapcomThreadTests: XCTestCase {
         await f.setActive(false)
     }
 
+    /// A status read that answers after a typing event is older than that event: it leaves
+    /// the mark on.
+    func testLateStatusKeepsNewerTyping() async throws {
+        let a = await serviceHab("bench")
+        let f = await fleet([a])
+        let (m, t) = try await open(f)
+        await a.setCapcomStatusDelay(.milliseconds(400))
+        let before = await a.capcomStatusCalls
+        let read = Task { await t.loadTail() }
+        await eventually("status asked") { await a.capcomStatusCalls > before }
+        await a.setCapcomTyping(true)
+        await eventually("typing") { t.typing }
+        await read.value
+        XCTAssertTrue(t.typing, "the status was read before the typing event")
+        await a.setCapcomStatusDelay(nil)
+        await t.loadTail()
+        XCTAssertFalse(t.typing, "a status read after the event clears it")
+        m.stop()
+        await f.setActive(false)
+    }
+
     func testStop() async throws {
         let a = await serviceHab("bench")
         let f = await fleet([a])

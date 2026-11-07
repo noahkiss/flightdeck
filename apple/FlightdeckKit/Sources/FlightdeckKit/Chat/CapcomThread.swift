@@ -41,6 +41,9 @@ public final class CapcomThread {
     /// One newest-page read at a time; a call meanwhile reads once more after it.
     @ObservationIgnored private var tailBusy = false
     @ObservationIgnored private var tailAgain = false
+    @ObservationIgnored private var tailWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Counts typing events, so a status read only clears a mark no newer event set.
+    @ObservationIgnored private var typingEvents = 0
 
     public init(habID: String, session: String?, connection: HabConnection?) {
         self.habID = habID
@@ -64,14 +67,16 @@ public final class CapcomThread {
     public func start() {
         viewers += 1
         guard viewers == 1, let conn = connection else { return }
+        // Listen first, then read the page: an event between the read and the listen would
+        // be lost, and a typing mark has no page to recover it from.
         listen = Task { [weak self] in
             let stream = await conn.capcomUpdates()
+            Task { [weak self] in await self?.loadTail() }
             for await u in stream {
                 guard let self else { return }
                 self.receive(u)
             }
         }
-        Task { await self.loadTail() }
     }
 
     public func stop() {
@@ -96,11 +101,18 @@ public final class CapcomThread {
     public func loadTail() async {
         guard let conn = connection else { return }
         if tailBusy {
+            // The running read goes once more; this call returns when that pass is done.
             tailAgain = true
+            await withCheckedContinuation { tailWaiters.append($0) }
             return
         }
         tailBusy = true
-        defer { tailBusy = false }
+        defer {
+            tailBusy = false
+            let w = tailWaiters
+            tailWaiters = []
+            for c in w { c.resume() }
+        }
         repeat {
             tailAgain = false
             if items.isEmpty { load = .loading }
@@ -116,7 +128,9 @@ public final class CapcomThread {
             }
             flush()
             if session != nil {
-                if let st = try? await conn.call(HabMethods.capcomStatus, CapcomServiceParams()) {
+                // A typing event that lands while the status read is out is newer than its answer.
+                let seen = typingEvents
+                if let st = try? await conn.call(HabMethods.capcomStatus, CapcomServiceParams()), typingEvents == seen {
                     typing = typing && st.turn != nil
                 }
             }
@@ -161,6 +175,7 @@ public final class CapcomThread {
             if it.kind.rawValue == "card" || it.kind.rawValue == "note" { Task { await self.refreshProposals() } }
         case .typing(let s, let on, _):
             guard s == session else { return }
+            typingEvents += 1
             typing = on
         }
     }
