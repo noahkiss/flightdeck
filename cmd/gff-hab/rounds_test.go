@@ -135,7 +135,11 @@ func TestRoundEveryMinute(t *testing.T) {
 	ev.KeepAlive(control.DefaultHeartbeat) // the slot may be most of a minute away
 	call(t, ev, "events.subscribe", api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}, nil)
 	envFile := filepath.Join(e.work, "env")
-	script := "env | grep '^GFF_ROUND' | LC_ALL=C sort > " + envFile + ".tmp; mv " + envFile + ".tmp " + envFile + "; sleep 1"
+	// The run holds until the test has seen it running: with a fixed sleep, a poll that came
+	// late missed the whole run and picked up the next slot's.
+	gate := filepath.Join(e.work, "go")
+	script := "env | grep '^GFF_ROUND' | LC_ALL=C sort > " + envFile + ".tmp; mv " + envFile + ".tmp " + envFile +
+		"; while [ ! -e " + gate + " ]; do sleep 0.05; done"
 	out := mustRound(t, e, "add", "minutely", "-every", "1m", "-project", repo, "-command", "--", "/bin/sh", "-c", script)
 	if !strings.Contains(out, "minutely") {
 		t.Fatalf("add: %s", out)
@@ -152,12 +156,16 @@ func TestRoundEveryMinute(t *testing.T) {
 	var run api.RoundRun
 	deadline := time.Now().Add(scaleTimeout(90 * time.Second))
 	for {
-		if runs := roundRuns(t, c, "minutely"); len(runs) > 0 && runs[0].State == api.RoundRunStateRunning && runs[0].Session != "" {
+		runs := roundRuns(t, c, "minutely")
+		if len(runs) > 0 && runs[0].State == api.RoundRunStateRunning && runs[0].Session != "" {
 			run = runs[0]
 			break
 		}
+		if len(runs) > 0 && runs[0].EndedAt != "" {
+			t.Fatalf("the first run ended before it was seen running: %+v", runs)
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("no run started at the slot")
+			t.Fatalf("no run started at the slot: %+v", runs)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -169,6 +177,7 @@ func TestRoundEveryMinute(t *testing.T) {
 	if !ok || ss.Round == nil || ss.Round.Round != r.ID || ss.Round.Run != run.ID || ss.Name != "minutely" || !paneIn(st, ss.Pane) {
 		t.Fatalf("run session: %+v", ss)
 	}
+	writeFile(t, gate, "")
 	done := waitRun(t, e, c, "minutely", api.RoundRunStateSucceeded)
 	if done.ID != run.ID || done.EndedAt == "" {
 		t.Fatalf("ended: %+v", done)
