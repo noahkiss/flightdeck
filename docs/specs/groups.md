@@ -561,7 +561,7 @@ it on the home hab.
 - **Not built in B3.** The envelope is not pushed to running members after an amend, so a host
   an amend adds is not in older members' envelopes. A pause reaches members through the catalog
   only, not at once over member links (5.6). The usage pause has its call but no governor
-  (Part 14 G). Reviewers and plan workers stay planned (B7). The scheduler does not wait for a
+  (Part 14 G). Plan workers stay planned; reviewers start with B7 (6.5). The scheduler does not wait for a
   started worktree setup or fetch first (B4). Stall detection covers local leads only, and
   `group.close` closes local members only. The app's group card and gff's board section come
   later.
@@ -627,6 +627,46 @@ branch:
   head. Its checks and CI run on that result, as for any land.
 - The lead's next `lane_submit` waits until the verdict. After a pass with fixes, the hab tells
   the lead to fast-forward to the review branch before any new change.
+
+### 6.5 Built choices (stage B7, task-3eez53r6)
+
+`internal/groups` holds the reviewer choice, the submit and verdict rules, and the idle check;
+gff-hab's group service runs them on the home hab.
+
+- **The reviewer at plan time.** The plan check adds a reviewer member to each item with review
+  on that has none. "Installed on a plan host" means a capability word in that host's catalog,
+  detected or declared. The lead's host is tried first, then the other plan hosts in member
+  order. With none, the reviewer runs in the lead's harness on the lead's host: the record's
+  item says `same_harness`, and the card shows a warning line for it. A plan with two reviewers
+  on one item is refused. A user who turns review off on the card drops its reviewer.
+- **The heads.** The member's own hab reads them with git, never the pane: at `lane_submit`
+  the head of `group/<group>/<item>`; at `review_verdict` with fixes, the head the reviewer
+  names (else its review branch's head), and whether it descends from the submitted head. It
+  then forwards the call to the home hab. The home hab takes these fields only from its own
+  route, or over the link from the hab its member runs on; a control connection is refused.
+- **The review worktree** is `worktree.create` on the reviewer's host, branch
+  `group/<group>/<item>-review`, base the submitted commit. The commit must be in that
+  repository: a reviewer on another host than its lead needs B4's fetch (12.7).
+- **The reviewer's seed** names the commit, the review branch, the merge-base diff command, the
+  rules (the top `brief_findings`, high and medium only, at most `max_findings`, fixes in place
+  unless the plan's `lane.fix_in_place` is false) and the item's brief.
+- **A submit** from `working`, `fix`, `review` or `ready` moves the item to `review` (`ready`
+  with review off, into the lane queue). The same head while in review changes nothing. A new
+  head while in review, or after a verdict, starts the review again: a running reviewer gets
+  the new head as a message from Flightdeck. A submit does not wait for a verdict.
+- **A verdict** must come while the item is in `review`. `fix_needed` needs at least one
+  finding. Fixes count only when the plan allows them and the reviewer's hab checked them
+  against the current submitted head; otherwise the verdict's `fixes_ignored` says why. The
+  coordinator gets the one line; the lead gets every finding, or the fast-forward line after a
+  pass with fixes, or a short pass line.
+- **Messages into members** on another hab go over the link as `group.message`, which a hab
+  takes only from the group's home hab, as its catalog copy names it, and only into a member of
+  that group.
+- **The idle check** runs with the members' refresh (every 5 s): a reviewer idle for
+  `[groups] reviewer_idle`, or exited, with no verdict is reported once per submitted head.
+- **Not built in B7.** The fetch before a review worktree (B4). The lane that lands a `ready`
+  item (B4). The app's and gff's group card: the record carries the verdict, its findings and
+  `same_harness` for them.
 
 ---
 
@@ -1166,6 +1206,7 @@ to 3.6.
 | catalog section `groups` | The short form per group, with the coordinator's address (5.1) | B3 |
 | `lane.submit {group, item}` | From the item's lead only; starts the review | B7 |
 | `review.verdict {group, item, verdict, findings, fixed}` | From the reviewer's pane only | B7 |
+| `group.message {group, member, text}` | Peer link only, from the group's home hab: a message from Flightdeck into a member on the receiving hab (6.5) | B7 |
 | `heavy.take {ticket?}`, `heavy.release {ticket}` | The lock, on a held connection | B5 |
 | `heavy.status` | Holders, waiters, disk state | B5 |
 | `member.compact`, `member.handoff {group, member}` | Sibling actions; → the action (9.5) | B6 |
@@ -1252,7 +1293,8 @@ B2 built the hab's `confirm.group_plan` row (its group starts need the off case)
 to `app.md` 20.3, and built `[groups] trust_hold`; the app's row is not built yet. Stage B3 built the hab rows `group.confirm_max_age`, `group.max_leads`, `group.max_workers` and
 `group.close_members` and the keys `[groups] keep_ended`, `inbox_max` and `inbox_days`; B5 adds the `heavy.*` rows; B6 built `group.compact_at`,
 `group.fresh_after_compacts`, `group.fresh_transcript_mb` and `group.handoff_at`, and the keys
-`[groups] handoff_note_wait` and `sibling_wait`. Each stage that
+`[groups] handoff_note_wait` and `sibling_wait`; B7 built the keys `[groups] max_findings`, `brief_findings` and
+`reviewer_idle`. Each stage that
 reads a `[groups]` or `[heavy]` key adds it to `docs/examples/hab.toml`.
 
 The project's `flightdeck.json` gains `lane.checks`, `lane.ci` and `lane.build_folders`, read
