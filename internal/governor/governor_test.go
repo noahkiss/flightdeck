@@ -319,7 +319,7 @@ func TestGroupWaitsAndResumes(t *testing.T) {
 	if a := g.Register(grp); a.Pace != Wait || a.Until.IsZero() {
 		t.Fatalf("group answer %+v", a)
 	}
-	check(t, g, "capcom", Ok, Ok) // one consumer's cap is not another's
+	check(t, g, "capcom", Ok, Ok)            // one consumer's cap is not another's
 	acc.week("member", t0.Add(time.Hour), 3) // the window moved: a new reading
 	g.Recheck()
 	check(t, g, "group:g1", Ok, Ok)
