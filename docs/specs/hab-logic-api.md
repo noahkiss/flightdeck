@@ -568,6 +568,7 @@ The first request on a control connection must be `hab.hello`.
 | `revision` | The revision this connection uses |
 | `epoch` | Random id of this gff-hab process |
 | `build` | gff-hab build string |
+| `version` | gff-hab release version: `x.y.z`, or `x.y.z-rc.n` or `x.y.z-dry.n` for a candidate or a dry run, from the release tag; `dev` for any other build. Clients order release versions to mark an older hab superseded (`gff-client.md` 9.3). Optional in the schema, like `device_id`; this build always sends it |
 | `host` | Host id (capabilities are in `capabilities`) |
 | `capabilities` | Strings for optional features, see 3.4 |
 | `client_id` | This client's id |

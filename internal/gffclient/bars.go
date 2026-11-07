@@ -10,9 +10,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/board"
+	"github.com/noahkiss/flightdeck/internal/hosts"
+	gffversion "github.com/noahkiss/flightdeck/internal/version"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -106,11 +109,35 @@ func (u *workspaceUI) drawTabBar() {
 }
 
 // warnings lists what the warnings badge counts (gff-client.md 9.1): each host that is not
-// online, with its problem: offline, connecting, update needed, host key changed.
+// online, with its problem: offline, connecting, update needed, host key changed; then each
+// online host whose hab or holder build is superseded.
 func (u *workspaceUI) warnings() []string {
+	return hostWarnings(u.c.cfg.Hosts.Hosts(), u.c.cfg.Version, u.c.cfg.Now())
+}
+
+// hostWarnings is warnings over a list of hosts, with own as gff's release version.
+//
+// A hab is superseded when its welcome's release version is older than the newest release
+// version among gff's own and the online habs'; a dev build or a hab that sends no version is
+// never compared. A holder build is superseded when a pane's holder_build differs from its
+// hab's build: gff-hab drains a holder of another build (hab-holder.md 4.3), so such a pane
+// runs on an older holder until it ends.
+func hostWarnings(hs []hosts.Host, own string, now time.Time) []string {
 	var out []string
-	now := u.c.cfg.Now()
-	for _, h := range u.c.cfg.Hosts.Hosts() {
+	newest := ""
+	if gffversion.IsRelease(own) {
+		newest = own
+	}
+	for _, h := range hs {
+		v := h.Welcome.Version
+		if !h.Online() || !gffversion.IsRelease(v) {
+			continue
+		}
+		if c, _ := gffversion.Compare(v, newest); newest == "" || c > 0 {
+			newest = v
+		}
+	}
+	for _, h := range hs {
 		p := h.Problem()
 		if p == "" {
 			continue
@@ -120,6 +147,26 @@ func (u *workspaceUI) warnings() []string {
 			s += " " + ago(now, h.Since)
 		}
 		out = append(out, s)
+	}
+	for _, h := range hs {
+		if !h.Online() {
+			continue
+		}
+		if c, ok := gffversion.Compare(h.Welcome.Version, newest); ok && c < 0 {
+			out = append(out, h.Label+" hab "+h.Welcome.Version+" superseded by "+newest)
+		}
+		n := 0
+		for _, p := range h.Structure.Panes {
+			if h.Welcome.Build != "" && p.HolderBuild != "" && p.HolderBuild != h.Welcome.Build {
+				n++
+			}
+		}
+		switch {
+		case n == 1:
+			out = append(out, h.Label+" holder build superseded: 1 pane")
+		case n > 1:
+			out = append(out, h.Label+" holder build superseded: "+strconv.Itoa(n)+" panes")
+		}
 	}
 	return out
 }

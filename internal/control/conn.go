@@ -1132,6 +1132,7 @@ func (c *conn) handleHello(m message) {
 		Revision:       chosen,
 		Epoch:          c.s.epoch,
 		Build:          c.s.cfg.Build,
+		Version:        c.s.cfg.Version,
 		Host:           c.s.cfg.Host,
 		Capabilities:   caps,
 		ClientID:       c.clientID,

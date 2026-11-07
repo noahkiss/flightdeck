@@ -94,6 +94,10 @@ type Config struct {
 	Tick <-chan time.Time
 	Logf func(format string, args ...any)
 
+	// Version is gff's own release version. A hab older than it is superseded (9.1). Empty or
+	// dev: only the habs' versions are compared.
+	Version string
+
 	// Workspace is the workspace's name, shown beside the clock (gff-client.md 5.5). Empty:
 	// none shows.
 	Workspace string

@@ -435,6 +435,18 @@ func TestWelcomeTime(t *testing.T) {
 	}
 }
 
+// TestWelcomeVersion: the welcome carries the configured release version, and none when unset.
+func TestWelcomeVersion(t *testing.T) {
+	h := startHab(t, "", socketPath(t), func(c *Config) { c.Version = "1.2.3" })
+	if w := hello(t, dial(t, h.path), ""); w.Version != "1.2.3" {
+		t.Fatalf("welcome version %q, want 1.2.3", w.Version)
+	}
+	h2 := startHab(t, "", socketPath(t), nil)
+	if w := hello(t, dial(t, h2.path), ""); w.Version != "" {
+		t.Fatalf("welcome version %q, want none", w.Version)
+	}
+}
+
 func TestHelloRules(t *testing.T) {
 	srv := New(testConfig(&fakeSource{}))
 	t.Cleanup(srv.Close)

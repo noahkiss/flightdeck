@@ -53,7 +53,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 | 28 | Agents drive the workspace | gap | `session.create`, `pane.input`, `session.send` and `gff-hab wait` work; no method reads a pane's screen or waits for output, and gff has no CLI verbs | task-nh5l85oo |
 | 29 | Kitty keyboard and OSC 8 links | fail | An OSC 8 link's text draws but no OSC 8 reaches the host; styled underlines and true colour do. The composed view never asks for the kitty protocol | task-nltn08k1 |
 | 30 | Theme | pass | Chrome colours are host palette indexes (`palette()` in `workspace.go`, `bars.go`), so gff follows the terminal's theme. No theme file yet | |
-| 31 | Status notices | pass | A host with no hab raises `1 warning`; Ctrl+O `!` lists `gone connecting`. A superseded build is not reported yet (task-bw97v7dk) | |
+| 31 | Status notices | pass | A host with no hab raises `1 warning`; Ctrl+O `!` lists `gone connecting`. A hab older than gff or another hab, and panes on a drained holder, are listed too | |
 | 32 | Pane size follows the typist | pass | Two gff clients, 120x30 and 80x20, on one pane: the second typed and the first shows `owner … 80x20` with the dim fill | |
 
 ## Plugins and add-ons (13)
