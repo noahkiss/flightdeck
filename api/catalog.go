@@ -27,6 +27,30 @@ type Catalog struct {
 	Heavy *CatalogHeavy `json:"heavy,omitempty" doc:"The heavy-run lock and the free space of the state and worktree volumes. Absent from a hab without the heavy capability."`
 	// Groups was added by rounds stage 9 as the read side of groups.md 5.1; Part 15 fills it.
 	Groups []CatalogGroup `json:"groups,omitempty" doc:"The groups this hab is the home of: the short form (groups.md 5.1). Absent with none."`
+	// Governor was added within revision 1 by the usage governor (capcom-service.md 10.1).
+	Governor *CatalogGovernor `json:"governor,omitempty" doc:"The usage governor's answer for each consumer this hab paces. Absent with none."`
+}
+
+// CatalogGovernor is the usage governor's state on the publishing hab (capcom-service.md 10.1,
+// groups.md 10).
+type CatalogGovernor struct {
+	Consumers []GovernorConsumer `json:"consumers" doc:"By id."`
+}
+
+// GovernorConsumer is one consumer's pace.
+type GovernorConsumer struct {
+	ID           string `json:"id" doc:"capcom, or group:<id>."`
+	Basis        string `json:"basis" doc:"plan: the plan's weekly window; usd: today's result cost against the daily dollar cap; none: unpaced, with no reading, its tokens counted. An open set."`
+	Pace         string `json:"pace" doc:"The next user turn's pace: ok, small (the small model) or wait. An open set."`
+	EventPace    string `json:"event_pace" doc:"The next event turn's pace: ok or wait. An open set."`
+	Until        string `json:"until,omitempty" doc:"RFC 3339 UTC time a wait of user turns ends."`
+	EventUntil   string `json:"event_until,omitempty" doc:"RFC 3339 UTC time a wait of event turns ends."`
+	UsedPct      int    `json:"used_pct,omitempty" doc:"plan: the weekly window's used percentage, the whole account's."`
+	SharePct     int    `json:"share_pct,omitempty" doc:"plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100."`
+	SpentCents   int64  `json:"spent_cents,omitempty" doc:"usd: today's reported cost, in US cents."`
+	CapCents     int64  `json:"cap_cents,omitempty" doc:"usd: the daily dollar cap, in US cents."`
+	InputTokens  int64  `json:"input_tokens,omitempty" doc:"Today's input tokens, by the hab's local day."`
+	OutputTokens int64  `json:"output_tokens,omitempty" doc:"Today's output tokens."`
 }
 
 // CatalogGroup is one group's short form in its home hab's catalog (groups.md 5.1, 12.5).

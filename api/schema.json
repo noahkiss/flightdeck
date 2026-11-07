@@ -849,6 +849,13 @@
           }
         },
         {
+          "name": "send_now",
+          "description": "The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "session",
           "required": true,
           "schema": {
@@ -5667,6 +5674,10 @@
             "format": "uint64",
             "description": "Raised on every change of this catalog; kept across restarts."
           },
+          "governor": {
+            "$ref": "#/components/schemas/CatalogGovernor",
+            "description": "The usage governor's answer for each consumer this hab paces. Absent with none."
+          },
           "groups": {
             "type": "array",
             "description": "The groups this hab is the home of: the short form (groups.md 5.1). Absent with none.",
@@ -5975,6 +5986,21 @@
         "required": [
           "seq",
           "generation"
+        ]
+      },
+      "CatalogGovernor": {
+        "type": "object",
+        "properties": {
+          "consumers": {
+            "type": "array",
+            "description": "By id.",
+            "items": {
+              "$ref": "#/components/schemas/GovernorConsumer"
+            }
+          }
+        },
+        "required": [
+          "consumers"
         ]
       },
       "CatalogGroup": {
@@ -8572,6 +8598,71 @@
         },
         "required": [
           "path"
+        ]
+      },
+      "GovernorConsumer": {
+        "type": "object",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "description": "plan: the plan's weekly window; usd: today's result cost against the daily dollar cap; none: unpaced, with no reading, its tokens counted. An open set."
+          },
+          "cap_cents": {
+            "type": "integer",
+            "format": "int64",
+            "description": "usd: the daily dollar cap, in US cents."
+          },
+          "event_pace": {
+            "type": "string",
+            "description": "The next event turn's pace: ok or wait. An open set."
+          },
+          "event_until": {
+            "type": "string",
+            "description": "RFC 3339 UTC time a wait of event turns ends."
+          },
+          "id": {
+            "type": "string",
+            "description": "capcom, or group:\u003cid\u003e."
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Today's input tokens, by the hab's local day."
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Today's output tokens."
+          },
+          "pace": {
+            "type": "string",
+            "description": "The next user turn's pace: ok, small (the small model) or wait. An open set."
+          },
+          "share_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100."
+          },
+          "spent_cents": {
+            "type": "integer",
+            "format": "int64",
+            "description": "usd: today's reported cost, in US cents."
+          },
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 UTC time a wait of user turns ends."
+          },
+          "used_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "plan: the weekly window's used percentage, the whole account's."
+          }
+        },
+        "required": [
+          "id",
+          "basis",
+          "pace",
+          "event_pace"
         ]
       },
       "Group": {
@@ -13411,6 +13502,10 @@
           },
           "origin": {
             "$ref": "#/components/schemas/SendOrigin"
+          },
+          "send_now": {
+            "type": "boolean",
+            "description": "The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it."
           },
           "session": {
             "type": "string"
