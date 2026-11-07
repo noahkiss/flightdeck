@@ -67,6 +67,9 @@ type Config struct {
 	Runner Runner
 	// Enabled reports confirm.start_elsewhere. Nil: off.
 	Enabled func() bool
+	// GroupPlan reports confirm.group_plan (groups.md 3.2): while it is on, a start with a
+	// group asks, also on the agent's own host. Nil: on.
+	GroupPlan func() bool
 	// Publish hears confirm.requested and confirm.closed, in order. A confirmed one sends
 	// confirm.requested again with state running before it runs. A confirmation's
 	// requested event always goes out before its closed one. It is called with the service's
@@ -183,6 +186,9 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	if p.Start.Teammate && p.From == "" {
 		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a teammate reports to the session that asked for it: ask from a Flightdeck pane")
 	}
+	if err := CheckGroup(*p.Start); err != nil {
+		return api.Confirmation{}, err
+	}
 	wait := time.Duration(min(p.WaitMS, int(MaxWait/time.Millisecond))) * time.Millisecond
 	asked := *p.Start
 	asked.Alias = "" // the hab fills it, from its own alias table
@@ -192,6 +198,11 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	on := s.cfg.Enabled != nil && s.cfg.Enabled()
 	ask := on && !self // a start on the agent's own host never asks (capcom.md 6.4)
+	if st.Group != "" && (s.cfg.GroupPlan == nil || s.cfg.GroupPlan()) {
+		// A group start asks while confirm.group_plan is on, on any host: its answer is also
+		// the trust answer for the group's worktrees (groups.md 3.2, 4.2).
+		ask = true
+	}
 	now := s.cfg.Now()
 	id := newID()
 	if st.Name == "" {
@@ -386,6 +397,7 @@ func (s *Service) run(e *entry) api.Confirmation {
 	defer cancel()
 	s.mu.Lock()
 	id, from, start := e.c.ID, e.c.From, *e.c.Start
+	ctx = context.WithValue(ctx, confirmedKey{}, !e.c.Record)
 	s.mu.Unlock()
 	res, err := s.cfg.Runner.RunStart(ctx, id, from, start)
 	s.mu.Lock()
@@ -478,6 +490,54 @@ func (s *Service) publishLocked(t api.EventType, c api.Confirmation) {
 	if s.cfg.Publish != nil {
 		s.cfg.Publish(structure.Event{Type: t, ID: c.ID, Data: c})
 	}
+}
+
+type confirmedKey struct{}
+
+// Confirmed reports, inside Runner.RunStart, whether the user answered the start's
+// confirmation; false for a record that ran with no question. A group member's trust cover
+// names the confirmation only when the user answered it (groups.md 4.2).
+func Confirmed(ctx context.Context) bool {
+	v, _ := ctx.Value(confirmedKey{}).(bool)
+	return v
+}
+
+// The roles a group member may have (groups.md 2.1). Flightdeck never starts the coordinator.
+var groupRoles = []string{"lead", "worker", "reviewer"}
+
+// ValidGroupID reports whether id is a group or item id: 1 to 64 lowercase ASCII letters,
+// digits and '-', starting with a letter or digit.
+func ValidGroupID(id string) bool {
+	if id == "" || len(id) > 64 || id[0] == '-' {
+		return false
+	}
+	for _, c := range []byte(id) {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// GroupBranchPrefix is the branch prefix of a group's worktrees (groups.md 7.1).
+func GroupBranchPrefix(group string) string { return "group/" + group + "/" }
+
+// CheckGroup checks a start's group fields: a valid group id, a known role and a valid item id,
+// and role and item only with a group.
+func CheckGroup(s api.ConfirmStart) error {
+	switch {
+	case s.Group == "" && (s.Role != "" || s.Item != ""):
+		return control.Errorf(api.ErrorKindInvalid, "role and item need group")
+	case s.Group == "":
+		return nil
+	case !ValidGroupID(s.Group):
+		return control.Errorf(api.ErrorKindInvalid, "group %q: use 1 to 64 lowercase letters, digits and '-'", s.Group)
+	case s.Role != "" && !slices.Contains(groupRoles, s.Role):
+		return control.Errorf(api.ErrorKindInvalid, "role %q is not one of %s", s.Role, strings.Join(groupRoles, ", "))
+	case s.Item != "" && !ValidGroupID(s.Item):
+		return control.Errorf(api.ErrorKindInvalid, "item %q: use 1 to 64 lowercase letters, digits and '-'", s.Item)
+	}
+	return nil
 }
 
 // Message is the text a requesting session gets when the answer came after its wait.

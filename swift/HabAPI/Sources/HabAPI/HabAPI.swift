@@ -2389,16 +2389,22 @@ public struct ConfirmStart: Codable, Sendable, Hashable {
     public var branch: String?
     /// The absolute project folder on the target host. The session starts there, in its project.
     public var folder: String
+    /// The agent group the new session is a member of: 1 to 64 lowercase letters, digits and '-'. A group start asks while confirm.group_plan is on, also on the requesting hab's own host, and its target hab answers the harness's folder trust prompt for the group's worktrees (groups.md 4.2).
+    public var group: String?
     /// The harness to start: claude, codex or opencode.
     public var harness: String
     /// The target hab: a peer label from the peer list, or this hab's host id. In confirm.request an empty host means this hab.
     public var host: String
+    /// With group: the plan item the member works on, 1 to 64 lowercase letters, digits and '-'.
+    public var item: String?
     /// A model for the harness, as the harness names it.
     public var model: String?
     /// The new session's name. Absent: the target hab picks one.
     public var name: String?
     /// The project's name, from the catalog. Filled by the hab.
     public var project: String?
+    /// With group: the member's role, lead, worker or reviewer (groups.md 2.1).
+    public var role: String?
     /// The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf.
     public var seed: String?
     /// Report back to the requesting session: the target hab sends it the final agent message of each turn that a message from it began, as a channel message from the new session. Needs a requesting session.
@@ -2408,24 +2414,30 @@ public struct ConfirmStart: Codable, Sendable, Hashable {
         case alias = "alias"
         case branch = "branch"
         case folder = "folder"
+        case group = "group"
         case harness = "harness"
         case host = "host"
+        case item = "item"
         case model = "model"
         case name = "name"
         case project = "project"
+        case role = "role"
         case seed = "seed"
         case teammate = "teammate"
     }
 
-    public init(alias: String? = nil, branch: String? = nil, folder: String, harness: String, host: String, model: String? = nil, name: String? = nil, project: String? = nil, seed: String? = nil, teammate: Bool? = nil) {
+    public init(alias: String? = nil, branch: String? = nil, folder: String, group: String? = nil, harness: String, host: String, item: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, role: String? = nil, seed: String? = nil, teammate: Bool? = nil) {
         self.alias = alias
         self.branch = branch
         self.folder = folder
+        self.group = group
         self.harness = harness
         self.host = host
+        self.item = item
         self.model = model
         self.name = name
         self.project = project
+        self.role = role
         self.seed = seed
         self.teammate = teammate
     }
@@ -6854,6 +6866,8 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var seed: String?
     /// Who wrote the seed, as host/session, shown in its envelope.
     public var seedFrom: String?
+    /// Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before.
+    public var trustCover: TrustCover?
 
     enum CodingKeys: String, CodingKey {
         case argv = "argv"
@@ -6871,9 +6885,10 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case rows = "rows"
         case seed = "seed"
         case seedFrom = "seed_from"
+        case trustCover = "trust_cover"
     }
 
-    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, reportTo: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil) {
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, reportTo: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil, trustCover: TrustCover? = nil) {
         self.argv = argv
         self.cols = cols
         self.cwd = cwd
@@ -6889,6 +6904,7 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         self.rows = rows
         self.seed = seed
         self.seedFrom = seedFrom
+        self.trustCover = trustCover
     }
 }
 
@@ -7728,6 +7744,31 @@ public struct TrustChoice: RawRepresentable, Codable, Sendable, Hashable {
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let trust = TrustChoice(rawValue: "trust")
     public static let exit = TrustChoice(rawValue: "exit")
+}
+
+public struct TrustCover: Codable, Sendable, Hashable {
+    /// group/<group>/: the cover answers only for a worktree whose branch starts with it.
+    public var branchPrefix: String
+    /// The id of the confirmation the user answered, 32 hex digits, or none when the plan started with no confirmation (confirm.group_plan off).
+    public var confirmation: String
+    /// The group id: 1 to 64 lowercase letters, digits and '-'.
+    public var group: String
+    /// The harness the plan names for this member; the cover answers only its prompt.
+    public var harness: String
+
+    enum CodingKeys: String, CodingKey {
+        case branchPrefix = "branch_prefix"
+        case confirmation = "confirmation"
+        case group = "group"
+        case harness = "harness"
+    }
+
+    public init(branchPrefix: String, confirmation: String, group: String, harness: String) {
+        self.branchPrefix = branchPrefix
+        self.confirmation = confirmation
+        self.group = group
+        self.harness = harness
+    }
 }
 
 public struct TrustPrompt: Codable, Sendable, Hashable {

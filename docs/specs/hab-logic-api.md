@@ -937,7 +937,13 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   With `harness`, the optional `report_to` names a session on the calling hab (the hab at the
   other end of the peer link the call came over, else this one): this hab sends it the final
   agent message of each turn the seed or a message from it began, as a channel message from
-  the new session (`harness-adapters.md`, Spawn).
+  the new session (`harness-adapters.md`, Spawn). The optional `trust_cover {group,
+  confirmation, harness, branch_prefix}` (`groups.md` 4.2, 12.6) is taken only from this hab's
+  own confirmations or over the link of a peer the peer list names; any other caller gets
+  `invalid`, as do a cover whose harness is not the create's, a group id outside lowercase
+  letters, digits and `-`, a `branch_prefix` other than `group/<group>/`, and a confirmation
+  that is neither 32 hex digits nor `none`. The hab then answers the new pane's folder trust
+  prompt itself when the cover matches (`app.md` 7.10, Group members).
 - **`cwd_of`** on `session.create` names a pane: with no `cwd` and no `project_dir`, the new
   pane starts in that pane's working folder (its program's folder, else its shell's last OSC 7
   report, else its session's start folder, else the default) and is filed in that pane's

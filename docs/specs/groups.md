@@ -243,8 +243,36 @@ worktrees, so most starts would show the prompt.
   idle.
 - **A failed pre-answer** (`conflict`, `unavailable`) leaves the card for the user and tells the
   coordinator once.
-- **Codex.** Its trust rule is not built (`app.md` 7.10: keys not checked). Stage B2 builds and
-  checks it; until then a Codex member's prompt raises the card.
+- **Codex.** Built in B2 (`app.md` 7.10): Codex 0.167's prompt was drawn and checked live, and
+  the card answers it with `trust` (arrows, then Enter on "Trust and continue"); `exit` is
+  refused for Codex, since no key exits it from the dialog. **The cover does not answer Codex.**
+  In a linked worktree Codex says "Trusting will apply to the repository root" and records the
+  main checkout as trusted (checked live 2026-11-06 with a throwaway `CODEX_HOME`). That trusts
+  every worktree of the repository, someone else's code too, which is wider than the rule above.
+  So a Codex member's prompt shows the card, as today; the hab never answers it.
+
+**Built choices (stage B2, task-7kzvfcna).**
+
+- Until stage B3 brings the one plan card, each group start is its own confirmation: a spawn
+  with `group` asks while `confirm.group_plan` is on, on any host, and the cover names that
+  confirmation. B3 replaces it with the plan's confirmation and the envelope (3.3).
+- The member hab checks the cover when the dialog first shows: the cover's harness (Claude Code;
+  not Codex, above), a linked worktree it made (gff-hab's worktree mark) holding the start
+  folder, on a branch under `branch_prefix`, and not a foreign checkout whose setup still waits
+  for the owner's yes (`hab-logic-api.md` 3.10). "Of the group's project" holds because the
+  session starts in that worktree; "a plan host" holds because only the plan's starts carry a
+  cover. The cover comes only from the hab's own confirmations or a listed peer's link.
+- "A listed peer's link" is not authentication by itself: a peer's hello names its device id,
+  and the link is as trusted as the SSH access behind it (`mesh.md` 4). A hab that can open a
+  link as a listed peer can already start sessions on this one.
+- The hold: the hab tries the answer on each screen read until it lands or `trust_hold` passes,
+  and stops trying once a client typed into the pane (in the last second before the dialog, or
+  during the hold). The card then shows at the hold's end. A folder outside the cover shows the
+  card at once.
+- "Tells the coordinator once": in B2 the hab tells the member's spawner (its `report_to`), as
+  a channel message from the member. B3 sends it to the group record's coordinator.
+- The session record's `group: {id, role, item}` (2.1) comes with B3; B2 carries the fields on
+  the confirmation and the cover only.
 
 Decision: the confirmation is the trust answer; with confirmation off, the group itself is.
 Reason: the user saw every folder on one card, and asking again per folder is the friction this
@@ -881,7 +909,7 @@ Built (task-6iwat66b, `harness-adapters.md` Spawn): the `spawn` tool with host, 
 model, folder, name, seed and `mode` (teammate or detached); the `[aliases]` table; the address
 in `ConfirmResult.address`; teammate reports through `session.create`'s `report_to`. B2 adds
 `{group, role, item}` to `ConfirmStart` and the tool, and `trust_cover` to `session.create`,
-both optional fields beside these.
+both optional fields beside these. Built (task-7kzvfcna): both, as 4.2's built choices say.
 
 ### 12.4 Self-compact (task-f2fhhr6p) — shared
 
@@ -913,6 +941,7 @@ matches the cover (4.2), and holds the `blocked:trust` report up to `[groups] tr
 while it does. This is an
 exception `app.md` 7.10 must state: the hab answers, the user does not, because the user
 confirmed the plan, or turned the plan's confirmation off (`confirmation: none`, 13 Q2).
+Built (task-7kzvfcna): `app.md` 7.10, Group members, states it.
 
 ### 12.7 Worktrees (`hab-logic-api.md` 3.10, B4) — shared
 
@@ -1073,8 +1102,9 @@ setting, with its earlier fixed value as the default. Two homes, by who tunes it
 | The reviewer harness order Codex, Claude Code, opencode (6.2) | Not a limit: an order. The plan names the reviewer, and the user edits it on the card |
 | The catalog pull every 15 s (5.6, 5.7) | `mesh.md` 5 owns it; this spec does not change it |
 
-**Changes to other specs.** This spec does not edit `app.md` 20.3 to 20.5. Stage B3 adds the
-rows `confirm.group_plan`, `group.confirm_max_age`, `group.max_leads`, `group.max_workers` and
+**Changes to other specs.** Each stage edits `app.md` 20.3 to 20.5 as it builds a row. Stage
+B2 built the hab's `confirm.group_plan` row (its group starts need the off case) and added it
+to `app.md` 20.3, and built `[groups] trust_hold`; the app's row comes with B3. Stage B3 adds the rows `group.confirm_max_age`, `group.max_leads`, `group.max_workers` and
 `group.close_members`; B5 adds the `heavy.*` rows; B6 adds `group.compact_at`,
 `group.fresh_after_compacts`, `group.fresh_transcript_mb` and `group.handoff_at`. Each stage that
 reads a `[groups]` or `[heavy]` key adds it to `docs/examples/hab.toml`.

@@ -27,6 +27,18 @@ type SessionCreateParams struct {
 	// ReportTo comes with the spawn verb (harness-adapters.md, Spawn). Optional, so an older
 	// hab ignores it.
 	ReportTo string `json:"report_to,omitempty" doc:"A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability."`
+	// TrustCover comes with stage B2 of agent groups (groups.md 4.2, 12.6). Optional, so an
+	// older hab ignores it and shows the trust card as before.
+	TrustCover *TrustCover `json:"trust_cover,omitempty" doc:"Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before."`
+}
+
+// TrustCover is what answers a group member's folder trust prompt (groups.md 4.2, 12.6): the
+// user confirmed the group's plan, or turned the plan's confirmation off.
+type TrustCover struct {
+	Group        string `json:"group" doc:"The group id: 1 to 64 lowercase letters, digits and '-'."`
+	Confirmation string `json:"confirmation" doc:"The id of the confirmation the user answered, 32 hex digits, or none when the plan started with no confirmation (confirm.group_plan off)."`
+	Harness      string `json:"harness" doc:"The harness the plan names for this member; the cover answers only its prompt."`
+	BranchPrefix string `json:"branch_prefix" doc:"group/<group>/: the cover answers only for a worktree whose branch starts with it."`
 }
 
 // SessionCreated names the session and pane a create or resume made.

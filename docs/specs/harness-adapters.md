@@ -1219,7 +1219,7 @@ gff agent compact with a follow-up that points at it."
 Any agent can start a teammate or sub-agent for its own work, in another harness, on any host,
 with one call (task-6iwat66b). The owner can say "run a codex reviewer" or "a gpt reviewer" and
 get the right harness and model. Groups (`groups.md` 4.1, 12.3) start their members through the
-same verb; stage B2 adds the group fields and the trust cover.
+same verb; stage B2 adds the group fields and the trust cover (built, task-7kzvfcna).
 
 ### The verb
 
@@ -1238,8 +1238,21 @@ manual (`gff-hab mcp --skill`) and the MCP rules tell agents when to use it.
 | `model` | Wins over the alias's model |
 | `name` | Absent: the harness and the confirmation id's first six hex digits, such as `codex-3fa9c2` |
 | `mode` | `teammate` (the default) or `detached` |
+| `group` | An agent group's id (stage B2, `groups.md` 4.1): 1 to 64 lowercase letters, digits and `-` |
+| `role` | With `group`: `lead`, `worker` or `reviewer` |
+| `item` | With `group`: the plan item, an id of the same form as `group` |
 
-The brief is `seed`, not `role`: B2 adds `role` (lead, reviewer) beside `group` and `item`.
+The brief is `seed`, not `role`. The three group fields go into `ConfirmStart` as `group`,
+`role` and `item`; `role` or `item` without `group` is refused `invalid`.
+
+**A group start** (stage B2, `groups.md` 4.2, 12.6). While `confirm.group_plan` is on (the
+default), a start with `group` asks, also on the spawner's own host; until stage B3 brings the
+group's one plan card, each member start is its own card. Off, it runs at once as a record,
+unless `confirm.start_elsewhere` asks for a start on another host. Its `session.create` carries
+`trust_cover {group, confirmation, harness, branch_prefix}`: the confirmation id when the user
+answered it, else `none`; the start's harness; `group/<group>/`. The target hab answers the
+member's folder trust prompt itself for a folder the cover matches (`app.md` 7.10, Group
+members).
 
 **What it does.** A spawn is a start, as `start_session`'s (`capcom.md` 6.4): `confirm.request`
 kind `start`, with `teammate` set in teammate mode. The confirmation rules do not change: a start

@@ -447,7 +447,7 @@ func TestTrustWatch(t *testing.T) {
 	ts, agents, f := newFakeTrust(t)
 	agents.SetTrust("p", "claude", "/work/a", false) // start from the starting state
 	agents.TrustStalled("p")
-	ts.watch("p", "claude", "/work/a")
+	ts.watch("p", "claude", "/work/a", nil)
 	waitUntil(t, "the prompt", func() bool { _, ok := agents.Trusting("p"); return ok })
 	f.mu.Lock()
 	f.flicker = 1

@@ -120,6 +120,9 @@ harness = "claude"
 # "logbook.habits.brief" = true
 # "logbook.habits.reminder" = true
 # "logbook.habits.closeout" = true
+# Ask before a group start; the answer also trusts the group's worktrees (docs/specs/groups.md
+# 3.2, 4.2): true or false.
+# "confirm.group_plan" = true
 # The heavy-run lock (docs/specs/groups.md 8): heavy runs at once on this host, 1 to 8.
 # "heavy.slots" = 1
 # Hold heavy runs while a volume has less than this many GiB free: 0 for never, else to 4096.
@@ -167,6 +170,13 @@ restart_hold = "10s"
 # Once free space was low, grant again only when it is this many GiB above heavy.disk_min_free:
 # 0 to 100.
 disk_resume_margin = 2
+
+# The [groups] section: agent groups (docs/specs/groups.md 15.3). A value outside its range is
+# logged and the default runs.
+[groups]
+# How long this hab holds a group member's folder trust prompt back while it answers it, before
+# the trust card shows: "1s" to "60s".
+trust_hold = "10s"
 
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and

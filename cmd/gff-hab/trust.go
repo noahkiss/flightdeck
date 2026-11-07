@@ -49,6 +49,15 @@ type trustService struct {
 	// refuse ends the messages that wait for the pane's session and counts them; nil: none.
 	refuse func(pane, reason string) (int, error)
 	logf   func(string, ...any)
+	// hold is [groups] trust_hold: how long a covered pane's prompt is held back while the hab
+	// answers it (groups.md 4.2). Zero: defaultTrustHold.
+	hold time.Duration
+	// covers checks that a pane's folder is one its group's cover answers, and says why not
+	// (groupcover.go). nil: no cover answers, every prompt shows the card.
+	covers func(ctx context.Context, harness string, pc paneCover) string
+	// tell sends the session in the pane's spawner one note from Flightdeck: a covered prompt
+	// the hab could not answer. nil: none.
+	tell func(pane, text string)
 
 	mu        sync.Mutex
 	watching  map[string]bool      // panes watched now
@@ -58,27 +67,35 @@ type trustService struct {
 	declined  map[string]bool      // panes whose prompt the owner answered exit, and that exited
 	queued    map[string]int       // client input to a pane not yet written
 	typed     map[string]time.Time // when client input last reached a pane
+	cover     map[string]paneCover // panes started with a group's trust cover
+	holding   map[string]bool      // covered panes whose prompt the hab holds back and answers
 	done      chan struct{}
+	wg        sync.WaitGroup // the watches running
+	ctx       context.Context
+	cancel    context.CancelFunc // ends ctx at Close
 	closed    bool
 }
 
 var _ control.Trust = (*trustService)(nil)
 
 func newTrustService(agents *harness.Store, screen func(string) ([]string, error), write func(context.Context, string, []byte) error, live func(string) bool, logf func(string, ...any)) *trustService {
-	return &trustService{agents: agents, screen: screen, write: write, live: live, logf: logf,
+	ctx, cancel := context.WithCancel(context.Background())
+	return &trustService{ctx: ctx, cancel: cancel, agents: agents, screen: screen, write: write, live: live, logf: logf,
 		watching: map[string]bool{}, answering: map[string]bool{}, answered: map[string]time.Time{},
 		exiting: map[string]bool{}, declined: map[string]bool{}, queued: map[string]int{}, typed: map[string]time.Time{},
-		done: make(chan struct{})}
+		cover: map[string]paneCover{}, holding: map[string]bool{}, done: make(chan struct{})}
 }
 
 // Close ends every watch.
 func (t *trustService) Close() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if !t.closed {
 		t.closed = true
 		close(t.done)
 	}
+	t.mu.Unlock()
+	t.cancel()
+	t.wg.Wait() // a watch may be mid-answer: it ends at its next step
 }
 
 // forget drops what the service holds about a pane that is gone.
@@ -90,6 +107,32 @@ func (t *trustService) forget(pane string) {
 	delete(t.declined, pane)
 	delete(t.typed, pane)
 	delete(t.queued, pane)
+	delete(t.cover, pane)
+	delete(t.holding, pane)
+}
+
+// typedSince reports whether client input reached the pane after at, or is on its way.
+func (t *trustService) typedSince(pane string, at time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.queued[pane] > 0 || t.typed[pane].After(at)
+}
+
+func (t *trustService) setHolding(pane string, on bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if on {
+		t.holding[pane] = true
+	} else {
+		delete(t.holding, pane)
+	}
+}
+
+func (t *trustService) holdFor() time.Duration {
+	if t.hold > 0 {
+		return t.hold
+	}
+	return defaultTrustHold
 }
 
 // inputStart and inputEnd bracket a client's pane.input: an answer waits until the pane is quiet.
@@ -138,8 +181,9 @@ func (t *trustService) show(pane, kind, folder string) bool {
 }
 
 // watch starts watching a pane gff-hab started with harness kind in folder, when that harness
-// has a trust prompt Flightdeck knows.
-func (t *trustService) watch(pane, kind, folder string) {
+// has a trust prompt Flightdeck knows. A group member's start brings its trust cover: the hab
+// then answers a prompt the cover matches itself (groups.md 4.2).
+func (t *trustService) watch(pane, kind, folder string, cover *api.TrustCover) {
 	if !slices.Contains(harness.TrustHarnesses, kind) {
 		return
 	}
@@ -150,8 +194,140 @@ func (t *trustService) watch(pane, kind, folder string) {
 		return
 	}
 	t.watching[pane] = true
+	if cover != nil {
+		t.cover[pane] = paneCover{cover: *cover, folder: folder}
+	}
+	t.wg.Add(1)
 	t.mu.Unlock()
-	go t.run(pane, kind, folder)
+	go func() {
+		defer t.wg.Done()
+		t.run(pane, kind, folder)
+	}()
+}
+
+// The steps of a covered pane's prompt (groups.md 4.2).
+const (
+	coverNone     = iota // no cover, or the prompt has not shown yet
+	coverHolding         // the report is held back while the hab answers
+	coverAnswered        // the hab answered it
+	coverCard            // the card shows as today: the cover did not match, or the answer failed
+)
+
+// coverStep runs one screen read of a covered pane whose dialog shows. It reports whether the
+// prompt stays held back (true), or shows as the card (false).
+func (t *trustService) coverStep(pane, kind string, st *coverState) bool {
+	now := time.Now()
+	switch st.step {
+	case coverNone:
+		t.mu.Lock()
+		pc, ok := t.cover[pane]
+		t.mu.Unlock()
+		if !ok || t.covers == nil {
+			st.step = coverCard
+			return false
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		why := t.covers(ctx, kind, pc)
+		cancel()
+		if why != "" {
+			t.logf("pane %s: group %s's trust cover does not answer this prompt: %s; the trust card shows", pane, pc.cover.Group, why)
+			st.step = coverCard
+			return false
+		}
+		st.step, st.group, st.until, st.since = coverHolding, pc.cover.Group, now.Add(t.holdFor()), now.Add(-trustQuiet)
+		t.setHolding(pane, true)
+		t.logf("pane %s: %s asks to trust a worktree of group %s; the hab answers it (confirmation %s)", pane, kind, pc.cover.Group, pc.cover.Confirmation)
+		fallthrough
+	case coverHolding:
+		if !now.Before(st.until) {
+			t.setHolding(pane, false)
+			st.step = coverCard
+			why := st.why
+			if why == "" {
+				why = "no answer within " + t.holdFor().String()
+			}
+			t.logf("pane %s: the hab did not answer the trust prompt of group %s (%s); the trust card shows", pane, st.group, why)
+			if t.tell != nil {
+				t.tell(pane, fmt.Sprintf("(Flightdeck: the hab could not answer my folder trust prompt for group %s: %s. The owner sees the trust card; I start once it is answered.)", st.group, why))
+			}
+			return false
+		}
+		if st.why == "" && t.typedSince(pane, st.since) {
+			// A person is at the pane: the hab answers nothing for them. The card shows when
+			// the hold ends.
+			st.why = "a client typed into the pane"
+		}
+		if st.why == "a client typed into the pane" {
+			return true
+		}
+		ctx, cancel := context.WithDeadline(t.ctx, st.until) // Close ends an answer on its way
+		err := t.preAnswer(ctx, pane, kind)
+		cancel()
+		if err != nil {
+			st.why = strings.TrimPrefix(err.Error(), "gff-hab: ")
+			if t.typedSince(pane, st.since) {
+				st.why = "a client typed into the pane"
+			}
+			return true
+		}
+		t.setHolding(pane, false)
+		st.step = coverAnswered
+		t.logf("pane %s: trust prompt answered trust by the hab for group %s", pane, st.group)
+		return true
+	case coverAnswered:
+		// The dialog came back after the hab's answer went in: the owner answers this one.
+		st.step = coverCard
+		return false
+	}
+	return false
+}
+
+// coverState is one watch's progress through a covered prompt.
+type coverState struct {
+	step  int
+	group string
+	until time.Time // the hold ends
+	since time.Time // client input after this stops the hab's answer
+	why   string    // the last failure
+}
+
+// preAnswer answers a covered pane's prompt with trust, as Answer does but with no state shown:
+// the dialog must show with one cursor row and the trust row; keys go one at a time; Enter
+// only on the trust row with no client input meanwhile; then the dialog must go and the agent
+// run on.
+func (t *trustService) preAnswer(ctx context.Context, pane, kind string) error {
+	t.mu.Lock()
+	if t.answering[pane] {
+		t.mu.Unlock()
+		return control.Errorf(api.ErrorKindConflict, "another answer is on its way")
+	}
+	t.answering[pane] = true
+	t.mu.Unlock()
+	sent := false
+	defer func() {
+		t.mu.Lock()
+		delete(t.answering, pane)
+		if sent {
+			t.answered[pane] = time.Now()
+		}
+		t.mu.Unlock()
+	}()
+	if why := t.busyInput(pane); why != "" {
+		return control.Errorf(api.ErrorKindConflict, "%s", why)
+	}
+	rows, err := t.screen(pane)
+	if err != nil {
+		return control.Errorf(api.ErrorKindUnavailable, "reading the screen: %v", err)
+	}
+	moves, err := harness.TrustMoves(kind, rows, true)
+	if err != nil {
+		return trustErr(pane, err)
+	}
+	sent = true
+	if err := t.pick(ctx, pane, kind, moves); err != nil {
+		return err
+	}
+	return t.outcome(ctx, pane, kind, true)
 }
 
 // run reads the pane's screen every trustPoll until the harness reports a state of its own or
@@ -164,9 +340,11 @@ func (t *trustService) run(pane, kind, folder string) {
 		delete(t.watching, pane)
 		t.mu.Unlock()
 	}()
+	defer t.setHolding(pane, false)
 	start := time.Now()
 	var seen, gone time.Time
 	misses, showing := 0, false
+	var cs coverState
 	tick := time.NewTicker(trustPoll)
 	defer tick.Stop()
 	for {
@@ -188,12 +366,20 @@ func (t *trustService) run(pane, kind, folder string) {
 				t.logf("pane %s: %s asks to trust folder %s", pane, kind, folder)
 			}
 			seen = time.Now()
+			if cs.step != coverCard && t.coverStep(pane, kind, &cs) {
+				continue // held back: no report, board row or push while the hab answers
+			}
 			if t.show(pane, kind, folder) {
 				showing = true
 			}
 			continue
 		}
 		misses++
+		if cs.step == coverHolding && misses >= trustMisses {
+			// The dialog went while held back: answered in the terminal, or by the agent exiting.
+			t.setHolding(pane, false)
+			cs.step = coverAnswered
+		}
 		switch {
 		case showing && misses >= trustMisses:
 			t.agents.SetTrust(pane, kind, folder, false)
@@ -210,12 +396,13 @@ func (t *trustService) run(pane, kind, folder string) {
 }
 
 // Declined reports whether the owner answered the pane's trust prompt with exit and the agent
-// exited (declined), or such an answer runs now (pending): a message then waits.
+// exited (declined), or such an answer runs now, or the hab holds a covered prompt back while
+// it answers it (pending): a message then waits.
 func (t *trustService) Declined(pane string) (declined, pending bool) {
 	pane = canonicalPane(pane)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.declined[pane], t.exiting[pane]
+	return t.declined[pane], t.exiting[pane] || t.holding[pane]
 }
 
 // Answer serves trust.answer (app.md 7.10). The pane must show blocked:trust and its screen

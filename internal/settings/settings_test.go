@@ -431,3 +431,17 @@ func TestHeavyRows(t *testing.T) {
 		}
 	}
 }
+
+// TestGroupPlanRow: confirm.group_plan (groups.md 3.2, 15.3) is a bool, on by default (the
+// Balanced column).
+func TestGroupPlanRow(t *testing.T) {
+	d, ok := Lookup(GroupPlan)
+	if !ok || string(d.Default) != "true" {
+		t.Fatalf("confirm.group_plan: %+v %v", d, ok)
+	}
+	for v, want := range map[string]bool{"true": true, "false": true, "1": false, `"on"`: false} {
+		if _, err := d.Check(json.RawMessage(v)); (err == nil) != want {
+			t.Errorf("confirm.group_plan = %s: err %v, want ok %v", v, err, want)
+		}
+	}
+}

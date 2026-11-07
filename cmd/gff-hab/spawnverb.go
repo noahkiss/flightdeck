@@ -17,8 +17,9 @@ import (
 // the harness may be an alias from the owner's table, the folder defaults to the agent's own
 // project, and a teammate reports each turn the agent began back to it over channels.
 //
-// Stage B2 (groups.md 4.1, 12.3) adds the group fields {group, role, item} and the trust
-// cover to the same start; the argument named role is theirs, so the brief is seed here.
+// Stage B2 (groups.md 4.1, 12.3) adds the group fields {group, role, item}: a group start asks
+// while confirm.group_plan is on, and its session.create carries the trust cover (groups.md
+// 4.2, groupcover.go). The argument named role is theirs, so the brief is seed here.
 
 // Spawn modes.
 const (
@@ -49,7 +50,8 @@ func runSpawn(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 	}
 	p := api.ConfirmRequestParams{Kind: "start", WaitMS: int(startWait / time.Millisecond), Start: &api.ConfirmStart{
 		Host: a.str("host"), Folder: a.str("folder"), Harness: a.str("harness"), Model: a.str("model"),
-		Name: a.str("name"), Seed: a.str("seed"), Teammate: mode == spawnTeammate}}
+		Name: a.str("name"), Seed: a.str("seed"), Teammate: mode == spawnTeammate,
+		Group: a.str("group"), Role: a.str("role"), Item: a.str("item")}}
 	var r api.ConfirmRequested
 	if err := c.Call(ctx, "confirm.request", p, &r); err != nil {
 		return nil, "", err

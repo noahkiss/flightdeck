@@ -1,0 +1,60 @@
+{
+  "data": {
+    "answered_by": "answered_by-24",
+    "closed": "closed-23",
+    "created": "created-21",
+    "edited": true,
+    "expires_at": "expires_at-22",
+    "from": "from-4",
+    "id": "id-3",
+    "kind": "setup",
+    "reason": "reason-30",
+    "record": true,
+    "result": {
+      "address": "address-29",
+      "host": "host-25",
+      "name": "name-27",
+      "pane": "pane-28",
+      "session": "session-26",
+      "x_unknown_field": "later"
+    },
+    "setup": {
+      "bootstrap": "bootstrap-20",
+      "branch": "branch-19",
+      "host": "host-17",
+      "repository": "repository-18",
+      "x_unknown_field": "later"
+    },
+    "start": {
+      "alias": "alias-13",
+      "branch": "branch-8",
+      "folder": "folder-6",
+      "group": "group-14",
+      "harness": "harness-9",
+      "host": "host-5",
+      "item": "item-16",
+      "model": "model-10",
+      "name": "name-11",
+      "project": "project-7",
+      "role": "role-15",
+      "seed": "seed-12",
+      "teammate": true,
+      "x_unknown_field": "later"
+    },
+    "state": "unknown",
+    "x_unknown_field": "later"
+  },
+  "id": "id-33",
+  "revision": 31,
+  "seq": 32,
+  "type": "confirm.requested",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

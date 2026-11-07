@@ -165,8 +165,14 @@ func (r *confirmRunner) RunStart(ctx context.Context, id, from string, s api.Con
 		// end of the call: this one, or over a peer link this hab, by the link's own hello.
 		p.ReportTo = from
 	}
+	if s.Group != "" {
+		// The target hab answers the member's folder trust prompt for the group's worktrees
+		// (groups.md 4.2, 12.6): the user answered this confirmation, or confirm.group_plan is
+		// off and nobody was asked.
+		p.TrustCover = groupCover(s, id, confirm.Confirmed(ctx))
+	}
 	if r.self(s.Host) {
-		made, err := r.local(ctx, p)
+		made, err := r.local(withOwnCover(ctx), p)
 		if err != nil {
 			return api.ConfirmResult{}, err // the hab's own refusal: a failure
 		}

@@ -23,8 +23,9 @@ type fakeRunner struct {
 }
 
 type run struct {
-	id, from string
-	start    api.ConfirmStart
+	id, from  string
+	start     api.ConfirmStart
+	confirmed bool // Confirmed(ctx): the user answered it
 }
 
 func (f *fakeRunner) CheckStart(s api.ConfirmStart) (api.ConfirmStart, bool, error) {
@@ -38,9 +39,9 @@ func (f *fakeRunner) CheckStart(s api.ConfirmStart) (api.ConfirmStart, bool, err
 	return s, s.Host == "self" || s.Host == "", nil
 }
 
-func (f *fakeRunner) RunStart(_ context.Context, id, from string, s api.ConfirmStart) (api.ConfirmResult, error) {
+func (f *fakeRunner) RunStart(ctx context.Context, id, from string, s api.ConfirmStart) (api.ConfirmResult, error) {
 	f.mu.Lock()
-	f.runs = append(f.runs, run{id, from, s})
+	f.runs = append(f.runs, run{id, from, s, Confirmed(ctx)})
 	hold := f.hold
 	f.mu.Unlock()
 	if hold != nil {

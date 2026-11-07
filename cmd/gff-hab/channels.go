@@ -99,7 +99,7 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 		case declined:
 			return ss, errUntrusted
 		case pending:
-			return ss, fmt.Errorf("%w: the owner's answer to the trust prompt is on its way", channels.ErrBusy)
+			return ss, fmt.Errorf("%w: an answer to the trust prompt is on its way", channels.ErrBusy)
 		}
 	}
 	if ss.State == api.SessionStateExited || ss.Pane == "" {
