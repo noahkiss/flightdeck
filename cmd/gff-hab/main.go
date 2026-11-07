@@ -1146,8 +1146,15 @@ func serve(args []string) error {
 		return ""
 	}}
 	var chRef atomic.Pointer[channels.Service] // for the fake Capcom service's outcome
+	// The swaps a stopped gff-hab left (groups.md 9.5): undone before the channels start, or
+	// held there until their messages move to the fresh session.
+	swapsToFinish := undoSwaps(store, logger.Printf)
+	var heldAtStart []string
+	for old := range swapsToFinish {
+		heldAtStart = append(heldAtStart, old)
+	}
 	chSvc, err := channels.New(channels.Config{
-		Self: key.Fingerprint(), Host: *hostID, State: dir,
+		Self: key.Fingerprint(), Host: *hostID, State: dir, Held: heldAtStart,
 		Peers: channelPeers{pm}, Catalog: cs.List, Local: cl,
 		CapcomHome: func() (string, string) {
 			c := capcomRef.Load()
@@ -1192,6 +1199,15 @@ func serve(args []string) error {
 	defer chSvc.Close()
 	chs.Store(chSvc)
 	chRef.Store(chSvc)
+	if len(swapsToFinish) > 0 {
+		var closePane func(context.Context, string) error
+		if sessionActs != nil {
+			closePane = sessionActs.ClosePane
+		}
+		repairCtx, repairStop := context.WithCancel(context.Background())
+		defer repairStop()
+		finishSwaps(repairCtx, store, swapsToFinish, chSvc.Move, chSvc.Unhold, closePane, logger.Printf)
+	}
 	mates.agent = agents.Get
 	mates.name = func(id string) (string, bool) {
 		ss, ok := store.Session(id)
@@ -1642,7 +1658,7 @@ func serve(args []string) error {
 	}
 	var sup *superviseService
 	if groupsSvc != nil && agentSvc != nil && sessionActs != nil {
-		scfg := superviseConfig{host: *hostID, members: store.Members, session: store.Session, agents: agents,
+		scfg := superviseConfig{host: *hostID, members: store.Members, session: store.Session, agents: agents, hold: chSvc.Hold,
 			reading: memberReading(nudges, findTranscript), setPct: store.SetContextPct, addCompact: store.AddCompact,
 			inUse: func(ss api.Session) string {
 				st, ok := agents.Get(ss.Pane)

@@ -69,6 +69,9 @@ type superviseConfig struct {
 	compacts   compactStarter // nil: no compaction on this hab
 	// inUse is the rounds lock's reason a session is in use (rounds.md 6.1); "" when free.
 	inUse func(ss api.Session) string
+	// hold holds channel deliveries to a member, its name kept with it (channels.Service.Hold);
+	// nil: none.
+	hold func(ctx context.Context, session, name string) (func(), error)
 	// guard runs under a send's claim: a client's use refuses the send with conflict.
 	guard func(session, pane string) error
 	// send delivers text to a session through session.send's path, with guard.
@@ -460,27 +463,33 @@ func (s *superviseService) sendFree(a *supAction, text string) (api.Session, uin
 	return s.sendFreeThen(a, text, nil)
 }
 
-// sendFreeThen is sendFree with before, run just before each try of the send.
-func (s *superviseService) sendFreeThen(a *supAction, text string, before func()) (api.Session, uint64, error) {
+// sendFreeThen is sendFree with before, run just before each try of the send; an error from it
+// waits and tries again, as a conflict does.
+func (s *superviseService) sendFreeThen(a *supAction, text string, before func(ss api.Session) error) (api.Session, uint64, error) {
 	for {
 		ss, st, err := s.waitFree(a)
 		if err != nil {
 			return ss, 0, err
 		}
 		guard := func(pane string) error { return s.cfg.guard(ss.ID, pane) }
+		ready := true
 		if before != nil {
-			before()
+			if berr := before(ss); berr != nil {
+				ready = false // try again after the poll
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err = s.cfg.send(ctx, ss.ID, text, guard)
-		cancel()
-		if err == nil {
-			return ss, st.Revision, nil
-		}
-		var ce *control.Error
-		if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindConflict {
-			s.end(a, actFailed, "the message did not go in: "+err.Error())
-			return ss, 0, errEnded
+		if ready {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err = s.cfg.send(ctx, ss.ID, text, guard)
+			cancel()
+			if err == nil {
+				return ss, st.Revision, nil
+			}
+			var ce *control.Error
+			if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindConflict {
+				s.end(a, actFailed, "the message did not go in: "+err.Error())
+				return ss, 0, errEnded
+			}
 		}
 		select {
 		case <-s.stop:
@@ -622,11 +631,30 @@ func (s *superviseService) run(a *supAction) {
 
 	// A hand-off, then a fresh session (9.3).
 	text := fmt.Sprintf("Send a hand-off with %s: what is done, what is next, open questions; then end your turn. A fresh session continues %s from it.", noteArgs, itemRef)
-	// Only a note written after the ask goes in counts as the hand-off (review M5).
-	ss2, rev, err := s.sendFreeThen(a, channels.NoteEnvelope(text), func() {
+	// Only a note written after the ask goes in counts as the hand-off (review M5). Channel
+	// deliveries to the member are held from the ask on: one delivered between the turn's end
+	// and the swap would start a turn in a pane the swap closes (review M2). The swap moves
+	// what waits to the fresh session; a failure releases it to this one.
+	var release func()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	ss2, rev, err := s.sendFreeThen(a, channels.NoteEnvelope(text), func(ss api.Session) error {
+		if release == nil && s.cfg.hold != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			r, err := s.cfg.hold(ctx, ss.ID, ss.Name)
+			cancel()
+			if err != nil {
+				return err
+			}
+			release = r
+		}
 		s.mu.Lock()
 		a.asked = true
 		s.mu.Unlock()
+		return nil
 	})
 	if err != nil {
 		return
@@ -645,6 +673,11 @@ func (s *superviseService) run(a *supAction) {
 	ss3, st, cerr := s.current(a)
 	if cerr != nil {
 		s.end(a, actFailed, cerr.Error())
+		return
+	}
+	if st.State == api.AgentStatusWorking || st.State == api.AgentStatusBlocked {
+		// Something else started a turn after the hand-off's: never close a pane mid-turn.
+		s.end(a, actFailed, "the member started another turn; no fresh session")
 		return
 	}
 	flag := ""

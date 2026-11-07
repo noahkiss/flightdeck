@@ -20,7 +20,7 @@ func TestHoldAndMove(t *testing.T) {
 	for _, text := range []string{"one", "two", "three"} {
 		ids = append(ids, send(t, h.s, "amy", "bob", text).ID)
 	}
-	release, err := h.s.Hold(context.Background(), "id-bob")
+	release, err := h.s.Hold(context.Background(), "id-bob", "bob")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,16 +74,59 @@ func TestHoldWaitsForAttempt(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := h.s.Hold(ctx, "id-bob"); err == nil {
+	if _, err := h.s.Hold(ctx, "id-bob", "bob"); err == nil {
 		t.Fatal("Hold returned while a delivery was in flight")
 	}
 	close(gate)
 	if st := final(t, h.s, id); st.State != api.ChannelStateDelivered {
 		t.Fatalf("message: %s", st.State)
 	}
-	release, err := h.s.Hold(context.Background(), "id-bob")
+	release, err := h.s.Hold(context.Background(), "id-bob", "bob")
 	if err != nil {
 		t.Fatal(err)
 	}
 	release()
+}
+
+// TestHoldKeepsName: between the old session's rename and the new one's start no session holds
+// the member's name; a message sent to it then waits for the held session and moves to the
+// successor, never refused (review M3). After the release the name is free again.
+func TestHoldKeepsName(t *testing.T) {
+	l := newLocal("bob", "amy")
+	h := newHab(t, "dev-a", "a", t.TempDir(), l)
+	release, err := h.s.Hold(context.Background(), "id-bob", "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The rename: bob-1 is the old session, no session is named bob yet.
+	l.mu.Lock()
+	delete(l.sessions, "bob")
+	l.sessions["bob-1"] = "id-bob"
+	l.mu.Unlock()
+	sent := send(t, h.s, "amy", "bob", "in the gap")
+	time.Sleep(60 * time.Millisecond)
+	if st := status(t, h.s, sent.ID); st.State == api.ChannelStateRefused {
+		t.Fatalf("message to the held name refused: %s", st.Reason)
+	}
+	// The new session takes the name; the held message moves to it.
+	l.mu.Lock()
+	l.sessions["bob"] = "id-bob2"
+	l.mu.Unlock()
+	if n, err := h.s.Move("id-bob", "id-bob2"); err != nil || n != 1 {
+		t.Fatalf("moved %d, %v; want 1", n, err)
+	}
+	release()
+	if st := final(t, h.s, sent.ID); st.State != api.ChannelStateDelivered {
+		t.Fatalf("message: %s %s", st.State, st.Reason)
+	}
+	l.mu.Lock()
+	got := l.delivered["bob"]
+	l.mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "in the gap") {
+		t.Fatalf("delivered to the new bob: %q", got)
+	}
+	// Released, with no session named carol and no hold: refused as before.
+	if _, err := h.s.Send(context.Background(), api.ChannelSendParams{From: "amy", To: "carol", Text: "x"}); err == nil {
+		t.Fatal("a send to an unknown name went through")
+	}
 }

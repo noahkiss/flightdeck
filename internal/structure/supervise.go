@@ -98,3 +98,39 @@ func (s *Store) Members() []api.Session {
 	}
 	return out
 }
+
+// SetSwap marks (m) or clears (nil) a fresh-session swap on its old session (groups.md 9.5).
+func (s *Store) SetSwap(id string, m *SwapMark) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.session(id)
+	if ss == nil {
+		return fmt.Errorf("%w: session %s", ErrNotFound, id)
+	}
+	if m == nil && ss.Swap == nil {
+		return nil
+	}
+	if m != nil {
+		c := *m
+		c.Envelope = copyEnvelope(m.Envelope)
+		m = &c
+	}
+	ss.Swap = m
+	s.commit(nil)
+	return nil
+}
+
+// Swaps lists the swap marks, by old session id.
+func (s *Store) Swaps() map[string]SwapMark {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]SwapMark{}
+	for _, ss := range s.sessions {
+		if ss.Swap != nil {
+			m := *ss.Swap
+			m.Envelope = copyEnvelope(ss.Swap.Envelope)
+			out[ss.ID] = m
+		}
+	}
+	return out
+}
