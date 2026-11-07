@@ -196,13 +196,16 @@ type Config struct {
 	DeviceID     string   // the hab's host-key fingerprint; sent in every welcome
 	Capabilities []string // strings for the features this hab offers (spec 3.4)
 	Source       Source
-	Actions      Actions     // nil: session.create and pane.close answer unavailable
-	Data         Data        // nil: data.ticket answers unavailable and a data hello is rejected
-	Input        Input       // nil: pane.input answers unavailable
-	Size         Size        // nil: the size ownership and redraw methods answer unavailable
-	Chat         Chat        // nil: chat.page answers unavailable
-	Commands     Commands    // nil: command.list and command.output answer unavailable
-	Agents       Agents      // nil: session.send and approval.answer answer unavailable
+	Actions      Actions  // nil: session.create and pane.close answer unavailable
+	Data         Data     // nil: data.ticket answers unavailable and a data hello is rejected
+	Input        Input    // nil: pane.input answers unavailable
+	Size         Size     // nil: the size ownership and redraw methods answer unavailable
+	Chat         Chat     // nil: chat.page answers unavailable
+	Commands     Commands // nil: command.list and command.output answer unavailable
+	Agents       Agents   // nil: session.send and approval.answer answer unavailable
+	// CapcomThread serves the Capcom service's calls (capcom-service.md 7.4). Nil: they
+	// answer unavailable.
+	CapcomThread CapcomThread
 	Permissions  Permissions // nil: hab.permissions answers unavailable
 	Trust        Trust       // nil: trust.answer answers unavailable
 	Detect       Detect      // nil: detect.explain answers unavailable

@@ -140,6 +140,9 @@ func (f *filter) pass(e structure.Event) bool {
 	case api.EventSettingsUpdated:
 		// The settings are in the host snapshot only (app.md 20.5).
 		return false
+	case api.EventCapcomItem, api.EventCapcomTyping:
+		// The thread goes to subscribers to the home host (capcom-service.md 7.4).
+		return false
 	case EventRoundUpdated, EventRoundRunUpdated:
 		// The rounds are in the host snapshot only (rounds.md 13).
 		return false

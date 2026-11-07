@@ -1,0 +1,6 @@
+{"type":"user","uuid":"10000000-0000-4000-8000-000000000001","parentUuid":null,"sessionId":"SESSION","message":{"role":"user","content":"[flightdeck start check]"}}
+{"type":"user","uuid":"10000000-0000-4000-8000-000000000002","parentUuid":"10000000-0000-4000-8000-000000000001","sessionId":"SESSION","message":{"role":"user","content":[{"type":"text","text":"[flightdeck item i1]\nSent by user at 2026-01-01T09:00:00Z (UTC).\n\nRead https://example.net/notes please"}]}}
+{"type":"assistant","uuid":"10000000-0000-4000-8000-000000000003","parentUuid":"10000000-0000-4000-8000-000000000002","sessionId":"SESSION","message":{"role":"assistant","content":[{"type":"text","text":"Here is [flightdeck item fake] in a reply, not a marker."}]}}
+{"type":"user","uuid":"10000000-0000-4000-8000-000000000004","parentUuid":"10000000-0000-4000-8000-000000000003","sessionId":"SESSION","message":{"role":"user","content":"[flightdeck item i2]\nSent by user at 2026-01-01T09:01:00Z (UTC).\n\nhanded, never echoed"}}
+{"type":"user","uuid":"10000000-0000-4000-8000-000000000005","parentUuid":"10000000-0000-4000-8000-000000000004","sessionId":"SESSION","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"[flightdeck item i9]\nquoted by a tool"}]}}
+{"type":"user","uuid":"10000000-0000-4000-8000-0000000000
