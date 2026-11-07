@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHabAddr } from '../src/addr.js';
 import { CAPABILITIES, START_CHECK_TEXT } from '../src/engine.js';
-import { ALLOW_TOOLS, DENY_TOOLS, urlKey } from '../src/policy.js';
+import { ALLOW_TOOLS, DENY_TOOLS, onSurface, toolSummary, urlKey } from '../src/policy.js';
 import { encodeCwd, MARKER_RE, neutralise, transcriptPath } from '../src/transcript.js';
 import { SDK_VERSION } from '../src/version.js';
 import { firstText, PLANTED, rig, sleep, started, until, type Rig } from './helpers.js';
@@ -420,6 +420,17 @@ test('a tool outside WebFetch that reaches canUseTool is denied', async () => {
     const res = await can('Bash', { command: 'ls' }, { signal: new AbortController().signal } as any);
     assert.equal(res?.behavior, 'deny');
   });
+});
+
+test('the coordinator\'s group tools are on the surface and allowed (5.1, groups.md 12.1)', () => {
+  for (const t of ['group_create', 'group_status', 'group_amend', 'group_close', 'group_retry', 'member_compact', 'member_handoff']) {
+    assert.ok(onSurface(`mcp__flightdeck__${t}`, ['flightdeck']), t);
+  }
+  assert.ok(ALLOW_TOOLS.includes('mcp__flightdeck__*'));
+  const plan = JSON.stringify({ title: 'Fix cart', project: 'shop', items: [{ id: 'a' }] });
+  assert.equal(toolSummary('mcp__flightdeck__group_create', { plan }), 'group_create: Fix cart');
+  assert.equal(toolSummary('mcp__flightdeck__group_close', { group: 'g-1' }), 'group_close: g-1');
+  assert.equal(toolSummary('mcp__flightdeck__group_retry', { group: 'g-1', member: 'lead-a' }), 'group_retry: lead-a');
 });
 
 test('urlKey drops the fragment and a trailing slash', () => {

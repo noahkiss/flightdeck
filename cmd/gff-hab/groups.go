@@ -63,6 +63,23 @@ type groupsConfig struct {
 	noteName   func(name, text string) error
 	now        func() time.Time
 	logf       func(string, ...any)
+	// capcom is the Capcom service on this hab, a coordinator like any session (groups.md
+	// 12.1). Nil: none.
+	capcom groupsCapcom
+}
+
+// groupsCapcom is what groups need of the Capcom service (groups.md 12.1).
+type groupsCapcom interface {
+	// IsService reports whether a session is the Capcom service's running session: it takes
+	// reports at once, also while its engine is busy or down, and its address is capcom.
+	IsService(session string) bool
+	// GroupCard puts a card into Capcom's thread that opens the group's card.
+	GroupCard(group, text string)
+}
+
+// capcomCoordinator reports whether a session is the Capcom service.
+func (s *groupsService) capcomCoordinator(session string) bool {
+	return s.cfg.capcom != nil && session != "" && s.cfg.capcom.IsService(session)
 }
 
 // groupsService keeps the groups this hab is the home of.
@@ -392,8 +409,13 @@ func (s *groupsService) Create(ctx context.Context, p api.GroupCreateParams) (ap
 	if err != nil {
 		return api.GroupCreated{}, err
 	}
+	address := s.cfg.host + "/" + coord.Name
+	viaCapcom := s.capcomCoordinator(coord.ID)
+	if viaCapcom {
+		address = capcomServiceName // the channel name that follows the mark (groups.md 12.1)
+	}
 	g := groups.New(id, plan, proj.Name, s.cfg.self,
-		api.GroupCoordinator{Session: coord.ID, Name: coord.Name, Address: s.cfg.host + "/" + coord.Name}, s.cfg.now())
+		api.GroupCoordinator{Session: coord.ID, Name: coord.Name, Address: address}, s.cfg.now())
 	planRec, tasks, err := s.filePlan(ctx, g, plan, lbProject)
 	if err != nil {
 		return api.GroupCreated{}, err
@@ -407,6 +429,11 @@ func (s *groupsService) Create(ctx context.Context, p api.GroupCreateParams) (ap
 	s.order = append(s.order, id)
 	s.saveLocked(&g)
 	s.mu.Unlock()
+	if viaCapcom {
+		// The card in Capcom's thread links to the group's card, which carries the plan's
+		// confirmation while it waits (groups.md 12.1).
+		s.cfg.capcom.GroupCard(id, groupCardText(g))
+	}
 
 	c, err := s.cfg.confirm(ctx, api.ConfirmRequestParams{Kind: "group", From: coord.Name, Group: &cg, WaitMS: p.WaitMS})
 	if err != nil {
@@ -1104,7 +1131,9 @@ func (s *groupsService) refresh(id string) {
 // waits in the inbox (groups.md 5.5). The caller holds s.mu and saves the record.
 func (s *groupsService) tellLocked(g *api.Group, text, from string) string {
 	ss, ok := s.cfg.store.Session(g.Coordinator.Session)
-	if ok && ss.State == "running" && s.cfg.note != nil {
+	// Capcom always counts as running: its thread takes the report while the engine is busy
+	// or down (groups.md 12.1).
+	if ok && (ss.State == "running" || s.capcomCoordinator(ss.ID)) && s.cfg.note != nil {
 		msg := fmt.Sprintf("Group %s (%s), from %s: %s", g.ID, g.Title, from, text)
 		if err := s.cfg.note(ss.ID, msg); err == nil {
 			return "sent"
@@ -1261,7 +1290,19 @@ func (s *groupsService) UsagePause(id string, on bool, until string) (api.Group,
 
 // Close ends the group: no new starts; with group.close_members on, its idle members on this
 // hab are closed (groups.md 5.2, 7.5). Members on other habs keep running until B4's end.
+// Close ends a group at the user's word: the coordinator gets one message with the result
+// (groups.md 7.5), which a Capcom coordinator sums up in its thread (12.1).
 func (s *groupsService) Close(ctx context.Context, id string) (api.Group, error) {
+	return s.closeGroup(ctx, id, false)
+}
+
+// CloseAsCoordinator ends a group at its coordinator's group_close, whose answer is the record:
+// no message follows.
+func (s *groupsService) CloseAsCoordinator(ctx context.Context, id string) (api.Group, error) {
+	return s.closeGroup(ctx, id, true)
+}
+
+func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator bool) (api.Group, error) {
 	closeIdle := s.boolSetting(settings.GroupCloseMembers, true)
 	var panes []string
 	g, err := s.change(id, func(g *api.Group) error {
@@ -1286,6 +1327,14 @@ func (s *groupsService) Close(ctx context.Context, id string) (api.Group, error)
 	})
 	if err != nil {
 		return g, err
+	}
+	if !byCoordinator {
+		s.mu.Lock()
+		if gp := s.groups[id]; gp != nil {
+			s.tellLocked(gp, "the user ended the group. "+groupEndText(*gp), "Flightdeck")
+			s.saveLocked(gp)
+		}
+		s.mu.Unlock()
 	}
 	for _, p := range panes {
 		if s.cfg.closePane != nil {
@@ -1376,4 +1425,56 @@ func (s *groupsService) deliverInbox(session string) {
 		g.Inbox = []api.GroupReport{}
 		s.saveLocked(g)
 	}
+}
+
+// groupCardText is the line of a group's card in Capcom's thread.
+func groupCardText(g api.Group) string {
+	hosts := []string{}
+	for _, m := range g.Members {
+		if m.Host != "" && !slices.Contains(hosts, m.Host) {
+			hosts = append(hosts, m.Host)
+		}
+	}
+	t := fmt.Sprintf("Group %s: %s, %s", g.Title, countOf(len(g.Items), "item"), countOf(len(g.Members), "member"))
+	if len(hosts) > 0 {
+		t += " on " + strings.Join(hosts, ", ")
+	}
+	return t
+}
+
+// groupEndText is the result of an ended group for its coordinator (groups.md 7.5): what
+// landed, what did not, and the leftovers.
+func groupEndText(g api.Group) string {
+	landed, dropped := 0, 0
+	var open []string
+	for _, it := range g.Items {
+		switch it.State {
+		case groups.ItemLanded:
+			landed++
+		case groups.ItemDropped:
+			dropped++
+		default:
+			open = append(open, fmt.Sprintf("%s (%s)", it.ID, it.State))
+		}
+	}
+	t := fmt.Sprintf("%d of %s landed", landed, countOf(len(g.Items), "item"))
+	if dropped > 0 {
+		t += fmt.Sprintf(", %d dropped", dropped)
+	}
+	if len(open) > 0 {
+		t += "; not landed: " + strings.Join(open, ", ")
+	}
+	t += "."
+	if len(g.Leftovers) > 0 {
+		t += " Left over: " + strings.Join(g.Leftovers, "; ") + "."
+	}
+	return t
+}
+
+// countOf writes n and the word, plural when n is not 1.
+func countOf(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }

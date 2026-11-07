@@ -1409,7 +1409,8 @@ func serve(args []string) error {
 				_, err := chSvc.Note(name, text)
 				return err
 			},
-			logf: logger.Printf,
+			capcom: groupsCapcomOf(capcomEng),
+			logf:   logger.Printf,
 		})
 		if err != nil {
 			return err
@@ -1796,7 +1797,9 @@ func serve(args []string) error {
 	}
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	if groupsSvc != nil {
-		hooks.SetGroups(groupHook(store, groupsSvc))
+		hooks.SetGroups(groupHook(store, groupsSvc, func(pane string) bool {
+			return capcomEng != nil && pane == capcomRoute && capcomEng.eventTurn()
+		}))
 	}
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote, capcomEng))
 	// One context handler: the Logbook habit and the context nudge, joined when both are due

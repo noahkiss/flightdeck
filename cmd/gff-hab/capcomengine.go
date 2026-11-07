@@ -542,6 +542,34 @@ func (e *capcomEngine) Send(client string, p api.SessionSendParams) error {
 	return nil
 }
 
+// IsService reports whether a session is the running service session (groups.md 12.1).
+func (e *capcomEngine) IsService(session string) bool {
+	return session != "" && session == e.Session()
+}
+
+// GroupCard adds a group's card to the thread, once per group (groups.md 12.1). The app opens
+// the group's card from it, by the group id in its ref.
+func (e *capcomEngine) GroupCard(group, text string) {
+	if _, _, err := e.thread.Add(capcomthread.Item{Kind: capcomthread.KindCard, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
+		Key: "group:" + group, Text: text, Card: &capcomthread.Card{Type: capcomthread.CardGroup, Ref: group}}); err != nil {
+		e.logf("capcom: store the card of group %s: %v", group, err)
+	}
+}
+
+// eventTurn reports whether the engine runs a turn an event started (capcom-service.md 9.4).
+func (e *capcomEngine) eventTurn() bool {
+	st := e.link.Status()
+	return st.Turn != "" && st.Origin == "event"
+}
+
+// groupsCapcomOf is the engine as the groups' Capcom, or nil with no engine.
+func groupsCapcomOf(e *capcomEngine) groupsCapcom {
+	if e == nil {
+		return nil
+	}
+	return e
+}
+
 // DeliverAgent stores a channel message to capcom as an agent item; the engine gets it as an
 // input (2.4, 9.1).
 func (e *capcomEngine) DeliverAgent(text string) error {

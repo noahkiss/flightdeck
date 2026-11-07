@@ -5168,11 +5168,11 @@
           },
           "ref": {
             "type": "string",
-            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review."
+            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card."
           },
           "type": {
             "type": "string",
-            "description": "approval, confirmation, handoff, calendar, reminder, proposal or memory."
+            "description": "approval, confirmation, handoff, calendar, reminder, proposal, memory or group."
           }
         },
         "required": [

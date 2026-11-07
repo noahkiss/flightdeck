@@ -97,12 +97,25 @@ export function textOf(v: unknown, depth = 0): string {
   return '';
 }
 
+// A group plan's title, from group_create's plan JSON (groups.md 15.2); '' when it has none.
+function planTitle(plan: unknown): string {
+  if (typeof plan !== 'string') return '';
+  try {
+    const p = JSON.parse(plan) as { title?: unknown };
+    return typeof p?.title === 'string' ? p.title : '';
+  } catch {
+    return '';
+  }
+}
+
 // One line for the folded tool line (7.2).
 export function toolSummary(name: string, input: unknown): string {
   let s = '';
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>;
-    for (const k of ['url', 'query', 'q', 'project', 'title', 'name', 'text', 'message']) {
+    s = planTitle(o.plan);
+    for (const k of ['url', 'query', 'q', 'project', 'title', 'name', 'member', 'group', 'text', 'message']) {
+      if (s) break;
       if (typeof o[k] === 'string' && o[k]) {
         s = String(o[k]);
         break;

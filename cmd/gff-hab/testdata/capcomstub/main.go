@@ -23,6 +23,9 @@
 // no compaction; a re-seed announces the fresh session with no id and sends the id at its first
 // turn, as a Codex thread gets its id then. An input that arrives while a turn runs is logged as
 // "input during a turn". A hello with reseed runs that re-seed before any input.
+//
+// Groups (groups.md 12.1): "group <plan JSON>" calls group.create on the pane route and replies
+// "group: <answer>"; "groupclose <id>" calls group.close and replies "groupclose: <answer>".
 package main
 
 import (
@@ -304,6 +307,12 @@ func turns(sock, token string) {
 			reply = "lb: " + routeCall(sock, token, body)
 		case "ctx":
 			fmt.Sscanf(arg, "%g", &used)
+		case "group":
+			body := fmt.Sprintf(`{"method":"group.create","params":{"plan":%s}}`, arg)
+			reply = "group: " + routeCall(sock, token, body)
+		case "groupclose":
+			body := fmt.Sprintf(`{"method":"group.close","params":{"group":%q}}`, arg)
+			reply = "groupclose: " + routeCall(sock, token, body)
 		case "compact":
 			if !codex {
 				summarise(askContext("compact"))

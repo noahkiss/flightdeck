@@ -24,8 +24,8 @@ type CapcomToolCall struct {
 
 // CapcomCard is a card item's content.
 type CapcomCard struct {
-	Type    string   `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal or memory."`
-	Ref     string   `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review."`
+	Type    string   `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal, memory or group."`
+	Ref     string   `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card."`
 	Choices []string `json:"choices"`
 }
 
