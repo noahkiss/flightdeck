@@ -421,7 +421,7 @@ func (s *Store) AddTool(turn string, call ToolCall, event bool) (Item, error) {
 func (s *Store) AnswerCard(id, choice, by string) (Item, error) {
 	a := &Answer{Choice: choice, By: by, Time: s.now().UTC()}
 	out, _, err := s.change(line{Op: "answer", ID: id, Answer: a}, func(it *Item) bool { return it.Answer == nil }, func(it *Item) error {
-		if it.Kind != KindCard || it.Card == nil {
+		if it.Card == nil { // a card, or a note that offers a choice (a memory line's Undo)
 			return fmt.Errorf("%w: item %s is not a card", ErrNotFound, id)
 		}
 		if it.Answer != nil {
