@@ -286,8 +286,10 @@ func turns(sock, token string) {
 			origin, text = "event", t
 		}
 		send(map[string]any{"type": "turn.started", "turn": turn, "origin": origin, "items": []string{id}})
-		waitHandled("turn.started") // as the real engine's model call does, before any tool call
 		send(map[string]any{"type": "input.taken", "item": id})
+		// gff-hab has the turn's origin before any tool call, as the real engine's model call
+		// gives it time to.
+		waitHandled("turn.started")
 		reply := "echo: " + text
 		used := 0.0
 		verb, arg, _ := strings.Cut(text, " ")
