@@ -1,5 +1,6 @@
 // Command capcomstub stands in for the Capcom engine in gff-hab's tests (capcom-service.md
-// 4.4). It reaches gff-hab through GFF_HAB, takes hello, answers ready, and runs one turn per
+// 4.4). It reaches gff-hab's engine route with GFF_HAB's socket and GFF_HAB_CAPCOM_TOKEN, and the
+// pane route with GFF_HAB's token; it takes hello, answers ready, and runs one turn per
 // input: turn.started, input.taken, a reply "echo: <text>", turn.ended. It reconnects after a
 // drop and sends again what gff-hab did not acknowledge. Its log, $STUB_DIR/log, records what
 // the tests check: its pid, a hash of the credential, whether its environment holds one.
@@ -56,7 +57,8 @@ func main() {
 	addr := os.Getenv("GFF_HAB")
 	rest := strings.TrimPrefix(addr, "http+unix://")
 	i := strings.LastIndex(rest, "/hooks/")
-	sock, token := rest[:i], rest[i+len("/hooks/"):]
+	sock, paneToken := rest[:i], rest[i+len("/hooks/"):]
+	token := os.Getenv("GFF_HAB_CAPCOM_TOKEN")
 	logf("pid %d", os.Getpid())
 	if _, err := os.Stat(filepath.Join(dir, "crashstart")); err == nil {
 		logf("crash at start")
@@ -67,7 +69,7 @@ func main() {
 			logf("env holds a credential")
 		}
 	}
-	go turns(sock, token)
+	go turns(sock, paneToken)
 	for {
 		if err := session(sock, token); err != nil {
 			logf("connection: %v", err)

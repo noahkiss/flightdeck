@@ -60,6 +60,8 @@ type capcomEngine struct {
 	session string // the service session's id, while this hab holds the mark
 	typing  bool
 
+	markMu sync.Mutex // one start or lose at a time, each acting on the mark as it is then
+
 	stateMu sync.Mutex // orders syncState's applies
 	stateT  int64      // the last applied update's clock (ms)
 	shown   bool       // an agent state was applied for the route since the last exit
@@ -136,7 +138,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 	})
 	job := s.job
 	if job == nil {
-		job = capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile)}
+		job = capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile), Match: engineCommand}
 	}
 	e.sup = capcomengine.NewSupervisor(capcomengine.SupervisorConfig{
 		Dir: dir, Job: job,
@@ -355,6 +357,9 @@ func (e *capcomEngine) stateUpdate() harness.Update {
 	return harness.Update{State: api.AgentStatusIdle}
 }
 
+// holds reports whether this hab holds the Capcom mark now.
+func (e *capcomEngine) holds() bool { return e.svc.Home() == e.device }
+
 // Session returns the service session's id, or "" while this hab does not run the service.
 func (e *capcomEngine) Session() string {
 	e.mu.Lock()
@@ -363,7 +368,15 @@ func (e *capcomEngine) Session() string {
 }
 
 // start makes sure the service session exists and runs the engine: this hab holds the mark.
+//
+// Mark changes call start and lose from goroutines, in any order: each takes markMu and acts
+// on whether this hab holds the mark now, so two changes close together end in the right state.
 func (e *capcomEngine) start(ctx context.Context) {
+	e.markMu.Lock()
+	defer e.markMu.Unlock()
+	if !e.holds() {
+		return
+	}
 	id, err := e.ensureSession()
 	if err != nil {
 		e.logf("capcom: the service session: %v", err)
@@ -380,6 +393,11 @@ func (e *capcomEngine) start(ctx context.Context) {
 // lose stops the engine after its turn and renames the record capcom-earlier-<n>: this hab lost
 // the mark (2.4). Its thread stays here, read-only.
 func (e *capcomEngine) lose() {
+	e.markMu.Lock()
+	defer e.markMu.Unlock()
+	if e.holds() {
+		return
+	}
 	e.sup.Lose()
 	e.mu.Lock()
 	id := e.session
@@ -436,6 +454,13 @@ func (e *capcomEngine) Accept(token string) bool {
 	return cur != "" && len(token) == len(cur) && subtle.ConstantTimeCompare([]byte(token), []byte(cur)) == 1
 }
 
+// acceptPane reports whether a token is the running engine's pane route token, the one in its
+// GFF_HAB: tool calls of its gff-hab mcp, as the Capcom session. It never opens the engine route.
+func (e *capcomEngine) acceptPane(token string) bool {
+	cur := e.sup.PaneToken()
+	return cur != "" && len(token) == len(cur) && subtle.ConstantTimeCompare([]byte(token), []byte(cur)) == 1
+}
+
 // Serve runs one engine connection.
 func (e *capcomEngine) Serve(c io.ReadWriteCloser) error { return e.link.Serve(c) }
 
@@ -447,7 +472,7 @@ type engineTokens struct {
 }
 
 func (t engineTokens) Pane(token string) (string, bool) {
-	if t.eng != nil && t.eng.Accept(token) {
+	if t.eng != nil && t.eng.acceptPane(token) {
 		return capcomRoute, true
 	}
 	return t.panes.Pane(token)
@@ -624,7 +649,7 @@ func (a engineAgents) SendsContext(session string, keyed bool) bool {
 // own process group outlives launchctl kickstart -k and bootout of the job that started it).
 func engineJob(sf *serviceFlags, state string) capcomengine.Job {
 	if *sf.init != string(service.Systemd) {
-		return nil
+		return engineJobFor(service.Launchd, "", state)
 	}
 	prefix := *sf.prefix
 	if prefix == "" {
@@ -639,7 +664,7 @@ func engineJob(sf *serviceFlags, state string) capcomengine.Job {
 // engineJobFor is the engine job of an install: init system, job prefix, state directory.
 func engineJobFor(in service.Init, prefix, state string) capcomengine.Job {
 	if in != service.Systemd {
-		return capcomengine.ProcessJob{PidFile: filepath.Join(state, capcomFolders, capcomengine.PidFile)}
+		return capcomengine.ProcessJob{PidFile: filepath.Join(state, capcomFolders, capcomengine.PidFile), Match: engineCommand}
 	}
 	return capcomengine.SystemdJob{Unit: prefix + "-gff-hab-capcom.service", EnvFile: filepath.Join(state, capcomFolders, capcomengine.EnvFile),
 		Keep: []string{"PATH", "HOME", "LANG", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"}}
@@ -647,14 +672,11 @@ func engineJobFor(in service.Init, prefix, state string) capcomengine.Job {
 
 // stopEngine ends the Capcom engine an install's gff-hab started, once the logic job is gone
 // (gff-hab uninstall): the engine outlives gff-hab by design (3.2), so nothing else would. A
-// plain process is ended only when its command line is the engine's, so a pid reused since the
-// pid file was written is left alone.
+// plain process is adopted only when its command line is the engine's (engineCommand), so a pid
+// reused since the pid file was written is left alone.
 func stopEngine(ctx context.Context, in service.Init, prefix, state string, out io.Writer) {
 	p, ok := engineJobFor(in, prefix, state).Adopt(ctx)
 	if !ok {
-		return
-	}
-	if in != service.Systemd && !engineCommand(p.Pid()) {
 		return
 	}
 	if err := p.Stop(10 * time.Second); err != nil {

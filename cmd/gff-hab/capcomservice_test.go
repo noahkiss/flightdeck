@@ -305,6 +305,10 @@ func TestCapcomServiceStub(t *testing.T) {
 	if code := upgradeStatus(t, hookSock, oldTok); code != http.StatusNotFound {
 		t.Fatalf("the old token: %d", code)
 	}
+	// GFF_HAB's token, which the SDK's binary and gff-hab mcp get, never opens the engine route.
+	if p := paneTokenOf(string(newEnv)); p == "" || p == tokenOf(string(newEnv)) || upgradeStatus(t, hookSock, p) != http.StatusNotFound {
+		t.Fatalf("the pane route token %q opens the engine route", p)
+	}
 	// The new engine got the crash message again (it was not taken) and runs on.
 	run(t, "capcom", "say", "-socket", e.sock, "after")
 	waitUntil(t, "a reply from the new engine", func() bool { return countReplies(threadText(t, c), "echo: after") == 1 })
@@ -419,7 +423,18 @@ func sessionByPaneOf(t *testing.T, c *control.Client, pane string) (api.Session,
 	return api.Session{}, false
 }
 
+// tokenOf returns the engine route token in the job's environment file.
 func tokenOf(env string) string {
+	for _, l := range strings.Split(env, "\n") {
+		if v, ok := strings.CutPrefix(l, capcomengine.TokenVar+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// paneTokenOf returns the pane route token in the job's environment file (GFF_HAB).
+func paneTokenOf(env string) string {
 	for _, l := range strings.Split(env, "\n") {
 		if v, ok := strings.CutPrefix(l, "GFF_HAB="); ok {
 			return v[strings.LastIndex(v, "/hooks/")+len("/hooks/"):]

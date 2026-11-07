@@ -17,7 +17,12 @@ import (
 
 // Files in the Capcom folder the supervisor writes.
 const (
-	EnvFile = "engine.env" // the job's environment: GFF_HAB with the route token, CLAUDE_CONFIG_DIR (3.3)
+	EnvFile = "engine.env" // the job's environment: GFF_HAB with the pane route token, the engine route token, CLAUDE_CONFIG_DIR (3.3)
+	// TokenVar names the engine route's token in the job's environment. GFF_HAB holds another
+	// token, for the pane route: the engine passes GFF_HAB on to the SDK's binary and gff-hab
+	// mcp, and keeps this one to itself, so a process with GFF_HAB cannot open /capcom/<token>
+	// (3.3, 4.4).
+	TokenVar = "GFF_HAB_CAPCOM_TOKEN"
 	PidFile = "engine.pid" // ProcessJob's pid
 	LogFile = "engine.log" // the engine's stdout and stderr
 )
@@ -81,7 +86,8 @@ type Supervisor struct {
 
 	mu        sync.Mutex
 	proc      Proc
-	token     string
+	token     string // the engine route's (/capcom/<token>)
+	paneToken string // the pane route's, in GFF_HAB (/hooks/<token>)
 	cred      *Credential
 	planned   string // why the running engine is meant to exit: pause, lose, build, auth, start, stop
 	authFails int
@@ -146,6 +152,14 @@ func (s *Supervisor) Token() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.token
+}
+
+// PaneToken is the pane route token of the engine that runs now, in its GFF_HAB, or "": the
+// token its tool calls (gff-hab mcp) reach the pane route with, as the Capcom session.
+func (s *Supervisor) PaneToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.paneToken
 }
 
 // Credential is what hello hands the engine (10.2).
@@ -219,10 +233,14 @@ func (s *Supervisor) Ensure(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	if p, ok := s.cfg.Job.Adopt(ctx); ok {
-		token := readToken(filepath.Join(s.cfg.Dir, EnvFile))
+		token, paneToken := readTokens(filepath.Join(s.cfg.Dir, EnvFile))
 		cred, why := s.loadCredential(ctx, cfg)
+		planned := ""
+		if rec.Paused {
+			planned = "pause" // a pause drain that a gff-hab restart cut: it stays a pause
+		}
 		s.mu.Lock()
-		s.proc, s.token, s.cred, s.planned = p, token, cred, ""
+		s.proc, s.token, s.paneToken, s.cred, s.planned = p, token, paneToken, cred, planned
 		s.drainNew = rec.Build != "" && rec.Build != s.cfg.Build()
 		if why != "" {
 			s.cfg.Logf("capcom: adopted the running engine, but %s", why)
@@ -264,6 +282,13 @@ func (s *Supervisor) start(ctx context.Context) {
 	if cfg.Engine == capcom.EngineNone {
 		return
 	}
+	if s.cfg.Record.Get().Paused {
+		s.mu.Lock()
+		s.setLocked(StatePaused, "")
+		s.mu.Unlock()
+		s.report()
+		return
+	}
 	cred, why := s.loadCredential(ctx, cfg)
 	if cred == nil {
 		fail(why)
@@ -285,15 +310,15 @@ func (s *Supervisor) start(ctx context.Context) {
 			return
 		}
 	}
-	token := newToken()
-	envs := []string{"GFF_HAB=" + s.cfg.RouteAddr(token)}
+	token, paneToken := newToken(), newToken()
+	envs := []string{"GFF_HAB=" + s.cfg.RouteAddr(paneToken), TokenVar + "=" + token}
 	if v := s.cfg.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
 		envs = append(envs, "CLAUDE_CONFIG_DIR="+v)
 	}
 	// The token is in place before the job runs, so its first connection is taken; the old one
 	// is refused from here on.
 	s.mu.Lock()
-	s.token, s.cred, s.planned, s.drainNew = token, cred, "", false
+	s.token, s.paneToken, s.cred, s.planned, s.drainNew = token, paneToken, cred, "", false
 	s.mu.Unlock()
 	if err := writeEnvFile(filepath.Join(s.cfg.Dir, EnvFile), envs); err != nil {
 		fail("engine environment file: " + err.Error())
@@ -342,12 +367,18 @@ func (s *Supervisor) exited(p Proc) {
 		s.cfg.Logf("capcom: the engine stopped for the pause")
 	case "lose", "stop":
 		s.mu.Lock()
-		s.token = ""
+		s.token, s.paneToken = "", ""
 		s.setLocked(StateOff, "")
 		s.mu.Unlock()
 		s.cfg.Logf("capcom: the engine stopped (%s)", planned)
 	case "build":
 		s.cfg.Logf("capcom: the engine of the earlier build finished; starting this build's engine")
+		s.start(context.Background())
+		return
+	case "resume":
+		// A resume came while a pause drained: the engine had its shutdown, so it exits after
+		// its turn; that exit is planned, and the engine starts again at once.
+		s.cfg.Logf("capcom: the paused engine finished its turn; starting it again for the resume")
 		s.start(context.Background())
 		return
 	case "start":
@@ -505,7 +536,7 @@ func (s *Supervisor) Resume(ctx context.Context) {
 	}
 	running := s.proc != nil
 	if running && s.planned == "pause" {
-		s.planned = "" // not yet exited: let it run on
+		s.planned = "resume" // it had its shutdown and exits after its turn: start it again then
 	}
 	s.mu.Unlock()
 	if running {
@@ -548,20 +579,24 @@ func writeEnvFile(path string, envs []string) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-// readToken reads the route token from the job's environment file.
-func readToken(path string) string {
+// readTokens reads the engine route token and the pane route token from the job's environment
+// file.
+func readTokens(path string) (token, paneToken string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if v, ok := strings.CutPrefix(sc.Text(), "GFF_HAB="); ok {
 			if i := strings.LastIndex(v, "/hooks/"); i >= 0 {
-				return v[i+len("/hooks/"):]
+				paneToken = v[i+len("/hooks/"):]
 			}
 		}
+		if v, ok := strings.CutPrefix(sc.Text(), TokenVar+"="); ok {
+			token = v
+		}
 	}
-	return ""
+	return token, paneToken
 }

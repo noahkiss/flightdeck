@@ -262,7 +262,8 @@ export function firstText(ctx: TurnCtx): string {
 // ---- the fake gff-hab route ----
 
 export class FakeHab {
-  readonly token = 'ab'.repeat(16);
+  readonly token = 'ab'.repeat(16); // the engine route's
+  readonly paneToken = 'cd'.repeat(16); // GFF_HAB's, for the MCP child
   socket = '';
   received: (Msg & { conn: number })[] = [];
   ackEngine = true;
@@ -310,7 +311,7 @@ export class FakeHab {
   }
 
   get addr(): string {
-    return `http+unix://${this.socket}/hooks/${this.token}`;
+    return `http+unix://${this.socket}/hooks/${this.paneToken}`;
   }
 
   send(type: string, fields: Record<string, unknown> = {}): number {
@@ -384,7 +385,7 @@ export async function rig(opts: { hello?: Record<string, unknown>; setup?: (r: {
   let code: number | undefined;
   const engine = new Engine({
     query: sdk.query,
-    env: { PATH: '/usr/bin:/bin', GFF_HAB: hab.addr, CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_OAUTH_TOKEN: 'inherited-should-go', ANTHROPIC_API_KEY: 'inherited-should-go' },
+    env: { PATH: '/usr/bin:/bin', GFF_HAB: hab.addr, GFF_HAB_CAPCOM_TOKEN: hab.token, CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_OAUTH_TOKEN: 'inherited-should-go', ANTHROPIC_API_KEY: 'inherited-should-go' },
     cwd,
     exit: (c) => {
       code = c;

@@ -78,6 +78,7 @@ async function run(status: number, f: (h: { hab: FakeHab; code: () => number | u
       HOME: dir,
       CLAUDE_CONFIG_DIR: cfg,
       GFF_HAB: hab.addr,
+      GFF_HAB_CAPCOM_TOKEN: hab.token,
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
       DISABLE_TELEMETRY: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',

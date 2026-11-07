@@ -22,6 +22,18 @@ export function parseHabAddr(s: string | undefined): HabAddr {
   return { socket, token };
 }
 
+// ENGINE_TOKEN_VAR names the engine route's own token (capcom-service.md 3.3). It differs from
+// the pane route token in GFF_HAB, which the SDK's binary and gff-hab mcp get; this one never
+// leaves the engine.
+export const ENGINE_TOKEN_VAR = 'GFF_HAB_CAPCOM_TOKEN';
+
+// engineToken reads and checks the engine route token.
+export function engineToken(s: string | undefined): string {
+  if (!s) throw new Error(`${ENGINE_TOKEN_VAR} is not set`);
+  if (!/^[0-9a-f]{16,128}$/.test(s)) throw new Error(`${ENGINE_TOKEN_VAR} is malformed`);
+  return s;
+}
+
 // The engine route on the same socket.
 export function enginePath(token: string): string {
   return `/capcom/${token}`;
