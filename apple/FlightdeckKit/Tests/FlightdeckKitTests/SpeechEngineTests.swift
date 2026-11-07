@@ -25,10 +25,13 @@ final class FakeEngine: SpeechEngine {
 
     /// How long each transcribe takes.
     var delay: Duration = .zero
+    /// Awaited after the delay: a transcribe that ends only once the test says so.
+    var hold: (@MainActor () async -> Void)?
 
     func transcribe(_ clip: SpeechClip, live: String) async throws -> String {
         transcribes += 1
         if delay > .zero { try await Task.sleep(for: delay) }
+        if let hold { await hold() }
         guard !results.isEmpty else { return live }
         return try (results.count > 1 ? results.removeFirst() : results[0]).get()
     }

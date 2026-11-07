@@ -51,6 +51,16 @@ func writeFile(t *testing.T, path, s string) {
 	}
 }
 
+// placeFile writes a file a polling fake reads, whole or not at all: a temporary file renamed
+// into place. With os.WriteFile the fake can find the file created but still empty.
+func placeFile(t *testing.T, path, s string) {
+	t.Helper()
+	writeFile(t, path+".tmp", s)
+	if err := os.Rename(path+".tmp", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fileIs(path, want string) func() bool {
 	return func() bool {
 		b, err := os.ReadFile(path)

@@ -74,7 +74,7 @@ func logoutCheckpoint(t *testing.T, holderLead, habLead time.Duration) {
 	})
 
 	// Mid-work: a new native id and a rename, each seen by gff-hab, then the signal at once.
-	writeFile(t, next, "second-id")
+	placeFile(t, next, "second-id")
 	waitUntil(t, "the agent's new id", func() bool {
 		return agentStates(t, e.sock)[agent.Pane].Session == "second-id"
 	})
