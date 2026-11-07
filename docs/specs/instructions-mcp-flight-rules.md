@@ -401,6 +401,71 @@ Facts for that run:
 
 Recommendation for that run: drive the CLI per owned server; patch directly only in tests.
 
+### 8.4 Built
+
+Built (`internal/mcpreg`, `gff-hab mcp render`). The first version follows D15 and renders for
+Claude Code, Codex and opencode. pi is accepted in the config and has no renderer yet.
+
+- **Config.** The registry lives in an `[mcp]` table of the same TOML file as `[instructions]`
+  (`-config` or `$GFF_CONFIG`): `[[mcp.server]]` with the fields of 8.1, and `write = [...]`
+  with the harness names whose config may be written. An unknown key in the table is an error.
+  `auth` is `none` (the default) or `oauth`; secret use follows from the value references.
+- **Value references.** An `env` or `headers` value is one of:
+  - a string: a plain value. It is refused when its key looks like a secret (8.2), when it
+    holds `${` and Claude would expand it, or when it holds `{env:` or `{file:` and opencode
+    would expand it.
+  - `{ env = "NAME" }`, with an optional `prefix = "Bearer "`: the harness reads the variable
+    from its own environment by name (Claude `${NAME}`, opencode `{env:NAME}`, Codex
+    `env_vars`, `env_http_headers` or `bearer_token_env_var`). Codex passes a stdio variable
+    only under its own name and a header only whole or as a bearer token, so another form is
+    "not rendered for codex".
+  - `{ secret = "<provider>:<reference>" }` or `{ command = ["argv", ...] }`: resolved at
+    launch by `gff-hab mcp launch` or `gff-hab mcp header`. Those commands come in a later
+    stage, so until then the server is "not rendered: needs secret resolution at launch".
+  A URL with a password in it is refused.
+- **Shapes.** Section 7.1 at user scope only; Flightdeck never writes a project file (D3).
+  Claude: `type`, `command`, `args`, `env`, or `url` and `headers`; a `cwd` has no Claude key,
+  so the server is not rendered for Claude; a `timeout` is noted and left out. Codex:
+  `command`, `args`, `cwd`, `env`, `env_vars`, or `url`, `http_headers`, `env_http_headers`,
+  `bearer_token_env_var`; `timeout` becomes `startup_timeout_sec`. opencode: `type` `local`
+  with `command` as one array, `environment` and `cwd`, or `type` `remote` with `url` and
+  `headers`; `timeout` in milliseconds. An `oauth` server renders with no credential; the
+  user signs in through the harness.
+- **Targets.** Claude: `$CLAUDE_CONFIG_DIR/.claude.json` when the variable is set, else
+  `~/.claude.json`, key `mcpServers`. Codex: `$CODEX_HOME/config.toml`, else
+  `~/.codex/config.toml`, tables `[mcp_servers.<name>]`. opencode: the global
+  `opencode.jsonc` or `opencode.json`, key `mcp.servers`; both files present is refused. A
+  symbolic link at the target is refused. A target inside a git work tree warns.
+- **Ownership (7.2, D9).** `<state>/mcp/<harness>.json` records each server name Flightdeck
+  wrote and a digest of the entry as the file holds it (canonical JSON, so formatting and key
+  order do not count). A registry name the file already holds and the record does not is
+  refused for that server. An owned entry whose digest changed was edited by hand: the dry run
+  shows it, and the write changes or removes it only with `-force <name>`. An owned server the
+  registry no longer gives this harness and host is removed. An owned entry gone from the file
+  is added back when the registry still lists it, with a note. A refused server never stops
+  the others.
+- **Dry run and write (6.5).** The default run prints, per harness, each server's action
+  (add, update, remove, keep, or why not), then a unified diff. For Codex and opencode the
+  diff is of the whole file; for Claude only of `mcpServers`, since the rest of
+  `~/.claude.json` is private state. `-write <harness>` writes when the `write` list names it;
+  `-dry-run` with `-write` is an error.
+- **Codex edit.** Line-based and format-preserving: each owned server is one
+  `[mcp_servers.<name>]` table with inline tables for its maps. Updated tables stay in place;
+  new ones go at the end; removed ones go with their sub-tables. A server defined another way
+  (dotted keys, an inline `mcp_servers`) is refused for that server. Before any write the edit
+  is checked by decoding both texts: every other value must be unchanged and each touched entry
+  must decode to what was rendered.
+- **opencode edit.** A JSONC edit that keeps comments, trailing commas and the rest of the
+  text: it replaces, inserts or deletes the member under `mcp.servers`, creating `mcp` and
+  `servers` when absent. The same decode check runs. A duplicate key is refused.
+- **Claude write.** Per changed server, `claude mcp remove --scope user <name>`, then
+  `claude mcp add-json --scope user <name> <json>` (`-claude-bin`, else `claude` on PATH).
+  The file is read back after the CLI runs, and the digests come from what Claude stored.
+- **Codex and opencode write.** A temporary file beside the target, the target's mode kept
+  (0600 for a new file), synced, then renamed over the target. The target is read again just
+  before the rename; when it changed since the plan, nothing is written and the run says to
+  try again.
+
 ---
 
 ## 9. Memory per harness
