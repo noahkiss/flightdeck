@@ -294,6 +294,11 @@ max_findings = 5
 brief_findings = 3
 # Tell the coordinator when a reviewer stays idle this long with no verdict: "5m" to "24h".
 reviewer_idle = "30m"
+# The lane starts again when the target moved during an item's run; after lane_tries tries
+# (1 to 20) the item goes back with "main keeps moving".
+lane_tries = 3
+# Lines of a failed lane step's output in the lead's message (0 to 500).
+fix_output_lines = 40
 
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and

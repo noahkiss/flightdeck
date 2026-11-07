@@ -2130,7 +2130,7 @@
       "params": [
         {
           "name": "base",
-          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.",
+          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch.",
           "schema": {
             "type": "string"
           }
@@ -2140,6 +2140,13 @@
           "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e.",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "fetch",
+          "description": "When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes.",
+          "schema": {
+            "type": "boolean"
           }
         },
         {
@@ -4317,8 +4324,15 @@
           }
         },
         {
+          "name": "lane",
+          "description": "Start the group's stopped lane again (groups.md 7.4), instead of a member.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "member",
-          "description": "A failed member's name.",
+          "description": "A failed member's name. Empty with lane.",
           "required": true,
           "schema": {
             "type": "string"
@@ -9374,6 +9388,13 @@
           "after": {
             "type": "string"
           },
+          "attempts": {
+            "type": "array",
+            "description": "The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run.",
+            "items": {
+              "$ref": "#/components/schemas/GroupLaneAttempt"
+            }
+          },
           "branch": {
             "type": "string",
             "description": "group/\u003cgroup\u003e/\u003citem\u003e."
@@ -9389,9 +9410,17 @@
             "type": "string",
             "description": "The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."
           },
+          "landed": {
+            "type": "string",
+            "description": "The commit on the target once the item landed: the rebased head."
+          },
           "lead": {
             "type": "string",
             "description": "Its lead's session name."
+          },
+          "no_ci": {
+            "type": "boolean",
+            "description": "The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI."
           },
           "reason": {
             "type": "string",
@@ -9464,17 +9493,58 @@
           }
         }
       },
+      "GroupLaneAttempt": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the try ended or saved its push."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later)."
+          },
+          "rebased": {
+            "type": "string",
+            "description": "The rebased head pushed to the item's branch."
+          },
+          "step": {
+            "type": "string",
+            "description": "Where it stopped: fetch, rebase, checks, push, ci, land or moving."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target commit the item was rebased on."
+          }
+        },
+        "required": [
+          "at",
+          "outcome"
+        ]
+      },
       "GroupLaneState": {
         "type": "object",
         "properties": {
           "landing": {
             "type": "string"
           },
+          "no_ci": {
+            "type": "boolean",
+            "description": "The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI."
+          },
           "queue": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "stopped": {
+            "type": "string",
+            "description": "Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again."
+          },
+          "waits": {
+            "type": "string",
+            "description": "Why the lane waits: no remote, a fetch that failed. It tries again each minute."
           }
         },
         "required": [
@@ -9576,6 +9646,10 @@
           "state": {
             "type": "string",
             "description": "planned, starting, running, exited or failed."
+          },
+          "worktree_removed": {
+            "type": "boolean",
+            "description": "The hab removed its worktree: its session ended and the worktree had no uncommitted changes."
           }
         },
         "required": [
@@ -9847,9 +9921,13 @@
           "group": {
             "type": "string"
           },
+          "lane": {
+            "type": "boolean",
+            "description": "Start the group's stopped lane again (groups.md 7.4), instead of a member."
+          },
           "member": {
             "type": "string",
-            "description": "A failed member's name."
+            "description": "A failed member's name. Empty with lane."
           }
         },
         "required": [
@@ -15263,11 +15341,15 @@
         "properties": {
           "base": {
             "type": "string",
-            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches."
+            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch."
           },
           "branch": {
             "type": "string",
             "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e."
+          },
+          "fetch": {
+            "type": "boolean",
+            "description": "When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes."
           },
           "path": {
             "type": "string",

@@ -146,6 +146,17 @@ func (w *worktrees) CreateWorktree(ctx context.Context, client string, p api.Wor
 	pr, _ := w.a.store.Project(project)
 	defer w.lock(project)()
 
+	if p.Fetch && p.Base != "" {
+		// A group's worktree (groups.md 12.7): a base another host pushed, such as a lead's
+		// submitted head for a reviewer here, comes from the remote first. A base this
+		// repository holds needs no fetch, and a project with no remote has nothing to fetch.
+		if _, err := w.git.Resolve(ctx, dir, p.Base); err == nil {
+		} else if remote := w.git.RemoteFor(ctx, dir, pr.Remote); remote != "" {
+			if err := w.git.Fetch(ctx, dir, remote); err != nil {
+				return api.WorktreeCreated{}, control.Errorf(api.ErrorKindUnavailable, "fetch %s: %s", remote, errText(err))
+			}
+		}
+	}
 	c, err := w.git.Create(ctx, worktree.CreateOptions{
 		Source: dir, Root: w.root, Branch: p.Branch, Base: p.Base, Path: p.Path, Remote: pr.Remote,
 	})
@@ -357,7 +368,7 @@ func worktreeCmd(args []string) error {
 	dir := fs.String("dir", "", "a folder in the repository, on the hab's host (default: the current folder, without -project or -via)")
 	timeout := fs.Duration("timeout", 6*time.Minute, "give up after this long")
 	var branch, base, path, setup *string
-	var force *bool
+	var force, fetch *bool
 	switch verb {
 	case "list":
 	case "create":
@@ -365,6 +376,7 @@ func worktreeCmd(args []string) error {
 		base = fs.String("base", "", "where a new branch starts (default: the source checkout's HEAD)")
 		path = fs.String("path", "", "folder for the worktree (default: <worktree root>/<repository>/<branch>)")
 		setup = fs.String("setup", "auto", "auto, run or skip the setup script")
+		fetch = fs.Bool("fetch", false, "fetch the project's remote first")
 	case "setup":
 	case "remove":
 		force = fs.Bool("force", false, "remove it even with uncommitted or untracked changes, which are lost")
@@ -412,7 +424,7 @@ func worktreeCmd(args []string) error {
 		res, err = cl.WorktreeList(ctx, api.WorktreeListParams{WorktreeProject: target})
 	case "create":
 		res, err = cl.WorktreeCreate(ctx, api.WorktreeCreateParams{
-			WorktreeProject: target, Branch: *branch, Base: *base, Path: *path, Setup: api.SetupMode(*setup),
+			WorktreeProject: target, Branch: *branch, Base: *base, Path: *path, Setup: api.SetupMode(*setup), Fetch: *fetch,
 		})
 	case "setup":
 		p, perr := wtPath()

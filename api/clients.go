@@ -754,9 +754,10 @@ type SetupMode string
 type WorktreeCreateParams struct {
 	WorktreeProject
 	Branch string    `json:"branch,omitempty" doc:"Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/<word>-<word>-<hex>."`
-	Base   string    `json:"base,omitempty" doc:"Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches."`
+	Base   string    `json:"base,omitempty" doc:"Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch."`
 	Path   string    `json:"path,omitempty" doc:"Absolute folder for the worktree; it must not exist. Default: <worktree root>/<repository folder>/<branch slug>."`
 	Setup  SetupMode `json:"setup,omitempty" doc:"auto (default): run the setup script unless the code may come from someone else; run: run it anyway, after the user said yes; skip: do not run it."`
+	Fetch  bool      `json:"fetch,omitempty" doc:"When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes."`
 }
 
 // SetupState says what became of a worktree's setup script. An open set the server sends.

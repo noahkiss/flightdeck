@@ -1504,7 +1504,12 @@ func serve(args []string) error {
 			worktree: func(ctx context.Context, p api.WorktreeCreateParams) (api.WorktreeCreated, error) {
 				return wts.CreateWorktree(ctx, "", p)
 			},
-			listWorktrees: wts.ListWorktrees,
+			listWorktrees:  wts.ListWorktrees,
+			removeWorktree: wts.RemoveWorktree,
+			laneDir:        filepath.Join(dir, "lane"),
+			heavy: func(ctx context.Context, command string) (func(), error) {
+				return heavyHold(ctx, heavyLock, command)
+			},
 			closePane: func(ctx context.Context, pane string) error {
 				return sessionActs.ClosePane(ctx, pane)
 			},

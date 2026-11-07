@@ -178,7 +178,8 @@ func TestGroupReview(t *testing.T) {
 		t.Fatalf("pass with fixes: %v %s", err, text)
 	}
 	g = getGroup(t, e, gid)
-	if it := g.Items[0]; it.State != "ready" || it.Land != f1 || it.Verdict.FixedHead != f1 || len(g.Lane.Queue) != 1 {
+	// The lane takes it at once (B4); its fetch of the test remote fails, so it waits in ready.
+	if it := g.Items[0]; (it.State != "ready" && it.State != "landing") || it.Land != f1 || it.Verdict.FixedHead != f1 || len(g.Lane.Queue) != 1 {
 		t.Fatalf("after a pass with fixes %+v, lane %+v", it, g.Lane)
 	}
 	waitUntil(t, "the fast-forward at the lead", func() bool { return strings.Contains(readIn(work, "in."+lPid), "git merge --ff-only "+f1) })
@@ -190,6 +191,7 @@ func TestGroupReview(t *testing.T) {
 	// refused and nothing lands; a fixed.head other than the review branch's is refused too.
 	gitRun(t, leadDir, "merge", "-q", "--ff-only", f1)
 	c3 := commitIn(t, leadDir, "more.go", "package cart\n")
+	waitUntil(t, "the lane to wait", func() bool { return getGroup(t, e, gid).Items[0].State == "ready" })
 	if _, _, err := st.run(ctx, lead, toolArgs{"group": gid, "item": "a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +212,7 @@ func TestGroupReview(t *testing.T) {
 	if _, _, err := vt.run(ctx, reviewer, toolArgs{"group": gid, "item": "a", "verdict": "pass"}); err != nil {
 		t.Fatal(err)
 	}
-	if it := getGroup(t, e, gid).Items[0]; it.State != "ready" || it.Land != c3 {
+	if it := getGroup(t, e, gid).Items[0]; (it.State != "ready" && it.State != "landing") || it.Land != c3 {
 		t.Fatalf("a pass on the submitted head %+v", it)
 	}
 }

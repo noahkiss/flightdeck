@@ -22,6 +22,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // Agent groups on their home hab (groups.md 3, 5): the record and its file, one confirmation
@@ -47,6 +48,15 @@ type groupsConfig struct {
 	create        func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	worktree      func(ctx context.Context, p api.WorktreeCreateParams) (api.WorktreeCreated, error)
 	listWorktrees func(ctx context.Context, p api.WorktreeListParams) (api.WorktreeList, error)
+	// removeWorktree runs worktree.remove on this hab, never with force (groups.md 7.3 step 7).
+	removeWorktree func(ctx context.Context, p api.WorktreeRemoveParams) (api.WorktreeRemoved, error)
+	// laneDir holds the lane's worktree per repository, <state>/lane. "": no lane runs.
+	laneDir   string
+	laneGit   worktree.Git
+	laneRetry time.Duration // 0: a minute
+	// heavy takes this hab's heavy-run lock for the lane's checks (groups.md 8) and returns
+	// its release. nil: the checks run with no lock.
+	heavy func(ctx context.Context, command string) (func(), error)
 	// closePane closes a member's pane on this hab.
 	closePane func(ctx context.Context, pane string) error
 	logbook   *lbsvc.Service // nil: group.create refuses, "groups need Logbook"
@@ -120,6 +130,7 @@ type groupsService struct {
 	running map[string]bool // a scheduler pass runs for the group
 	again   map[string]bool // another pass was asked for meanwhile
 	panes   map[string]string
+	lane    laneState
 	closed  bool
 	wg      sync.WaitGroup
 	stop    chan struct{}
@@ -144,6 +155,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	}
 	s := &groupsService{cfg: cfg, st: st, groups: map[string]*api.Group{}, running: map[string]bool{}, again: map[string]bool{},
 		panes: map[string]string{}, stop: make(chan struct{})}
+	s.laneInit()
 	loaded, problems := st.Load(cfg.now())
 	for _, p := range problems {
 		cfg.logf("groups: %s", p)
@@ -170,7 +182,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		s.order = append(s.order, g.ID)
 	}
 	for _, id := range s.order {
-		s.kick(id)
+		s.kick(id) // the lane follows each pass, so an item cut short in landing runs again
 	}
 	s.wg.Add(1)
 	go s.watch()
@@ -196,6 +208,7 @@ func (s *groupsService) Stop() {
 	s.closed = true
 	close(s.stop)
 	s.mu.Unlock()
+	s.lane.cancel()
 	s.wg.Wait()
 }
 
@@ -782,6 +795,7 @@ func (s *groupsService) kick(id string) {
 				delete(s.running, id)
 				delete(s.again, id)
 				s.mu.Unlock()
+				s.laneKick(id) // an item may be ready to land
 				return
 			}
 			s.again[id] = false
@@ -986,8 +1000,13 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 		// 6.4). The commit must be in the reviewer's repository: B4's fetch brings it there
 		// from another host.
 		branch, base = groups.ReviewBranch(g.ID, it.ID), it.Submitted
+	} else if up := groups.Upstream(g, it); up != "" {
+		// A stacked item starts from the submitted head of the item it stacks on (groups.md 7.2).
+		base = up
 	}
-	wp := api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: src}, Branch: branch, Base: base}
+	// The fetch brings what another host pushed: the lead's submitted head for a reviewer, the
+	// earlier item's head for a stacked lead (groups.md 12.7).
+	wp := api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: src}, Branch: branch, Base: base, Fetch: true}
 	var wt api.WorktreeCreated
 	var err error
 	if self {
@@ -1145,7 +1164,7 @@ func leadSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string) s
 	fmt.Fprintf(&b, "Work in %s on branch %s. The coordinator is %s.\n", folder, it.Branch, g.Coordinator.Address)
 	fmt.Fprintf(&b, "Report with group_report (group %s); write progress and hand-off notes with group_note (item %s). Your item's Logbook task is %s.\n", g.ID, it.ID, it.Task)
 	if m.Role == groups.RoleLead {
-		fmt.Fprintf(&b, "When the item is done, commit on %s and call lane_submit (group %s, item %s)", it.Branch, g.ID, it.ID)
+		fmt.Fprintf(&b, "When the item is done, commit on %s and call lane_submit (group %s, item %s); Flightdeck pushes the branch to the project's remote", it.Branch, g.ID, it.ID)
 		if it.Reviewer != "" {
 			b.WriteString(": a reviewer reviews it, and its findings reach you as a message from Flightdeck")
 		}
@@ -1293,7 +1312,7 @@ func (s *groupsService) refresh(id string) {
 		case !ok:
 			m.State, changed = groups.MemberExited, true
 			if m.Role == groups.RoleLead {
-				if ii := groups.ItemIndex(*g, m.Item); ii >= 0 && g.Items[ii].State != groups.ItemLanded && g.Items[ii].State != groups.ItemDropped {
+				if ii := groups.ItemIndex(*g, m.Item); ii >= 0 && !inLane(g.Items[ii].State) {
 					g.Items[ii].State, g.Items[ii].Reason = groups.ItemStalled, "its lead's session was closed"
 					s.tellLocked(g, fmt.Sprintf("Lead %s of item %s was closed. The item is stalled; group_retry starts a new lead.", m.Name, m.Item), "Flightdeck")
 				}
@@ -1305,6 +1324,7 @@ func (s *groupsService) refresh(id string) {
 	if s.stuckLocked(g) {
 		changed = true
 	}
+	s.sweepLocked(g)
 	if changed {
 		s.saveLocked(g)
 		go s.kick(g.ID)
@@ -1475,10 +1495,10 @@ func (s *groupsService) UsagePause(id string, on bool, until string) (api.Group,
 	return g, err
 }
 
-// Close ends the group at the user's word: no new starts; with group.close_members on, its idle
-// members on this hab are closed (groups.md 5.2, 7.5). Members on other habs keep running until
-// B4's end. The coordinator gets one message with the result, which a Capcom coordinator sums
-// up in its thread (12.1).
+// Close ends the group at the user's word (groups.md 5.2, 7.5): no new starts and no more
+// lands; with group.close_members on, its idle members on this hab are closed, and the end
+// lists what is left over. Members on other habs keep running and are listed. The coordinator
+// gets one message with the result, which a Capcom coordinator sums up in its thread (12.1).
 func (s *groupsService) Close(ctx context.Context, id string) (api.Group, error) {
 	return s.closeGroup(ctx, id, false)
 }
@@ -1490,45 +1510,25 @@ func (s *groupsService) CloseAsCoordinator(ctx context.Context, id string) (api.
 }
 
 func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator bool) (api.Group, error) {
-	closeIdle := s.boolSetting(settings.GroupCloseMembers, true)
-	var panes []string
-	g, err := s.change(id, func(g *api.Group) error {
-		if !groups.Live(*g) || g.State == groups.StateConfirming {
-			return control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
-		}
-		g.State = groups.StateEnded
-		g.Ended = stampT(s.cfg.now())
-		for _, m := range g.Members {
-			if m.Device == s.cfg.self && m.State == groups.MemberRunning && (m.Agent == "idle" || m.Agent == "") && closeIdle {
-				if p := s.panes[g.ID+"/"+m.Name]; p != "" {
-					panes = append(panes, p)
-				} else if ss, ok := s.cfg.store.Session(m.Session); ok && ss.Pane != "" {
-					panes = append(panes, ss.Pane)
-				}
-			}
-			if m.State == groups.MemberRunning {
-				g.Leftovers = appendOnce(g.Leftovers, fmt.Sprintf("member %s on %s, folder %s", m.Name, m.Host, m.Folder))
-			}
-		}
-		return nil
-	})
+	s.mu.Lock()
+	g := s.groups[id]
+	var err error
+	switch {
+	case g == nil:
+		err = control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
+	case !groups.Live(*g) || g.State == groups.StateConfirming || g.State == groups.StateEnding:
+		err = control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
+	}
+	s.mu.Unlock()
 	if err != nil {
-		return g, err
+		return api.Group{}, err
 	}
-	if !byCoordinator {
-		s.mu.Lock()
-		if gp := s.groups[id]; gp != nil {
-			s.tellLocked(gp, "the user ended the group. "+groupEndText(*gp), "Flightdeck")
-			s.saveLocked(gp)
-		}
-		s.mu.Unlock()
+	head := "the user ended the group."
+	if byCoordinator {
+		head = "" // the coordinator's own close: its answer is the record
 	}
-	for _, p := range panes {
-		if s.cfg.closePane != nil {
-			if err := s.cfg.closePane(ctx, p); err != nil {
-				s.cfg.logf("groups: %s: closing pane %s: %v", id, p, err)
-			}
-		}
+	if _, err := s.end(id, head); err != nil {
+		return api.Group{}, control.Errorf(api.ErrorKindConflict, "%v", err)
 	}
 	return s.Get(id)
 }
@@ -1536,6 +1536,19 @@ func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator
 // Retry starts a failed member again, or a new start for an item whose lead was closed: inside
 // the envelope, so it asks nothing (groups.md 3.3, 4.3).
 func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.Group, error) {
+	if p.Lane {
+		g, err := s.change(p.Group, func(g *api.Group) error {
+			if g.State != groups.StateRunning && g.State != groups.StatePaused {
+				return control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
+			}
+			g.Lane.Stopped, g.Lane.Waits = "", ""
+			return nil
+		})
+		if err == nil {
+			s.laneKick(p.Group)
+		}
+		return g, err
+	}
 	g, err := s.change(p.Group, func(g *api.Group) error {
 		if g.State != groups.StateRunning && g.State != groups.StatePaused {
 			return control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
