@@ -14,9 +14,9 @@ import type {
 import { ENGINE_TOKEN_VAR, engineToken, parseHabAddr } from './addr.js';
 import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, siteOf, textOf, toolSummary, UrlSet } from './policy.js';
 import { Route, type Msg } from './route.js';
-import { configDir, findTranscript, handedIds, MARKER_RE } from './transcript.js';
+import { configDir, findTranscript, handedIds, MARKER_RE, markedUser } from './transcript.js';
 import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
-import { admit, ContextAsks, type ContextMsg, type Credential, defaultSettings, helloReseed, type Item, itemLines, mayHand, newTurnId, originOf, type Pace, PACE_OK, parseContext, parseCredential, parsePace, parseSettings, redactor, type Settings } from './contract.js';
+import { admit, ContextAsks, type ContextMsg, type Credential, defaultSettings, EVENT_FETCH_REFUSAL, helloReseed, isUserKind, type Item, itemLines, mayHand, newTurnId, opensUserTurn, originOf, type Pace, PACE_OK, parseContext, parseCredential, parsePace, parseSettings, redactor, type Settings } from './contract.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -60,6 +60,9 @@ export type { Credential, Item, Pace } from './contract.js';
 interface Turn {
   id: string;
   origin: 'user' | 'event';
+  // user: a user message (or a note) opened the turn or joined it. A turn without one, an event
+  // batch's or an agent report's, may not fetch a URL it did not see, and asks no card (9.4).
+  user: boolean;
   part: number;
   interrupted: boolean;
   urls: UrlSet; // URLs seen in tool and search results of this turn
@@ -255,9 +258,21 @@ export class Engine {
     // After shutdown nothing new goes in; gff-hab sends it again to the next
     // engine, since it was never taken.
     if (this.shuttingDown || this.exiting) return;
-    if (this.handed.has(item.id) || this.pending.some((p) => p.id === item.id)) return;
+    if (this.handed.has(item.id)) {
+      // gff-hab sends an item again only while it holds no take of it: the take was lost (a
+      // drop before its ack). Once the model has it, say so again; an item still on its way
+      // to the model is taken in its turn.
+      if (!this.isUntaken(item.id)) this.send('input.taken', { item: item.id });
+      return;
+    }
+    if (this.pending.some((p) => p.id === item.id)) return;
     this.pending.push(item);
     void this.pump();
+  }
+
+  private isUntaken(id: string): boolean {
+    for (const u of this.untaken) if (this.uuidToItem.get(u) === id) return true;
+    return false;
   }
 
   private onPace(m: Msg): void {
@@ -317,8 +332,9 @@ export class Engine {
     this.uuidToItem.set(msg.uuid!, item.id);
     this.uuidItems.set(msg.uuid!, item);
     this.untaken.add(msg.uuid!);
-    if (item.kind === 'message' || item.kind === undefined) this.userUrls.addText(item.text ?? '');
-    if (!this.turn) this.beginTurn(this.nextOrigin ?? originOf(item), [item.id]);
+    if (isUserKind(item.kind)) this.userUrls.addText(item.text ?? '');
+    if (!this.turn) this.beginTurn(this.nextOrigin ?? originOf(item), [item]);
+    else if (opensUserTurn(item.kind)) this.turn.user = true; // a user message joins: a user turn from here (9.4)
     this.nextOrigin = undefined;
     this.input.push(msg);
   }
@@ -349,10 +365,11 @@ export class Engine {
     };
   }
 
-  private beginTurn(origin: 'user' | 'event', items: string[]): void {
+  private beginTurn(origin: 'user' | 'event', items: Item[]): void {
     this.turn = {
       id: newTurnId(),
       origin,
+      user: items.some((i) => opensUserTurn(i.kind)),
       part: 0,
       interrupted: false,
       urls: new UrlSet(),
@@ -360,7 +377,7 @@ export class Engine {
       lastContext: 0,
       authFailed: false,
     };
-    this.send('turn.started', { turn: this.turn.id, origin, items });
+    this.send('turn.started', { turn: this.turn.id, origin, items: items.map((i) => i.id) });
   }
 
   private take(uuid: string | undefined): void {
@@ -643,8 +660,11 @@ export class Engine {
         if (rec?.type !== 'user') continue;
         const c = rec?.message?.content;
         const t = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('\n') : '';
-        // Only inputs the engine handed (marked) are user messages of the thread.
-        if (t.match(MARKER_RE)) this.userUrls.addText(t);
+        // Only the user's own messages count: an input the engine handed carries its marker,
+        // tagged with the item's kind, and an event batch, an agent report or a Flightdeck note
+        // is text from outside (9.4).
+        const m = t.match(new RegExp(MARKER_RE.source, 'm'));
+        if (m && markedUser(m[2], t.slice((m.index ?? 0) + m[0].length))) this.userUrls.addText(t);
       }
     } catch {
       // no file, no URLs
@@ -802,8 +822,8 @@ export class Engine {
     // Items handed but not taken run as the SDK's next turn.
     // Only items the pace let through were handed (mayHand in contract.ts), so the turn needs no admit.
     const untaken = [...this.untaken];
-    const left = untaken.map((u) => this.uuidToItem.get(u)!).filter(Boolean);
-    if (left.length) this.beginTurn(this.uuidItems.get(untaken[0]!)?.kind === 'event' ? 'event' : 'user', left);
+    const left = untaken.map((u) => this.uuidItems.get(u)!).filter(Boolean);
+    if (left.length) this.beginTurn(left[0]!.kind === 'event' ? 'event' : 'user', left);
     void this.pump(); // items held during the turn meet the pace of now
   }
 
@@ -891,6 +911,10 @@ export class Engine {
     if (url && this.urlSeen(url)) {
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } };
     }
+    if (this.turn && !this.turn.user) {
+      // An event turn asks the user nothing: no card, the call is refused (9.4).
+      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: EVENT_FETCH_REFUSAL } };
+    }
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
@@ -913,6 +937,7 @@ export class Engine {
     const url = String((input as any)?.url ?? '');
     if (url && this.urlSeen(url)) return { behavior: 'allow', updatedInput: input };
     if (!this.turn) return { behavior: 'deny', message: 'No turn is running.' };
+    if (!this.turn.user) return { behavior: 'deny', message: EVENT_FETCH_REFUSAL };
     let shown = url;
     try {
       const u = new URL(url);

@@ -940,6 +940,7 @@ func serve(args []string) error {
 	var capcomSvc *capcomService
 	var capcomCtl control.Capcom
 	var capcomEng *capcomEngine
+	var capcomEngRef atomic.Pointer[capcomEngine] // for closures made before it exists
 	var capcomThreadCtl control.CapcomThread
 	var setRef atomic.Pointer[settings.Service]
 	if sessionActs != nil {
@@ -1008,11 +1009,33 @@ func serve(args []string) error {
 				},
 				message: func(it capcomthread.Item, session string) {
 					if n := pushes.live(); n != nil {
-						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event))
+						no := push.CapcomMessage(it.ID, session, it.Text, it.Event)
+						if ce := capcomEngRef.Load(); ce != nil && ce.events.UrgentTurn(it.Turn) {
+							no.Level = push.LevelTimeSensitive // an urgent event's turn (9.2)
+						}
+						n.Raise(no)
 					}
 				},
 				logf:     logger.Printf,
 				governor: gov, usage: usageStore,
+				setting: func(id string) json.RawMessage {
+					if v := setRef.Load(); v != nil {
+						return v.Value(id)
+					}
+					return nil
+				},
+				moved: func() string {
+					dev := capcomSvc.Home()
+					if dev == "" || dev == key.Fingerprint() {
+						return ""
+					}
+					for _, p := range pm.List().Peers {
+						if p.DeviceID == dev {
+							return p.Label
+						}
+					}
+					return shortID(dev)
+				},
 			})
 			if err != nil {
 				return fmt.Errorf("capcom service: %w", err)
@@ -1033,6 +1056,7 @@ func serve(args []string) error {
 			}
 			capcomSvc.engine = eng
 			capcomEng = eng
+			capcomEngRef.Store(eng)
 			sessionActs.reserved = func(name string) bool {
 				return name == capcomServiceName || strings.HasPrefix(name, capcomServiceName+"-")
 			}
@@ -1110,7 +1134,7 @@ func serve(args []string) error {
 			if capcomSvc == nil {
 				return nil
 			}
-			return withServiceActor(capcomSvc.Section(), key.Fingerprint())
+			return withServiceActor(capcomSvc.Section(), key.Fingerprint(), capcomEng)
 		},
 		Rounds: func() []api.CatalogRound {
 			if r := roundsRef.Load(); r != nil {
@@ -1129,7 +1153,7 @@ func serve(args []string) error {
 			if roundsRef.Load() == nil {
 				return nil
 			}
-			return roundWords()
+			return roundWords(capcomEng)
 		},
 		Groups: func() []api.CatalogGroup {
 			return append(groupsRef.section(), roundGroups()...)
@@ -1164,7 +1188,10 @@ func serve(args []string) error {
 		}
 		return ""
 	}}
-	var chRef atomic.Pointer[channels.Service] // for the fake Capcom service's outcome
+	var capcomRounds func(api.ChannelMessage) (api.ChannelState, string)
+	if capcomEng != nil {
+		capcomRounds = capcomEng.DeliverRound
+	}
 	// The swaps a stopped gff-hab left (groups.md 9.5): undone before the channels start, or
 	// held there until their messages move to the fresh session.
 	swapsToFinish := undoSwaps(store, logger.Printf)
@@ -1204,7 +1231,7 @@ func serve(args []string) error {
 				rs.outcome(id, word, at)
 			}
 		},
-		Capcom: roundCapcomService(func() *channels.Service { return chRef.Load() }, logger.Printf),
+		Capcom: capcomRounds,
 		Wake: func(device string) bool {
 			s := srv.Load()
 			return s != nil && s.NotifyLink(device, structure.Event{Type: api.EventMeshChanged, ID: key.Fingerprint(), Data: api.MeshChanged{Reasons: []api.MeshReason{api.MeshReasonMail}}}) > 0
@@ -1217,7 +1244,25 @@ func serve(args []string) error {
 	}
 	defer chSvc.Close()
 	chs.Store(chSvc)
-	chRef.Store(chSvc)
+	if capcomEng != nil {
+		out := func(round, word string, at time.Time) {
+			// A turn can end before the channels service records the accepted answer of a
+			// message this hab sent itself: a conflict is tried again for a while.
+			var err error
+			for i := 0; i < 50; i++ {
+				if err = chSvc.Outcome(round, word, at); err == nil {
+					return
+				}
+				var ce *control.Error
+				if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindConflict || strings.Contains(err.Error(), "has its outcome") {
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			logger.Printf("capcom: outcome of round message %s: %v", round, err)
+		}
+		capcomEng.outcome.Store(&out)
+	}
 	if len(swapsToFinish) > 0 {
 		var closePane func(context.Context, string) error
 		if sessionActs != nil {
@@ -1601,6 +1646,9 @@ func serve(args []string) error {
 			if r := roundsRef.Load(); r != nil {
 				r.matcher.observe(e)
 			}
+			if capcomEng != nil {
+				capcomEng.observe(e)
+			}
 		},
 		Capabilities: caps,
 		Actions:      acts,
@@ -1804,6 +1852,7 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	if capcomEng != nil {
 		hooks.SetEngine(capcomEng)
+		hooks.SetGuard(capcomEng.routeGuard) // an event turn reads and messages only (9.4)
 	}
 	if compacts != nil {
 		hooks.SetAgent(compactHook(compacts))

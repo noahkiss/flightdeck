@@ -28,6 +28,9 @@ const (
 	KindTools   = "tools"
 	KindAgent   = "agent"
 	KindRound   = "round"
+	// KindEvent is a notice or a round run's end that Capcom looks at in an event turn
+	// (capcom-service.md 9.1): a quiet line, open like every kind (api.CapcomItemKind).
+	KindEvent   = "event"
 	KindCard    = "card"
 	KindNote    = "note"
 	KindDivider = "divider"
@@ -131,7 +134,7 @@ func (it Item) ForModel() bool {
 	switch it.Kind {
 	case KindMessage:
 		return it.Author.Kind == AuthorUser
-	case KindAgent, KindRound:
+	case KindAgent, KindRound, KindEvent:
 		return true
 	case KindNote:
 		return it.Model

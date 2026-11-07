@@ -112,7 +112,7 @@ func chatMessage(session string, it capcomthread.Item) api.ChatMessage {
 		}
 	case capcomthread.KindDivider:
 		m.Kind, m.Event = api.ChatKindEvent, api.ChatEventCompaction
-	default: // note, round
+	default: // note, round, event
 		m.Kind, m.Event = api.ChatKindEvent, api.ChatEventNotice
 	}
 	return m

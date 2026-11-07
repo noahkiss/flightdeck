@@ -379,7 +379,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | Type (hab to engine) | Fields |
 |---|---|
 | `hello` | `credential {kind: "oauth_token"\|"api_key"\|"login", value}` (`login`, Codex only, has no value: the CLI reads the user's own login), `device`, `last_item`, `sdk_session` (the session to resume, or empty), `reseed` (a re-seed to open with instead: `switch`, `new` or `restart_failed`; 4.5), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms, route_backoff_max_ms, summary_max_chars, precompact_timeout_ms}` |
-| `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}], send_now}` (`send_now` true for a message sent with "Send now", 10.1) |
+| `input` | `item {id, kind: "message"\|"agent"\|"note"\|"event", author, time, tz, text, images: [path], context: [{kind, title, text}], send_now}` (`send_now` true for a message sent with "Send now", 10.1; `event` is an event batch, 9.7: its id is the batch's, each event a context block) |
 | `interrupt` | none |
 | `reseed` | `reason` |
 | `pace` | `pace: "ok"\|"small"\|"wait"` and `until` for a user turn, `event_pace: "ok"\|"wait"` and `event_until` for an event turn (10.1). gff-hab sends it after each `ready`, before any `input`, and on each change |
@@ -410,10 +410,15 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 - **After each `ready`** the engine sends `approval.request` again for every request still open,
   since a gff-hab that restarted holds none. gff-hab keeps one card per request id.
 - **Markers.** Each input the engine hands to the SDK starts with the line
-  `[flightdeck item <id>]`. In the item's text and context, a line that starts with
+  `[flightdeck item <id>]`; an input that is not the user's own message adds its kind
+  (`[flightdeck item <id> event]`, `agent`, `note`). In the item's text and context, a line that starts with
   `[flightdeck` or `[context` has its `[` turned into `(`, so outside text cannot forge a marker
   or a context header. At start, before it takes any input, the engine reads the resumed
-  SDK session's transcript for these lines and keeps their ids as handed.
+  SDK session's transcript for these lines and keeps their ids as handed. Only untagged inputs
+  count their URLs as seen (5.3); for a marker written before the tag, the header line after it
+  tells an agent report or a note apart. An input gff-hab sends again whose id the engine
+  already handed goes to the model no second time: when the model has it, the engine sends
+  `input.taken` again, since gff-hab holds no take of it.
 - **SDK facts the engine builds on** (SDK 0.3.319, verified in A2 against the bundled binary
   and a fake Messages API):
   - The SDK sends its `init` message only when the first user message arrives. For the start
@@ -731,6 +736,7 @@ stays native").
 | `tools` | One quiet line per turn, "read 3 transcripts, searched the web"; tap lists each call | `tool` |
 | `agent` | A quiet line "Report from <address>", tap for the text | A channel message to `capcom` |
 | `round` | A quiet line "Round <name>: 3 events", tap for the prompt and the events, shown as data from outside | A round message (9.5) |
+| `event` | A quiet line with the notice's title (added in A7, 9.7) | A notice on the home hab (9.1) |
 | `card` | Hand-off record, confirmation, approval, calendar or reminder card, proposal line | The hab's cards (`capcom.md` 6.3, `app.md` 4.8, 7.9) and 8.5 |
 | `note` | A one-line Flightdeck note: "Noted: …", "Pacing usage until 14:00", "Capcom restarted" | gff-hab |
 | `divider` | A thin rule with "Earlier messages summarised" or "New conversation"; tap shows the summary | 6.2, 6.3, 7.5 |
@@ -1166,6 +1172,50 @@ Rejected: a Capcom-only job list on the home hab. It could not use watchers on o
 without rebuilding round runners, and it would show a second "scheduled things" list beside
 Rounds.
 
+### 9.7 Built (stage A7, task-hj8cnr5v)
+
+The queue is `internal/capcomevents`; gff-hab's side is `cmd/gff-hab/capcomevents.go`; the link
+sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice open:
+
+- **Thread items.** A notice becomes an `event` item (a new kind, shown as a quiet line, 7.2)
+  with the key `notice:<id>`, so a repeat adds nothing. A round message becomes a `round` item
+  with the key `round:<message id>`: its prompt as the text, its events as context blocks, and
+  the author `<host>/round:<name>`. A held key answers `duplicate`.
+- **Which notices.** Only notices raised on the home hab reach Capcom. Notices of other hosts
+  reach it through a round in `capcom` mode on that host (`notice.raised` event trigger). A
+  notice with `round` set is a round run's end (`capcom.events.rounds`); every other one is
+  `capcom.events.notices`. A notice whose session is the service session reaches nothing.
+- **The batch.** Event items never go to the engine alone. A released batch goes as one input,
+  kind `event`, id `b` and 16 hex digits, each event a context block, data from outside; the
+  engine's turn is an event turn. Its `input.taken` marks every item of the batch read. A batch
+  goes when its window (from its first event) ends, or at once when it holds `batch_max`
+  events or an urgent one. Outside quiet hours an urgent event takes every waiting event with
+  it; in quiet hours it goes alone. Each released batch counts one event turn. The budget note
+  is one per day.
+- **The time zone.** The zone of the newest user message that names one (the device's, 6.5),
+  else the host's. It is saved with the count in `<state>/capcom/events.json`, with the waiting
+  events and the batches no turn ended yet, so a restart keeps all three.
+- **Settings.** `capcom.quiet_hours` is the text `HH:MM-HH:MM`; `capcom.events.batch_window`
+  is in seconds (19.1). A change applies at the queue's next check, at once.
+- **What an event turn may do.** gff-hab refuses these calls on the engine's route, kind
+  `denied`, while the running turn has no user message (or a note the model gets) in it:
+  `channel.send` (`hand_off` sends through it), `confirm.request` (`start_session`,
+  `set_up_project`, `spawn`), the coordinator's acting group calls (`group.create`, `.amend`,
+  `.close`, `.retry`, `member.compact`, `.handoff`, `.action`) and round changes. A turn an
+  agent's report began counts as an event turn (9.1). Reads and Logbook writes go on as in a
+  user turn (6.4). The manual's Events part tells the model so. The engine refuses a WebFetch
+  of a URL the conversation did not show in such a turn, with no card; a user message or a
+  note that joins the turn makes it a user turn from there.
+- **The outcome.** A reply with text in the turn makes it `told`. A batch taken by a turn the
+  hab never heard end (the engine crashed) is settled at the next `ready` that names another
+  turn or none. On losing the mark every waiting event and every batch no turn took gives its
+  round messages `unseen`; a batch a running turn took waits for that turn's end.
+- **Push.** A Capcom message from a turn that took an urgent batch pushes time-sensitive.
+- **Not built in A7.** The first look on the small model and `escalate` (9.2): an event turn
+  runs on the model the pace gives, as a user turn does. `unseen` after "New conversation" and
+  after the thread file is set aside. Notices raised on other hosts, other than through a round
+  there. A batch whose items are gone from the thread still goes, as "0 event(s)".
+
 ---
 
 ## 10. Usage and terms
@@ -1225,7 +1275,7 @@ first consumer.
   model, at `small` the small model. Claude takes `small_model`, else the alias `haiku`, through
   the SDK's `setModel`. Codex takes `small_model`, else the main model, by resuming the same
   thread on it. At `wait` the items stay with the engine, untaken, until a new
-  `pace`. Event batches, agent reports and round messages (sent as `agent`) wait at the event
+  `pace`. Event batches (round messages go in them since A7, 9.7) and agent reports wait at the event
   step, since no user typed them; the item's kind still gives the turn's origin. An item that
   waits at the event step does not hold a user message after it: the user turn takes both. Input
   that arrives during a running turn joins it, except while user turns wait: then only an item

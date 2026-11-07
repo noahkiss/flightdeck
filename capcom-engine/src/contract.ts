@@ -75,10 +75,11 @@ export function helloReseed(m: Msg): string {
 // itemLines is an input's text for the model: its marker line, who sent it and when, the
 // attached context blocks, then the text. Every outside line is neutralised (4.4 Markers).
 export function itemLines(item: Item): string[] {
-  const lines = [markerLine(item.id)];
+  const lines = [markerLine(item.id, item.kind)];
   const when = [item.time, item.tz ? `(${item.tz})` : ''].filter(Boolean).join(' ');
   if (item.kind === 'agent') lines.push(`Channel message from ${item.author ?? 'an agent'}${when ? ` at ${when}` : ''}.`);
   else if (item.kind === 'note') lines.push(`Flightdeck note${when ? ` at ${when}` : ''}.`);
+  else if (item.kind === 'event') lines.push(`Flightdeck events${when ? ` at ${when}` : ''}: an event turn. Nobody asked you anything.`);
   else if (when || item.author) lines.push(`Sent${item.author ? ` by ${item.author}` : ''}${when ? ` at ${when}` : ''}.`);
   for (const c of item.context ?? []) {
     lines.push('', `[context: ${c.kind ?? 'item'}${c.title ? `: ${neutralise(c.title).replace(/[\]\n]/g, ' ')}` : ''}]`, neutralise(c.text ?? ''));
@@ -86,6 +87,20 @@ export function itemLines(item: Item): string[] {
   lines.push('', neutralise(item.text ?? ''));
   return lines;
 }
+
+// isUserKind: an item of the user's own text, whose URLs count as seen (5.3).
+export function isUserKind(kind: string | undefined): boolean {
+  return kind === 'message' || kind === undefined || kind === '';
+}
+
+// opensUserTurn: an item that makes its turn a user turn for what it may do (9.4): the user's
+// message, or a Flightdeck note the model gets. An event batch or an agent report does not.
+export function opensUserTurn(kind: string | undefined): boolean {
+  return isUserKind(kind) || kind === 'note';
+}
+
+// The refusal of a WebFetch of an unseen URL in an event turn: no card (9.4).
+export const EVENT_FETCH_REFUSAL = 'This URL did not appear in the conversation, and nobody asked for this turn: ask the user first.';
 
 // A turn's origin from the item that opened it.
 export function originOf(item: Item): 'user' | 'event' {

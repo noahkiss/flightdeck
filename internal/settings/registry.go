@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -41,6 +42,16 @@ const (
 	// CapcomApprovalMaxAge is the age at which a Capcom approval card expires, in minutes
 	// (capcom-service.md 5.3, 19.1). No 0: an open card holds a re-seed.
 	CapcomApprovalMaxAge = "capcom.approval_max_age"
+	// Capcom writes first (capcom-service.md 9, 19.1): quiet hours as "HH:MM-HH:MM" in the time
+	// zone a device last shared (the same time twice: none), the switch per source, the daily
+	// event turn budget, and the batch window (seconds) and size.
+	CapcomQuietHours          = "capcom.quiet_hours"
+	CapcomEventsNotices       = "capcom.events.notices"
+	CapcomEventsRounds        = "capcom.events.rounds"
+	CapcomEventsRoundMessages = "capcom.events.round_messages"
+	CapcomDailyTurns          = "capcom.events.daily_turns"
+	CapcomBatchWindow         = "capcom.events.batch_window"
+	CapcomBatchMax            = "capcom.events.batch_max"
 	// Agent groups' caps (groups.md 15.3), each on every hab.
 	GroupConfirmMaxAge = "group.confirm_max_age" // minutes
 	GroupMaxLeads      = "group.max_leads"
@@ -85,6 +96,13 @@ var Defs = []Def{
 	{ID: HeavyDiskMinFree, Default: json.RawMessage(`10`), check: checkInt(0, 4096), integer: true},
 	{ID: HeavyLongHold, Default: json.RawMessage(`60`), check: checkInt(5, 1440), integer: true},
 	{ID: CapcomApprovalMaxAge, Default: json.RawMessage(`10`), check: checkInt(1, 1440), integer: true},
+	{ID: CapcomQuietHours, Default: json.RawMessage(`"22:00-07:00"`), check: checkQuietHours},
+	{ID: CapcomEventsNotices, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: CapcomEventsRounds, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: CapcomEventsRoundMessages, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: CapcomDailyTurns, Default: json.RawMessage(`20`), check: checkInt(1, 1000), integer: true},
+	{ID: CapcomBatchWindow, Default: json.RawMessage(`120`), check: checkInt(10, 3600), integer: true},
+	{ID: CapcomBatchMax, Default: json.RawMessage(`20`), check: checkInt(1, 200), integer: true},
 	{ID: GroupConfirmMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: GroupMaxLeads, Default: json.RawMessage(`3`), check: checkInt(1, 10), integer: true},
 	{ID: GroupMaxWorkers, Default: json.RawMessage(`2`), check: checkInt(0, 5), integer: true},
@@ -173,6 +191,38 @@ func checkWord(words ...string) func(any) (json.RawMessage, error) {
 		}
 		return json.Marshal(s)
 	}
+}
+
+// checkQuietHours takes "HH:MM-HH:MM", two times of day on a 24-hour clock.
+func checkQuietHours(v any) (json.RawMessage, error) {
+	s, ok := v.(string)
+	if _, _, err := ParseQuietHours(s); !ok || err != nil {
+		return nil, fmt.Errorf("want a start and an end time of day, as \"22:00-07:00\"")
+	}
+	return json.Marshal(s)
+}
+
+// ParseQuietHours reads "HH:MM-HH:MM" as minutes after midnight.
+func ParseQuietHours(s string) (start, end int, err error) {
+	clock := func(p string) (int, bool) {
+		if len(p) != 5 || p[2] != ':' {
+			return 0, false
+		}
+		for _, i := range []int{0, 1, 3, 4} {
+			if p[i] < '0' || p[i] > '9' {
+				return 0, false
+			}
+		}
+		h, m := int(p[0]-'0')*10+int(p[1]-'0'), int(p[3]-'0')*10+int(p[4]-'0')
+		return h*60 + m, h < 24 && m < 60
+	}
+	a, b, cut := strings.Cut(s, "-")
+	start, ok1 := clock(a)
+	end, ok2 := clock(b)
+	if !cut || !ok1 || !ok2 {
+		return 0, 0, fmt.Errorf("quiet hours %q: want HH:MM-HH:MM", s)
+	}
+	return start, end, nil
 }
 
 // checkText takes a string of lo to hi characters with no control character but newline and
