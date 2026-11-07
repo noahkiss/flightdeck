@@ -120,6 +120,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.capcomStatus)
         result(HabMethods.capcomPause)
         result(HabMethods.capcomResume)
+        result(HabMethods.capcomCardAnswer)
         result(HabMethods.habPermissions)
         result(HabMethods.detectExplain)
         result(HabMethods.channelSend)
