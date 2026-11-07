@@ -1,0 +1,182 @@
+{
+  "confirmation": {
+    "answered_by": "answered_by-85",
+    "closed": "closed-84",
+    "created": "created-82",
+    "edited": true,
+    "expires_at": "expires_at-83",
+    "from": "from-5",
+    "group": {
+      "amend": true,
+      "group": "group-22",
+      "plan": {
+        "brief": "brief-24",
+        "items": [
+          {
+            "after": "after-30",
+            "brief": "brief-28",
+            "id": "id-26",
+            "review": "review-31",
+            "title": "title-27",
+            "touches": [
+              "touches-29"
+            ],
+            "x_unknown_field": "later"
+          }
+        ],
+        "lane": {
+          "fix_in_place": true,
+          "target": "target-37",
+          "x_unknown_field": "later"
+        },
+        "members": [
+          {
+            "harness": "harness-34",
+            "host": "host-33",
+            "item": "item-32",
+            "model": "model-35",
+            "name": "name-36",
+            "role": "reviewer",
+            "x_unknown_field": "later"
+          }
+        ],
+        "project": "project-25",
+        "title": "title-23",
+        "x_unknown_field": "later"
+      },
+      "trust": "trust-38",
+      "warnings": [
+        "warnings-39"
+      ],
+      "x_unknown_field": "later"
+    },
+    "id": "id-4",
+    "kind": "round",
+    "reason": "reason-92",
+    "record": true,
+    "result": {
+      "address": "address-91",
+      "host": "host-86",
+      "name": "name-88",
+      "pane": "pane-89",
+      "round": "round-90",
+      "session": "session-87",
+      "x_unknown_field": "later"
+    },
+    "round": {
+      "host": "host-40",
+      "project": "project-81",
+      "round": {
+        "catch_up": "skip",
+        "command": [
+          "command-66"
+        ],
+        "cooldown_ms": 78,
+        "cwd": "cwd-70",
+        "debounce_ms": 77,
+        "expires_at": "expires_at-73",
+        "group": "group-76",
+        "harness": "harness-63",
+        "harness_args": [
+          "harness_args-65"
+        ],
+        "max_runs": 72,
+        "mode": "group",
+        "model": "model-64",
+        "name": "name-41",
+        "notify": "never",
+        "on_finish": "keep",
+        "paused": true,
+        "project": "project-67",
+        "project_dir": "project_dir-68",
+        "project_remote": "project_remote-69",
+        "prompt": "prompt-62",
+        "secrets": "secrets-79",
+        "target": "target-71",
+        "timeout_ms": 74,
+        "trigger": {
+          "at": "at-45",
+          "cron": "cron-42",
+          "event": "event-46",
+          "every": "every-43",
+          "filter": {
+            "by": "by-58",
+            "change": "change-55",
+            "field": [
+              "field-50"
+            ],
+            "level": "level-52",
+            "project": "project-47",
+            "project_remote": "project_remote-48",
+            "session": "session-49",
+            "state": [
+              "state-51"
+            ],
+            "status": [
+              "status-56"
+            ],
+            "tags": [
+              "tags-57"
+            ],
+            "text": "text-53",
+            "type": "type-54",
+            "x_unknown_field": "later"
+          },
+          "kind": "manual",
+          "watch": {
+            "argv": [
+              "argv-59"
+            ],
+            "cwd": "cwd-60",
+            "kinds": [
+              "kinds-61"
+            ],
+            "x_unknown_field": "later"
+          },
+          "x_unknown_field": "later",
+          "zone": "zone-44"
+        },
+        "wait_ms": 75,
+        "x_unknown_field": "later"
+      },
+      "run_now": true,
+      "trigger": "trigger-80",
+      "x_unknown_field": "later"
+    },
+    "setup": {
+      "bootstrap": "bootstrap-21",
+      "branch": "branch-20",
+      "host": "host-18",
+      "repository": "repository-19",
+      "x_unknown_field": "later"
+    },
+    "start": {
+      "alias": "alias-14",
+      "branch": "branch-9",
+      "folder": "folder-7",
+      "group": "group-15",
+      "harness": "harness-10",
+      "host": "host-6",
+      "item": "item-17",
+      "model": "model-11",
+      "name": "name-12",
+      "project": "project-8",
+      "role": "role-16",
+      "seed": "seed-13",
+      "teammate": true,
+      "x_unknown_field": "later"
+    },
+    "state": "unknown",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
