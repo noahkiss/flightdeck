@@ -355,8 +355,20 @@ func (w *watchSup) hangUp(id, pane string) {
 			return
 		}
 		w.s.cfg.logf("rounds: round %s: hang up its watcher's pane %s: %v", id, pane, err)
+		// The pane still runs: gff-hab's hang-up is no longer under way, and the loop looks
+		// again soon and tries once more if the round still wants it gone or restarted.
+		w.mu.Lock()
+		if wt := w.m[id]; wt != nil && wt.pane == pane && wt.own {
+			wt.own = false
+			w.stopTimerLocked(wt)
+			wt.timer = w.after(watchHangUpRetry, func() { w.look(id) })
+		}
+		w.mu.Unlock()
 	}
 }
+
+// watchHangUpRetry is how soon a failed hang-up of a watcher's pane is tried again.
+const watchHangUpRetry = 5 * time.Second
 
 // removeSession removes a deleted round's watcher session once its pane has exited.
 func (w *watchSup) removeSession(id string) {
@@ -389,9 +401,10 @@ func (w *watchSup) start(e rounds.Entry, wt *watcher) {
 	w.mu.Lock()
 	if err != nil {
 		wt.started = now
+		x := w.exitLocked(r.ID, wt, "did not start: "+err.Error(), now)
 		w.mu.Unlock()
 		w.s.cfg.logf("rounds: round %s: start its watcher: %v", r.Name, err)
-		w.afterExit(r.ID, wt, "did not start: "+err.Error(), now)
+		w.exitDone(x)
 		return
 	}
 	if wt.starts > 0 {
@@ -478,30 +491,42 @@ func (w *watchSup) exited(pane, how string) {
 		w.look(id)
 		return
 	}
+	x := w.exitLocked(id, wt, how, now)
 	w.mu.Unlock()
-	w.afterExit(id, wt, how, now)
+	w.exitDone(x)
 }
 
-// afterExit backs off after an exit that was not gff-hab's own, or pauses the round.
-func (w *watchSup) afterExit(id string, wt *watcher, how string, now time.Time) {
-	w.mu.Lock()
+// exitLocked backs off after an exit that was not gff-hab's own, or marks the round for a
+// pause, in the same hold of w.mu that cleared the pane: the loop never sees a watcher with no
+// pane and no backoff in between. The caller holds w.mu, then calls exitDone without it.
+func (w *watchSup) exitLocked(id string, wt *watcher, how string, now time.Time) watchExit {
 	wt.lastExit = how
 	delay, pause := wt.back.Exit(wt.started, now, false, w.lim())
-	exits, session := wt.back.Quick, wt.session
+	w.stopTimerLocked(wt)
 	if pause {
 		wt.state, wt.reason, wt.next = watchStopped, watchReasonExits, time.Time{}
-		w.mu.Unlock()
-		w.s.publishRound(id)
-		if err := w.s.sched.PauseWatcher(id, how, session, exits); err != nil && !errors.Is(err, rounds.ErrNotFound) {
-			w.s.cfg.logf("rounds: round %s: pause after its watcher's exits: %v", id, err)
-		}
-		return
+		return watchExit{id: id, how: how, pause: true, session: wt.session, exits: wt.back.Quick}
 	}
 	wt.state, wt.next = watchBackoff, now.Add(delay)
-	w.stopTimerLocked(wt)
 	wt.timer = w.after(delay, func() { w.look(id) })
-	w.mu.Unlock()
-	w.s.publishRound(id)
+	return watchExit{id: id}
+}
+
+// watchExit is what exitDone does once w.mu is let go.
+type watchExit struct {
+	id, how, session string
+	pause            bool
+	exits            int
+}
+
+func (w *watchSup) exitDone(x watchExit) {
+	w.s.publishRound(x.id)
+	if !x.pause {
+		return
+	}
+	if err := w.s.sched.PauseWatcher(x.id, x.how, x.session, x.exits); err != nil && !errors.Is(err, rounds.ErrNotFound) {
+		w.s.cfg.logf("rounds: round %s: pause after its watcher's exits: %v", x.id, err)
+	}
 }
 
 // woke hangs up every running watcher at a wake, after its settle, and starts it again: its

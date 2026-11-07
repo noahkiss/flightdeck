@@ -172,6 +172,9 @@ func ParseWatchLine(b []byte, now time.Time, lim WatchLimits) WatchLine {
 			return drop("%v", err)
 		case len(c) > lim.CursorMax:
 			return drop("cursor over %d bytes", lim.CursorMax)
+		case strings.ContainsRune(c, 0):
+			// The cursor goes into the environment as GFF_WATCH_CURSOR, which cannot hold a NUL.
+			return drop("cursor holds a NUL")
 		}
 		return WatchLine{Cursor: &c}
 	}

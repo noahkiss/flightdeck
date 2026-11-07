@@ -142,7 +142,7 @@ func run(ctx context.Context, cfg config, out io.Writer) error {
 			}
 			if cfg.from[strings.ToLower(from)] {
 				enc.Encode(map[string]any{"kind": "mail", "key": fmt.Sprintf("%d:%d", validity, uid),
-					"title": subject + " from " + from, "level": "active",
+					"title": title(subject, from), "level": "active",
 					"data": map[string]string{"from": from, "subject": subject}})
 			}
 			last = uid
@@ -165,7 +165,7 @@ type client struct {
 func (c *client) line() (string, error) {
 	var b strings.Builder
 	for {
-		l, err := c.r.ReadString('\n')
+		l, err := c.readLine(maxResponse - b.Len())
 		if err != nil {
 			return "", err
 		}
@@ -176,8 +176,11 @@ func (c *client) line() (string, error) {
 			return b.String(), nil
 		}
 		n, err := strconv.Atoi(l[i+1 : len(l)-1])
-		if err != nil || n < 0 || n > 1<<20 {
+		if err != nil || n < 0 {
 			return b.String(), nil
+		}
+		if n > maxResponse-b.Len() {
+			return "", errResponse
 		}
 		lit := make([]byte, n)
 		if _, err := io.ReadFull(c.r, lit); err != nil {
@@ -252,7 +255,13 @@ func (c *client) headers(uid uint32) (from, subject string, err error) {
 			subject = s
 		}
 	}
-	return from, oneLine(subject), nil
+	// A cut keeps the event under the hab's event_data_max (16 KiB).
+	if r := []rune(oneLine(subject)); len(r) > 1000 {
+		subject = string(r[:1000])
+	} else {
+		subject = string(r)
+	}
+	return from, subject, nil
 }
 
 // idle waits in IDLE until the server reports new mail or after d, then ends it.
@@ -298,7 +307,11 @@ func (c *client) idle(d time.Duration) error {
 func code(lines []string, name string) uint32 {
 	for _, l := range lines {
 		if _, rest, ok := strings.Cut(l, "["+name+" "); ok {
-			n, _ := strconv.ParseUint(strings.TrimRight(strings.Fields(rest)[0], "]"), 10, 32)
+			f := strings.Fields(rest)
+			if len(f) == 0 {
+				return 0
+			}
+			n, _ := strconv.ParseUint(strings.TrimRight(f[0], "]"), 10, 32)
 			return uint32(n)
 		}
 	}
@@ -313,4 +326,50 @@ func quote(s string) string {
 
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// maxResponse bounds one response line with its literals: the server's data is not trusted.
+const maxResponse = 1 << 20
+
+var errResponse = fmt.Errorf("the server sent a response over %d bytes", maxResponse)
+
+// readLine reads one line of at most max bytes.
+func (c *client) readLine(max int) (string, error) {
+	var b []byte
+	for {
+		chunk, err := c.r.ReadSlice('\n')
+		if len(b)+len(chunk) > max {
+			return "", errResponse
+		}
+		b = append(b, chunk...)
+		switch {
+		case err == nil:
+			return string(b), nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		default:
+			return "", err
+		}
+	}
+}
+
+// titleMax is the hab's event_title_max default; a longer title would be dropped.
+const titleMax = 200
+
+// title is "<subject> from <address>", the subject cut so the whole fits titleMax characters.
+func title(subject, from string) string {
+	tail := " from " + from
+	room := titleMax - len([]rune(tail))
+	if r := []rune(subject); len(r) > room {
+		if room <= 1 {
+			subject = ""
+		} else {
+			subject = string(r[:room-1]) + "…"
+		}
+	}
+	t := subject + tail
+	if r := []rune(t); len(r) > titleMax {
+		t = string(r[:titleMax])
+	}
+	return t
 }

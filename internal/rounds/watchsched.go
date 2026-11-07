@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // Watch rounds in the scheduler (rounds.md 4.4): the event lines a watcher printed join the
@@ -58,6 +59,10 @@ func (s *Scheduler) WatchLines(roundID string, lines [][]byte) ([]LineResult, er
 			switch {
 			case l.Drop != "":
 				out = append(out, LineResult{Drop: l.Drop})
+			case l.Cursor != nil && (e.Round.Paused || e.State.Completed):
+				// The events of a paused round are dropped, so its cursor must not move past
+				// them: a move or an unpause starts from the cursor of before the pause.
+				out = append(out, LineResult{Drop: DropPaused, Quiet: true})
 			case l.Cursor != nil:
 				if ws.Cursor != *l.Cursor {
 					ws.Cursor = *l.Cursor
@@ -132,6 +137,8 @@ func (s *Scheduler) SeedCursor(roundID, cursor string) error {
 		err = ErrNotWatch
 	case len(cursor) > s.watchLim.CursorMax:
 		err = &FieldError{Field: "cursor", Reason: "over the cursor bound"}
+	case strings.ContainsRune(cursor, 0):
+		err = &FieldError{Field: "cursor", Reason: "holds a NUL"}
 	default:
 		ws := s.wst[roundID]
 		if ws == nil {
