@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -134,11 +135,58 @@ func TestShellJoin(t *testing.T) {
 	}
 }
 
+// TestShellRoundTrip: the helper string, run by /bin/sh as Claude runs it, gives back the argv,
+// with a space and a quote in the paths.
+func TestShellRoundTrip(t *testing.T) {
+	argv := []string{"/Applications/GFF Hab.app/gff-hab", "mcp", "header", "-config", "/a b/it's $HOME.toml", "web"}
+	out, err := exec.Command("/bin/sh", "-c", "printf '%s\\n' "+shellJoin(argv[1:])+" "+shellJoin(argv[:1])).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join(append(argv[1:], argv[0]), "\n") + "\n"
+	if string(out) != want {
+		t.Fatalf("round trip %q, want %q", out, want)
+	}
+}
+
+// TestSecretNotQuoted: a secret pasted where a reference or a variable name goes never reaches
+// an error text.
+func TestSecretNotQuoted(t *testing.T) {
+	pasted := rot13("cnfgrqgbxra9931")
+	for _, v := range []string{`{ secret = "` + pasted + `" }`, `{ env = "` + pasted + `-x" }`} {
+		_, err := loadConfig(t, "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\nenv = { K = "+v+" }\n")
+		if err == nil || strings.Contains(err.Error(), pasted) {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	r := &Resolver{Lookup: func(string) (string, bool) { return "", false }}
+	if _, err := r.resolve(context.Background(), "a", "env", "K", Value{Env: "PASTED_" + strings.ToUpper(pasted)}); err == nil || strings.Contains(strings.ToLower(err.Error()), pasted) {
+		t.Errorf("unset variable: %v", err)
+	}
+}
+
+// TestHeadersParallel: two slow headers resolve together, inside the helper's one deadline.
+func TestHeadersParallel(t *testing.T) {
+	r, prov := resolverFixture(t)
+	web, _ := r.Config.Server("web")
+	web.Headers = map[string]Value{"A": {Command: []string{prov, "nap"}}, "B": {Command: []string{prov, "nap"}}}
+	r.Config.Servers = []Server{web}
+	start := time.Now()
+	h, err := r.Headers(context.Background(), "web")
+	if err != nil || h["A"] != "anc" || h["B"] != "anc" {
+		t.Fatalf("headers %v %v", h, err)
+	}
+	if d := time.Since(start); d > 2500*time.Millisecond {
+		t.Fatalf("two 1.5 s headers took %v", d)
+	}
+}
+
 func resolverFixture(t *testing.T) (*Resolver, string) {
 	t.Helper()
 	dir := t.TempDir()
 	prov := writeScript(t, dir, "provider", `case "$1" in fail*) printf '%s\n' "${1#fail}" | tr a-z n-za-m >&2; exit 3;; esac
 if [ "$1" = slow ]; then exec sleep 5; fi
+if [ "$1" = nap ]; then sleep 1.5; fi
 if [ "$1" = empty ]; then exit 0; fi
 if [ "$1" = lines ]; then printf 'a\nb\n'; exit 0; fi
 printf '%s\n' "$1" | tr a-z n-za-m
@@ -189,6 +237,16 @@ func TestResolverLaunch(t *testing.T) {
 	if !reflect.DeepEqual(l.Env, want) {
 		t.Fatalf("env:\n got %q\nwant %q", l.Env, want)
 	}
+	wd, _ := os.Getwd()
+	rel, err := filepath.Rel(wd, docs.Cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Config.Servers[0].Cwd = rel
+	if l, err := r.Launch(context.Background(), "docs", base); err != nil || l.Dir != docs.Cwd {
+		t.Errorf("relative cwd: %+v %v", l, err)
+	}
+	r.Config.Servers[0].Cwd = docs.Cwd
 	if _, err := r.Launch(context.Background(), "web", base); err == nil || !strings.Contains(err.Error(), "mcp header") {
 		t.Errorf("launch of an http server: %v", err)
 	}
@@ -203,7 +261,7 @@ func TestResolverLaunch(t *testing.T) {
 		t.Errorf("headers of a stdio server: %v", err)
 	}
 	r.Lookup = func(string) (string, bool) { return "", false }
-	if _, err := r.Launch(context.Background(), "docs", nil); err == nil || !strings.Contains(err.Error(), "env ORG: variable DOCS_ORG is not set") {
+	if _, err := r.Launch(context.Background(), "docs", nil); err == nil || !strings.Contains(err.Error(), "env ORG: the variable it names is not set") {
 		t.Errorf("unset variable: %v", err)
 	}
 }

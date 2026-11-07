@@ -493,23 +493,29 @@ Built (`internal/mcpreg`, `gff-hab mcp launch`, `gff-hab mcp header`).
   environment and its own process group, killed with the group past `timeout` (seconds;
   default 8, since Claude gives up on a header helper after 10 s; at most 300). Stdout is
   capped at 64 KiB; one trailing newline goes. Empty output, a NUL byte, or a header value of
-  more than one line is refused. `env` names the variables the provider reads.
+  more than one line is refused. `env` names the variables the provider reads. A stop signal
+  to the launcher (TERM, INT, HUP) kills a provider still running, with its group.
 - **Values.** Held in the launcher's memory only, then in the exec'd server's environment, or
   in the helper's stdout to the harness. Never logged, written to a file, or put in an error
   text. An error names the server, the key, the provider and the exit status or timeout. It
   never quotes the provider's stderr, which may echo a short token that a filter cannot tell
-  from a message.
+  from a message. Nor does it quote a secret reference or the variable an env value names,
+  since a user may paste the token itself there. The launcher keeps its whole environment
+  (`gff-hab mcp` serve clears the Capcom credential; launch and header do not).
 - **stdio shape.** `<launcher> mcp launch -config <file> <name>`, where `<launcher>` is the
   render's `-launcher` (default `gff-hab`, found on the harness's PATH). The launcher sets
-  the server's `env` values and its `cwd`, so the entry holds neither, and a `cwd` is fine for
-  Claude here. Claude: `type`, `command`, `args`. Codex: `command`, `args`, `env_vars` with each
+  the server's `env` values and its `cwd` (a relative one against the launcher's folder), so
+  the entry holds neither, and a `cwd` is fine for Claude here. Claude: `type`, `command`, `args`. Codex: `command`, `args`, `env_vars` with each
   variable an env reference reads and each one the server's providers name, since Codex passes
-  a stdio server only a default set. opencode: `type` `local` and `command` as one array. A
+  a stdio server only a default set. A `command` value cannot list the variables it reads, so
+  under Codex it sees only that default set; a provider with `env` is the way around. opencode: `type` `local` and `command` as one array. A
   `timeout` renders as in 8.4.
 - **http shape.** Plain and env headers render as in 8.4. The secret and command headers come
   from the helper, `<launcher> mcp header -config <file> <name>`, quoted for a POSIX shell:
   Claude's `headersHelper`, Codex's `http_headers_helper`. The helper prints one JSON object of
-  those headers. opencode has no helper, so the server is "not rendered for opencode"; an env
+  those headers, resolving them all at once under one 9 s deadline. Claude runs the string
+  through a shell. Codex takes it as a string; whether it uses a shell or splits the words is
+  not confirmed, and the quoting suits either. opencode has no helper, so the server is "not rendered for opencode"; an env
   reference renders there instead.
 - **Pick-up.** Each new server process or connection resolves again, so a rotated secret
   needs only a reconnect, not a render.

@@ -97,6 +97,7 @@ timeout = 5
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
 		"CLAUDE_CONFIG_DIR="+filepath.Join(home, ".claude"),
 		"CODEX_HOME="+filepath.Join(home, ".codex"),
+		"GFF_CONFIG=",
 		"GFF_HAB_STATE="+state,
 		"GFF_HAB_HOST_ID=test-host",
 		"GFF_HAB_SOCKET="+filepath.Join(dir, "no-hab.sock"),

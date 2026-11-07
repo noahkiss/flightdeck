@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/push"
@@ -53,7 +54,7 @@ func (r *Resolver) resolve(ctx context.Context, server, kind, key string, v Valu
 	case v.Env != "":
 		val, ok := r.lookup(v.Env)
 		if !ok {
-			return "", fmt.Errorf("%s: variable %s is not set", where, v.Env)
+			return "", fmt.Errorf("%s: the variable it names is not set", where)
 		}
 		return v.Prefix + val, nil
 	}
@@ -138,11 +139,18 @@ func (r *Resolver) Launch(ctx context.Context, name string, base []string) (Laun
 	for _, k := range sortedKeys(set) {
 		env = append(env, k+"="+set[k])
 	}
-	path, err := lookPath(s.Command, s.Cwd, envValue(env, "PATH"))
+	dir := s.Cwd
+	if dir != "" {
+		var err error
+		if dir, err = filepath.Abs(dir); err != nil {
+			return Launch{}, fmt.Errorf("mcp launch: server %s: cwd: %v", name, err)
+		}
+	}
+	path, err := lookPath(s.Command, dir, envValue(env, "PATH"))
 	if err != nil {
 		return Launch{}, fmt.Errorf("mcp launch: server %s: %v", name, err)
 	}
-	return Launch{Path: path, Argv: append([]string{s.Command}, s.Args...), Dir: s.Cwd, Env: env}, nil
+	return Launch{Path: path, Argv: append([]string{s.Command}, s.Args...), Dir: dir, Env: env}, nil
 }
 
 // Headers resolves an http server's secret and command headers, the ones the rendered entry
@@ -155,20 +163,39 @@ func (r *Resolver) Headers(ctx context.Context, name string) (map[string]string,
 	if s.Transport != HTTP {
 		return nil, fmt.Errorf("mcp header: server %s is stdio; harnesses start it through gff-hab mcp launch", name)
 	}
-	out := map[string]string{}
+	// Claude gives up on a helper after 10 s, so every header resolves at once, under one
+	// deadline for the whole call.
+	ctx, cancel := context.WithTimeout(ctx, HeaderDeadline)
+	defer cancel()
+	var keys []string
 	for _, k := range sortedKeys(s.Headers) {
-		v := s.Headers[k]
-		if !v.NeedsLaunch() {
-			continue
+		if s.Headers[k].NeedsLaunch() {
+			keys = append(keys, k)
 		}
-		val, err := r.resolve(ctx, s.Name, "header", k, v)
-		if err != nil {
-			return nil, err
+	}
+	vals := make([]string, len(keys))
+	errs := make([]error, len(keys))
+	var wg sync.WaitGroup
+	for i, k := range keys {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vals[i], errs[i] = r.resolve(ctx, s.Name, "header", k, s.Headers[k])
+		}()
+	}
+	wg.Wait()
+	out := map[string]string{}
+	for i, k := range keys {
+		if errs[i] != nil {
+			return nil, errs[i]
 		}
-		out[k] = val
+		out[k] = vals[i]
 	}
 	return out, nil
 }
+
+// HeaderDeadline bounds one header helper call, under Claude's 10 s limit.
+const HeaderDeadline = 9 * time.Second
 
 func envValue(env []string, key string) string {
 	for i := len(env) - 1; i >= 0; i-- {

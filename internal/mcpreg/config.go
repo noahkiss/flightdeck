@@ -95,9 +95,9 @@ func (v *Value) UnmarshalTOML(data any) error {
 		case v.Prefix != "" && v.Env == "":
 			return fmt.Errorf("prefix goes only with env")
 		case v.Env != "" && !envName.MatchString(v.Env):
-			return fmt.Errorf("env %q is not a variable name", v.Env)
-		case v.Secret != "" && !strings.Contains(v.Secret, ":"):
-			return fmt.Errorf("secret %q is not <provider>:<reference>", v.Secret)
+			return fmt.Errorf("env is not a variable name")
+		case v.Secret != "" && !validSecretRef(v.Secret):
+			return fmt.Errorf("secret is not <provider>:<reference>")
 		case len(v.Command) > 0 && v.Command[0] == "":
 			return fmt.Errorf("command has an empty program")
 		}
@@ -278,6 +278,13 @@ func (s Server) validate() error {
 		}
 	}
 	return nil
+}
+
+// validSecretRef reports whether a secret reference is "<provider>:<reference>" with both parts.
+// Errors never quote it: a user may paste the secret itself there by mistake.
+func validSecretRef(s string) bool {
+	name, ref, ok := strings.Cut(s, ":")
+	return ok && serverName.MatchString(name) && ref != ""
 }
 
 // MaxSecretTimeout bounds a provider's timeout, in seconds.

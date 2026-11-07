@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"syscall"
 
 	"github.com/noahkiss/flightdeck/internal/mcpreg"
@@ -26,8 +27,10 @@ func mcpLaunchCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx, stop := signalContext()
 	r := &mcpreg.Resolver{Config: cfg}
-	l, err := r.Launch(context.Background(), name, os.Environ())
+	l, err := r.Launch(ctx, name, os.Environ())
+	stop()
 	if err != nil {
 		return err
 	}
@@ -51,8 +54,10 @@ func mcpHeaderCmd(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	ctx, stop := signalContext()
+	defer stop()
 	r := &mcpreg.Resolver{Config: cfg}
-	h, err := r.Headers(context.Background(), name)
+	h, err := r.Headers(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -63,6 +68,12 @@ func mcpHeaderCmd(args []string, stdout io.Writer) error {
 	_, err = stdout.Write(append(b, '\n'))
 	clear(b)
 	return err
+}
+
+// signalContext ends when the harness stops the launcher, so a provider still running is killed
+// with its process group rather than left behind.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 }
 
 func mcpResolveArgs(verb string, fs *flag.FlagSet, config string) (string, mcpreg.Config, error) {
