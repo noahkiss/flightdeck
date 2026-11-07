@@ -460,7 +460,15 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
 - **Switching engines is a re-seed.** When the thread's current session belongs to another
   engine, `hello` names no session and asks for `reseed: switch`. The new engine opens with the
   summary and the Logbook part (6.2), and the old session stays with its own CLI.
+- **A thread that will not resume.** No rollout file, or one the CLI cannot load (it fails
+  before any event), is a re-seed with `restart_failed`; the untaken items go into the fresh
+  session.
 - **A refused login** ends the turn `error` with `error {kind: auth}`, as 10.2 says for Claude.
+- **Open: the user's global instructions.** `--ignore-user-config` skips only `config.toml`.
+  The CLI still loads `$CODEX_HOME/AGENTS.md` and the skills under `$CODEX_HOME/skills` into
+  every request (verified on 0.167.0), and no config key turns either off. An engine-owned
+  `CODEX_HOME` would keep them out, but it must share the user's login (whose refresh token
+  the CLI rewrites) and keep threads where `codex resume` finds them. For the owner to decide.
 - **`max_turns` and `max_turn_usd`** have no Codex equivalent and are ignored.
 - **Tools (5.1 on Codex).** The CLI sends no tool list before a model call. The start check runs
   the CLI once against a loopback endpoint in the engine, with `--ephemeral`, and reads the tool

@@ -241,6 +241,35 @@ test('a thread that will not resume is replaced by a re-seed', async () => {
   });
 });
 
+test('a rollout that is there but will not load is replaced by a re-seed, not a crash loop', async () => {
+  const id = '02b2c67e-9513-8ed2-0f1f-e70005ef9462';
+  await withRig(
+    {
+      hello: { sdk_session: id },
+      setup: async ({ codex }) => {
+        codex.resumeFails = true;
+        await codex.appendRollout(id, [{ type: 'session_meta', payload: { id } }]);
+      },
+    },
+    async (r) => {
+      await codexStarted(r);
+      await r.hab.wait('session.started', (m) => m.session === id);
+      r.hab.input('it1', 'after the restart');
+      const err = await r.hab.wait('error');
+      assert.equal(err.exiting, false);
+      assert.match(err.text, /resume of .* failed/);
+      await r.hab.wait('context.request', (m) => m.for === 'reseed');
+      await r.hab.wait('session.started', (m) => m.why === 'reseed');
+      // The untaken item goes into the fresh session, once.
+      await r.hab.wait('input.taken', (m) => m.item === 'it1');
+      const fresh = r.codex.turns.filter((t) => !t.thread.resumed);
+      assert.equal(fresh.length, 1);
+      assert.equal(fresh[0]!.text.split('[flightdeck item it1]').length, 2);
+      assert.equal(r.exitCode(), undefined);
+    },
+  );
+});
+
 test('a tool outside 5.1 that runs anyway ends the turn and the engine', async () => {
   await withRig({}, async (r) => {
     r.codex.script = async (ctx) => {
