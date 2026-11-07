@@ -223,6 +223,47 @@ func TestCapcomServiceStub(t *testing.T) {
 		t.Fatalf("the engine route is not the Capcom session's: %s", route)
 	}
 
+	// A channel message from another session to capcom starts a turn (2.4, 9.1).
+	pane := e.spawn(c, "sleep 60")
+	var from api.Session
+	waitUntil(t, "the sender's session", func() bool {
+		var ok bool
+		from, ok = sessionByPaneOf(t, c, pane)
+		return ok
+	})
+	run(t, "send", "-socket", e.sock, "-from", from.ID, "capcom", "ping from an agent")
+	waitUntil(t, "the agent message's turn", func() bool {
+		for _, it := range threadText(t, c) {
+			if it.Author.Kind == "capcom" && strings.HasPrefix(it.Text, "echo: ") && strings.Contains(it.Text, "ping from an agent") {
+				return true
+			}
+		}
+		return false
+	})
+
+	// A Logbook write on the engine route is the Capcom session's: a proposal, nothing landed
+	// (3.3, capcom.md 6.2).
+	run(t, "capcom", "say", "-socket", e.sock, "lbwrite")
+	var lb string
+	waitUntil(t, "the logbook reply", func() bool {
+		for _, it := range threadText(t, c) {
+			if strings.HasPrefix(it.Text, "lb: ") {
+				lb = it.Text
+				return true
+			}
+		}
+		return false
+	})
+	if !strings.HasPrefix(lb, "lb: 200 ") || !strings.Contains(lb, `"proposed"`) {
+		t.Fatalf("the engine route's Logbook write: %s", lb)
+	}
+	out = run(t, "lb", "--socket", e.sock, "--json", "proposals")
+	prop := out[strings.Index(out, `"id":"`)+6:]
+	prop = prop[:strings.Index(prop, `"`)]
+	if out := run(t, "lb", "--socket", e.sock, "--json", "show", prop); !strings.Contains(out, "from capcom") || !strings.Contains(out, st.Session) {
+		t.Fatalf("proposal %s (want the Capcom session %s as the author):\n%s", prop, st.Session, out)
+	}
+
 	// gff-hab restarts mid-turn: the engine keeps running, its reply arrives once.
 	pid := e.enginePid()
 	run(t, "capcom", "say", "-socket", e.sock, "slow")
@@ -309,6 +350,73 @@ func TestCapcomServiceNoToken(t *testing.T) {
 	if out := run(t, "capcom", "say", "-socket", e.sock, "anyone?"); !strings.Contains(out, "delivered") {
 		t.Fatal(out)
 	}
+}
+
+// Crashes up to crash_limit in crash_window stop the restarts; the row shows error and the
+// thread a note; gff-hab capcom resume clears the count (3.2). A limit key moves the behaviour it
+// names (crash_limit 3); max_turns reaches the engine in hello; a value outside its range is
+// refused and the default runs (19.2). settings.set refuses capcom.approval_max_age 0 (19.1).
+func TestCapcomServiceCrashLimit(t *testing.T) {
+	e := newServiceEnv(t, "crash_limit = 3\nmax_turns = 9999\n")
+	os.WriteFile(filepath.Join(e.stubDir, "crashstart"), nil, 0o600)
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	var st api.CapcomServiceStatus
+	waitUntil(t, "the restarts stopped", func() bool {
+		st, _ = callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.State == "error" && strings.Contains(st.Reason, "crashed 3 times")
+	})
+	if n := strings.Count(e.stubLog(), "crash at start"); n != 3 {
+		t.Fatalf("%d starts, want 3 (crash_limit)", n)
+	}
+	time.Sleep(1500 * time.Millisecond) // past restart_delay: no fourth start
+	if n := strings.Count(e.stubLog(), "crash at start"); n != 3 {
+		t.Fatalf("%d starts after the stop", n)
+	}
+	var notes []string
+	for _, it := range threadText(t, c) {
+		if it.Kind == "note" {
+			notes = append(notes, it.Text)
+		}
+	}
+	if len(notes) == 0 {
+		t.Fatal("no note in the thread")
+	}
+	t.Logf("reason %q, notes %q", st.Reason, notes)
+	if a, _ := agentOf(t, c, capcomRoute); a.State != api.AgentStatusError {
+		t.Fatalf("agent state %+v", a)
+	}
+
+	os.Remove(filepath.Join(e.stubDir, "crashstart"))
+	run(t, "capcom", "resume", "-socket", e.sock)
+	waitUntil(t, "connected after resume", func() bool {
+		st, _ = callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.Connected
+	})
+	if !strings.Contains(e.stubLog(), "settings max_turns 50") {
+		t.Fatalf("max_turns out of range did not fall back to the default:\n%s", e.stubLog())
+	}
+
+	var got api.SettingsResult
+	err := c.Call(context.Background(), "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{
+		{ID: "capcom.approval_max_age", Value: []byte("0"), Revision: 1}}}, &got)
+	if errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("settings.set capcom.approval_max_age 0: %v", err)
+	}
+}
+
+// sessionByPaneOf finds the session that lives in pane.
+func sessionByPaneOf(t *testing.T, c *control.Client, pane string) (api.Session, bool) {
+	t.Helper()
+	var st api.StructureResult
+	call(t, c, "structure.get", api.StructureGetParams{}, &st)
+	for _, ss := range st.Sessions {
+		if ss.Pane == pane {
+			return ss, true
+		}
+	}
+	return api.Session{}, false
 }
 
 func tokenOf(env string) string {

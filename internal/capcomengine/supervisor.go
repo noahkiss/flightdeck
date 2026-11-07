@@ -393,7 +393,10 @@ func (s *Supervisor) exited(p Proc) {
 		})
 		line := LastLine(filepath.Join(s.cfg.Dir, LogFile))
 		if n >= cfg.Limits.CrashLimit {
-			reason := fmt.Sprintf("the engine crashed %d times in %s; last line: %s; gff-hab capcom resume starts it again", n, cfg.Limits.CrashWindow, line)
+			reason := fmt.Sprintf("the engine crashed %d times in %s; gff-hab capcom resume starts it again", n, cfg.Limits.CrashWindow)
+			if line != "" {
+				reason = fmt.Sprintf("the engine crashed %d times in %s; last line: %s; gff-hab capcom resume starts it again", n, cfg.Limits.CrashWindow, line)
+			}
 			s.cfg.Record.Update(func(r *Record) { r.Stopped = reason })
 			s.mu.Lock()
 			s.setLocked(StateError, reason)
@@ -405,7 +408,7 @@ func (s *Supervisor) exited(p Proc) {
 		s.cfg.Logf("capcom: the engine exited unasked (%d in %s); restarting in %s", n, cfg.Limits.CrashWindow, cfg.Limits.RestartDelay)
 		s.cfg.Note("Capcom restarted")
 		s.mu.Lock()
-		s.setLocked(StateError, "the engine exited: "+line)
+		s.setLocked(StateError, strings.TrimSuffix("the engine exited: "+line, ": "))
 		s.retry = s.cfg.After(cfg.Limits.RestartDelay, func() { s.start(context.Background()) })
 		s.mu.Unlock()
 	}

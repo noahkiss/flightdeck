@@ -6,7 +6,9 @@
 //
 // Inputs that steer it: "slow" waits for $STUB_DIR/release before its reply; "crash" exits 3;
 // "route" calls channel.status on the pane route with its token and replies with the answer;
-// "approve" asks approval.request for a WebFetch and replies with the answer it got.
+// "lbwrite" files a Logbook task on the pane route and replies with the answer;
+// "approve" asks approval.request for a WebFetch and replies with the answer it got. With the
+// file $STUB_DIR/crashstart present it exits 3 at once, before it connects.
 package main
 
 import (
@@ -56,6 +58,10 @@ func main() {
 	i := strings.LastIndex(rest, "/hooks/")
 	sock, token := rest[:i], rest[i+len("/hooks/"):]
 	logf("pid %d", os.Getpid())
+	if _, err := os.Stat(filepath.Join(dir, "crashstart")); err == nil {
+		logf("crash at start")
+		os.Exit(3)
+	}
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
 			logf("env holds a credential")
@@ -121,6 +127,9 @@ func session(sock, token string) error {
 			v, _ := cred["value"].(string)
 			sum := sha256.Sum256([]byte(v))
 			logf("hello %s %s", cred["kind"], hex.EncodeToString(sum[:8]))
+			if st, ok := m["settings"].(map[string]any); ok {
+				logf("settings max_turns %v", st["max_turns"])
+			}
 			if !readyDone {
 				readyDone = true
 			}
@@ -170,7 +179,9 @@ func turns(sock, token string) {
 				time.Sleep(50 * time.Millisecond)
 			}
 		case "route":
-			reply = "route: " + routeCall(sock, token)
+			reply = "route: " + routeCall(sock, token, `{"method":"channel.status","params":{"id":"m-none"}}`)
+		case "lbwrite":
+			reply = "lb: " + routeCall(sock, token, `{"method":"logbook.write","params":{"idempotency_key":"stub-lb-1","changes":[{"op":"create","type":"task","title":"from capcom"}]}}`)
 		case "approve":
 			req := "req-" + turn
 			send(map[string]any{"type": "approval.request", "request": req, "tool": "WebFetch",
@@ -183,9 +194,8 @@ func turns(sock, token string) {
 	}
 }
 
-func routeCall(sock, token string) string {
+func routeCall(sock, token, body string) string {
 	cl := http.Client{Transport: &http.Transport{Dial: func(string, string) (net.Conn, error) { return net.Dial("unix", sock) }}}
-	body := `{"method":"channel.status","params":{"id":"m-none"}}`
 	resp, err := cl.Post("http://hab/channel/"+token, "application/json", bytes.NewBufferString(body))
 	if err != nil {
 		return err.Error()
