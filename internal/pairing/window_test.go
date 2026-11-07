@@ -452,11 +452,24 @@ func TestOnlyTheSubsystem(t *testing.T) {
 		pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
 		f.wait(t)
 	}()
-	c, err := dial(f, phoneKey(t), f.hostPub)
-	if err != nil {
-		t.Fatal(err)
+	// The window allows one session channel per connection and hangs up the connection once
+	// that channel closes. A call on a client whose server hung up can wait forever in
+	// x/crypto/ssh (a channel opened while its read loop shuts down is never closed), so each
+	// check gets a fresh connection, and its session stays open until the check ends.
+	fresh := func() (*ssh.Client, *ssh.Session) {
+		t.Helper()
+		f.settle(t, "127.0.0.1", 0)
+		c, err := dial(f, phoneKey(t), f.hostPub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := c.NewSession()
+		if err != nil {
+			c.Close()
+			t.Fatal(err)
+		}
+		return c, s
 	}
-	defer c.Close()
 	for _, try := range []func(*ssh.Session) error{
 		func(s *ssh.Session) error { return s.Run("gff-hab connect") },
 		func(s *ssh.Session) error { return s.Shell() },
@@ -464,23 +477,15 @@ func TestOnlyTheSubsystem(t *testing.T) {
 		func(s *ssh.Session) error { return s.RequestSubsystem("sftp") },
 		func(s *ssh.Session) error { return s.Setenv("A", "b") },
 	} {
-		s, err := c.NewSession()
-		if err != nil {
-			// Only one session channel per connection: a fresh connection for each try.
-			c.Close()
-			f.settle(t, "127.0.0.1", 0)
-			if c, err = dial(f, phoneKey(t), f.hostPub); err != nil {
-				t.Fatal(err)
-			}
-			if s, err = c.NewSession(); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := try(s); err == nil {
+		c, s := fresh()
+		err := try(s)
+		c.Close()
+		if err == nil {
 			t.Fatal("a request other than the pairing subsystem was accepted")
 		}
-		s.Close()
 	}
+	c, _ := fresh()
+	defer c.Close()
 	if _, err := c.Dial("tcp", "127.0.0.1:22"); err == nil {
 		t.Fatal("a forwarding channel was accepted")
 	}
