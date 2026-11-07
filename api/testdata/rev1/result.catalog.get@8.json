@@ -1,0 +1,203 @@
+{
+  "catalog": {
+    "actions": [
+      {
+        "command": "command-23",
+        "name": "name-22",
+        "x_unknown_field": "later"
+      }
+    ],
+    "agents": [
+      {
+        "compacts": 40,
+        "context_pct": 38,
+        "group": {
+          "id": "id-36",
+          "item": "item-37",
+          "role": "reviewer",
+          "x_unknown_field": "later"
+        },
+        "harness": "harness-33",
+        "id": "id-39",
+        "project": "project-34",
+        "replaced": "replaced-41",
+        "session": "session-32",
+        "since": "since-35",
+        "state": "exited",
+        "x_unknown_field": "later"
+      }
+    ],
+    "always_on": true,
+    "at": "at-8",
+    "capabilities": [
+      {
+        "declared": true,
+        "detected": true,
+        "name": "name-18",
+        "x_unknown_field": "later"
+      }
+    ],
+    "capcom": {
+      "assignment": 44,
+      "home": "home-45",
+      "service": "service-46",
+      "sessions": [
+        {
+          "harness": "harness-49",
+          "name": "name-48",
+          "session": "session-47",
+          "standing": true,
+          "x_unknown_field": "later"
+        }
+      ],
+      "x_unknown_field": "later"
+    },
+    "device_id": "device_id-5",
+    "generation": 7,
+    "governor": {
+      "consumers": [
+        {
+          "basis": "basis-78",
+          "cap_cents": 86,
+          "event_pace": "event_pace-80",
+          "event_until": "event_until-82",
+          "id": "id-77",
+          "input_tokens": 87,
+          "output_tokens": 88,
+          "pace": "pace-79",
+          "share_pct": 84,
+          "spent_cents": 85,
+          "until": "until-81",
+          "used_pct": 83,
+          "x_unknown_field": "later"
+        }
+      ],
+      "x_unknown_field": "later"
+    },
+    "groups": [
+      {
+        "coordinator": {
+          "capcom": true,
+          "device": "device-66",
+          "name": "name-68",
+          "session": "session-67",
+          "x_unknown_field": "later"
+        },
+        "generation": 69,
+        "home": "home-70",
+        "id": "id-63",
+        "items": 71,
+        "landed": 72,
+        "members": 73,
+        "pause": {
+          "until": "until-76",
+          "usage": "usage-75",
+          "user": "user-74",
+          "x_unknown_field": "later"
+        },
+        "state": "state-65",
+        "title": "title-64",
+        "x_unknown_field": "later"
+      }
+    ],
+    "harnesses": [
+      {
+        "name": "name-16",
+        "version": "version-17",
+        "x_unknown_field": "later"
+      }
+    ],
+    "heavy": {
+      "disk_low": true,
+      "holding": 58,
+      "slots": 57,
+      "volumes": [
+        {
+          "free_bytes": 61,
+          "path": "path-60",
+          "total_bytes": 62,
+          "x_unknown_field": "later"
+        }
+      ],
+      "waiting": 59,
+      "x_unknown_field": "later"
+    },
+    "host": "host-6",
+    "peers": [
+      "peers-42"
+    ],
+    "projects": [
+      {
+        "folders": [
+          {
+            "branch": "branch-29",
+            "dirty": true,
+            "head": "head-30",
+            "last_commit": "last_commit-31",
+            "path": "path-28",
+            "x_unknown_field": "later"
+          }
+        ],
+        "name": "name-24",
+        "remote": "remote-25",
+        "root_commit": "root_commit-26",
+        "summary": "summary-27",
+        "x_unknown_field": "later"
+      }
+    ],
+    "rounds": [
+      {
+        "completed": true,
+        "id": "id-50",
+        "last_run": "taken_over",
+        "last_run_at": "last_run_at-56",
+        "mode": "group",
+        "name": "name-51",
+        "next_slot": "next_slot-55",
+        "paused": true,
+        "project": "project-53",
+        "remote": "remote-54",
+        "trigger": "trigger-52",
+        "x_unknown_field": "later"
+      }
+    ],
+    "services": [
+      {
+        "health": "health-21",
+        "name": "name-19",
+        "url": "url-20",
+        "x_unknown_field": "later"
+      }
+    ],
+    "system": {
+      "arch": "arch-11",
+      "cores": 12,
+      "memory_bytes": 13,
+      "os": "os-9",
+      "os_version": "os_version-10",
+      "x_unknown_field": "later"
+    },
+    "toolchains": [
+      {
+        "name": "name-14",
+        "version": "version-15",
+        "x_unknown_field": "later"
+      }
+    ],
+    "watches": [
+      "watches-43"
+    ],
+    "x_unknown_field": "later"
+  },
+  "generation": 4,
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
