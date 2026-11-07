@@ -23,8 +23,8 @@ const (
 	// mcp, and keeps this one to itself, so a process with GFF_HAB cannot open /capcom/<token>
 	// (3.3, 4.4).
 	TokenVar = "GFF_HAB_CAPCOM_TOKEN"
-	PidFile = "engine.pid" // ProcessJob's pid
-	LogFile = "engine.log" // the engine's stdout and stderr
+	PidFile  = "engine.pid" // ProcessJob's pid
+	LogFile  = "engine.log" // the engine's stdout and stderr
 )
 
 // Supervisor states, for the session row (7.6).
