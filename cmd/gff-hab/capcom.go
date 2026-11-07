@@ -328,12 +328,18 @@ func (c *capcomService) openService(e *capcomEngine, p api.CapcomOpenParams) (ap
 	if id == "" {
 		return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable, "the Capcom service is not running on this hab yet")
 	}
+	out := api.CapcomOpened{Session: id, Dir: filepath.Join(c.state, capcomFolders, "engine")}
 	if p.New {
 		if err := e.link.Reseed("new"); err != nil {
 			return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable, "new conversation: no Capcom engine is connected")
 		}
+		// The thread never ends: a new conversation is where the proposals that wait are
+		// reviewed (6.4).
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		out.Proposals = e.pendingProposals(ctx)
+		cancel()
 	}
-	return api.CapcomOpened{Session: id, Dir: filepath.Join(c.state, capcomFolders, "engine")}, nil
+	return out, nil
 }
 
 // addServiceRecord lists the service session among the Capcom sessions, so context attaches

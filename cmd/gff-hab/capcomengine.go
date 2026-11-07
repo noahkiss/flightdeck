@@ -21,6 +21,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -55,6 +56,8 @@ type capcomEngine struct {
 	// approvals area, push and the board see Capcom as they see a pane's agent. Nil in tests
 	// that need no state.
 	agents *harness.Store
+	// memory is Capcom's memory in Logbook (6.4); nil on a hab without Logbook.
+	memory *capcomMemory
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
@@ -79,6 +82,8 @@ type capcomEngineSetup struct {
 	store      *structure.Store
 	agents     *harness.Store
 	svc        *capcomService
+	logbook    *lbsvc.Service // nil: no Logbook
+	host       string
 	approval   func() time.Duration
 	publish    func(structure.Event)
 	notify     func(title, body string)
@@ -119,6 +124,9 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 	}
 	e := &capcomEngine{dir: dir, store: s.store, svc: s.svc, thread: th, rec: rec, config: config, publish: s.publish,
 		notify: s.notify, device: s.device, logf: s.logf, agents: s.agents}
+	if s.logbook != nil {
+		e.memory = &capcomMemory{svc: s.logbook, host: s.host}
+	}
 	th.Watch(func(it capcomthread.Item) {
 		e.publish(structure.Event{Type: api.EventCapcomItem, ID: it.ID, Data: apiItem(it)})
 		e.publishChat(it)
@@ -135,6 +143,8 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		OnReady:     func() { e.sup.Ready() },
 		OnTurnEnded: func(result string) { e.sup.TurnEnded(result) },
 		Logf:        s.logf,
+		Limits:      func() capcomengine.ContextLimits { return contextLimits(config().Limits) },
+		Logbook:     e.logbookPart,
 	})
 	job := s.job
 	if job == nil {
@@ -285,7 +295,15 @@ func (e *capcomEngine) hello() (capcomengine.Message, bool) {
 	return capcomengine.Message{Credential: &cred, Device: e.device, Settings: &capcomengine.Settings{
 		Model: cfg.Model, SmallModel: cfg.SmallModel, MaxTurns: cfg.Limits.MaxTurns, MaxTurnUSD: cfg.Limits.MaxTurnUSD,
 		WakeRetryMS: cfg.Limits.WakeRetry.Milliseconds(), RouteBackoffMaxMS: cfg.Limits.RouteBackoffMax.Milliseconds(),
+		SummaryMaxChars: cfg.Limits.SummaryMaxChars, PrecompactTimeoutMS: cfg.Limits.PrecompactTimeout.Milliseconds(),
 	}}, true
+}
+
+// contextLimits are the context manager's [capcom] keys (6, 19.2).
+func contextLimits(l capcom.Limits) capcomengine.ContextLimits {
+	return capcomengine.ContextLimits{SummaryMaxChars: l.SummaryMaxChars, SummaryInputChars: l.SummaryInputChars,
+		SummaryQuiet: l.SummaryQuiet, ReseedAt: l.ReseedAt, ReseedQuiet: l.ReseedQuiet, ReseedQuietAt: l.ReseedQuietAt,
+		SeedMessages: l.SeedMessages, SeedMessagesChars: l.SeedMessagesChars, SeedLogbookBytes: l.SeedLogbookBytes}
 }
 
 func (e *capcomEngine) linkStatus(st capcomengine.Status) {

@@ -14,9 +14,46 @@ type CapcomThread interface {
 	ServiceStatus() (api.CapcomServiceStatus, error)
 	Pause() (api.CapcomServiceStatus, error)
 	Resume(ctx context.Context) (api.CapcomServiceStatus, error)
+	// CardAnswer answers a thread card for the client device (6.4, 7.4).
+	CardAnswer(ctx context.Context, client string, p api.CapcomCardAnswerParams) (api.CapcomCardAnswered, error)
 }
 
 const hintNoCapcomThread = "%s needs the Capcom service, which this hab is not running: set [capcom] engine on the home host; the capcom-thread capability is absent"
+
+// handleCapcomCard answers capcom.card.answer off the read loop: an undo writes to Logbook,
+// which may wait for SQLite's write lock (logbook.md 4.3).
+func (c *conn) handleCapcomCard(m message) {
+	seq := c.currentSeq()
+	var p api.CapcomCardAnswerParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	ct := c.s.cfg.CapcomThread
+	if ct == nil {
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintNoCapcomThread, m.Method))
+		return
+	}
+	if p.Item == "" || p.Choice == "" {
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "capcom.card.answer: item and choice are required"))
+		return
+	}
+	c.mu.Lock()
+	client := c.label
+	c.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, maxReadTime)
+		defer cancel()
+		res, err := ct.CardAnswer(ctx, client, p)
+		seq := c.currentSeq()
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		res.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, api.NonNil(res), nil)
+	}()
+}
 
 // dispatchCapcomThread answers capcom.thread.page, capcom.interrupt, capcom.status,
 // capcom.pause and capcom.resume.

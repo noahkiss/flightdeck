@@ -1,0 +1,26 @@
+{
+  "dir": "dir-6",
+  "pane": "pane-5",
+  "pending": [
+    {
+      "host": "host-8",
+      "kind": "logbook",
+      "ref": "ref-7",
+      "title": "title-9",
+      "x_unknown_field": "later"
+    }
+  ],
+  "proposals": 10,
+  "seq": 3,
+  "session": "session-4",
+  "started": true,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

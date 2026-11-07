@@ -1139,6 +1139,13 @@ func (c Client) CapcomResume(ctx context.Context, params CapcomServiceParams) (C
 	return result, err
 }
 
+// CapcomCardAnswer calls capcom.card.answer. Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.
+func (c Client) CapcomCardAnswer(ctx context.Context, params CapcomCardAnswerParams) (CapcomCardAnswered, error) {
+	var result CapcomCardAnswered
+	err := c.Caller.Call(ctx, "capcom.card.answer", params, &result)
+	return result, err
+}
+
 // WorktreeRemove calls worktree.remove. Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
 func (c Client) WorktreeRemove(ctx context.Context, params WorktreeRemoveParams) (WorktreeRemoved, error) {
 	var result WorktreeRemoved

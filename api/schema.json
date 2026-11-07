@@ -2536,6 +2536,38 @@
       }
     },
     {
+      "name": "capcom.card.answer",
+      "summary": "Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "choice",
+          "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "description": "The card's item id.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomCardAnswered"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomCardAnswerParams"
+      }
+    },
+    {
       "name": "worktree.remove",
       "summary": "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).",
       "paramStructure": "by-name",
@@ -4954,16 +4986,55 @@
           },
           "ref": {
             "type": "string",
-            "description": "approval: the request id, as approval.answer takes it."
+            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review."
           },
           "type": {
             "type": "string",
-            "description": "approval, confirmation, handoff, calendar, reminder or proposal."
+            "description": "approval, confirmation, handoff, calendar, reminder, proposal or memory."
           }
         },
         "required": [
           "type",
           "choices"
+        ]
+      },
+      "CapcomCardAnswerParams": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4)."
+          },
+          "item": {
+            "type": "string",
+            "description": "The card's item id."
+          }
+        },
+        "required": [
+          "item",
+          "choice"
+        ]
+      },
+      "CapcomCardAnswered": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/CapcomItem",
+            "description": "The card with its answer."
+          },
+          "note": {
+            "type": "string",
+            "description": "What the answer did, for the user to read: an undo of a record edited since it was noted deleted the edited record."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "item"
         ]
       },
       "CapcomContextItem": {
@@ -5161,6 +5232,11 @@
             "items": {
               "$ref": "#/components/schemas/CapcomContextItem"
             }
+          },
+          "proposals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The Capcom service's Logbook proposals that wait for review. With new set, the app opens the review list when it is above 0."
           },
           "seq": {
             "type": "integer",
