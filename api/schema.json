@@ -2594,7 +2594,7 @@
     },
     {
       "name": "device.context.put",
-      "summary": "Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link. Needs the device-context capability.",
+      "summary": "Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link; unavailable on a hab that does not hold the Capcom mark. Needs the device-context capability.",
       "paramStructure": "by-name",
       "params": [
         {

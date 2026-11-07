@@ -9683,7 +9683,7 @@ public enum HabMethods {
     public static let capcomResume = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.resume")
     /// Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.
     public static let capcomCardAnswer = HabMethod<CapcomCardAnswerParams, CapcomCardAnswered>(name: "capcom.card.answer")
-    /// Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link. Needs the device-context capability.
+    /// Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link; unavailable on a hab that does not hold the Capcom mark. Needs the device-context capability.
     public static let deviceContextPut = HabMethod<DeviceContextPutParams, Empty>(name: "device.context.put")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
