@@ -83,6 +83,8 @@ type actions struct {
 	// reserved reports a name only the Capcom service may hold: capcom and capcom-<anything>
 	// while the service runs (capcom-service.md 2.4). nil: none.
 	reserved func(name string) bool
+	// resumed hears each session session.resume started again. nil: none.
+	resumed func(session string)
 }
 
 // isReserved reports whether name is kept for the Capcom service.
@@ -93,6 +95,14 @@ var _ control.Resumer = (*actions)(nil)
 // ResumeSession serves session.resume: Capcom's sessions through Capcom (capcom.md 7.4), the
 // rest through the resume book (gff-client.md 6.2).
 func (a *actions) ResumeSession(ctx context.Context, session string) (string, error) {
+	pane, err := a.resumeOnce(ctx, session)
+	if err == nil && a.resumed != nil {
+		a.resumed(session) // a group coordinator's inbox goes in (groups.md 5.5)
+	}
+	return pane, err
+}
+
+func (a *actions) resumeOnce(ctx context.Context, session string) (string, error) {
 	if a.resume != nil {
 		pane, ok, err := a.resume(ctx, session)
 		if ok {
@@ -237,6 +247,7 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 	if isRun {
 		spec.Round = &rs.ref
 	}
+	spec.Group, spec.Envelope = p.Group, p.Envelope // a group member (groups.md 2.1, 3.3)
 	ss, err := a.store.CreateSession(spec)
 	// A picked name another create took between freeName and the record: pick again.
 	for try := 0; try < freeNameRetries && p.Name == "" && errors.Is(err, structure.ErrConflict); try++ {

@@ -82,6 +82,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -101,6 +102,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
+	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
@@ -505,6 +507,7 @@ func serve(args []string) error {
 	// Harness runs of rounds follow their agents' states (roundharness.go); set once rounds run.
 	var roundsRef atomic.Pointer[roundsService]
 	var heavyRef atomic.Pointer[heavy.Lock] // set once the lock runs; the catalog reads its section
+	var groupsRef groupRunnerRef            // set once the group service runs (groups.md 5)
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
@@ -1085,7 +1088,9 @@ func serve(args []string) error {
 			}
 			return roundWords()
 		},
-		Groups: roundGroups,
+		Groups: func() []api.CatalogGroup {
+			return append(groupsRef.section(), roundGroups()...)
+		},
 		OnCopy: func(c api.Catalog) {
 			if capcomSvc != nil {
 				capcomSvc.Observe(c)
@@ -1107,7 +1112,9 @@ func serve(args []string) error {
 	}
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
-	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, capcom: capcomEng, lock: func(ss api.Session) string {
+	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, capcom: capcomEng, paused: func(group string) bool {
+		return groupPaused(cs.List(), group)
+	}, lock: func(ss api.Session) string {
 		if r := roundsRef.Load(); r != nil {
 			return r.roundLock(ss)
 		}
@@ -1273,7 +1280,15 @@ func serve(args []string) error {
 				}
 				return ""
 			},
-			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get},
+			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get, store: store},
+		Envelope: memberEnvelope(store, *hostID, key.Fingerprint(), cs.List),
+		Groups:   &groupsRef,
+		GroupTTL: func() time.Duration {
+			if n, err := strconv.Atoi(string(setSvc.Value(settings.GroupConfirmMaxAge))); err == nil {
+				return time.Duration(n) * time.Minute
+			}
+			return 0
+		},
 		Enabled:   func() bool { return string(setSvc.Value(settings.StartElsewhere)) == "true" },
 		GroupPlan: func() bool { return string(setSvc.Value(settings.GroupPlan)) != "false" },
 		Publish: func(e structure.Event) {
@@ -1303,6 +1318,56 @@ func serve(args []string) error {
 	}
 	defer cfSvc.Close()
 	caps = append(caps, confirm.Capability)
+	// Agent groups (groups.md 3, 5): the records of the groups this hab is the home of. Their
+	// members start in holder panes, so groups need the holder link.
+	var groupsSvc *groupsService
+	var groupsCtl control.Groups
+	if sessionActs != nil {
+		groupsSvc, err = newGroups(groupsConfig{host: *hostID, self: key.Fingerprint(), dir: filepath.Join(dir, "groups"),
+			keys: groups.LoadKeys(cpath, logger.Printf), store: store, catalog: cs.List, links: confirmLinks(pm),
+			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get,
+			confirm: cfSvc.Request,
+			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				if s := srv.Load(); s != nil {
+					return s.CreateSession(ctx, p)
+				}
+				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
+			},
+			worktree: func(ctx context.Context, p api.WorktreeCreateParams) (api.WorktreeCreated, error) {
+				return wts.CreateWorktree(ctx, "", p)
+			},
+			listWorktrees: wts.ListWorktrees,
+			closePane: func(ctx context.Context, pane string) error {
+				return sessionActs.ClosePane(ctx, pane)
+			},
+			logbook: lbVerbs,
+			note: func(id, text string) error {
+				ss, ok := store.Session(id)
+				if !ok {
+					return fmt.Errorf("session %s is gone", id)
+				}
+				_, err := chSvc.Note(ss.Name, text)
+				return err
+			},
+			setting: setSvc.Value,
+			publish: func(e structure.Event) {
+				if s := srv.Load(); s != nil {
+					s.Publish(e)
+				}
+			},
+			poke: cs.Poke,
+			logf: logger.Printf,
+		})
+		if err != nil {
+			return err
+		}
+		defer groupsSvc.Stop()
+		groupsRef.p.Store(groupsSvc)
+		groupsCtl = groupsSvc
+		sessionActs.resumed = groupsSvc.Resumed
+		cs.Poke()
+		caps = append(caps, groups.Capability)
+	}
 	// The speech engine (voice.md): on when its helper is installed and the host setting allows.
 	var speechSvc control.Speech
 	sp, err := speechSetup(cpath, dir, store, speechEnv{getenv: os.Getenv, executable: os.Executable, memory: speech.HostMemory()}, logger.Printf)
@@ -1458,7 +1523,7 @@ func serve(args []string) error {
 		Version:  version,
 		Host:     api.HostInfo{ID: *hostID},
 		DeviceID: key.Fingerprint(),
-		Source:   agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc},
+		Source:   agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc, groups: groupsSvc},
 		Observe: func(e structure.Event) {
 			if r := roundsRef.Load(); r != nil {
 				r.matcher.observe(e)
@@ -1499,6 +1564,7 @@ func serve(args []string) error {
 		CapcomThread: capcomThreadCtl,
 		Rounds:       roundsCtl,
 		Heavy:        heavyLock,
+		Groups:       groupsCtl,
 		Logbook:      lbVerbs,
 	})
 	srv.Store(s)
@@ -1617,6 +1683,9 @@ func serve(args []string) error {
 		folders.folderOf = sessionActs.folderOf
 	}
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
+	if groupsSvc != nil {
+		hooks.SetGroups(groupHook(store, groupsSvc))
+	}
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote))
 	// One context handler: the Logbook habit and the context nudge, joined when both are due
 	// (harness-adapters.md, Context nudge).

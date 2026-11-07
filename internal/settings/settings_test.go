@@ -416,6 +416,11 @@ func TestHeavyRows(t *testing.T) {
 		HeavySlots:       {"1": true, "8": true, "0": false, "9": false, "1.5": false},
 		HeavyDiskMinFree: {"0": true, "10": true, "4096": true, "-1": false, "4097": false},
 		HeavyLongHold:    {"5": true, "1440": true, "4": false, "1441": false, "true": false},
+		// The group rows (groups.md 15.3, stage B3): 0 is refused for the expiry.
+		GroupConfirmMaxAge: {"1": true, "60": true, "1440": true, "0": false, "1441": false},
+		GroupMaxLeads:      {"1": true, "10": true, "0": false, "11": false},
+		GroupMaxWorkers:    {"0": true, "5": true, "6": false, "-1": false},
+		GroupCloseMembers:  {"true": true, "false": true, "1": false},
 	} {
 		d, ok := Lookup(id)
 		if !ok {

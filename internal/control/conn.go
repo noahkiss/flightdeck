@@ -517,6 +517,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleHeavy(m)
 		return
 	}
+	if isGroupMethod(m.Method) {
+		c.handleGroups(m)
+		return
+	}
 	if strings.HasPrefix(m.Method, "worktree.") {
 		c.handleWorktree(m)
 		return

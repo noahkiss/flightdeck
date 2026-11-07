@@ -114,6 +114,9 @@ type Session struct {
 	// Round marks a run session (rounds.md 7.2). Optional, so a newer client reads a session
 	// from an older revision 1 hab.
 	Round *SessionRound `json:"round,omitempty" doc:"Set on a session a round's run started: the round and the run. Every client can badge and filter it."`
+	// Group marks a group member (groups.md 2.1, stage B3). Optional, so a newer client reads
+	// a session from an older revision 1 hab.
+	Group *SessionGroup `json:"group,omitempty" doc:"Set on a session an agent group started: the group, the member's role and its item."`
 }
 
 // SessionKind says what a session is for, beyond running a program. Open: a client shows an
@@ -142,6 +145,7 @@ type Structure struct {
 	// (re)subscribe with no read.
 	Confirmations []Confirmation `json:"confirmations,omitempty" doc:"The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability."`
 	Rounds        []Round        `json:"rounds,omitempty" doc:"The rounds (rounds.md 13), in a host scope snapshot only. Absent when the hab has none, and from a hab without the rounds capability."`
+	Groups        []Group        `json:"groups,omitempty" doc:"The groups this hab is the home of (groups.md 5.1), in a host scope snapshot only. Absent with none, and from a hab without the groups capability."`
 }
 
 // --- Agent state (docs/specs/harness-adapters.md, State event model) ---

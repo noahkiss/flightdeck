@@ -53,6 +53,7 @@ type Server struct {
 	confirm  ChannelHandler
 	rounds   ChannelHandler
 	logbook  ChannelHandler
+	groups   ChannelHandler
 	context  ContextHandler
 	reads    ReadHandler
 	agent    ChannelHandler

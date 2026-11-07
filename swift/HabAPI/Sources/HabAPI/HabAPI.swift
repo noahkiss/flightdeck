@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -916,7 +916,13 @@ public struct CatalogAction: Codable, Sendable, Hashable {
 }
 
 public struct CatalogAgent: Codable, Sendable, Hashable {
+    /// How full its context window is, in whole percent; absent when unknown.
+    public var contextPct: Int?
+    /// The session is a member of this group.
+    public var group: SessionGroup?
     public var harness: String
+    /// The session's id on its host.
+    public var id: String?
     /// The project's name. Absent for an unfiled session.
     public var project: String?
     /// The session's name on its host.
@@ -926,15 +932,21 @@ public struct CatalogAgent: Codable, Sendable, Hashable {
     public var state: AgentStatus
 
     enum CodingKeys: String, CodingKey {
+        case contextPct = "context_pct"
+        case group = "group"
         case harness = "harness"
+        case id = "id"
         case project = "project"
         case session = "session"
         case since = "since"
         case state = "state"
     }
 
-    public init(harness: String, project: String? = nil, session: String, since: String, state: AgentStatus) {
+    public init(contextPct: Int? = nil, group: SessionGroup? = nil, harness: String, id: String? = nil, project: String? = nil, session: String, since: String, state: AgentStatus) {
+        self.contextPct = contextPct
+        self.group = group
         self.harness = harness
+        self.id = id
         self.project = project
         self.session = session
         self.since = since
@@ -1103,7 +1115,17 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
     /// The coordinator, when the group has one.
     public var coordinator: CatalogMember?
     public var generation: UInt64?
+    /// The home hab's device id.
+    public var home: String?
     public var id: String
+    /// Plan items.
+    public var items: Int?
+    /// Items landed.
+    public var landed: Int?
+    /// Members started.
+    public var members: Int?
+    /// The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6).
+    public var pause: GroupPause?
     /// confirming, running, paused, ending, ended or dropped. An open set.
     public var state: String
     public var title: String?
@@ -1111,15 +1133,25 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case coordinator = "coordinator"
         case generation = "generation"
+        case home = "home"
         case id = "id"
+        case items = "items"
+        case landed = "landed"
+        case members = "members"
+        case pause = "pause"
         case state = "state"
         case title = "title"
     }
 
-    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, id: String, state: String, title: String? = nil) {
+    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, home: String? = nil, id: String, items: Int? = nil, landed: Int? = nil, members: Int? = nil, pause: GroupPause? = nil, state: String, title: String? = nil) {
         self.coordinator = coordinator
         self.generation = generation
+        self.home = home
         self.id = id
+        self.items = items
+        self.landed = landed
+        self.members = members
+        self.pause = pause
         self.state = state
         self.title = title
     }
@@ -2211,6 +2243,8 @@ public struct ConfirmEdits: Codable, Sendable, Hashable {
     /// Another target hab. Give folder with it.
     public var host: String?
     public var model: String?
+    /// Kind group: the edited plan. The user may change hosts, harnesses, models and names, drop an item or a member, and turn review off; the hab checks it again.
+    public var plan: GroupPlan?
     /// The edited seed, at most 8000 characters.
     public var seed: String?
 
@@ -2219,14 +2253,16 @@ public struct ConfirmEdits: Codable, Sendable, Hashable {
         case harness = "harness"
         case host = "host"
         case model = "model"
+        case plan = "plan"
         case seed = "seed"
     }
 
-    public init(folder: String? = nil, harness: String? = nil, host: String? = nil, model: String? = nil, seed: String? = nil) {
+    public init(folder: String? = nil, harness: String? = nil, host: String? = nil, model: String? = nil, plan: GroupPlan? = nil, seed: String? = nil) {
         self.folder = folder
         self.harness = harness
         self.host = host
         self.model = model
+        self.plan = plan
         self.seed = seed
     }
 }
@@ -2243,12 +2279,41 @@ public struct ConfirmGetParams: Codable, Sendable, Hashable {
     }
 }
 
+public struct ConfirmGroup: Codable, Sendable, Hashable {
+    /// The plan is a change to a running group (group.amend): its new items and members.
+    public var amend: Bool?
+    /// The group id.
+    public var group: String
+    public var plan: GroupPlan
+    /// The trust rule the confirmation answers, in one line: which new worktrees, on which hosts, for which harnesses (groups.md 4.2).
+    public var trust: String
+    /// Lines the card shows above the buttons, such as one item: a single session costs less (groups.md 11).
+    public var warnings: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case amend = "amend"
+        case group = "group"
+        case plan = "plan"
+        case trust = "trust"
+        case warnings = "warnings"
+    }
+
+    public init(amend: Bool? = nil, group: String, plan: GroupPlan, trust: String, warnings: [String]? = nil) {
+        self.amend = amend
+        self.group = group
+        self.plan = plan
+        self.trust = trust
+        self.warnings = warnings
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct ConfirmKind: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let start = ConfirmKind(rawValue: "start")
     public static let setup = ConfirmKind(rawValue: "setup")
+    public static let group = ConfirmKind(rawValue: "group")
 }
 
 public struct ConfirmList: Codable, Sendable, Hashable {
@@ -2287,6 +2352,8 @@ public struct ConfirmListParams: Codable, Sendable, Hashable {
 public struct ConfirmRequestParams: Codable, Sendable, Hashable {
     /// The requesting session's name on this hab. The hook endpoint fills it from the pane's token.
     public var from: String?
+    /// Kind group: only gff-hab's group.create and group.amend ask for it, never a pane.
+    public var group: ConfirmGroup?
     public var kind: ConfirmKind
     /// Kind setup.
     public var setup: ConfirmSetup?
@@ -2297,14 +2364,16 @@ public struct ConfirmRequestParams: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case from = "from"
+        case group = "group"
         case kind = "kind"
         case setup = "setup"
         case start = "start"
         case waitMs = "wait_ms"
     }
 
-    public init(from: String? = nil, kind: ConfirmKind, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, waitMs: Int? = nil) {
+    public init(from: String? = nil, group: ConfirmGroup? = nil, kind: ConfirmKind, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, waitMs: Int? = nil) {
         self.from = from
+        self.group = group
         self.kind = kind
         self.setup = setup
         self.start = start
@@ -2490,6 +2559,8 @@ public struct Confirmation: Codable, Sendable, Hashable {
     public var expiresAt: String?
     /// The requesting session's name on this hab. Absent for a request from outside a pane.
     public var from: String?
+    /// Kind group: the plan the confirmation starts, or the change an amend adds.
+    public var group: ConfirmGroup?
     /// 128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab.
     public var id: String
     public var kind: ConfirmKind
@@ -2513,6 +2584,7 @@ public struct Confirmation: Codable, Sendable, Hashable {
         case edited = "edited"
         case expiresAt = "expires_at"
         case from = "from"
+        case group = "group"
         case id = "id"
         case kind = "kind"
         case reason = "reason"
@@ -2523,13 +2595,14 @@ public struct Confirmation: Codable, Sendable, Hashable {
         case state = "state"
     }
 
-    public init(answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
+    public init(answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, group: ConfirmGroup? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
         self.answeredBy = answeredBy
         self.closed = closed
         self.created = created
         self.edited = edited
         self.expiresAt = expiresAt
         self.from = from
+        self.group = group
         self.id = id
         self.kind = kind
         self.reason = reason
@@ -3442,6 +3515,640 @@ public struct FileReadParams: Codable, Sendable, Hashable {
         self.offset = offset
         self.path = path
     }
+}
+
+public struct Group: Codable, Sendable, Hashable {
+    public var confirmation: GroupConfirmationRef
+    public var coordinator: GroupCoordinator
+    public var created: String
+    public var ended: String?
+    /// What the confirmed plan allows (groups.md 3.3). Absent while confirming.
+    public var envelope: GroupEnvelope?
+    /// 1 at creation; one more at each move of the home (groups.md 5.7).
+    public var generation: UInt64
+    /// The home hab's device id.
+    public var home: String
+    /// 64 random bits as 16 hex digits.
+    public var id: String
+    public var inbox: [GroupReport]
+    public var items: [GroupItem]
+    public var lane: GroupLaneState
+    public var leftovers: [String]
+    public var members: [GroupMember]
+    public var pause: GroupPause
+    /// The plan as confirmed, with each amend merged in.
+    public var plan: GroupPlan
+    /// The Logbook plan record id.
+    public var planRecord: String?
+    /// The project's name in the home hab's catalog.
+    public var project: String
+    public var revision: UInt64
+    /// confirming, running, paused, ending, ended or dropped.
+    public var state: String
+    public var title: String
+    public var updated: String
+    /// What holds the group now, one line each.
+    public var waits: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case confirmation = "confirmation"
+        case coordinator = "coordinator"
+        case created = "created"
+        case ended = "ended"
+        case envelope = "envelope"
+        case generation = "generation"
+        case home = "home"
+        case id = "id"
+        case inbox = "inbox"
+        case items = "items"
+        case lane = "lane"
+        case leftovers = "leftovers"
+        case members = "members"
+        case pause = "pause"
+        case plan = "plan"
+        case planRecord = "plan_record"
+        case project = "project"
+        case revision = "revision"
+        case state = "state"
+        case title = "title"
+        case updated = "updated"
+        case waits = "waits"
+    }
+
+    public init(confirmation: GroupConfirmationRef, coordinator: GroupCoordinator, created: String, ended: String? = nil, envelope: GroupEnvelope? = nil, generation: UInt64, home: String, id: String, inbox: [GroupReport], items: [GroupItem], lane: GroupLaneState, leftovers: [String], members: [GroupMember], pause: GroupPause, plan: GroupPlan, planRecord: String? = nil, project: String, revision: UInt64, state: String, title: String, updated: String, waits: [String]) {
+        self.confirmation = confirmation
+        self.coordinator = coordinator
+        self.created = created
+        self.ended = ended
+        self.envelope = envelope
+        self.generation = generation
+        self.home = home
+        self.id = id
+        self.inbox = inbox
+        self.items = items
+        self.lane = lane
+        self.leftovers = leftovers
+        self.members = members
+        self.pause = pause
+        self.plan = plan
+        self.planRecord = planRecord
+        self.project = project
+        self.revision = revision
+        self.state = state
+        self.title = title
+        self.updated = updated
+        self.waits = waits
+    }
+}
+
+public struct GroupAmendParams: Codable, Sendable, Hashable {
+    /// The items and members to add. Title, brief and project are not read.
+    public var change: GroupPlan
+    public var group: String
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case change = "change"
+        case group = "group"
+        case waitMs = "wait_ms"
+    }
+
+    public init(change: GroupPlan, group: String, waitMs: Int? = nil) {
+        self.change = change
+        self.group = group
+        self.waitMs = waitMs
+    }
+}
+
+public struct GroupConfirmationRef: Codable, Sendable, Hashable {
+    /// The confirmation id, or none when confirm.group_plan was off.
+    public var id: String
+    public var outcome: ConfirmState?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case outcome = "outcome"
+    }
+
+    public init(id: String, outcome: ConfirmState? = nil) {
+        self.id = id
+        self.outcome = outcome
+    }
+}
+
+public struct GroupCoordinator: Codable, Sendable, Hashable {
+    /// Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id.
+    public var address: String
+    public var name: String
+    /// Its session id on the home hab.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case address = "address"
+        case name = "name"
+        case session = "session"
+    }
+
+    public init(address: String, name: String, session: String) {
+        self.address = address
+        self.name = name
+        self.session = session
+    }
+}
+
+public struct GroupCreateParams: Codable, Sendable, Hashable {
+    /// The coordinator's session name on this hab. From a pane the pane's session, whatever this says.
+    public var coordinator: String?
+    public var plan: GroupPlan
+    /// Wait up to this long for the confirmation's answer; 0 answers at once. At most 120000.
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case coordinator = "coordinator"
+        case plan = "plan"
+        case waitMs = "wait_ms"
+    }
+
+    public init(coordinator: String? = nil, plan: GroupPlan, waitMs: Int? = nil) {
+        self.coordinator = coordinator
+        self.plan = plan
+        self.waitMs = waitMs
+    }
+}
+
+public struct GroupCreated: Codable, Sendable, Hashable {
+    /// The plan's confirmation, open or closed. Absent when none was asked.
+    public var confirmation: Confirmation?
+    public var group: Group
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case confirmation = "confirmation"
+        case group = "group"
+        case seq = "seq"
+    }
+
+    public init(confirmation: Confirmation? = nil, group: Group, seq: UInt64) {
+        self.confirmation = confirmation
+        self.group = group
+        self.seq = seq
+    }
+}
+
+public struct GroupEnvelope: Codable, Sendable, Hashable {
+    /// The plan's confirmation id, or none when it started with no confirmation.
+    public var confirmation: String
+    public var group: String
+    public var harnesses: [String]
+    /// The home hab's device id.
+    public var home: String
+    /// The device ids of the plan's hosts.
+    public var hosts: [String]
+    /// Workers per lead (group.max_workers when the plan was confirmed).
+    public var maxWorkers: Int
+    /// The project's identity: its normalized remote, else root:<commit>.
+    public var project: String
+
+    enum CodingKeys: String, CodingKey {
+        case confirmation = "confirmation"
+        case group = "group"
+        case harnesses = "harnesses"
+        case home = "home"
+        case hosts = "hosts"
+        case maxWorkers = "max_workers"
+        case project = "project"
+    }
+
+    public init(confirmation: String, group: String, harnesses: [String], home: String, hosts: [String], maxWorkers: Int, project: String) {
+        self.confirmation = confirmation
+        self.group = group
+        self.harnesses = harnesses
+        self.home = home
+        self.hosts = hosts
+        self.maxWorkers = maxWorkers
+        self.project = project
+    }
+}
+
+public struct GroupItem: Codable, Sendable, Hashable {
+    public var after: String?
+    /// group/<group>/<item>.
+    public var branch: String?
+    public var id: String
+    /// Its lead's session name.
+    public var lead: String?
+    /// Why it is stalled or waits.
+    public var reason: String?
+    public var review: String?
+    /// queued, stalled, working, review, fix, ready, landing, landed or dropped.
+    public var state: String
+    /// Its Logbook task id.
+    public var task: String?
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case after = "after"
+        case branch = "branch"
+        case id = "id"
+        case lead = "lead"
+        case reason = "reason"
+        case review = "review"
+        case state = "state"
+        case task = "task"
+        case title = "title"
+    }
+
+    public init(after: String? = nil, branch: String? = nil, id: String, lead: String? = nil, reason: String? = nil, review: String? = nil, state: String, task: String? = nil, title: String) {
+        self.after = after
+        self.branch = branch
+        self.id = id
+        self.lead = lead
+        self.reason = reason
+        self.review = review
+        self.state = state
+        self.task = task
+        self.title = title
+    }
+}
+
+public struct GroupLane: Codable, Sendable, Hashable {
+    /// A reviewer may fix in place on its review branch (groups.md 6.4).
+    public var fixInPlace: Bool?
+    /// The target branch. Absent: the project's default branch.
+    public var target: String?
+
+    enum CodingKeys: String, CodingKey {
+        case fixInPlace = "fix_in_place"
+        case target = "target"
+    }
+
+    public init(fixInPlace: Bool? = nil, target: String? = nil) {
+        self.fixInPlace = fixInPlace
+        self.target = target
+    }
+}
+
+public struct GroupLaneState: Codable, Sendable, Hashable {
+    public var landing: String?
+    public var queue: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case landing = "landing"
+        case queue = "queue"
+    }
+
+    public init(landing: String? = nil, queue: [String]) {
+        self.landing = landing
+        self.queue = queue
+    }
+}
+
+public struct GroupList: Codable, Sendable, Hashable {
+    public var groups: [CatalogGroup]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case groups = "groups"
+        case seq = "seq"
+    }
+
+    public init(groups: [CatalogGroup], seq: UInt64) {
+        self.groups = groups
+        self.seq = seq
+    }
+}
+
+public struct GroupListParams: Codable, Sendable, Hashable {
+    /// Only groups in this state.
+    public var state: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state = "state"
+    }
+
+    public init(state: String? = nil) {
+        self.state = state
+    }
+}
+
+public struct GroupMember: Codable, Sendable, Hashable {
+    /// Its agent state, from its hab or the catalog copy.
+    public var agent: AgentStatus?
+    /// RFC 3339 time the home hab last confirmed that state with the member's hab.
+    public var agentAge: String?
+    /// Starts tried again by group.retry; each has its own idempotency key.
+    public var attempts: Int?
+    public var compacts: Int?
+    public var contextPct: Int?
+    /// Its hab's device id.
+    public var device: String?
+    /// Its worktree on its host.
+    public var folder: String?
+    public var harness: String
+    /// Its host, as the home hab labels it.
+    public var host: String
+    public var item: String
+    public var model: String?
+    public var name: String
+    /// Why it failed.
+    public var reason: String?
+    /// The session it replaced (groups.md 9.3).
+    public var replaced: String?
+    public var role: GroupRole
+    /// Its session id on its host, once started.
+    public var session: String?
+    /// planned, starting, running, exited or failed.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case agent = "agent"
+        case agentAge = "agent_age"
+        case attempts = "attempts"
+        case compacts = "compacts"
+        case contextPct = "context_pct"
+        case device = "device"
+        case folder = "folder"
+        case harness = "harness"
+        case host = "host"
+        case item = "item"
+        case model = "model"
+        case name = "name"
+        case reason = "reason"
+        case replaced = "replaced"
+        case role = "role"
+        case session = "session"
+        case state = "state"
+    }
+
+    public init(agent: AgentStatus? = nil, agentAge: String? = nil, attempts: Int? = nil, compacts: Int? = nil, contextPct: Int? = nil, device: String? = nil, folder: String? = nil, harness: String, host: String, item: String, model: String? = nil, name: String, reason: String? = nil, replaced: String? = nil, role: GroupRole, session: String? = nil, state: String) {
+        self.agent = agent
+        self.agentAge = agentAge
+        self.attempts = attempts
+        self.compacts = compacts
+        self.contextPct = contextPct
+        self.device = device
+        self.folder = folder
+        self.harness = harness
+        self.host = host
+        self.item = item
+        self.model = model
+        self.name = name
+        self.reason = reason
+        self.replaced = replaced
+        self.role = role
+        self.session = session
+        self.state = state
+    }
+}
+
+public struct GroupNoteParams: Codable, Sendable, Hashable {
+    /// From a pane the pane's session.
+    public var from: String?
+    public var group: String
+    public var item: String
+    /// At most 4000 characters.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case group = "group"
+        case item = "item"
+        case text = "text"
+    }
+
+    public init(from: String? = nil, group: String, item: String, text: String) {
+        self.from = from
+        self.group = group
+        self.item = item
+        self.text = text
+    }
+}
+
+public struct GroupPause: Codable, Sendable, Hashable {
+    /// With usage: when the governor expects room.
+    public var until: String?
+    /// RFC 3339 time usage pacing paused it; absent when not.
+    public var usage: String?
+    /// RFC 3339 time the user paused the group; absent when not.
+    public var user: String?
+
+    enum CodingKeys: String, CodingKey {
+        case until = "until"
+        case usage = "usage"
+        case user = "user"
+    }
+
+    public init(until: String? = nil, usage: String? = nil, user: String? = nil) {
+        self.until = until
+        self.usage = usage
+        self.user = user
+    }
+}
+
+public struct GroupPlan: Codable, Sendable, Hashable {
+    /// The task in full: every member's seed carries it.
+    public var brief: String?
+    public var items: [GroupPlanItem]
+    public var lane: GroupLane?
+    public var members: [GroupPlanMember]
+    /// The project: its name or remote in the catalog. A group works on one repository.
+    public var project: String
+    /// The task, one line.
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case brief = "brief"
+        case items = "items"
+        case lane = "lane"
+        case members = "members"
+        case project = "project"
+        case title = "title"
+    }
+
+    public init(brief: String? = nil, items: [GroupPlanItem], lane: GroupLane? = nil, members: [GroupPlanMember], project: String, title: String) {
+        self.brief = brief
+        self.items = items
+        self.lane = lane
+        self.members = members
+        self.project = project
+        self.title = title
+    }
+}
+
+public struct GroupPlanItem: Codable, Sendable, Hashable {
+    /// An item whose branch this one stacks on (groups.md 7.2). It starts once that item reaches review.
+    public var after: String?
+    /// The item in full: its lead's seed carries it after the group's brief.
+    public var brief: String?
+    /// 1 to 64 lowercase letters, digits and '-', unique in the plan.
+    public var id: String
+    /// on (the default) or off (groups.md 6.1).
+    public var review: String?
+    public var title: String
+    /// Paths or item ids it overlaps.
+    public var touches: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case after = "after"
+        case brief = "brief"
+        case id = "id"
+        case review = "review"
+        case title = "title"
+        case touches = "touches"
+    }
+
+    public init(after: String? = nil, brief: String? = nil, id: String, review: String? = nil, title: String, touches: [String]? = nil) {
+        self.after = after
+        self.brief = brief
+        self.id = id
+        self.review = review
+        self.title = title
+        self.touches = touches
+    }
+}
+
+public struct GroupPlanMember: Codable, Sendable, Hashable {
+    /// claude, codex or opencode, or an alias from the home hab's [aliases] table.
+    public var harness: String
+    /// A peer label from the home hab's peer list, or its host id. Absent: the home hab.
+    public var host: String?
+    /// The item it works on.
+    public var item: String
+    public var model: String?
+    /// Its session name, free on every host. Absent: harness, six hex digits of the group id, role and item position, such as codex-3fa9c2-review-2.
+    public var name: String?
+    /// lead, worker or reviewer.
+    public var role: GroupRole
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case host = "host"
+        case item = "item"
+        case model = "model"
+        case name = "name"
+        case role = "role"
+    }
+
+    public init(harness: String, host: String? = nil, item: String, model: String? = nil, name: String? = nil, role: GroupRole) {
+        self.harness = harness
+        self.host = host
+        self.item = item
+        self.model = model
+        self.name = name
+        self.role = role
+    }
+}
+
+public struct GroupRef: Codable, Sendable, Hashable {
+    public var group: String
+
+    enum CodingKeys: String, CodingKey {
+        case group = "group"
+    }
+
+    public init(group: String) {
+        self.group = group
+    }
+}
+
+public struct GroupReport: Codable, Sendable, Hashable {
+    /// RFC 3339 time the home hab took it.
+    public var at: String
+    /// Who sent it: a member's name, or Flightdeck.
+    public var from: String?
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case from = "from"
+        case text = "text"
+    }
+
+    public init(at: String, from: String? = nil, text: String) {
+        self.at = at
+        self.from = from
+        self.text = text
+    }
+}
+
+public struct GroupReportParams: Codable, Sendable, Hashable {
+    /// Who sends it: a member's session name. From a pane the pane's session.
+    public var from: String?
+    public var group: String
+    /// One line or a short text, at most 4000 characters.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case group = "group"
+        case text = "text"
+    }
+
+    public init(from: String? = nil, group: String, text: String) {
+        self.from = from
+        self.group = group
+        self.text = text
+    }
+}
+
+public struct GroupReported: Codable, Sendable, Hashable {
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// sent: a channel message to the running coordinator; waiting: it waits in the record's inbox.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(seq: UInt64, state: String) {
+        self.seq = seq
+        self.state = state
+    }
+}
+
+public struct GroupResult: Codable, Sendable, Hashable {
+    public var group: Group
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case group = "group"
+        case seq = "seq"
+    }
+
+    public init(group: Group, seq: UInt64) {
+        self.group = group
+        self.seq = seq
+    }
+}
+
+public struct GroupRetryParams: Codable, Sendable, Hashable {
+    public var group: String
+    /// A failed member's name.
+    public var member: String
+
+    enum CodingKeys: String, CodingKey {
+        case group = "group"
+        case member = "member"
+    }
+
+    public init(group: String, member: String) {
+        self.group = group
+        self.member = member
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct GroupRole: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let lead = GroupRole(rawValue: "lead")
+    public static let worker = GroupRole(rawValue: "worker")
+    public static let reviewer = GroupRole(rawValue: "reviewer")
 }
 
 public struct HabStatsParams: Codable, Sendable, Hashable {
@@ -6731,6 +7438,8 @@ public struct Session: Codable, Sendable, Hashable {
     /// The hab-owned folder a Capcom session runs in; a plain terminal resumes the harness from there. Absent for other sessions.
     public var dir: String?
     public var exit: ExitStatus?
+    /// Set on a session an agent group started: the group, the member's role and its item.
+    public var group: SessionGroup?
     public var id: String
     /// capcom for a Capcom session, which clients label Capcom. Absent for an ordinary session.
     public var kind: SessionKind?
@@ -6752,6 +7461,7 @@ public struct Session: Codable, Sendable, Hashable {
         case contextPct = "context_pct"
         case dir = "dir"
         case exit = "exit"
+        case group = "group"
         case id = "id"
         case kind = "kind"
         case model = "model"
@@ -6764,10 +7474,11 @@ public struct Session: Codable, Sendable, Hashable {
         case title = "title"
     }
 
-    public init(contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, round: SessionRound? = nil, state: SessionState, title: String? = nil) {
+    public init(contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, round: SessionRound? = nil, state: SessionState, title: String? = nil) {
         self.contextPct = contextPct
         self.dir = dir
         self.exit = exit
+        self.group = group
         self.id = id
         self.kind = kind
         self.model = model
@@ -6846,6 +7557,10 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var cwdOf: String?
     /// KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.
     public var env: [String]?
+    /// With group: what the group's confirmed plan allows. A later start from this member inside it asks nothing, and is a member too.
+    public var envelope: GroupEnvelope?
+    /// Only with trust_cover: the session is a member of this group.
+    public var group: SessionGroup?
     /// Detection manifest id of a harness to start, such as claude. Needs that harness's adapter.
     public var harness: String?
     /// A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing.
@@ -6875,6 +7590,8 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case cwd = "cwd"
         case cwdOf = "cwd_of"
         case env = "env"
+        case envelope = "envelope"
+        case group = "group"
         case harness = "harness"
         case idempotencyKey = "idempotency_key"
         case model = "model"
@@ -6888,12 +7605,14 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case trustCover = "trust_cover"
     }
 
-    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, reportTo: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil, trustCover: TrustCover? = nil) {
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, envelope: GroupEnvelope? = nil, group: SessionGroup? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, reportTo: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil, trustCover: TrustCover? = nil) {
         self.argv = argv
         self.cols = cols
         self.cwd = cwd
         self.cwdOf = cwdOf
         self.env = env
+        self.envelope = envelope
+        self.group = group
         self.harness = harness
         self.idempotencyKey = idempotencyKey
         self.model = model
@@ -6942,6 +7661,24 @@ public struct SessionFocusParams: Codable, Sendable, Hashable {
     public init(active: Bool, session: String) {
         self.active = active
         self.session = session
+    }
+}
+
+public struct SessionGroup: Codable, Sendable, Hashable {
+    public var id: String
+    public var item: String?
+    public var role: GroupRole
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case item = "item"
+        case role = "role"
+    }
+
+    public init(id: String, item: String? = nil, role: GroupRole) {
+        self.id = id
+        self.item = item
+        self.role = role
     }
 }
 
@@ -7315,6 +8052,8 @@ public struct StructureResult: Codable, Sendable, Hashable {
     public var agents: [AgentState]?
     /// The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability.
     public var confirmations: [Confirmation]?
+    /// The groups this hab is the home of (groups.md 5.1), in a host scope snapshot only. Absent with none, and from a hab without the groups capability.
+    public var groups: [Group]?
     public var host: HostInfo
     public var panes: [Pane]
     public var projects: [Project]
@@ -7329,6 +8068,7 @@ public struct StructureResult: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case agents = "agents"
         case confirmations = "confirmations"
+        case groups = "groups"
         case host = "host"
         case panes = "panes"
         case projects = "projects"
@@ -7338,9 +8078,10 @@ public struct StructureResult: Codable, Sendable, Hashable {
         case settings = "settings"
     }
 
-    public init(agents: [AgentState]? = nil, confirmations: [Confirmation]? = nil, host: HostInfo, panes: [Pane], projects: [Project], rounds: [Round]? = nil, seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
+    public init(agents: [AgentState]? = nil, confirmations: [Confirmation]? = nil, groups: [Group]? = nil, host: HostInfo, panes: [Pane], projects: [Project], rounds: [Round]? = nil, seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
         self.agents = agents
         self.confirmations = confirmations
+        self.groups = groups
         self.host = host
         self.panes = panes
         self.projects = projects
@@ -8429,6 +9170,26 @@ public enum HabMethods {
     public static let heavyRelease = HabMethod<HeavyReleaseParams, Empty>(name: "heavy.release")
     /// Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.
     public static let heavyStatus = HabMethod<HeavyStatusParams, HeavyStatus>(name: "heavy.status")
+    /// Propose a group plan (groups.md 3): the hab checks it, files a Logbook plan record and a task per item, and asks one confirmation of kind group while confirm.group_plan is on (also with confirm.start_elsewhere on and a member elsewhere). Nothing starts before the answer. Needs the groups and logbook capabilities.
+    public static let groupCreate = HabMethod<GroupCreateParams, GroupCreated>(name: "group.create")
+    /// Add items or members to a running group: one confirmation for the change, by the same setting rules (groups.md 3.3). Needs the groups capability.
+    public static let groupAmend = HabMethod<GroupAmendParams, GroupCreated>(name: "group.amend")
+    /// One group's record (groups.md 5.1). Needs the groups capability.
+    public static let groupGet = HabMethod<GroupRef, GroupResult>(name: "group.get")
+    /// The short form of each group this hab is the home of, newest first. Needs the groups capability.
+    public static let groupList = HabMethod<GroupListParams, GroupList>(name: "group.list")
+    /// A report to the group's coordinator (groups.md 5.5): a channel message from Flightdeck while it runs, else it waits in the record's inbox until its resume. Needs the groups capability.
+    public static let groupReport = HabMethod<GroupReportParams, GroupReported>(name: "group.report")
+    /// A note the hab writes on an item's Logbook task, so it lands under logbook.approval agents too (groups.md 4.3). Needs the groups capability.
+    public static let groupNote = HabMethod<GroupNoteParams, Empty>(name: "group.note")
+    /// The user's pause: member habs hold messages into the group's members and new starts; working members finish their turn (groups.md 5.6). Needs the groups capability.
+    public static let groupPause = HabMethod<GroupRef, GroupResult>(name: "group.pause")
+    /// Lift the user's pause. A usage pause stays (groups.md 5.6). Needs the groups capability.
+    public static let groupResume = HabMethod<GroupRef, GroupResult>(name: "group.resume")
+    /// End the group: no new starts; with group.close_members on, idle members are closed (groups.md 5.2). Needs the groups capability.
+    public static let groupClose = HabMethod<GroupRef, GroupResult>(name: "group.close")
+    /// Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.
+    public static let groupRetry = HabMethod<GroupRetryParams, GroupResult>(name: "group.retry")
 }
 
 public enum HabNotification {
@@ -8491,6 +9252,8 @@ public enum HabEvent: Sendable, Hashable {
     case roundUpdated(Round)
     /// A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.
     case roundRunUpdated(RoundRun)
+    /// A group record changed; the id is the group id (groups.md 15.1). Host scope only. Not ephemeral: the groups are in the host snapshot.
+    case groupUpdated(Group)
     /// The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.
     case habWoke(HabWoke)
     /// A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.
@@ -8533,6 +9296,7 @@ public enum HabEvent: Sendable, Hashable {
         case "confirm.closed": self = .confirmClosed(try event.data.decode(Confirmation.self))
         case "round.updated": self = .roundUpdated(try event.data.decode(Round.self))
         case "round.run_updated": self = .roundRunUpdated(try event.data.decode(RoundRun.self))
+        case "group.updated": self = .groupUpdated(try event.data.decode(Group.self))
         case "hab.woke": self = .habWoke(try event.data.decode(HabWoke.self))
         case "logbook.updated": self = .logbookUpdated(try event.data.decode(LogbookUpdated.self))
         case "logbook.conflict": self = .logbookConflict(try event.data.decode(LogbookConflict.self))

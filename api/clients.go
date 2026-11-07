@@ -29,7 +29,11 @@ type SessionCreateParams struct {
 	ReportTo string `json:"report_to,omitempty" doc:"A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability."`
 	// TrustCover comes with stage B2 of agent groups (groups.md 4.2, 12.6). Optional, so an
 	// older hab ignores it and shows the trust card as before.
-	TrustCover *TrustCover `json:"trust_cover,omitempty" doc:"Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before."`
+	// Group and Envelope come with stage B3 (groups.md 3.3). Optional, so an older hab ignores
+	// them and starts an ordinary session.
+	Group      *SessionGroup  `json:"group,omitempty" doc:"Only with trust_cover: the session is a member of this group."`
+	Envelope   *GroupEnvelope `json:"envelope,omitempty" doc:"With group: what the group's confirmed plan allows. A later start from this member inside it asks nothing, and is a member too."`
+	TrustCover *TrustCover    `json:"trust_cover,omitempty" doc:"Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before."`
 }
 
 // TrustCover is what answers a group member's folder trust prompt (groups.md 4.2, 12.6): the

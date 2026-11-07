@@ -51,6 +51,8 @@ type channelLocal struct {
 	// capcom is the Capcom service: a message to its session goes into the thread
 	// (capcom-service.md 2.4, 9.1). Nil: the service is off.
 	capcom *capcomEngine
+	// paused reports whether a group is paused (groups.md 5.6). Nil: none is.
+	paused func(group string) bool
 }
 
 var _ channels.RoundLocal = (*channelLocal)(nil)
@@ -104,6 +106,10 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 	}
 	if ss.State == api.SessionStateExited || ss.Pane == "" {
 		return ss, errors.New("agent not running: the session has exited")
+	}
+	if ss.Group != nil && l.paused != nil && l.paused(ss.Group.ID) {
+		// A member of a paused group takes no new turn: the message waits (groups.md 5.6).
+		return ss, fmt.Errorf("%w: its group %s is paused", channels.ErrBusy, ss.Group.ID)
 	}
 	if l.send == nil {
 		return ss, errors.New("this hab runs without its holder link")

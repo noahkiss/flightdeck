@@ -78,6 +78,9 @@ type sessionRecord struct {
 	Dir  string `json:"dir,omitempty"`
 	// Round marks a run session: the round and the run that started it (rounds.md 7.2).
 	Round *api.SessionRound `json:"round,omitempty"`
+	// Group and Envelope mark a group member (groups.md 2.1, 3.3).
+	Group    *api.SessionGroup  `json:"group,omitempty"`
+	Envelope *api.GroupEnvelope `json:"envelope,omitempty"`
 }
 
 // paneRecord keeps what gff-hab owns about a pane: its revision, plus the last size and build it

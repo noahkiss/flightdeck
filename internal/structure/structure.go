@@ -559,6 +559,10 @@ type SessionSpec struct {
 	// NoPane files a session with no pane: the Capcom service session (capcom-service.md
 	// 2.1). Pane and NewPane must be unset.
 	NoPane bool
+	// Group marks a group member (groups.md 2.1): Session.group. Envelope is what the group's
+	// confirmed plan allows its later starts (groups.md 3.3); it stays out of the API.
+	Group    *api.SessionGroup
+	Envelope *api.GroupEnvelope
 }
 
 // CreateSession adds a session record for a live pane, or for a pane about to be spawned
@@ -600,6 +604,13 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	if spec.Round != nil {
 		r := *spec.Round
 		ss.Round = &r
+	}
+	if spec.Group != nil {
+		g := *spec.Group
+		ss.Group = &g
+	}
+	if spec.Envelope != nil {
+		ss.Envelope = copyEnvelope(spec.Envelope)
 	}
 	if ps != nil && ps.exit != nil {
 		ss.State = stateExited
@@ -1120,8 +1131,38 @@ func sessionAPI(ss *sessionRecord) api.Session {
 	return api.NonNil(api.Session{
 		ID: ss.ID, Revision: ss.Revision, Name: ss.Name, Project: ss.Project, Pane: ss.Pane,
 		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit), Round: copyRound(ss.Round),
-		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir,
+		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir, Group: copyGroup(ss.Group),
 	})
+}
+
+func copyGroup(g *api.SessionGroup) *api.SessionGroup {
+	if g == nil {
+		return nil
+	}
+	c := *g
+	return &c
+}
+
+func copyEnvelope(e *api.GroupEnvelope) *api.GroupEnvelope {
+	if e == nil {
+		return nil
+	}
+	c := *e
+	c.Hosts = append([]string(nil), e.Hosts...)
+	c.Harnesses = append([]string(nil), e.Harnesses...)
+	return &c
+}
+
+// Envelope returns a group member's envelope (groups.md 3.3): what its group's confirmed plan
+// allows a later start from it. ok false for a session that is no member or has none.
+func (s *Store) Envelope(id string) (api.GroupEnvelope, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.session(id)
+	if ss == nil || ss.Envelope == nil {
+		return api.GroupEnvelope{}, false
+	}
+	return *copyEnvelope(ss.Envelope), true
 }
 
 func copyRound(r *api.SessionRound) *api.SessionRound {

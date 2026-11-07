@@ -44,6 +44,13 @@ var ConfirmMethods = []string{"confirm.request", "confirm.get", "confirm.list"}
 var RoundMethods = []string{"round.list", "round.get", "round.create", "round.update", "round.delete",
 	"round.pause", "round.unpause", "round.run", "round.runs"}
 
+// GroupMethods are the group methods the route takes (groups.md 15.2): the coordinator's and
+// the members' tools. The pane's session is the caller: the coordinator of a new group, the
+// sender of a report or a note. group.pause and group.resume are not on the route: the user
+// pauses a group.
+var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.list", "group.report", "group.note",
+	"group.close", "group.retry"}
+
 // AgentMethods are the methods an agent calls about itself (harness-adapters.md, Self-compact).
 // The pane's token names the agent: it can act only on its own pane.
 var AgentMethods = []string{"agent.compact"}
@@ -114,6 +121,14 @@ func (s *Server) SetLogbook(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetGroups sets the handler of the group methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetGroups(h ChannelHandler) {
+	s.mu.Lock()
+	s.groups = h
+	s.mu.Unlock()
+}
+
 // SetAgent sets the handler of the agent methods on the route. With none, each answers
 // unavailable.
 func (s *Server) SetAgent(h ChannelHandler) {
@@ -161,7 +176,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known, read, conf, round, lb, ag := false, false, false, false, false, false
+	known, read, conf, round, lb, ag, grp := false, false, false, false, false, false, false
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
 	}
@@ -179,6 +194,9 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	}
 	for _, m := range AgentMethods {
 		ag = ag || m == call.Method
+	}
+	for _, m := range GroupMethods {
+		grp = grp || m == call.Method
 	}
 	if read {
 		s.mu.Lock()
@@ -215,8 +233,8 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "only a person decides a proposal (logbook.md 9.2): logbook.decide is not on a pane's route. The user approves or rejects it with gff lb approve or reject, run outside a pane, or in the app")
 		return
 	}
-	if !known && !conf && !round && !lb && !ag {
-		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods)
+	if !known && !conf && !round && !lb && !ag && !grp {
+		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods, GroupMethods)
 		return
 	}
 	s.mu.Lock()
@@ -230,6 +248,8 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		h = s.logbook
 	case ag:
 		h = s.agent
+	case grp:
+		h = s.groups
 	}
 	s.mu.Unlock()
 	if h == nil && lb {

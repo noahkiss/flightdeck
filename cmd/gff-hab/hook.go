@@ -97,6 +97,7 @@ type agentSource struct {
 	settings *settings.Service // nil: no settings in the snapshot
 	confirms confirmService    // nil: no confirmations in the snapshot
 	rounds   *roundsService    // nil: no rounds in the snapshot
+	groups   *groupsService    // nil: no groups in the snapshot
 }
 
 func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
@@ -114,6 +115,9 @@ func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
 		if rs := a.rounds.List(); len(rs) > 0 {
 			st.Rounds = rs
 		}
+	}
+	if a.groups != nil {
+		st.Groups = a.groups.Snapshot()
 	}
 	return st
 }
