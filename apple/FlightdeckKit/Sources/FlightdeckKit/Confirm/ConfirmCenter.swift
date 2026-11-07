@@ -413,7 +413,7 @@ public final class ConfirmCenter {
             let n = c.result?.name ?? c.round?.round.name ?? "the round"
             return "Made round \(n) on \(c.result?.host ?? c.round?.host ?? "")"
         case .done where c.kind == .group:
-            let t = c.group.map { "group \($0.plan.title)" } ?? "the group"
+            let t = c.group.map { "group \(ConfirmCardContent.groupName($0))" } ?? "the group"
             let verb = c.group?.amend == true ? "Changed" : "Started"
             return c.result.map { "\(verb) \(t) on \($0.host)" } ?? "\(verb) \(t)"
         case .done:
