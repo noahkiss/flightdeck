@@ -326,6 +326,13 @@ func turns(sock, token string) {
 		case "groupclose":
 			body := fmt.Sprintf(`{"method":"group.close","params":{"group":%q}}`, arg)
 			reply = "groupclose: " + routeCall(sock, token, body)
+		case "personal":
+			// "personal <tool> <method> <params json>": a tool line as the SDK reports the call,
+			// then the call on the route, as gff-hab mcp makes it.
+			tool, rest, _ := strings.Cut(arg, " ")
+			method, params, _ := strings.Cut(rest, " ")
+			send(map[string]any{"type": "tool", "turn": turn, "name": "mcp__flightdeck__" + tool, "summary": tool + ": " + params})
+			reply = "personal: " + routeCall(sock, token, fmt.Sprintf(`{"method":%q,"params":%s}`, method, params))
 		case "compact":
 			if !codex {
 				summarise(askContext("compact"))
