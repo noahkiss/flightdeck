@@ -217,16 +217,27 @@ func TestGroupPlanExpiry(t *testing.T) {
 }
 
 // TestEnvelopeStart (groups.md 3.3): with an envelope check, a member's start inside it runs at
-// once with no question; outside it is refused.
+// once with no question; a member's start outside it is refused; a start from a session that
+// is not a member follows the normal rules, so it asks while confirm.group_plan is on.
 func TestEnvelopeStart(t *testing.T) {
 	r := newRig(t, false, time.Hour)
-	r.svc.cfg.Envelope = func(from string, s api.ConfirmStart) error {
-		if from == "lead-1" && s.Host == "self" {
-			return nil
+	r.svc.cfg.Envelope = func(from string, s api.ConfirmStart) (bool, error) {
+		if from != "lead-1" {
+			return false, nil
 		}
-		return control.Errorf(api.ErrorKindInvalid, "outside the envelope")
+		if s.Host == "self" {
+			return true, nil
+		}
+		return true, control.Errorf(api.ErrorKindInvalid, "outside the envelope")
 	}
-	c, err := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: groupStart("self"), From: "lead-1"})
+	c, err := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: groupStart("self"), From: "coord"})
+	if err != nil || c.Record || c.State != "open" {
+		t.Fatalf("not a member: %+v %v", c, err)
+	}
+	if r.runner.count() != 0 {
+		t.Fatalf("runs before the answer: %+v", r.runner.runs)
+	}
+	c, err = r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: groupStart("self"), From: "lead-1"})
 	if err != nil || !c.Record {
 		t.Fatalf("inside: %+v %v", c, err)
 	}

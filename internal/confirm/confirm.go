@@ -96,10 +96,11 @@ type Config struct {
 	// its name when SessionID is nil): the answer to a request whose wait ended first
 	// (capcom.md 6.1). Nil: none is sent.
 	Notify func(session, text string) error
-	// Envelope checks a start with a group (groups.md 3.3): nil when the requesting session
-	// from is a member of that group and the start is inside the group's envelope, so it runs
-	// at once as a record; else the refusal. Nil: a group start asks while GroupPlan is on.
-	Envelope func(from string, s api.ConfirmStart) error
+	// Envelope checks a start with a group (groups.md 3.3). member false: the requesting
+	// session from is not a member of that group, and the start follows the normal start
+	// rules. member true: nil err when the start is inside the group's envelope, so it runs at
+	// once as a record; else the refusal. Nil: a group start asks while GroupPlan is on.
+	Envelope func(from string, s api.ConfirmStart) (member bool, err error)
 	// Groups runs kind group confirmations. Nil: kind group answers unavailable.
 	Groups GroupRunner
 	// GroupTTL returns group.confirm_max_age, read when a plan's confirmation opens. Nil or 0:
@@ -224,17 +225,23 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	on := s.cfg.Enabled != nil && s.cfg.Enabled()
 	ask := on && !self // a start on the agent's own host never asks (capcom.md 6.4)
-	switch {
-	case st.Group != "" && s.cfg.Envelope != nil:
+	member := false
+	if st.Group != "" && s.cfg.Envelope != nil {
 		// A later start of a group's member (groups.md 3.3): inside the envelope its plan's
 		// confirmation covers it, so it asks nothing; outside it is refused, and the
-		// coordinator's group_amend asks for the change.
-		if err := s.cfg.Envelope(p.From, st); err != nil {
+		// coordinator's group_amend asks for the change. A start from a session that is not
+		// a member follows the normal start rules below.
+		m, err := s.cfg.Envelope(p.From, st)
+		if m && err != nil {
 			return api.Confirmation{}, err
 		}
+		member = m
+	}
+	switch {
+	case member:
 		ask = false
 	case st.Group != "" && (s.cfg.GroupPlan == nil || s.cfg.GroupPlan()):
-		// With no envelope check, a group start asks while confirm.group_plan is on, on any
+		// A group start from outside its envelope asks while confirm.group_plan is on, on any
 		// host: its answer is also the trust answer for the group's worktrees (groups.md 3.2,
 		// 4.2).
 		ask = true
