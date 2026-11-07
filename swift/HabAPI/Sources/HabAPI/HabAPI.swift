@@ -1196,6 +1196,10 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
     public var landed: Int?
     /// Members started.
     public var members: Int?
+    /// A tombstone: the group moved home to this hab with this generation.
+    public var moved: GroupMoveRef?
+    /// A hand-over to this hab runs.
+    public var moving: GroupMoveRef?
     /// The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6).
     public var pause: GroupPause?
     /// The group record's revision when this copy was made.
@@ -1203,6 +1207,8 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
     /// confirming, running, paused, ending, ended or dropped. An open set.
     public var state: String
     public var title: String?
+    /// The highest generation a move attempt of the home used: a copy with a lower one was built before that attempt's freeze.
+    public var tried: UInt64?
 
     enum CodingKeys: String, CodingKey {
         case coordinator = "coordinator"
@@ -1212,13 +1218,16 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
         case items = "items"
         case landed = "landed"
         case members = "members"
+        case moved = "moved"
+        case moving = "moving"
         case pause = "pause"
         case revision = "revision"
         case state = "state"
         case title = "title"
+        case tried = "tried"
     }
 
-    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, home: String? = nil, id: String, items: Int? = nil, landed: Int? = nil, members: Int? = nil, pause: GroupPause? = nil, revision: UInt64? = nil, state: String, title: String? = nil) {
+    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, home: String? = nil, id: String, items: Int? = nil, landed: Int? = nil, members: Int? = nil, moved: GroupMoveRef? = nil, moving: GroupMoveRef? = nil, pause: GroupPause? = nil, revision: UInt64? = nil, state: String, title: String? = nil, tried: UInt64? = nil) {
         self.coordinator = coordinator
         self.generation = generation
         self.home = home
@@ -1226,10 +1235,13 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
         self.items = items
         self.landed = landed
         self.members = members
+        self.moved = moved
+        self.moving = moving
         self.pause = pause
         self.revision = revision
         self.state = state
         self.title = title
+        self.tried = tried
     }
 }
 
@@ -3475,6 +3487,8 @@ public struct ErrorData: Codable, Sendable, Hashable {
     /// Client revision range, on revision_unsupported.
     public var client: RevisionRange?
     public var hint: String
+    /// On moved: the device id of the group's new home hab (groups.md 5.7).
+    public var home: String?
     /// On every settings.set error: the id of the first refused row (app.md 20.5).
     public var id: String?
     public var kind: ErrorKind
@@ -3485,15 +3499,17 @@ public struct ErrorData: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case client = "client"
         case hint = "hint"
+        case home = "home"
         case id = "id"
         case kind = "kind"
         case seq = "seq"
         case server = "server"
     }
 
-    public init(client: RevisionRange? = nil, hint: String, id: String? = nil, kind: ErrorKind, seq: UInt64, server: RevisionRange? = nil) {
+    public init(client: RevisionRange? = nil, hint: String, home: String? = nil, id: String? = nil, kind: ErrorKind, seq: UInt64, server: RevisionRange? = nil) {
         self.client = client
         self.hint = hint
+        self.home = home
         self.id = id
         self.kind = kind
         self.seq = seq
@@ -3514,6 +3530,7 @@ public struct ErrorKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let locked = ErrorKind(rawValue: "locked")
     public static let denied = ErrorKind(rawValue: "denied")
     public static let invalid = ErrorKind(rawValue: "invalid")
+    public static let moved = ErrorKind(rawValue: "moved")
 }
 
 public struct Event: Codable, Sendable, Hashable {
@@ -3642,6 +3659,8 @@ public struct Group: Codable, Sendable, Hashable {
     public var ended: String?
     /// What the confirmed plan allows (groups.md 3.3). Absent while confirming.
     public var envelope: GroupEnvelope?
+    /// On a pending copy: the old home it came from.
+    public var from: GroupFrom?
     /// 1 at creation; one more at each move of the home (groups.md 5.7).
     public var generation: UInt64
     /// The home hab's device id.
@@ -3653,7 +3672,15 @@ public struct Group: Codable, Sendable, Hashable {
     public var lane: GroupLaneState
     public var leftovers: [String]
     public var members: [GroupMember]
+    /// Why the last move did not commit, for the card.
+    public var moveFailed: String?
+    /// A tombstone: the group moved home to this hab. The old home keeps it [groups] tombstone_keep.
+    public var moved: GroupMoveRef?
+    /// A hand-over to another hab runs: the lane and the scheduler take no new item.
+    public var moving: GroupMoveRef?
     public var pause: GroupPause
+    /// A copy adopted from the old home, not yet committed: not published, runs nothing.
+    public var pending: Bool?
     /// The plan as confirmed, with each amend merged in.
     public var plan: GroupPlan
     /// The Logbook plan record id.
@@ -3664,6 +3691,8 @@ public struct Group: Codable, Sendable, Hashable {
     /// confirming, running, paused, ending, ended or dropped.
     public var state: String
     public var title: String
+    /// The highest generation a move attempt used.
+    public var tried: UInt64?
     public var updated: String
     /// What holds the group now, one line each.
     public var waits: [String]
@@ -3674,6 +3703,7 @@ public struct Group: Codable, Sendable, Hashable {
         case created = "created"
         case ended = "ended"
         case envelope = "envelope"
+        case from = "from"
         case generation = "generation"
         case home = "home"
         case id = "id"
@@ -3682,23 +3712,29 @@ public struct Group: Codable, Sendable, Hashable {
         case lane = "lane"
         case leftovers = "leftovers"
         case members = "members"
+        case moveFailed = "move_failed"
+        case moved = "moved"
+        case moving = "moving"
         case pause = "pause"
+        case pending = "pending"
         case plan = "plan"
         case planRecord = "plan_record"
         case project = "project"
         case revision = "revision"
         case state = "state"
         case title = "title"
+        case tried = "tried"
         case updated = "updated"
         case waits = "waits"
     }
 
-    public init(confirmation: GroupConfirmationRef, coordinator: GroupCoordinator, created: String, ended: String? = nil, envelope: GroupEnvelope? = nil, generation: UInt64, home: String, id: String, inbox: [GroupReport], items: [GroupItem], lane: GroupLaneState, leftovers: [String], members: [GroupMember], pause: GroupPause, plan: GroupPlan, planRecord: String? = nil, project: String, revision: UInt64, state: String, title: String, updated: String, waits: [String]) {
+    public init(confirmation: GroupConfirmationRef, coordinator: GroupCoordinator, created: String, ended: String? = nil, envelope: GroupEnvelope? = nil, from: GroupFrom? = nil, generation: UInt64, home: String, id: String, inbox: [GroupReport], items: [GroupItem], lane: GroupLaneState, leftovers: [String], members: [GroupMember], moveFailed: String? = nil, moved: GroupMoveRef? = nil, moving: GroupMoveRef? = nil, pause: GroupPause, pending: Bool? = nil, plan: GroupPlan, planRecord: String? = nil, project: String, revision: UInt64, state: String, title: String, tried: UInt64? = nil, updated: String, waits: [String]) {
         self.confirmation = confirmation
         self.coordinator = coordinator
         self.created = created
         self.ended = ended
         self.envelope = envelope
+        self.from = from
         self.generation = generation
         self.home = home
         self.id = id
@@ -3707,15 +3743,56 @@ public struct Group: Codable, Sendable, Hashable {
         self.lane = lane
         self.leftovers = leftovers
         self.members = members
+        self.moveFailed = moveFailed
+        self.moved = moved
+        self.moving = moving
         self.pause = pause
+        self.pending = pending
         self.plan = plan
         self.planRecord = planRecord
         self.project = project
         self.revision = revision
         self.state = state
         self.title = title
+        self.tried = tried
         self.updated = updated
         self.waits = waits
+    }
+}
+
+public struct GroupAdoptCommitParams: Codable, Sendable, Hashable {
+    public var generation: UInt64
+    public var group: String
+    /// The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start.
+    public var record: Group?
+
+    enum CodingKeys: String, CodingKey {
+        case generation = "generation"
+        case group = "group"
+        case record = "record"
+    }
+
+    public init(generation: UInt64, group: String, record: Group? = nil) {
+        self.generation = generation
+        self.group = group
+        self.record = record
+    }
+}
+
+public struct GroupAdoptParams: Codable, Sendable, Hashable {
+    /// The generation the new home takes (groups.md 5.7 step 3).
+    public var generation: UInt64
+    /// The group record as the current home holds it.
+    public var record: Group
+
+    enum CodingKeys: String, CodingKey {
+        case generation = "generation"
+        case record = "record"
+    }
+
+    public init(generation: UInt64, record: Group) {
+        self.generation = generation
+        self.record = record
     }
 }
 
@@ -3757,18 +3834,22 @@ public struct GroupConfirmationRef: Codable, Sendable, Hashable {
 public struct GroupCoordinator: Codable, Sendable, Hashable {
     /// Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id.
     public var address: String
+    /// The device id of the hab the coordinator runs on. Absent in a record from before B9: the home hab.
+    public var device: String?
     public var name: String
     /// Its session id on the home hab.
     public var session: String
 
     enum CodingKeys: String, CodingKey {
         case address = "address"
+        case device = "device"
         case name = "name"
         case session = "session"
     }
 
-    public init(address: String, name: String, session: String) {
+    public init(address: String, device: String? = nil, name: String, session: String) {
         self.address = address
+        self.device = device
         self.name = name
         self.session = session
     }
@@ -3871,6 +3952,27 @@ public struct GroupFinding: Codable, Sendable, Hashable {
         self.severity = severity
         self.text = text
         self.title = title
+    }
+}
+
+public struct GroupFrom: Codable, Sendable, Hashable {
+    /// The generation of the old home's catalog copy this hab held at the adopt: only a later copy can show the move failed.
+    public var catalog: UInt64
+    /// The old home's device id.
+    public var device: String
+    /// This hab's label on the old home: the coordinator's line names the new home by it.
+    public var label: String?
+
+    enum CodingKeys: String, CodingKey {
+        case catalog = "catalog"
+        case device = "device"
+        case label = "label"
+    }
+
+    public init(catalog: UInt64, device: String, label: String? = nil) {
+        self.catalog = catalog
+        self.device = device
+        self.label = label
     }
 }
 
@@ -4163,6 +4265,84 @@ public struct GroupMessageParams: Codable, Sendable, Hashable {
     }
 }
 
+public struct GroupMoveParams: Codable, Sendable, Hashable {
+    /// Cancel the move queued on this hab for the group.
+    public var cancel: Bool?
+    /// The new home by device id, in place of host: a queued move names its own hab this way.
+    public var device: String?
+    public var group: String
+    /// The new home: a peer label of the hab that takes the call, or its own host id.
+    public var host: String?
+
+    enum CodingKeys: String, CodingKey {
+        case cancel = "cancel"
+        case device = "device"
+        case group = "group"
+        case host = "host"
+    }
+
+    public init(cancel: Bool? = nil, device: String? = nil, group: String, host: String? = nil) {
+        self.cancel = cancel
+        self.device = device
+        self.group = group
+        self.host = host
+    }
+}
+
+public struct GroupMoveRef: Codable, Sendable, Hashable {
+    /// On a tombstone: the new home acknowledged group.adopt_commit.
+    public var acked: Bool?
+    /// The generation of the attempt: one above any the old home used for the group.
+    public var generation: UInt64?
+    /// Its label, as the hab that wrote this knows it.
+    public var label: String?
+    /// RFC 3339 time the move started (moving) or committed (moved).
+    public var since: String?
+    /// The new home hab's device id.
+    public var to: String
+
+    enum CodingKeys: String, CodingKey {
+        case acked = "acked"
+        case generation = "generation"
+        case label = "label"
+        case since = "since"
+        case to = "to"
+    }
+
+    public init(acked: Bool? = nil, generation: UInt64? = nil, label: String? = nil, since: String? = nil, to: String) {
+        self.acked = acked
+        self.generation = generation
+        self.label = label
+        self.since = since
+        self.to = to
+    }
+}
+
+public struct GroupMoveResult: Codable, Sendable, Hashable {
+    /// The new home's device id.
+    public var home: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set.
+    public var state: String
+    /// One line for the user, such as: <label> is offline; the group moves when it is back.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case home = "home"
+        case seq = "seq"
+        case state = "state"
+        case text = "text"
+    }
+
+    public init(home: String, seq: UInt64, state: String, text: String) {
+        self.home = home
+        self.seq = seq
+        self.state = state
+        self.text = text
+    }
+}
+
 public struct GroupNoteParams: Codable, Sendable, Hashable {
     /// From a pane the pane's session.
     public var from: String?
@@ -4436,6 +4616,26 @@ public struct GroupSyncParams: Codable, Sendable, Hashable {
         self.group = group
         self.pause = pause
         self.revision = revision
+    }
+}
+
+public struct GroupTellParams: Codable, Sendable, Hashable {
+    public var group: String
+    /// The coordinator's session id on the hab that takes the call.
+    public var session: String
+    /// The report, or the waiting reports in one message.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case group = "group"
+        case session = "session"
+        case text = "text"
+    }
+
+    public init(group: String, session: String, text: String) {
+        self.group = group
+        self.session = session
+        self.text = text
     }
 }
 
@@ -9954,6 +10154,14 @@ public enum HabMethods {
     public static let groupMessage = HabMethod<GroupMessageParams, Empty>(name: "group.message")
     /// A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.
     public static let groupSync = HabMethod<GroupSyncParams, Empty>(name: "group.sync")
+    /// The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.
+    public static let groupMove = HabMethod<GroupMoveParams, GroupMoveResult>(name: "group.move")
+    /// The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.
+    public static let groupAdopt = HabMethod<GroupAdoptParams, Empty>(name: "group.adopt")
+    /// The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.
+    public static let groupAdoptCommit = HabMethod<GroupAdoptCommitParams, Empty>(name: "group.adopt_commit")
+    /// A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.
+    public static let groupTell = HabMethod<GroupTellParams, Empty>(name: "group.tell")
 }
 
 public enum HabNotification {

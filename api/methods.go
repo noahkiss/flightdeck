@@ -190,6 +190,10 @@ var Methods = []Method{
 	{"review.verdict", "A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.", ReviewVerdictParams{}, ReviewVerdictTaken{}},
 	{"group.message", "The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.", GroupMessageParams{}, Empty{}},
 	{"group.sync", "A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.", GroupSyncParams{}, Empty{}},
+	{"group.move", "The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.", GroupMoveParams{}, GroupMoveResult{}},
+	{"group.adopt", "The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.", GroupAdoptParams{}, Empty{}},
+	{"group.adopt_commit", "The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.", GroupAdoptCommitParams{}, Empty{}},
+	{"group.tell", "A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.", GroupTellParams{}, Empty{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -264,7 +268,7 @@ var Enums = map[string][]string{
 	"BlockedKind":   {"permission", "question", "auth", "trust"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
 	"HookHealth":    {"missing"},
-	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "denied", "invalid"},
+	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "denied", "invalid", "moved"},
 	// Sets added for the clients' calls (spec 3.9).
 	"SendOrigin":      {"typed", "dictated", "voice"},
 	"ApprovalChoice":  {"allow", "deny", "answer", "allow_site"},

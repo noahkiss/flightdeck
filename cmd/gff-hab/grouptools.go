@@ -212,6 +212,16 @@ func groupConfirmText(c api.Confirmation) string {
 func groupText(g api.Group) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Group %s: %s. State %s. Coordinator %s.\n", g.ID, g.Title, g.State, g.Coordinator.Address)
+	fmt.Fprintf(&b, "Home %s, generation %d.\n", g.Home, g.Generation)
+	if g.Moving != nil {
+		fmt.Fprintf(&b, "Moving home to %s since %s.\n", nameOr(g.Moving.Label, g.Moving.To), g.Moving.Since)
+	}
+	if g.Moved != nil {
+		fmt.Fprintf(&b, "Moved home to %s at %s.\n", nameOr(g.Moved.Label, g.Moved.To), g.Moved.Since)
+	}
+	if g.MoveFailed != "" {
+		fmt.Fprintf(&b, "Last move: %s.\n", g.MoveFailed)
+	}
 	if g.Pause.User != "" || g.Pause.Usage != "" {
 		fmt.Fprintf(&b, "Paused: user %v, usage %v.\n", g.Pause.User != "", g.Pause.Usage != "")
 	}

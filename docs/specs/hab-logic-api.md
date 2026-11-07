@@ -760,6 +760,10 @@ capability) carries none. Kinds are a server-sent word set, so adding one needs 
 With the `read-tools` capability: kind `denied`, a read the host's read scope refused
 (`capcom.md` 5.2). The hint names the host, and is the same for every reason: it never names the pattern or the list.
 
+With the `groups` capability: kind `moved`, a call about a group whose home moved to another
+hab (`groups.md` 5.7). `data.home` is the new home's device id; the caller's hab sends the call
+there.
+
 ### 3.7 Reconnect
 
 - A client that loses its control connection may reconnect with its `reconnect_token`.

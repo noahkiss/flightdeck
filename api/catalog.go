@@ -46,6 +46,10 @@ type CatalogGroup struct {
 	// Revision came with the pause push (groups.md 5.6): a member's hab compares it with the
 	// revision of the last group.sync it took. Optional, so an older copy reads 0.
 	Revision uint64 `json:"revision,omitempty" doc:"The group record's revision when this copy was made."`
+	// Moving and Moved come with the movable home (groups.md 5.7, stage B9).
+	Moving *GroupMoveRef `json:"moving,omitempty" doc:"A hand-over to this hab runs."`
+	Moved  *GroupMoveRef `json:"moved,omitempty" doc:"A tombstone: the group moved home to this hab with this generation."`
+	Tried  uint64        `json:"tried,omitempty" doc:"The highest generation a move attempt of the home used: a copy with a lower one was built before that attempt's freeze."`
 }
 
 // CatalogMember names a session on a hab of the mesh.
