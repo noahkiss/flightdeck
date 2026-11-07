@@ -89,10 +89,15 @@ public final class Board {
     private func rebuild() {
         var all: [BoardRow] = []
         let t = now()
+        // A member's group lives on its home hab, which may be another hab than the member's.
+        var groups: [String: String] = [:]
+        for h in habs {
+            for g in h.state.groups.values { groups[g.id] = g.title }
+        }
         for h in habs {
             // A hab whose revision does not fit shows "update needed"; its rows are hidden, not stale.
             if case .updateNeeded = h.state.status { continue }
-            var rows = BoardRows.build(habID: h.id, host: h.label, store: h.state.store, seen: seen, rounds: h.state.rounds)
+            var rows = BoardRows.build(habID: h.id, host: h.label, store: h.state.store, seen: seen, rounds: h.state.rounds, groups: groups)
             if h.state.status == .offline {
                 for i in rows.indices {
                     rows[i].offline = true

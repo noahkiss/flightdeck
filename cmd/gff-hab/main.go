@@ -516,6 +516,7 @@ func serve(args []string) error {
 	var heavyRef atomic.Pointer[heavy.Lock] // set once the lock runs; the catalog reads its section
 	var groupsRef groupRunnerRef            // set once the group service runs (groups.md 5)
 	supRef := &supervisorRef{}              // set once context supervision runs (groups.md 9)
+	groupSync := newGroupSyncs()            // what group homes pushed to this hab (groups.md 5.6)
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
@@ -1138,7 +1139,7 @@ func serve(args []string) error {
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
 	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, capcom: capcomEng, paused: func(group string) bool {
-		return groupPaused(cs.List(), group)
+		return groupSync.paused(cs.List(), group)
 	}, lock: func(ss api.Session) string {
 		if r := roundsRef.Load(); r != nil {
 			return r.roundLock(ss)
@@ -1325,7 +1326,7 @@ func serve(args []string) error {
 	cfSvc, err := confirm.New(confirm.Config{
 		Runner:   cfRunner,
 		Rounds:   cfRunner,
-		Envelope: memberEnvelope(store, *hostID, key.Fingerprint(), cs.List),
+		Envelope: memberEnvelope(store, *hostID, key.Fingerprint(), cs.List, groupSync),
 		Groups:   &groupsRef,
 		GroupTTL: func() time.Duration {
 			if n, err := strconv.Atoi(string(setSvc.Value(settings.GroupConfirmMaxAge))); err == nil {
@@ -1368,7 +1369,7 @@ func serve(args []string) error {
 	var groupsCtl control.Groups
 	if sessionActs != nil {
 		groupsSvc, err = newGroups(groupsConfig{host: *hostID, self: key.Fingerprint(), dir: filepath.Join(dir, "groups"),
-			keys: groups.LoadKeys(cpath, logger.Printf), store: store, catalog: cs.List, links: confirmLinks(pm),
+			keys: groups.LoadKeys(cpath, logger.Printf), store: store, catalog: cs.List, links: confirmLinks(pm), syncs: groupSync,
 			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get,
 			confirm: cfSvc.Request,
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
@@ -1380,11 +1381,24 @@ func serve(args []string) error {
 			worktree: func(ctx context.Context, p api.WorktreeCreateParams) (api.WorktreeCreated, error) {
 				return wts.CreateWorktree(ctx, "", p)
 			},
-			listWorktrees: wts.ListWorktrees,
+			listWorktrees:  wts.ListWorktrees,
+			removeWorktree: wts.RemoveWorktree,
+			laneDir:        filepath.Join(dir, "lane"),
+			heavy: func(ctx context.Context, command string) (func(), error) {
+				return heavyHold(ctx, heavyLock, command)
+			},
 			closePane: func(ctx context.Context, pane string) error {
 				return sessionActs.ClosePane(ctx, pane)
 			},
 			logbook: lbVerbs,
+			listedPeer: func(device string) bool {
+				for _, p := range pm.List().Peers {
+					if p.DeviceID == device && p.Label != "" {
+						return true
+					}
+				}
+				return false
+			},
 			note: func(id, text string) error {
 				ss, ok := store.Session(id)
 				if !ok {
@@ -1410,7 +1424,12 @@ func serve(args []string) error {
 				return err
 			},
 			capcom: groupsCapcomOf(capcomEng),
-			logf:   logger.Printf,
+			notice: func(title, body string) {
+				if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+					logger.Printf("groups: notice: %v", err)
+				}
+			},
+			logf: logger.Printf,
 		})
 		if err != nil {
 			return err
@@ -1800,7 +1819,7 @@ func serve(args []string) error {
 	}
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	if groupsSvc != nil {
-		hooks.SetGroups(groupHook(store, groupsSvc, func(pane string) bool {
+		hooks.SetGroups(groupHook(store, groupsSvc, folders.folderOf, func(pane string) bool {
 			return capcomEng != nil && pane == capcomRoute && capcomEng.eventTurn()
 		}))
 	}

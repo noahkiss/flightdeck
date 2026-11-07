@@ -3490,7 +3490,7 @@ every key, so a change never makes a new key.
 | Id | Title | Area | Type | Safe | Balanced | Bypass | Stored | Source |
 |---|---|---|---|---|---|---|---|---|
 | `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | bool | `true` | `false` | `false` | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
-| `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2); B3 reads it on the home hab for each plan and amend; the app row is not built | `groups.md` 3.2, 13 Q1 |
+| `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2); B3 reads it on the home hab for each plan and amend; the app row is built (`groups.md` 5.9) | `groups.md` 3.2, 13 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
@@ -3640,7 +3640,10 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
   started after it), and `group.close_members` at `group.close`. Context supervision
   (`groups.md` 9.5, stage B6) reads `group.compact_at`, `group.fresh_after_compacts`,
   `group.fresh_transcript_mb` and `group.handoff_at` at each reading of a member, every 2 s. The
-  app's rows for these and for `confirm.group_plan` are not built.
+  app has a row for `confirm.group_plan` and each cap, on every hab (`groups.md` 5.9):
+  `confirm.group_plan` with the levels, a minutes picker for `group.confirm_max_age`, steppers
+  for `group.max_leads` and `group.max_workers`, a switch for `group.close_members`. The four
+  context supervision rows and the `heavy.*` rows have no app row yet.
 - **The flag lock.** `-permission-wait` given on the command line, even as 0, or a non-empty
   `$GFF_HAB_PERMISSION_WAIT`, locks `hab.permission_wait` in whole seconds, rounded. A flag wins
   over the config file.

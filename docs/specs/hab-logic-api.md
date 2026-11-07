@@ -760,6 +760,10 @@ capability) carries none. Kinds are a server-sent word set, so adding one needs 
 With the `read-tools` capability: kind `denied`, a read the host's read scope refused
 (`capcom.md` 5.2). The hint names the host, and is the same for every reason: it never names the pattern or the list.
 
+With the `groups` capability: kind `moved`, a call about a group whose home moved to another
+hab (`groups.md` 5.7). `data.home` is the new home's device id; the caller's hab sends the call
+there.
+
 ### 3.7 Reconnect
 
 - A client that loses its control connection may reconnect with its `reconnect_token`.
@@ -1339,8 +1343,9 @@ project's identity, so the session files into the same project. No method of its
   a new branch starts at `base`, else at the source checkout's HEAD, with `--no-track`, so its
   first push names its own branch, never the base. No branch: `wt/<word>-<word>-<4 hex>`. A
   branch checked out elsewhere, or on several remotes with no base, is a `conflict`; a bad name
-  is `invalid`; an unknown base is `not_found`. gff-hab never fetches: `base: origin/main` is
-  whatever the last fetch brought.
+  is `invalid`; an unknown base is `not_found`. gff-hab fetches only with `fetch`, and then only
+  when `base` names no commit here (`groups.md` 12.7): otherwise `base: origin/main` is whatever
+  the last fetch brought. A fetch that fails is `unavailable`.
 - **Included files.** `.worktreeinclude` is read from the source checkout. gff-hab asks git for
   the untracked files its patterns match (`ls-files --others --ignored --exclude-from`), keeps
   those git ignores anyway (`check-ignore --stdin`), and copies each: regular files with their

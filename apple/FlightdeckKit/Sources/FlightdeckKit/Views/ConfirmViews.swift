@@ -61,6 +61,8 @@ struct ConfirmCardView: View {
                     header
                     if editing, let d = center.draft(card), let s = c.start {
                         ConfirmEditor(center: center, card: card, draft: d, start: s)
+                    } else if let g = c.group, let d = center.groupDraft(card) {
+                        GroupPlanCard(center: center, card: card, draft: d, group: g, editing: editing)
                     } else {
                         facts
                     }
@@ -244,7 +246,7 @@ struct ConfirmCardView: View {
                 Task { await center.cancel(card) }
             }
             .disabled(!on)
-            if c.start != nil {
+            if c.start != nil || c.group != nil {
                 Button(editing ? "Done" : "Edit") { editing.toggle() }
                     .disabled(!on)
             }

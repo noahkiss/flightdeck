@@ -45,7 +45,9 @@ type Hab struct {
 	creates  []api.SessionCreateParams
 	noResume error // set: session.resume answers it
 
-	rounds roundBook        // rounds.go
+	rounds roundBook            // rounds.go
+	groups map[string]api.Group // groups.go
+	grev   uint64
 	cat    *api.CatalogList // what catalog.list answers; nil: unavailable
 }
 
@@ -60,6 +62,7 @@ func New(dir, hostID string) (*Hab, error) {
 		dir:      filepath.Join(dir, hostID+".state"),
 		agents:   map[string]api.AgentState{},
 		rounds:   newRoundBook(),
+		groups:   map[string]api.Group{},
 	}
 	return h, h.Start()
 }
@@ -284,6 +287,7 @@ func (s source) Snapshot(host api.HostInfo) api.Structure {
 		return 0
 	})
 	snap.Rounds = s.h.rounds.list()
+	snap.Groups = s.h.groupList()
 	return snap
 }
 

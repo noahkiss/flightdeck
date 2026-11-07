@@ -22,6 +22,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // Agent groups on their home hab (groups.md 3, 5): the record and its file, one confirmation
@@ -40,6 +41,7 @@ type groupsConfig struct {
 	store   *structure.Store
 	catalog func() api.CatalogList
 	links   func() []confirmLink
+	syncs   *groupSyncs          // what other homes pushed to this hab; nil: a push is refused
 	aliases func() aliases.Table // nil: none
 	// confirm asks the plan's confirmation (confirm.Service.Request).
 	confirm func(ctx context.Context, p api.ConfirmRequestParams) (api.Confirmation, error)
@@ -47,9 +49,21 @@ type groupsConfig struct {
 	create        func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	worktree      func(ctx context.Context, p api.WorktreeCreateParams) (api.WorktreeCreated, error)
 	listWorktrees func(ctx context.Context, p api.WorktreeListParams) (api.WorktreeList, error)
+	// removeWorktree runs worktree.remove on this hab, never with force (groups.md 7.3 step 7).
+	removeWorktree func(ctx context.Context, p api.WorktreeRemoveParams) (api.WorktreeRemoved, error)
+	// laneDir holds the lane's worktree per repository, <state>/lane. "": no lane runs.
+	laneDir   string
+	laneGit   worktree.Git
+	laneRetry time.Duration // 0: a minute
+	// heavy takes this hab's heavy-run lock for the lane's checks (groups.md 8) and returns
+	// its release. nil: the checks run with no lock.
+	heavy func(ctx context.Context, command string) (func(), error)
 	// closePane closes a member's pane on this hab.
 	closePane func(ctx context.Context, pane string) error
 	logbook   *lbsvc.Service // nil: group.create refuses, "groups need Logbook"
+	// listedPeer reports whether the peer list pins a device id: the review calls and
+	// group.message are taken only over such a peer's link. nil: none is.
+	listedPeer func(device string) bool
 	// note sends a message from Flightdeck to a session on this hab, by id.
 	note    func(session, text string) error
 	setting func(id string) json.RawMessage
@@ -61,11 +75,13 @@ type groupsConfig struct {
 	// 9); noteName sends a message from Flightdeck to a session on this hab, by name.
 	supervisor *supervisorRef
 	noteName   func(name, text string) error
-	now        func() time.Time
-	logf       func(string, ...any)
 	// capcom is the Capcom service on this hab, a coordinator like any session (groups.md
 	// 12.1). Nil: none.
 	capcom groupsCapcom
+	// notice raises a Flightdeck notice: a queued move that expired or was refused (5.7).
+	notice func(title, body string)
+	now    func() time.Time
+	logf   func(string, ...any)
 }
 
 // groupsCapcom is what groups need of the Capcom service (groups.md 12.1).
@@ -117,9 +133,33 @@ type groupsService struct {
 	running map[string]bool // a scheduler pass runs for the group
 	again   map[string]bool // another pass was asked for meanwhile
 	panes   map[string]string
-	closed  bool
-	wg      sync.WaitGroup
-	stop    chan struct{}
+	lane    laneState
+	// The member push (groups.md 3.3, 5.6): per group, the envelope and pause last saved
+	// (syncKey) and the revision that changed them (syncWant); per group and member device,
+	// the revision that device took (synced) and a push in flight (syncing).
+	syncKey  map[string]string
+	syncWant map[string]uint64
+	synced   map[string]uint64
+	syncing  map[string]bool
+	peerSeen map[string]string // group and member name: the peer copy's SeenAt last asked about
+	// peerAsked is when that member was last asked about; peerChecking, a check in flight.
+	peerAsked    map[string]time.Time
+	peerChecking map[string]bool
+	// The movable home (groups.md 5.7, groupmove.go): tombstones of groups that moved away,
+	// pending copies of groups moving here, and moves queued on this hab as the target.
+	tombs      map[string]*api.Group
+	pending    map[string]*api.Group
+	queued     []groups.Queued
+	queuing    map[string]bool // a queued move is being sent
+	committing map[string]bool // an adopt_commit is being sent
+	flushing   map[string]bool // a remote coordinator's inbox is being handed over
+	queueTries map[string]int  // unavailable answers to a queued move
+	closed     bool
+	wg         sync.WaitGroup
+	stop       chan struct{}
+	// base is cancelled by Stop: the move's calls over links end with it.
+	base       context.Context
+	baseCancel context.CancelFunc
 }
 
 var _ control.Groups = (*groupsService)(nil)
@@ -140,14 +180,44 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		cfg.logf = func(string, ...any) {}
 	}
 	s := &groupsService{cfg: cfg, st: st, groups: map[string]*api.Group{}, running: map[string]bool{}, again: map[string]bool{},
-		panes: map[string]string{}, stop: make(chan struct{})}
+		panes: map[string]string{}, syncKey: map[string]string{}, syncWant: map[string]uint64{}, synced: map[string]uint64{},
+		syncing: map[string]bool{}, peerSeen: map[string]string{}, peerAsked: map[string]time.Time{},
+		peerChecking: map[string]bool{}, stop: make(chan struct{}), tombs: map[string]*api.Group{}, pending: map[string]*api.Group{},
+		queuing: map[string]bool{}, committing: map[string]bool{}, flushing: map[string]bool{}, queueTries: map[string]int{}}
+	s.laneInit()
 	loaded, problems := st.Load(cfg.now())
 	for _, p := range problems {
 		cfg.logf("groups: %s", p)
 	}
+	// The lock is held while the records load: a drop below saves, and its save may start a
+	// push that reads the maps this loop still fills.
+	s.mu.Lock()
 	now := cfg.now()
+	if q, err := st.LoadQueued(now); err != nil {
+		cfg.logf("groups: %v", err)
+	} else {
+		s.queued = q
+	}
 	for i := range loaded {
 		g := loaded[i]
+		switch {
+		case g.Moved != nil:
+			s.tombs[g.ID] = &g
+			s.order = append(s.order, g.ID)
+			continue
+		case g.Pending:
+			s.pending[g.ID] = &g
+			s.order = append(s.order, g.ID)
+			continue
+		case g.Moving != nil:
+			// The hab restarted mid-move, before its tombstone: the group stays here. A pending
+			// copy on the target goes once the catalog shows it (groups.md 5.7 step 7).
+			g.MoveFailed = fmt.Sprintf("the move to %s did not commit: this hab restarted during it", nameOr(g.Moving.Label, g.Moving.To))
+			g.Moving = nil
+			if err := st.Save(g); err != nil {
+				cfg.logf("groups: %s: %v", g.ID, err)
+			}
+		}
 		if !groups.Live(g) && endedBefore(g, now.Add(-cfg.keys.KeepEnded)) {
 			if err := st.Remove(g.ID); err != nil {
 				cfg.logf("groups: %s: %v", g.ID, err)
@@ -165,10 +235,15 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		}
 		s.groups[g.ID] = &g
 		s.order = append(s.order, g.ID)
+		// After a restart each member's hab gets the envelope and pause once more: a push
+		// the restart cut short is not lost.
+		s.syncKey[g.ID], s.syncWant[g.ID] = syncKey(g), g.Revision
 	}
+	s.mu.Unlock()
 	for _, id := range s.order {
-		s.kick(id)
+		s.kick(id) // the lane follows each pass, so an item cut short in landing runs again
 	}
+	s.base, s.baseCancel = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.watch()
 	return s, nil
@@ -192,7 +267,9 @@ func (s *groupsService) Stop() {
 	}
 	s.closed = true
 	close(s.stop)
+	s.baseCancel()
 	s.mu.Unlock()
+	s.lane.cancel()
 	s.wg.Wait()
 }
 
@@ -241,7 +318,155 @@ func (s *groupsService) saveLocked(g *api.Group) error {
 	if s.cfg.poke != nil {
 		s.cfg.poke()
 	}
+	if k := syncKey(*g); k != s.syncKey[g.ID] {
+		// The envelope or the pause changed: each member's hab hears it now (groups.md 3.3,
+		// 5.6), not at its next catalog pull.
+		s.syncKey[g.ID], s.syncWant[g.ID] = k, g.Revision
+		if !s.closed {
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.syncMembers(g.ID)
+			}()
+		}
+	}
 	return err
+}
+
+// syncKey sums up what group.sync carries: the envelope and the pause.
+func syncKey(g api.Group) string {
+	b, _ := json.Marshal(struct {
+		E *api.GroupEnvelope
+		P *api.GroupPause
+	}{g.Envelope, syncPause(g)})
+	return string(b)
+}
+
+// syncPause is the pause reasons while paused, else nil.
+func syncPause(g api.Group) *api.GroupPause {
+	if g.Pause.User == "" && g.Pause.Usage == "" {
+		return nil
+	}
+	p := g.Pause
+	return &p
+}
+
+// syncMembers pushes the group's envelope and pause to each member's hab that has not taken
+// the latest change (groups.md 3.3, 5.6): over the link this hab dialed, at once. The members
+// on this hab get the envelope straight into their session records. A hab offline, or one
+// only the other way linked, gets it at a later pass (every 5 s) and reads the pause from the
+// catalog copy meanwhile.
+func (s *groupsService) syncMembers(id string) {
+	s.mu.Lock()
+	g := s.groups[id]
+	if g == nil || s.closed || !groups.Live(*g) || g.State == groups.StateConfirming {
+		s.mu.Unlock()
+		return
+	}
+	want := s.syncWant[id]
+	p := api.GroupSyncParams{Group: g.ID, Revision: g.Revision, Pause: syncPause(*g)}
+	if g.Envelope != nil {
+		e := *g.Envelope
+		e.Hosts, e.Harnesses = slices.Clone(e.Hosts), slices.Clone(e.Harnesses)
+		p.Envelope = &e
+	}
+	var devs []string
+	for _, m := range g.Members {
+		key := id + "\x00" + m.Device
+		if m.Device == "" || m.Session == "" || m.State != groups.MemberRunning || slices.Contains(devs, m.Device) ||
+			s.synced[key] >= want || s.syncing[key] {
+			continue
+		}
+		devs = append(devs, m.Device)
+		s.syncing[key] = true
+	}
+	s.mu.Unlock()
+	if len(devs) == 0 {
+		return
+	}
+	cl := s.cfg.catalog()
+	for _, dev := range devs {
+		ok := true
+		if dev == s.cfg.self {
+			if p.Envelope != nil {
+				s.cfg.store.SetGroupEnvelope(*p.Envelope)
+			}
+		} else {
+			ok = s.pushSync(cl, dev, p)
+		}
+		s.mu.Lock()
+		key := id + "\x00" + dev
+		delete(s.syncing, key)
+		if ok && p.Revision > s.synced[key] {
+			s.synced[key] = p.Revision
+		}
+		s.mu.Unlock()
+	}
+}
+
+// pushSync sends one group.sync to a member's hab over the link this hab dialed.
+func (s *groupsService) pushSync(cl api.CatalogList, dev string, p api.GroupSyncParams) bool {
+	c, label, err := s.peerCaller(cl, dev)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := s.peerCtx()
+	defer cancel()
+	if err := c.Call(ctx, "group.sync", p, &api.Empty{}); err != nil {
+		var ce *control.Error
+		if errors.As(err, &ce) && (ce.Data.Kind == api.ErrorKindNotFound || ce.Data.Kind == api.ErrorKindDenied ||
+			ce.Data.Kind == api.ErrorKindInvalid) {
+			// A hab that answers but takes no push (an older build, or one that does not know
+			// this home yet) is not asked again for this change: it reads the pause from the
+			// catalog copy.
+			s.cfg.logf("groups: %s: %s takes no group.sync: %v", p.Group, label, err)
+			return true
+		}
+		s.cfg.logf("groups: %s: group.sync to %s: %v", p.Group, label, err)
+		return false
+	}
+	return true
+}
+
+// peerCtx bounds one call to a peer: 5 s, and cut short when the service stops, so a peer
+// that is linked but does not answer holds up neither the watch pass nor Stop for long.
+func (s *groupsService) peerCtx() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	go func() {
+		select {
+		case <-s.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+// Sync takes a group's envelope and pause from its home hab over a peer link (groups.md 3.3,
+// 5.6): the envelope of that group's members on this hab is replaced, and the pause holds
+// messages and starts at once. Only the group's home sends it: the catalog lists that hab as
+// the home, or a member here carries its envelope.
+func (s *groupsService) Sync(from api.PeerHello, p api.GroupSyncParams) error {
+	switch {
+	case !confirm.ValidGroupID(p.Group):
+		return control.Errorf(api.ErrorKindInvalid, "group %q: use 1 to 64 lowercase letters, digits and '-'", p.Group)
+	case p.Envelope != nil && (p.Envelope.Group != p.Group || p.Envelope.Home != from.DeviceID):
+		return control.Errorf(api.ErrorKindInvalid, "the envelope is for group %q from %q; this push is for group %q from %q",
+			p.Envelope.Group, p.Envelope.Home, p.Group, from.DeviceID)
+	case s.cfg.syncs == nil:
+		return control.Errorf(api.ErrorKindUnavailable, "this hab takes no group pushes")
+	}
+	cg, listed := groupOf(s.cfg.catalog(), p.Group)
+	if !(listed && cg.Home == from.DeviceID) && !s.cfg.store.GroupHome(p.Group, from.DeviceID) {
+		return control.Errorf(api.ErrorKindDenied, "%s is not the home of group %s here: no member of it on this hab came from there", from.Host, p.Group)
+	}
+	if !s.cfg.syncs.take(from.DeviceID, p) {
+		return nil // an older push than one taken: nothing changes
+	}
+	if p.Envelope != nil {
+		s.cfg.store.SetGroupEnvelope(*p.Envelope)
+	}
+	return nil
 }
 
 func copyGroup(g api.Group) api.Group {
@@ -292,6 +517,11 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 		return cg, false, control.Errorf(api.ErrorKindUnavailable, "groups need Logbook, which this hab runs without")
 	}
 	plan := cg.Plan
+	plan.Members = slices.Clone(plan.Members)
+	for i := range plan.Members {
+		plan.Members[i] = s.resolveMember(plan.Members[i])
+	}
+	cl := s.cfg.catalog()
 	full := plan // an amend is checked as the whole plan with the change in it
 	s.mu.Lock()
 	g := s.groups[cg.Group]
@@ -301,13 +531,22 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 			return cg, false, control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", cg.Group)
 		}
 		full = g.Plan
-		full.Items = append(slices.Clone(full.Items), plan.Items...)
-		full.Members = append(slices.Clone(full.Members), plan.Members...)
 		plan.Title, plan.Brief, plan.Project, plan.Lane = full.Title, full.Brief, full.Project, full.Lane
 	}
 	s.mu.Unlock()
-	for i := range plan.Members {
-		plan.Members[i] = s.resolveMember(plan.Members[i])
+	// Each new item with review on gets a reviewer in another harness (groups.md 6.2). In an
+	// amend, the hosts it looks at are the change's.
+	for i := range plan.Items {
+		if plan.Items[i].Review == "" {
+			plan.Items[i].Review = "on"
+		}
+	}
+	plan = groups.AddReviewers(plan, s.installed(cl))
+	if cg.Amend {
+		full.Items = append(slices.Clone(full.Items), plan.Items...)
+		full.Members = append(slices.Clone(full.Members), plan.Members...)
+	} else {
+		full = plan
 	}
 	for i := range full.Members {
 		full.Members[i] = s.resolveMember(full.Members[i])
@@ -324,7 +563,6 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 	if err := groups.Check(full, s.intSetting(settings.GroupMaxWorkers, 2)); err != nil {
 		return cg, false, err
 	}
-	cl := s.cfg.catalog()
 	proj, ok := project(cl, plan.Project)
 	if !ok {
 		return cg, false, control.Errorf(api.ErrorKindNotFound, "no project %q in the catalog; the projects tool lists them", plan.Project)
@@ -367,8 +605,52 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 	}
 	cg.Plan = plan
 	cg.Trust = groups.TrustRule(cg.Group, hosts, harnessList)
-	cg.Warnings = groups.Warnings(full)
+	cg.Warnings = append(groups.Warnings(full), groups.SameHarnessLines(plan)...)
+	if !cg.Amend {
+		if line := s.alwaysOnLine(cl, proj); line != "" {
+			cg.Warnings = append(cg.Warnings, line)
+		}
+	}
 	return cg, elsewhere, nil
+}
+
+// installed reports whether a harness is on a plan host: a capability word the host's catalog
+// detected or declares (groups.md 6.2). host is a peer label, or "" or this hab's host id.
+func (s *groupsService) installed(cl api.CatalogList) func(host, harness string) bool {
+	return func(host, harness string) bool {
+		for _, h := range cl.Hosts {
+			if (host == "" || host == s.cfg.host) != h.Own || (!h.Own && h.Label != host) {
+				continue
+			}
+			for _, c := range h.Catalog.Capabilities {
+				if c.Name == harness {
+					return true
+				}
+			}
+		}
+		return false
+	}
+}
+
+// alwaysOnLine is the plan card's line when this hab is not marked always on and an always-on
+// peer has the project (groups.md 5.7, at creation): the user may move the home there.
+func (s *groupsService) alwaysOnLine(cl api.CatalogList, proj api.CatalogProjectGroup) string {
+	var peers []string
+	for _, h := range cl.Hosts {
+		if h.Own {
+			if h.Catalog.AlwaysOn {
+				return ""
+			}
+			continue
+		}
+		if h.Catalog.AlwaysOn && h.Label != "" && folderOn(proj, h.Catalog.DeviceID) != "" {
+			peers = append(peers, h.Label)
+		}
+	}
+	if len(peers) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is not marked always on; %s is and has the project: move the group home there to keep the lane going while this host sleeps", s.cfg.host, strings.Join(peers, ", "))
 }
 
 // resolveMember turns a member's alias into its harness and model.
@@ -618,6 +900,7 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 	}
 	var newItems []api.GroupPlanItem
 	var newPos []int
+	var edits []api.LogbookChange
 	tag := ""
 	if cg.Amend {
 		for _, it := range cg.Plan.Items {
@@ -636,6 +919,8 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		for _, it := range g.Items {
 			keep[it.ID] = it.Task
 		}
+		edits = cardEdits(*g, cg.Plan)
+		g.Title = cg.Plan.Title
 		g.Plan = cg.Plan
 		g.Items, g.Members = nil, nil
 		groups.AddPlan(g, cg.Plan)
@@ -663,6 +948,14 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 	planRec, lbProj := g.PlanRecord, ""
 	s.saveLocked(g)
 	s.mu.Unlock()
+	if len(edits) > 0 && s.cfg.logbook != nil {
+		// The card's edits of the title and the briefs reach the plan record and the tasks
+		// they were filed as.
+		if _, err := s.cfg.logbook.Write(ctx, s.habActor(""), api.LogbookWriteParams{Changes: edits,
+			IdempotencyKey: "group-card-" + cg.Group}); err != nil {
+			s.cfg.logf("groups: %s: writing the card's edits to Logbook: %v", cg.Group, err)
+		}
+	}
 	if len(newItems) > 0 {
 		cl := s.cfg.catalog()
 		if proj, ok := project(cl, g.Plan.Project); ok {
@@ -682,6 +975,34 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 	}
 	s.kick(cg.Group)
 	return api.ConfirmResult{Host: s.cfg.host}, nil
+}
+
+// cardEdits are the Logbook changes of the card's edits (groups.md 5.8): the plan record's title
+// and body, and the title and body of each item's task that the edit changed.
+func cardEdits(g api.Group, plan api.GroupPlan) []api.LogbookChange {
+	var out []api.LogbookChange
+	set := func(id, field, old, new string) {
+		if id == "" || old == new || (field == "title" && strings.TrimSpace(new) == "") {
+			return
+		}
+		v, _ := json.Marshal(new)
+		out = append(out, api.LogbookChange{Op: api.LogbookChangeOpSet, ID: id, Field: field, Value: v})
+	}
+	set(g.PlanRecord, "title", g.Plan.Title, plan.Title)
+	set(g.PlanRecord, "body", g.Plan.Brief, plan.Brief)
+	for _, it := range plan.Items {
+		i := groups.ItemIndex(g, it.ID)
+		if i < 0 {
+			continue
+		}
+		for _, old := range g.Plan.Items {
+			if old.ID == it.ID {
+				set(g.Items[i].Task, "title", old.Title, it.Title)
+				set(g.Items[i].Task, "body", old.Brief, it.Brief)
+			}
+		}
+	}
+	return out
 }
 
 // envelope is what the confirmed plan allows (groups.md 3.3).
@@ -748,6 +1069,7 @@ func (s *groupsService) kick(id string) {
 				delete(s.running, id)
 				delete(s.again, id)
 				s.mu.Unlock()
+				s.laneKick(id) // an item may be ready to land
 				return
 			}
 			s.again[id] = false
@@ -761,26 +1083,36 @@ func (s *groupsService) pass(id string) {
 	for {
 		s.mu.Lock()
 		g := s.groups[id]
-		if g == nil || s.closed {
+		if g == nil || s.closed || g.Moving != nil {
 			s.mu.Unlock()
-			return
+			return // a moving group starts nothing: the new home does (groups.md 5.7)
 		}
 		next := groups.NextLeads(*g, s.intSetting(settings.GroupMaxLeads, 3))
-		var item string
+		item, mi := "", -1
 		for _, it := range next {
+			if waitsForYes(*g, it) {
+				continue // its setup waits for the user's yes; group_retry tries it again
+			}
 			if i := groups.MemberIndex(*g, g.Items[groups.ItemIndex(*g, it)].Lead); i >= 0 && g.Members[i].State == groups.MemberPlanned {
-				item = it
+				item, mi = it, i
 				break
 			}
+		}
+		if item == "" {
+			// A reviewer starts when its item is submitted (groups.md 4.3 step 4, 6.2). It
+			// holds no lead slot.
+			item, mi = nextReviewer(*g)
 		}
 		if item == "" {
 			s.mu.Unlock()
 			return
 		}
 		ii := groups.ItemIndex(*g, item)
-		mi := groups.MemberIndex(*g, g.Items[ii].Lead)
+		reviewer := g.Members[mi].Role == groups.RoleReviewer
 		g.Members[mi].State = groups.MemberStarting
-		g.Items[ii].Reason = ""
+		if !reviewer {
+			g.Items[ii].Reason = ""
+		}
 		s.saveLocked(g)
 		snap := copyGroup(*g)
 		s.mu.Unlock()
@@ -798,11 +1130,18 @@ func (s *groupsService) pass(id string) {
 		switch {
 		case err != nil && errors.Is(err, errSetupWaits):
 			m.State = groups.MemberPlanned
-			it.Reason = err.Error()
+			if !reviewer {
+				it.Reason = err.Error()
+			}
 			g.Waits = appendOnce(g.Waits, fmt.Sprintf("%s: %v", it.ID, err))
 			s.saveLocked(g)
 			s.mu.Unlock()
 			return // the yes comes from the user; a retry starts it
+		case err != nil && reviewer:
+			// The item stays in review: the coordinator retries the reviewer.
+			m.State, m.Reason = groups.MemberFailed, errText(err)
+			it.Stuck = "its reviewer failed to start"
+			s.tellLocked(g, fmt.Sprintf("Reviewer %s of item %s failed to start: %s. The item stays in review; group_retry starts the reviewer again.", m.Name, it.ID, errText(err)), "Flightdeck")
 		case err != nil:
 			m.State, m.Reason = groups.MemberFailed, errText(err)
 			it.State, it.Reason = groups.ItemStalled, "its lead failed to start: "+errText(err)
@@ -814,14 +1153,19 @@ func (s *groupsService) pass(id string) {
 			g.Leftovers = appendOnce(g.Leftovers, fmt.Sprintf("member %s on %s, folder %s", m.Name, m.Host, m.Folder))
 			s.saveLocked(g)
 			s.mu.Unlock()
-			if res.device == s.cfg.self && s.cfg.closePane != nil && s.boolSetting(settings.GroupCloseMembers, true) {
+			if res.Pane != "" && s.boolSetting(settings.GroupCloseMembers, true) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				if err := s.cfg.closePane(ctx, res.Pane); err != nil {
-					s.cfg.logf("groups: %s: closing pane %s: %v", g.ID, res.Pane, err)
-				}
+				s.closeMemberPane(ctx, s.cfg.catalog(), res.device, res.Pane)
 				cancel()
 			}
 			return
+		case reviewer:
+			m.State, m.Session, m.Device, m.Folder, m.Host = groups.MemberRunning, res.Session, res.device, res.folder, res.host
+			s.panes[g.ID+"/"+m.Name] = res.Pane
+			if it.State == groups.ItemReview && it.Submitted != snap.Items[ii].Submitted {
+				// The lead submitted again while the reviewer started: it hears of the new head.
+				s.memberNoteLocked(g, *m, newHeadText(*g, *it))
+			}
 		default:
 			m.State, m.Session, m.Device, m.Folder, m.Host = groups.MemberRunning, res.Session, res.device, res.folder, res.host
 			s.panes[g.ID+"/"+m.Name] = res.Pane
@@ -831,6 +1175,33 @@ func (s *groupsService) pass(id string) {
 		s.saveLocked(g)
 		s.mu.Unlock()
 	}
+}
+
+// waitsForYes reports whether an item's member start waits for the user's yes to its
+// worktree setup: the waits line names it until group_retry clears it. The scheduler skips it,
+// so one waiting start never holds the others back.
+func waitsForYes(g api.Group, item string) bool {
+	return slices.ContainsFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, item+":") })
+}
+
+// nextReviewer returns the first item in review whose planned reviewer starts now, and the
+// reviewer's member index: in a running group only.
+func nextReviewer(g api.Group) (string, int) {
+	if g.State != groups.StateRunning {
+		return "", -1
+	}
+	for _, it := range g.Items {
+		if it.State != groups.ItemReview || it.Reviewer == "" {
+			continue
+		}
+		if waitsForYes(g, it.ID) {
+			continue
+		}
+		if i := groups.MemberIndex(g, it.Reviewer); i >= 0 && g.Members[i].State == groups.MemberPlanned {
+			return it.ID, i
+		}
+	}
+	return "", -1
 }
 
 func appendOnce(list []string, line string) []string {
@@ -895,7 +1266,19 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 		}
 		caller, host = l.Caller, m.Host
 	}
-	wp := api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: src}, Branch: it.Branch, Base: g.Plan.Lane.Target}
+	branch, base := it.Branch, g.Plan.Lane.Target
+	if m.Role == groups.RoleReviewer {
+		// A review worktree on the submitted head, on the reviewer's own branch (groups.md 6.2,
+		// 6.4). The commit must be in the reviewer's repository: B4's fetch brings it there
+		// from another host.
+		branch, base = groups.ReviewBranch(g.ID, it.ID), it.Submitted
+	} else if up := groups.Upstream(g, it); up != "" {
+		// A stacked item starts from the submitted head of the item it stacks on (groups.md 7.2).
+		base = up
+	}
+	// The fetch brings what another host pushed: the lead's submitted head for a reviewer, the
+	// earlier item's head for a stacked lead (groups.md 12.7).
+	wp := api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: src}, Branch: branch, Base: base, Fetch: true}
 	var wt api.WorktreeCreated
 	var err error
 	if self {
@@ -906,7 +1289,7 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 	if err != nil && strings.Contains(err.Error(), "exists") {
 		// A start tried again after a restart: the branch's worktree is there already.
 		var ferr error
-		if wt, ferr = s.findWorktree(ctx, caller, src, it.Branch); ferr == nil {
+		if wt, ferr = s.findWorktree(ctx, caller, src, branch); ferr == nil {
 			err = nil
 		} else if errors.Is(ferr, errNoWorktree) {
 			// The branch is there but its worktree was removed: a new one on the branch.
@@ -932,7 +1315,7 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 	}
 	key := sha256.Sum256([]byte(g.ID + "\x00" + m.Name + "\x00" + strconv.Itoa(m.Attempts)))
 	p := api.SessionCreateParams{Name: m.Name, ProjectDir: wt.Worktree.Path, Harness: m.Harness, Model: m.Model,
-		Seed: leadSeed(g, m, it, wt.Worktree.Path), IdempotencyKey: "group-" + hex.EncodeToString(key[:16]),
+		Seed: memberSeed(g, m, it, wt.Worktree.Path, s.cfg.keys), IdempotencyKey: "group-" + hex.EncodeToString(key[:16]),
 		Group:      &api.SessionGroup{ID: g.ID, Role: m.Role, Item: m.Item},
 		Envelope:   env,
 		TrustCover: &api.TrustCover{Group: g.ID, Confirmation: env.Confirmation, Harness: m.Harness, BranchPrefix: confirm.GroupBranchPrefix(g.ID)}}
@@ -981,6 +1364,65 @@ func (s *groupsService) findWorktree(ctx context.Context, caller api.Caller, src
 	return api.WorktreeCreated{}, fmt.Errorf("%w %s", errNoWorktree, branch)
 }
 
+// memberSeed is a member's first message: a lead's, or a reviewer's (groups.md 6.2).
+func memberSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string, keys groups.Keys) string {
+	if m.Role == groups.RoleReviewer {
+		return clipSeed(reviewSeed(g, it, folder, keys))
+	}
+	return leadSeed(g, m, it, folder)
+}
+
+func clipSeed(s string) string {
+	if utf8.RuneCountInString(s) > confirm.MaxSeed {
+		return string([]rune(s)[:confirm.MaxSeed])
+	}
+	return s
+}
+
+// diffCommand is how a reviewer reads the submitted head's diff against the merge base with
+// the lane target (groups.md 6.2).
+func diffCommand(g api.Group, head string) string {
+	target := g.Plan.Lane.Target
+	if target == "" {
+		target = "origin/HEAD"
+	}
+	return fmt.Sprintf("git diff $(git merge-base %s %s) %s", target, head, head)
+}
+
+// reviewSeed is a reviewer's first message (groups.md 6.2, 6.3, 6.4): the item's brief, how to
+// read the diff against the merge base, and the review rules.
+func reviewSeed(g api.Group, it api.GroupItem, folder string, keys groups.Keys) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are the reviewer of item %s (%s) in agent group %s: %s.\n", it.ID, it.Title, g.ID, g.Title)
+	fmt.Fprintf(&b, "Review commit %s, the submit of branch %s by the lead %s. Your worktree is %s, on your own branch %s at that commit; if its head is another commit, run git reset --hard %s first.\n",
+		it.Submitted, it.Branch, it.Lead, folder, it.ReviewBranch, it.Submitted)
+	fmt.Fprintf(&b, "Read the diff against the merge base: %s. The coordinator is %s.\n\n", diffCommand(g, it.Submitted), g.Coordinator.Address)
+	b.WriteString("The rules:\n")
+	fmt.Fprintf(&b, "- Review the diff against the item's brief. Report the most severe %d findings, high or medium only. Do not report low findings or style.\n", keys.BriefFindings)
+	fmt.Fprintf(&b, "- End with the review_verdict tool (group %s, item %s): verdict pass or fix_needed, at most %d findings, each with severity, title, place (file and line) and one paragraph.\n", g.ID, it.ID, keys.MaxFindings)
+	if groups.FixInPlace(g.Plan) {
+		fmt.Fprintf(&b, "- You may fix your own findings: commit in your worktree on top of the submitted commit, on %s and never on the lead's branch, and name the commits in review_verdict's fixed field. A pass with fixes lands your branch's head.\n", it.ReviewBranch)
+	} else {
+		b.WriteString("- Do not fix in place: the plan leaves the fixes to the lead.\n")
+	}
+	b.WriteString("- Your full review stays in your transcript; the coordinator gets one line. A new submit reaches you as a message from Flightdeck.\n\n")
+	for _, pi := range g.Plan.Items {
+		if pi.ID == it.ID && pi.Brief != "" {
+			b.WriteString("The item:\n" + pi.Brief + "\n\n")
+		}
+	}
+	if g.Plan.Brief != "" {
+		b.WriteString("The task:\n" + g.Plan.Brief + "\n")
+	}
+	return b.String()
+}
+
+// newHeadText tells a running reviewer of a new submit (groups.md 6.2).
+func newHeadText(g api.Group, it api.GroupItem) string {
+	return fmt.Sprintf("Group %s, item %s: the lead %s submitted again. Review commit %s now: run git reset --hard %s in your worktree, then read the diff: %s. A verdict on the earlier head no longer counts; end with review_verdict on this one.",
+		g.ID, it.ID, it.Lead, it.Submitted, it.Submitted, diffCommand(g, it.Submitted))
+}
+
 // leadSeed is a lead's first message: the group's brief, its item and how to report.
 func leadSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string) string {
 	var brief string
@@ -992,7 +1434,15 @@ func leadSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string) s
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the %s of item %s (%s) in agent group %s: %s.\n", m.Role, it.ID, it.Title, g.ID, g.Title)
 	fmt.Fprintf(&b, "Work in %s on branch %s. The coordinator is %s.\n", folder, it.Branch, g.Coordinator.Address)
-	fmt.Fprintf(&b, "Report with group_report (group %s); write progress and hand-off notes with group_note (item %s). Your item's Logbook task is %s.\n\n", g.ID, it.ID, it.Task)
+	fmt.Fprintf(&b, "Report with group_report (group %s); write progress and hand-off notes with group_note (item %s). Your item's Logbook task is %s.\n", g.ID, it.ID, it.Task)
+	if m.Role == groups.RoleLead {
+		fmt.Fprintf(&b, "When the item is done, commit on %s and call lane_submit (group %s, item %s); Flightdeck pushes the branch to the project's remote", it.Branch, g.ID, it.ID)
+		if it.Reviewer != "" {
+			b.WriteString(": a reviewer reviews it, and its findings reach you as a message from Flightdeck")
+		}
+		b.WriteString(".\n")
+	}
+	b.WriteString("\n")
 	if g.Plan.Brief != "" {
 		b.WriteString("The task:\n" + g.Plan.Brief + "\n\n")
 	}
@@ -1016,9 +1466,22 @@ func (s *groupsService) Get(id string) (api.Group, error) {
 	defer s.mu.Unlock()
 	g := s.groups[id]
 	if g == nil {
-		return api.Group{}, control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
+		return api.Group{}, s.notHereLocked(id)
 	}
 	return copyGroup(*g), nil
+}
+
+// notHereLocked is the refusal for a group this hab is not the home of: moved, with the new
+// home, for a tombstone; unavailable for a pending copy, so the caller tries again after
+// [groups] move_retry; else not found. The caller holds s.mu.
+func (s *groupsService) notHereLocked(id string) error {
+	if t := s.tombs[id]; t != nil {
+		return movedErr(id, t.Moved.To, t.Moved.Label)
+	}
+	if s.pending[id] != nil {
+		return control.Errorf(api.ErrorKindUnavailable, "group %s is moving to this hab; try again in a moment", id)
+	}
+	return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
 }
 
 // List returns the short forms, newest first.
@@ -1048,7 +1511,8 @@ func (s *groupsService) Snapshot() []api.Group {
 	return out
 }
 
-// Section is the catalog's groups section: the short form of each group (groups.md 5.1).
+// Section is the catalog's groups section: the short form of each group (groups.md 5.1), and
+// each tombstone, so other habs follow a move (5.7). A pending copy is not published.
 func (s *groupsService) Section() []api.CatalogGroup {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1056,6 +1520,8 @@ func (s *groupsService) Section() []api.CatalogGroup {
 	for _, id := range s.order {
 		if g := s.groups[id]; g != nil {
 			out = append(out, groups.Short(*g))
+		} else if t := s.tombs[id]; t != nil {
+			out = append(out, groups.Short(*t))
 		}
 	}
 	return out
@@ -1078,7 +1544,18 @@ func (s *groupsService) watch() {
 		s.mu.Unlock()
 		for _, id := range ids {
 			s.refresh(id)
+			// The peer calls run beside the pass, so a peer that does not answer holds up
+			// no other group's refresh. syncMembers skips a device with a push in flight;
+			// checkPeerMembers runs once at a time per group.
+			s.mu.Lock()
+			if !s.closed {
+				s.wg.Add(2)
+				go func() { defer s.wg.Done(); s.syncMembers(id) }()
+				go func() { defer s.wg.Done(); s.checkPeerMembers(id) }()
+			}
+			s.mu.Unlock()
 		}
+		s.moveTick()
 	}
 }
 
@@ -1105,6 +1582,9 @@ func (s *groupsService) refresh(id string) {
 				continue
 			}
 			i := slices.IndexFunc(g.Members, func(m api.GroupMember) bool { return m.Name == a.Session && (m.Device == "" || m.Device == dev) })
+			if i < 0 && !admitMember(*g, a, dev) {
+				continue
+			}
 			if i < 0 {
 				g.Members = append(g.Members, api.GroupMember{Session: a.ID, Name: a.Session, Host: label, Device: dev, Harness: a.Harness,
 					Role: a.Group.Role, Item: a.Group.Item, State: groups.MemberRunning})
@@ -1133,20 +1613,172 @@ func (s *groupsService) refresh(id string) {
 		switch {
 		case !ok:
 			m.State, changed = groups.MemberExited, true
-			if m.Role == groups.RoleLead {
-				if ii := groups.ItemIndex(*g, m.Item); ii >= 0 && g.Items[ii].State != groups.ItemLanded && g.Items[ii].State != groups.ItemDropped {
-					g.Items[ii].State, g.Items[ii].Reason = groups.ItemStalled, "its lead's session was closed"
-					s.tellLocked(g, fmt.Sprintf("Lead %s of item %s was closed. The item is stalled; group_retry starts a new lead.", m.Name, m.Item), "Flightdeck")
-				}
-			}
+			s.stallLocked(g, *m)
 		case ss.State == "exited":
 			m.Agent = "exited"
 		}
 	}
+	if s.stuckLocked(g) {
+		changed = true
+	}
+	s.sweepLocked(g)
 	if changed {
 		s.saveLocked(g)
 		go s.kick(g.ID)
 	}
+}
+
+// peerExitedRecheck is how often a peer is asked again about a member whose agent exited.
+const peerExitedRecheck = 2 * time.Minute
+
+// checkPeerMembers asks a peer hab about its running members that its latest catalog copy no
+// longer lists as agents (groups.md 14): a session that is gone was closed, which stalls a
+// lead's item as on this hab; one that exited shows exited. A member is asked about once per
+// copy, over the link this hab dialed; a hab offline is not asked, and its members stay as
+// they were (stale on the card).
+func (s *groupsService) checkPeerMembers(id string) {
+	cl := s.cfg.catalog()
+	copies := map[string]api.CatalogEntry{}
+	for _, h := range cl.Hosts {
+		if !h.Own {
+			copies[h.Catalog.DeviceID] = h
+		}
+	}
+	s.mu.Lock()
+	g := s.groups[id]
+	if g == nil || s.closed || !groups.Live(*g) || s.peerChecking[id] {
+		s.mu.Unlock()
+		return
+	}
+	s.peerChecking[id] = true
+	defer func() {
+		s.mu.Lock()
+		delete(s.peerChecking, id)
+		s.mu.Unlock()
+	}()
+	now := s.cfg.now()
+	ask := map[string][]string{} // device: member names
+	seen := map[string]string{}  // member key: the copy's SeenAt asked at
+	for _, m := range g.Members {
+		if m.Device == "" || m.Device == s.cfg.self || m.Session == "" || m.State != groups.MemberRunning {
+			continue
+		}
+		h, ok := copies[m.Device]
+		if !ok || slices.ContainsFunc(h.Catalog.Agents, func(a api.CatalogAgent) bool { return a.ID == m.Session }) {
+			continue
+		}
+		key := id + "\x00" + m.Name
+		if s.peerSeen[key] == h.SeenAt {
+			continue
+		}
+		if m.Agent == "exited" && now.Sub(s.peerAsked[key]) < peerExitedRecheck {
+			// An exited agent never shows in the copy: its session is asked about again only
+			// now and then, to see whether the user closed it.
+			continue
+		}
+		s.peerAsked[key] = now
+		seen[key] = h.SeenAt
+		ask[m.Device] = append(ask[m.Device], m.Name)
+	}
+	s.mu.Unlock()
+	for dev, names := range ask {
+		sessions, err := s.peerSessions(cl, dev)
+		if err != nil {
+			continue // asked again with the next copy
+		}
+		s.mu.Lock()
+		g = s.groups[id]
+		if g == nil || !groups.Live(*g) {
+			s.mu.Unlock()
+			return
+		}
+		changed := false
+		for _, name := range names {
+			s.peerSeen[id+"\x00"+name] = seen[id+"\x00"+name]
+			i := groups.MemberIndex(*g, name)
+			if i < 0 || g.Members[i].State != groups.MemberRunning {
+				continue
+			}
+			m := &g.Members[i]
+			ss, ok := sessions[m.Session]
+			switch {
+			case !ok:
+				m.State, changed = groups.MemberExited, true
+				s.stallLocked(g, *m)
+			case ss.State == "exited":
+				m.Agent = "exited"
+			}
+		}
+		if changed {
+			s.saveLocked(g)
+			go s.kick(id)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// peerSessions reads a peer hab's sessions by id over the link this hab dialed.
+func (s *groupsService) peerSessions(cl api.CatalogList, dev string) (map[string]api.Session, error) {
+	c, label, err := s.peerCaller(cl, dev)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.peerCtx()
+	defer cancel()
+	var st api.StructureResult
+	if err := c.Call(ctx, "structure.get", api.StructureGetParams{}, &st); err != nil {
+		s.cfg.logf("groups: reading the sessions on %s: %v", label, err)
+		return nil, err
+	}
+	out := map[string]api.Session{}
+	for _, ss := range st.Sessions {
+		out[ss.ID] = ss
+	}
+	return out, nil
+}
+
+// peerCaller is the link this hab dialed to the hab with device id dev, while it is online.
+func (s *groupsService) peerCaller(cl api.CatalogList, dev string) (api.Caller, string, error) {
+	label := ""
+	for _, h := range cl.Hosts {
+		if !h.Own && h.Catalog.DeviceID == dev {
+			label = h.Label
+		}
+	}
+	l, ok := s.link(label)
+	if label == "" || !ok || !l.Online || l.Caller == nil {
+		return nil, label, fmt.Errorf("the hab %s is offline", label)
+	}
+	return l.Caller, label, nil
+}
+
+// stallLocked stalls the item of a lead whose session was closed, and tells the coordinator
+// (groups.md 14). The caller holds s.mu and saves the record.
+func (s *groupsService) stallLocked(g *api.Group, m api.GroupMember) {
+	if m.Role != groups.RoleLead {
+		return
+	}
+	if ii := groups.ItemIndex(*g, m.Item); ii >= 0 && !inLane(g.Items[ii].State) {
+		g.Items[ii].State, g.Items[ii].Reason = groups.ItemStalled, "its lead's session was closed"
+		s.tellLocked(g, fmt.Sprintf("Lead %s of item %s was closed. The item is stalled; group_retry starts a new lead.", m.Name, m.Item), "Flightdeck")
+	}
+}
+
+// admitMember reports whether an agent the record does not list is a member a member's hab
+// started inside the envelope (groups.md 3.3): a worker or reviewer on a plan item, on a plan
+// host, in a plan harness. A session that carries the group but started outside the envelope
+// is not a member, so it never counts as a worker.
+func admitMember(g api.Group, a api.CatalogAgent, dev string) bool {
+	e := g.Envelope
+	switch {
+	case e == nil || a.Group == nil:
+		return false
+	case a.Group.Role != groups.RoleWorker && a.Group.Role != groups.RoleReviewer:
+		return false
+	case groups.ItemIndex(g, a.Group.Item) < 0:
+		return false
+	}
+	return slices.Contains(e.Hosts, dev) && slices.Contains(e.Harnesses, a.Harness)
 }
 
 // --- reports, notes, pause, close, retry ---
@@ -1154,6 +1786,14 @@ func (s *groupsService) refresh(id string) {
 // tellLocked sends the coordinator a report: a message from Flightdeck while it runs, else it
 // waits in the inbox (groups.md 5.5). The caller holds s.mu and saves the record.
 func (s *groupsService) tellLocked(g *api.Group, text, from string) string {
+	if groups.CoordinatorDevice(*g) != s.cfg.self {
+		// A moved group: the coordinator runs on another hab. The report waits in the inbox
+		// and goes over the link as group.tell (groups.md 5.7).
+		groups.AddReport(g, api.GroupReport{At: stampT(s.cfg.now()), From: from, Text: text}, s.cfg.keys.InboxMax, s.cfg.keys.InboxDays, s.cfg.now())
+		id := g.ID
+		s.bgLocked(func() { s.flushRemote(id) })
+		return "waiting"
+	}
 	ss, ok := s.cfg.store.Session(s.coordinatorOf(*g))
 	// Capcom always counts as running: its thread takes the report while the engine is busy
 	// or down (groups.md 12.1).
@@ -1190,34 +1830,84 @@ func (s *groupsService) Report(ctx context.Context, p api.GroupReportParams) (ap
 	if from == "" {
 		from = "the user"
 	}
+	if groups.CoordinatorDevice(*g) != s.cfg.self {
+		groups.AddReport(g, api.GroupReport{At: stampT(s.cfg.now()), From: from, Text: p.Text}, s.cfg.keys.InboxMax, s.cfg.keys.InboxDays, s.cfg.now())
+		s.saveLocked(g)
+		s.mu.Unlock()
+		if s.flushRemote(p.Group) {
+			return api.GroupReported{State: "sent"}, nil
+		}
+		return api.GroupReported{State: "waiting"}, nil
+	}
 	state := s.tellLocked(g, p.Text, from)
 	s.saveLocked(g)
 	s.mu.Unlock()
 	return api.GroupReported{State: state}, nil
 }
 
-// forward sends a call about a group this hab is not the home of to its home, found in the
-// catalog's groups sections, over the link to it.
+// forward sends a call about a group this hab is not the home of to its home: the tombstone's
+// new home when this hab moved it, else the catalog copy with the highest generation (groups.md
+// 5.7). A moved refusal sends it once more to the hab it names; an unavailable answer from a
+// pending copy is tried again after [groups] move_retry. A call that came over a peer link is
+// passed on only by the hab that holds its tombstone, so a call is never forwarded in a loop.
 func (s *groupsService) forward(ctx context.Context, group, method string, p, out any) error {
-	if _, peer := control.CallerPeer(ctx); peer {
-		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", group) // never forwarded twice
+	_, fromPeer := control.CallerPeer(ctx)
+	s.mu.Lock()
+	t := s.tombs[group]
+	var to, label string
+	if t != nil {
+		to, label = t.Moved.To, t.Moved.Label
+	}
+	here := s.notHereLocked(group)
+	s.mu.Unlock()
+	if fromPeer && t == nil {
+		return here
+	}
+	if t == nil && errKind(here) == api.ErrorKindUnavailable {
+		return here // a pending copy here: the caller tries again
 	}
 	cl := s.cfg.catalog()
-	cg, ok := groupOf(cl, group)
-	if !ok || cg.Home == "" || cg.Home == s.cfg.self {
-		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
+	if t == nil {
+		w, ok := groups.Find(cl, group)
+		if !ok || w.Device == s.cfg.self {
+			return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
+		}
+		to = w.Device
 	}
-	label := ""
-	for _, h := range cl.Hosts {
-		if h.Catalog.DeviceID == cg.Home {
-			label = h.Label
+	hops := 0
+	for {
+		l, l2, up := s.linkTo(cl, to)
+		if l2 != "" {
+			label = l2
+		}
+		if !up {
+			if t != nil {
+				return movedErr(group, to, label) // the caller's hab sends it to the new home
+			}
+			return control.Errorf(api.ErrorKindUnavailable, "group %s's home hab %s is offline; try again once it is back", group, nameOr(label, to))
+		}
+		err := l.Caller.Call(ctx, method, p, out)
+		var e *control.Error
+		switch {
+		case err == nil:
+			return nil
+		case fromPeer:
+			return err
+		case errors.As(err, &e) && e.Data.Kind == api.ErrorKindMoved && e.Data.Home != "" && e.Data.Home != s.cfg.self && hops < 2:
+			to, label, hops = e.Data.Home, "", hops+1
+		case errors.As(err, &e) && e.Data.Kind == api.ErrorKindUnavailable && hops < 30:
+			// A pending copy on the new home: tried again until it commits.
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(s.cfg.keys.MoveRetry):
+			}
+			hops++
+			cl = s.cfg.catalog()
+		default:
+			return err
 		}
 	}
-	l, ok := s.link(label)
-	if label == "" || !ok || !l.Online || l.Caller == nil {
-		return control.Errorf(api.ErrorKindUnavailable, "group %s's home hab is offline; try again once it is back", group)
-	}
-	return l.Caller.Call(ctx, method, p, out)
 }
 
 // Note writes a note on an item's Logbook task, as the hab (groups.md 4.3, 13 Q5).
@@ -1257,7 +1947,10 @@ func (s *groupsService) change(id string, f func(g *api.Group) error) (api.Group
 	defer s.mu.Unlock()
 	g := s.groups[id]
 	if g == nil {
-		return api.Group{}, control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
+		return api.Group{}, s.notHereLocked(id)
+	}
+	if g.Moving != nil {
+		return api.Group{}, control.Errorf(api.ErrorKindUnavailable, "group %s is moving to %s; try again in a moment", id, nameOr(g.Moving.Label, g.Moving.To))
 	}
 	if err := f(g); err != nil {
 		return api.Group{}, err
@@ -1312,10 +2005,10 @@ func (s *groupsService) UsagePause(id string, on bool, until string) (api.Group,
 	return g, err
 }
 
-// Close ends the group at the user's word: no new starts; with group.close_members on, its idle
-// members on this hab are closed (groups.md 5.2, 7.5). Members on other habs keep running until
-// B4's end. The coordinator gets one message with the result, which a Capcom coordinator sums
-// up in its thread (12.1).
+// Close ends the group at the user's word (groups.md 5.2, 5.8, 7.5): no new starts and no
+// more lands; with group.close_members on, its idle members are closed, on this hab and over the
+// links to peers that are online, and the end lists what is left over. The coordinator gets one
+// message with the result, which a Capcom coordinator sums up in its thread (12.1).
 func (s *groupsService) Close(ctx context.Context, id string) (api.Group, error) {
 	return s.closeGroup(ctx, id, false)
 }
@@ -1327,52 +2020,87 @@ func (s *groupsService) CloseAsCoordinator(ctx context.Context, id string) (api.
 }
 
 func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator bool) (api.Group, error) {
-	closeIdle := s.boolSetting(settings.GroupCloseMembers, true)
-	var panes []string
-	g, err := s.change(id, func(g *api.Group) error {
-		if !groups.Live(*g) || g.State == groups.StateConfirming {
-			return control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
-		}
-		g.State = groups.StateEnded
-		g.Ended = stampT(s.cfg.now())
+	s.mu.Lock()
+	g := s.groups[id]
+	var err error
+	switch {
+	case g == nil:
+		err = control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
+	case !groups.Live(*g) || g.State == groups.StateConfirming || g.State == groups.StateEnding:
+		err = control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
+	}
+	remote := map[string][]string{} // device: idle members' session ids on that hab
+	if err == nil && s.boolSetting(settings.GroupCloseMembers, true) {
 		for _, m := range g.Members {
-			if m.Device == s.cfg.self && m.State == groups.MemberRunning && (m.Agent == "idle" || m.Agent == "") && closeIdle {
-				if p := s.panes[g.ID+"/"+m.Name]; p != "" {
-					panes = append(panes, p)
-				} else if ss, ok := s.cfg.store.Session(m.Session); ok && ss.Pane != "" {
-					panes = append(panes, ss.Pane)
-				}
-			}
-			if m.State == groups.MemberRunning {
-				g.Leftovers = appendOnce(g.Leftovers, fmt.Sprintf("member %s on %s, folder %s", m.Name, m.Host, m.Folder))
+			if m.Device != "" && m.Device != s.cfg.self && m.Session != "" && m.State == groups.MemberRunning &&
+				(m.Agent == "idle" || m.Agent == "") {
+				remote[m.Device] = append(remote[m.Device], m.Session)
 			}
 		}
-		return nil
-	})
+	}
+	s.mu.Unlock()
 	if err != nil {
-		return g, err
+		return api.Group{}, err
 	}
-	if !byCoordinator {
-		s.mu.Lock()
-		if gp := s.groups[id]; gp != nil {
-			s.tellLocked(gp, "the user ended the group. "+groupEndText(*gp), "Flightdeck")
-			s.saveLocked(gp)
+	head := "the user ended the group."
+	if byCoordinator {
+		head = "" // the coordinator's own close: its answer is the record
+	}
+	if _, err := s.end(id, head); err != nil {
+		return api.Group{}, control.Errorf(api.ErrorKindConflict, "%v", err)
+	}
+	// Idle members on other habs close over the link this hab dialed; a hab offline keeps
+	// its members, listed as left over.
+	cl := s.cfg.catalog()
+	for dev, ids := range remote {
+		sessions, err := s.peerSessions(cl, dev)
+		if err != nil {
+			continue
 		}
-		s.mu.Unlock()
-	}
-	for _, p := range panes {
-		if s.cfg.closePane != nil {
-			if err := s.cfg.closePane(ctx, p); err != nil {
-				s.cfg.logf("groups: %s: closing pane %s: %v", id, p, err)
+		for _, sid := range ids {
+			if ss, ok := sessions[sid]; ok && ss.Pane != "" {
+				s.closeMemberPane(ctx, cl, dev, ss.Pane)
 			}
 		}
 	}
 	return s.Get(id)
 }
 
+// closeMemberPane closes a member's pane: on this hab, or over the link to its hab.
+func (s *groupsService) closeMemberPane(ctx context.Context, cl api.CatalogList, dev, pane string) {
+	var err error
+	if dev == s.cfg.self {
+		if s.cfg.closePane == nil {
+			return
+		}
+		err = s.cfg.closePane(ctx, pane)
+	} else {
+		var c api.Caller
+		if c, _, err = s.peerCaller(cl, dev); err == nil {
+			err = c.Call(ctx, "pane.close", api.PaneRef{Pane: pane}, &api.Empty{})
+		}
+	}
+	if err != nil {
+		s.cfg.logf("groups: closing pane %s on %s: %v", pane, dev, err)
+	}
+}
+
 // Retry starts a failed member again, or a new start for an item whose lead was closed: inside
 // the envelope, so it asks nothing (groups.md 3.3, 4.3).
 func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.Group, error) {
+	if p.Lane {
+		g, err := s.change(p.Group, func(g *api.Group) error {
+			if g.State != groups.StateRunning && g.State != groups.StatePaused {
+				return control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
+			}
+			g.Lane.Stopped, g.Lane.Waits = "", ""
+			return nil
+		})
+		if err == nil {
+			s.laneKick(p.Group)
+		}
+		return g, err
+	}
 	g, err := s.change(p.Group, func(g *api.Group) error {
 		if g.State != groups.StateRunning && g.State != groups.StatePaused {
 			return control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
@@ -1383,8 +2111,12 @@ func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.
 		}
 		m := &g.Members[i]
 		ii := groups.ItemIndex(*g, m.Item)
-		waits := m.State == groups.MemberPlanned && ii >= 0 && g.Items[ii].Reason != ""
-		if m.State != groups.MemberFailed && m.State != groups.MemberExited && !waits {
+		waits := m.State == groups.MemberPlanned && ii >= 0 && (g.Items[ii].Reason != "" ||
+			slices.ContainsFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, m.Item+":") }))
+		// A member whose agent exited counts as exited: a remote member's session record is
+		// on its own hab, so only its agent state says so.
+		gone := m.State == groups.MemberRunning && m.Agent == api.AgentStatusExited
+		if m.State != groups.MemberFailed && m.State != groups.MemberExited && !gone && !waits {
 			return control.Errorf(api.ErrorKindConflict, "member %s is %s; only a failed or closed member, or one whose setup waited, starts again", m.Name, m.State)
 		}
 		if !waits {
@@ -1392,7 +2124,12 @@ func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.
 		}
 		m.State, m.Session, m.Reason = groups.MemberPlanned, "", ""
 		g.Waits = slices.DeleteFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, m.Item+":") })
-		if ii >= 0 && (g.Items[ii].State == groups.ItemStalled || waits) {
+		switch {
+		case ii < 0:
+		case m.Role == groups.RoleReviewer:
+			// A reviewer starts again on the item's submitted head; the item stays in review.
+			g.Items[ii].Stuck, g.Items[ii].IdleSince = "", ""
+		case g.Items[ii].State == groups.ItemStalled || waits:
 			g.Items[ii].State, g.Items[ii].Reason = groups.ItemQueued, ""
 		}
 		return nil

@@ -2121,7 +2121,7 @@
       "params": [
         {
           "name": "base",
-          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.",
+          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch.",
           "schema": {
             "type": "string"
           }
@@ -2131,6 +2131,13 @@
           "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e.",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "fetch",
+          "description": "When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes.",
+          "schema": {
+            "type": "boolean"
           }
         },
         {
@@ -4252,8 +4259,15 @@
           }
         },
         {
+          "name": "lane",
+          "description": "Start the group's stopped lane again (groups.md 7.4), instead of a member.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "member",
-          "description": "A failed member's name.",
+          "description": "A failed member's name. Empty with lane.",
           "required": true,
           "schema": {
             "type": "string"
@@ -4368,6 +4382,372 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/MemberActionRef"
+      }
+    },
+    {
+      "name": "lane.submit",
+      "summary": "Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The lead's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "head",
+          "description": "Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LaneSubmitted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LaneSubmitParams"
+      }
+    },
+    {
+      "name": "review.verdict",
+      "summary": "A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "checked",
+          "description": "Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "descends",
+          "description": "Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "findings",
+          "description": "High and medium findings only, at most [groups] max_findings. More are refused.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          }
+        },
+        {
+          "name": "fixed",
+          "description": "Fix commits the reviewer pushed to its review branch, if any.",
+          "schema": {
+            "$ref": "#/components/schemas/ReviewFixed"
+          }
+        },
+        {
+          "name": "from",
+          "description": "The reviewer's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "reviewed",
+          "description": "Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "verdict",
+          "description": "pass or fix_needed.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ReviewVerdictTaken"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ReviewVerdictParams"
+      }
+    },
+    {
+      "name": "group.message",
+      "summary": "The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name on the receiving hab.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "At most 8000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupMessageParams"
+      }
+    },
+    {
+      "name": "group.sync",
+      "summary": "A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "envelope",
+          "description": "The envelope as amended. Its home is the sending hab.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupEnvelope"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pause",
+          "description": "The pause reasons, while paused; absent when the group runs.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupPause"
+          }
+        },
+        {
+          "name": "revision",
+          "description": "The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupSyncParams"
+      }
+    },
+    {
+      "name": "group.move",
+      "summary": "The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "cancel",
+          "description": "Cancel the move queued on this hab for the group.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "device",
+          "description": "The new home by device id, in place of host: a queued move names its own hab this way.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "description": "The new home: a peer label of the hab that takes the call, or its own host id.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupMoveResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupMoveParams"
+      }
+    },
+    {
+      "name": "group.adopt",
+      "summary": "The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "generation",
+          "description": "The generation the new home takes (groups.md 5.7 step 3).",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "record",
+          "description": "The group record as the current home holds it.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Group"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAdoptParams"
+      }
+    },
+    {
+      "name": "group.adopt_commit",
+      "summary": "The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "generation",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "record",
+          "description": "The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start.",
+          "schema": {
+            "$ref": "#/components/schemas/Group"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAdoptCommitParams"
+      }
+    },
+    {
+      "name": "group.tell",
+      "summary": "A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The coordinator's session id on the hab that takes the call.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The report, or the waiting reports in one message.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupTellParams"
       }
     }
   ],
@@ -5998,7 +6378,7 @@
           "items": {
             "type": "integer",
             "format": "int64",
-            "description": "Plan items."
+            "description": "Plan items that are not dropped."
           },
           "landed": {
             "type": "integer",
@@ -6010,9 +6390,22 @@
             "format": "int64",
             "description": "Members started."
           },
+          "moved": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A tombstone: the group moved home to this hab with this generation."
+          },
+          "moving": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A hand-over to this hab runs."
+          },
           "pause": {
             "$ref": "#/components/schemas/GroupPause",
             "description": "The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The group record's revision when this copy was made."
           },
           "state": {
             "type": "string",
@@ -6020,6 +6413,11 @@
           },
           "title": {
             "type": "string"
+          },
+          "tried": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest generation a move attempt of the home used: a copy with a lower one was built before that attempt's freeze."
           }
         },
         "required": [
@@ -8416,6 +8814,10 @@
           "hint": {
             "type": "string"
           },
+          "home": {
+            "type": "string",
+            "description": "On moved: the device id of the group's new home hab (groups.md 5.7)."
+          },
           "id": {
             "type": "string",
             "description": "On every settings.set error: the id of the first refused row (app.md 20.5)."
@@ -8449,7 +8851,8 @@
           "ticket_invalid",
           "locked",
           "denied",
-          "invalid"
+          "invalid",
+          "moved"
         ]
       },
       "Event": {
@@ -8593,6 +8996,10 @@
             "$ref": "#/components/schemas/GroupEnvelope",
             "description": "What the confirmed plan allows (groups.md 3.3). Absent while confirming."
           },
+          "from": {
+            "$ref": "#/components/schemas/GroupFrom",
+            "description": "On a pending copy: the old home it came from."
+          },
           "generation": {
             "type": "integer",
             "format": "uint64",
@@ -8633,8 +9040,24 @@
               "$ref": "#/components/schemas/GroupMember"
             }
           },
+          "move_failed": {
+            "type": "string",
+            "description": "Why the last move did not commit, for the card."
+          },
+          "moved": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A tombstone: the group moved home to this hab. The old home keeps it [groups] tombstone_keep."
+          },
+          "moving": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A hand-over to another hab runs: the lane and the scheduler take no new item."
+          },
           "pause": {
             "$ref": "#/components/schemas/GroupPause"
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "A copy adopted from the old home, not yet committed: not published, runs nothing."
           },
           "plan": {
             "$ref": "#/components/schemas/GroupPlan",
@@ -8658,6 +9081,11 @@
           },
           "title": {
             "type": "string"
+          },
+          "tried": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest generation a move attempt used."
           },
           "updated": {
             "type": "string"
@@ -8690,6 +9118,44 @@
           "plan",
           "created",
           "updated"
+        ]
+      },
+      "GroupAdoptCommitParams": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "group": {
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start."
+          }
+        },
+        "required": [
+          "group",
+          "generation"
+        ]
+      },
+      "GroupAdoptParams": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation the new home takes (groups.md 5.7 step 3)."
+          },
+          "record": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The group record as the current home holds it."
+          }
+        },
+        "required": [
+          "record",
+          "generation"
         ]
       },
       "GroupAmendParams": {
@@ -8733,6 +9199,10 @@
           "address": {
             "type": "string",
             "description": "Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id."
+          },
+          "device": {
+            "type": "string",
+            "description": "The device id of the hab the coordinator runs on. Absent in a record from before B9: the home hab."
           },
           "name": {
             "type": "string"
@@ -8836,11 +9306,66 @@
           "max_workers"
         ]
       },
+      "GroupFinding": {
+        "type": "object",
+        "properties": {
+          "place": {
+            "type": "string",
+            "description": "File and line, such as api/groups.go:42. At most 200 characters."
+          },
+          "severity": {
+            "type": "string",
+            "description": "high or medium."
+          },
+          "text": {
+            "type": "string",
+            "description": "One paragraph, at most 2000 characters."
+          },
+          "title": {
+            "type": "string",
+            "description": "One line, at most 200 characters."
+          }
+        },
+        "required": [
+          "severity",
+          "title",
+          "text"
+        ]
+      },
+      "GroupFrom": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation of the old home's catalog copy this hab held at the adopt: only a later copy can show the move failed."
+          },
+          "device": {
+            "type": "string",
+            "description": "The old home's device id."
+          },
+          "label": {
+            "type": "string",
+            "description": "This hab's label on the old home: the coordinator's line names the new home by it."
+          }
+        },
+        "required": [
+          "device",
+          "catalog"
+        ]
+      },
       "GroupItem": {
         "type": "object",
         "properties": {
           "after": {
             "type": "string"
+          },
+          "attempts": {
+            "type": "array",
+            "description": "The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run.",
+            "items": {
+              "$ref": "#/components/schemas/GroupLaneAttempt"
+            }
           },
           "branch": {
             "type": "string",
@@ -8849,9 +9374,25 @@
           "id": {
             "type": "string"
           },
+          "idle_since": {
+            "type": "string",
+            "description": "RFC 3339 time the reviewer was first seen idle with no verdict on this head."
+          },
+          "land": {
+            "type": "string",
+            "description": "The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."
+          },
+          "landed": {
+            "type": "string",
+            "description": "The commit on the target once the item landed: the rebased head."
+          },
           "lead": {
             "type": "string",
             "description": "Its lead's session name."
+          },
+          "no_ci": {
+            "type": "boolean",
+            "description": "The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI."
           },
           "reason": {
             "type": "string",
@@ -8860,9 +9401,38 @@
           "review": {
             "type": "string"
           },
+          "review_branch": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/\u003citem\u003e-review: the reviewer's own branch (groups.md 6.4)."
+          },
+          "review_since": {
+            "type": "string",
+            "description": "RFC 3339 time the review of the submitted head began."
+          },
+          "reviewer": {
+            "type": "string",
+            "description": "Its reviewer's session name: a member with role reviewer. Absent with review off."
+          },
+          "same_harness": {
+            "type": "boolean",
+            "description": "The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness."
+          },
           "state": {
             "type": "string",
             "description": "queued, stalled, working, review, fix, ready, landing, landed or dropped."
+          },
+          "stuck": {
+            "type": "string",
+            "description": "Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit."
+          },
+          "submits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many times the lead submitted."
+          },
+          "submitted": {
+            "type": "string",
+            "description": "The full commit id of the lead's last lane_submit."
           },
           "task": {
             "type": "string",
@@ -8870,6 +9440,10 @@
           },
           "title": {
             "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/GroupVerdict",
+            "description": "The reviewer's verdict on the submitted head. Absent while the reviewer reviews."
           }
         },
         "required": [
@@ -8883,7 +9457,7 @@
         "properties": {
           "fix_in_place": {
             "type": "boolean",
-            "description": "A reviewer may fix in place on its review branch (groups.md 6.4)."
+            "description": "A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true."
           },
           "target": {
             "type": "string",
@@ -8891,17 +9465,58 @@
           }
         }
       },
+      "GroupLaneAttempt": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the try ended or saved its push."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later)."
+          },
+          "rebased": {
+            "type": "string",
+            "description": "The rebased head pushed to the item's branch."
+          },
+          "step": {
+            "type": "string",
+            "description": "Where it stopped: fetch, rebase, checks, push, ci, land or moving."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target commit the item was rebased on."
+          }
+        },
+        "required": [
+          "at",
+          "outcome"
+        ]
+      },
       "GroupLaneState": {
         "type": "object",
         "properties": {
           "landing": {
             "type": "string"
           },
+          "no_ci": {
+            "type": "boolean",
+            "description": "The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI."
+          },
           "queue": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "stopped": {
+            "type": "string",
+            "description": "Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again."
+          },
+          "waits": {
+            "type": "string",
+            "description": "Why the lane waits: no remote, a fetch that failed. It tries again each minute."
           }
         },
         "required": [
@@ -9003,6 +9618,10 @@
           "state": {
             "type": "string",
             "description": "planned, starting, running, exited or failed."
+          },
+          "worktree_removed": {
+            "type": "boolean",
+            "description": "The hab removed its worktree: its session ended and the worktree had no uncommitted changes."
           }
         },
         "required": [
@@ -9012,6 +9631,107 @@
           "role",
           "item",
           "state"
+        ]
+      },
+      "GroupMessageParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name on the receiving hab."
+          },
+          "text": {
+            "type": "string",
+            "description": "At most 8000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "member",
+          "text"
+        ]
+      },
+      "GroupMoveParams": {
+        "type": "object",
+        "properties": {
+          "cancel": {
+            "type": "boolean",
+            "description": "Cancel the move queued on this hab for the group."
+          },
+          "device": {
+            "type": "string",
+            "description": "The new home by device id, in place of host: a queued move names its own hab this way."
+          },
+          "group": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The new home: a peer label of the hab that takes the call, or its own host id."
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "GroupMoveRef": {
+        "type": "object",
+        "properties": {
+          "acked": {
+            "type": "boolean",
+            "description": "On a tombstone: the new home acknowledged group.adopt_commit."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation of the attempt: one above any the old home used for the group."
+          },
+          "label": {
+            "type": "string",
+            "description": "Its label, as the hab that wrote this knows it."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time the move started (moving) or committed (moved)."
+          },
+          "to": {
+            "type": "string",
+            "description": "The new home hab's device id."
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "GroupMoveResult": {
+        "type": "object",
+        "properties": {
+          "home": {
+            "type": "string",
+            "description": "The new home's device id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."
+          },
+          "text": {
+            "type": "string",
+            "description": "One line for the user, such as: \u003clabel\u003e is offline; the group moves when it is back."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "home",
+          "text"
         ]
       },
       "GroupNoteParams": {
@@ -9253,9 +9973,13 @@
           "group": {
             "type": "string"
           },
+          "lane": {
+            "type": "boolean",
+            "description": "Start the group's stopped lane again (groups.md 7.4), instead of a member."
+          },
           "member": {
             "type": "string",
-            "description": "A failed member's name."
+            "description": "A failed member's name. Empty with lane."
           }
         },
         "required": [
@@ -9269,6 +9993,97 @@
           "lead",
           "worker",
           "reviewer"
+        ]
+      },
+      "GroupSyncParams": {
+        "type": "object",
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "The envelope as amended. Its home is the sending hab."
+          },
+          "group": {
+            "type": "string"
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause",
+            "description": "The pause reasons, while paused; absent when the group runs."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's."
+          }
+        },
+        "required": [
+          "group",
+          "revision"
+        ]
+      },
+      "GroupTellParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The coordinator's session id on the hab that takes the call."
+          },
+          "text": {
+            "type": "string",
+            "description": "The report, or the waiting reports in one message."
+          }
+        },
+        "required": [
+          "group",
+          "session",
+          "text"
+        ]
+      },
+      "GroupVerdict": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab took it."
+          },
+          "findings": {
+            "type": "array",
+            "description": "At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings.",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          },
+          "fixed": {
+            "type": "array",
+            "description": "The fix commits the reviewer named.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fixed_head": {
+            "type": "string",
+            "description": "The review branch head the lane takes: it descends from the submitted head."
+          },
+          "fixes_ignored": {
+            "type": "string",
+            "description": "Why the reviewer's fixes were ignored, in one line. The card shows it."
+          },
+          "head": {
+            "type": "string",
+            "description": "The submitted head the verdict is on."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "pass or fix_needed."
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "head",
+          "at"
         ]
       },
       "HabStatsParams": {
@@ -9642,6 +10457,58 @@
         },
         "required": [
           "pane"
+        ]
+      },
+      "LaneSubmitParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The lead's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string",
+            "description": "Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced."
+          },
+          "item": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "item"
+        ]
+      },
+      "LaneSubmitted": {
+        "type": "object",
+        "properties": {
+          "head": {
+            "type": "string"
+          },
+          "restart": {
+            "type": "boolean",
+            "description": "A review of an earlier head ran: it restarts on this head, and the reviewer is told."
+          },
+          "reviewer": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "head"
         ]
       },
       "LinkedPeer": {
@@ -12032,6 +12899,95 @@
           "cols",
           "rows",
           "reason"
+        ]
+      },
+      "ReviewFixed": {
+        "type": "object",
+        "properties": {
+          "commits": {
+            "type": "array",
+            "description": "The fix commits on the review branch.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "head": {
+            "type": "string",
+            "description": "The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch."
+          }
+        }
+      },
+      "ReviewVerdictParams": {
+        "type": "object",
+        "properties": {
+          "checked": {
+            "type": "string",
+            "description": "Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced."
+          },
+          "descends": {
+            "type": "boolean",
+            "description": "Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced."
+          },
+          "findings": {
+            "type": "array",
+            "description": "High and medium findings only, at most [groups] max_findings. More are refused.",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          },
+          "fixed": {
+            "$ref": "#/components/schemas/ReviewFixed",
+            "description": "Fix commits the reviewer pushed to its review branch, if any."
+          },
+          "from": {
+            "type": "string",
+            "description": "The reviewer's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "reviewed": {
+            "type": "string",
+            "description": "Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "pass or fix_needed."
+          }
+        },
+        "required": [
+          "group",
+          "item",
+          "verdict"
+        ]
+      },
+      "ReviewVerdictTaken": {
+        "type": "object",
+        "properties": {
+          "fixes_ignored": {
+            "type": "string",
+            "description": "Why the fixes were ignored, in one line."
+          },
+          "land": {
+            "type": "string",
+            "description": "After a pass: the commit the lane lands."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "ready after a pass, fix after fix_needed."
+          }
+        },
+        "required": [
+          "seq",
+          "state"
         ]
       },
       "RevisionRange": {
@@ -14471,11 +15427,15 @@
         "properties": {
           "base": {
             "type": "string",
-            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches."
+            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch."
           },
           "branch": {
             "type": "string",
             "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e."
+          },
+          "fetch": {
+            "type": "boolean",
+            "description": "When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes."
           },
           "path": {
             "type": "string",

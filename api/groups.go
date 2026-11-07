@@ -38,7 +38,7 @@ type GroupPlanMember struct {
 // GroupLane is where the group's items land (groups.md 3.1, 7).
 type GroupLane struct {
 	Target     string `json:"target,omitempty" doc:"The target branch. Absent: the project's default branch."`
-	FixInPlace bool   `json:"fix_in_place,omitempty" doc:"A reviewer may fix in place on its review branch (groups.md 6.4)."`
+	FixInPlace *bool  `json:"fix_in_place,omitempty" doc:"A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true."`
 }
 
 // GroupPlan is what the coordinator proposes and the confirmation covers (groups.md 3.1).
@@ -75,6 +75,8 @@ type GroupCoordinator struct {
 	Session string `json:"session" doc:"Its session id on the home hab."`
 	Name    string `json:"name"`
 	Address string `json:"address" doc:"Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id."`
+	// Device was added by B9: a moved group's coordinator may run on another hab than its home.
+	Device string `json:"device,omitempty" doc:"The device id of the hab the coordinator runs on. Absent in a record from before B9: the home hab."`
 }
 
 // GroupConfirmationRef is the plan's confirmation and its outcome.
@@ -94,6 +96,104 @@ type GroupItem struct {
 	Review string         `json:"review,omitempty"`
 	State  GroupItemState `json:"state" doc:"queued, stalled, working, review, fix, ready, landing, landed or dropped."`
 	Reason string         `json:"reason,omitempty" doc:"Why it is stalled or waits."`
+	// The review fields come with stage B7 of agent groups (groups.md 6). Optional, so an
+	// older hab leaves them out.
+	Reviewer     string        `json:"reviewer,omitempty" doc:"Its reviewer's session name: a member with role reviewer. Absent with review off."`
+	SameHarness  bool          `json:"same_harness,omitempty" doc:"The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness."`
+	Submitted    string        `json:"submitted,omitempty" doc:"The full commit id of the lead's last lane_submit."`
+	Submits      int           `json:"submits,omitempty" doc:"How many times the lead submitted."`
+	ReviewBranch string        `json:"review_branch,omitempty" doc:"group/<group>/<item>-review: the reviewer's own branch (groups.md 6.4)."`
+	ReviewSince  string        `json:"review_since,omitempty" doc:"RFC 3339 time the review of the submitted head began."`
+	IdleSince    string        `json:"idle_since,omitempty" doc:"RFC 3339 time the reviewer was first seen idle with no verdict on this head."`
+	Stuck        string        `json:"stuck,omitempty" doc:"Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit."`
+	Verdict      *GroupVerdict `json:"verdict,omitempty" doc:"The reviewer's verdict on the submitted head. Absent while the reviewer reviews."`
+	Land         string        `json:"land,omitempty" doc:"The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."`
+	// The lane fields come with stage B4 (groups.md 7.3). Optional, so an older hab leaves
+	// them out.
+	Landed   string             `json:"landed,omitempty" doc:"The commit on the target once the item landed: the rebased head."`
+	NoCI     bool               `json:"no_ci,omitempty" doc:"The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI."`
+	Attempts []GroupLaneAttempt `json:"attempts,omitempty" doc:"The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run."`
+}
+
+// GroupLaneAttempt is one try of the lane on an item (groups.md 7.3). The rebased head is saved
+// before CI, so a restart after the land push finds it on the target.
+type GroupLaneAttempt struct {
+	At      string `json:"at" doc:"RFC 3339 time the try ended or saved its push."`
+	Target  string `json:"target,omitempty" doc:"The target commit the item was rebased on."`
+	Rebased string `json:"rebased,omitempty" doc:"The rebased head pushed to the item's branch."`
+	Outcome string `json:"outcome" doc:"pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later)."`
+	Step    string `json:"step,omitempty" doc:"Where it stopped: fetch, rebase, checks, push, ci, land or moving."`
+}
+
+// GroupFinding is one finding of a verdict (groups.md 6.3). Low findings are not reported.
+type GroupFinding struct {
+	Severity string `json:"severity" doc:"high or medium."`
+	Title    string `json:"title" doc:"One line, at most 200 characters."`
+	Place    string `json:"place,omitempty" doc:"File and line, such as api/groups.go:42. At most 200 characters."`
+	Text     string `json:"text" doc:"One paragraph, at most 2000 characters."`
+}
+
+// GroupVerdict is a reviewer's verdict on one submitted head (groups.md 6.3, 6.4).
+type GroupVerdict struct {
+	Verdict      string         `json:"verdict" doc:"pass or fix_needed."`
+	Findings     []GroupFinding `json:"findings" doc:"At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings."`
+	Head         string         `json:"head" doc:"The submitted head the verdict is on."`
+	Fixed        []string       `json:"fixed,omitempty" doc:"The fix commits the reviewer named."`
+	FixedHead    string         `json:"fixed_head,omitempty" doc:"The review branch head the lane takes: it descends from the submitted head."`
+	FixesIgnored string         `json:"fixes_ignored,omitempty" doc:"Why the reviewer's fixes were ignored, in one line. The card shows it."`
+	At           string         `json:"at" doc:"RFC 3339 time the home hab took it."`
+}
+
+// LaneSubmitParams is a lead's submit (groups.md 6.2, 15.1).
+type LaneSubmitParams struct {
+	Group string `json:"group"`
+	Item  string `json:"item"`
+	From  string `json:"from,omitempty" doc:"The lead's session name. From a pane the pane's session."`
+	Head  string `json:"head,omitempty" doc:"Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced."`
+}
+
+// LaneSubmitted answers lane.submit.
+type LaneSubmitted struct {
+	Seq
+	State    GroupItemState `json:"state" doc:"review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue."`
+	Head     string         `json:"head"`
+	Reviewer string         `json:"reviewer,omitempty"`
+	Restart  bool           `json:"restart,omitempty" doc:"A review of an earlier head ran: it restarts on this head, and the reviewer is told."`
+}
+
+// ReviewFixed names a reviewer's fixes in place (groups.md 6.4).
+type ReviewFixed struct {
+	Commits []string `json:"commits,omitempty" doc:"The fix commits on the review branch."`
+	Head    string   `json:"head,omitempty" doc:"The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch."`
+}
+
+// ReviewVerdictParams is a reviewer's verdict (groups.md 6.3, 15.1).
+type ReviewVerdictParams struct {
+	Group    string         `json:"group"`
+	Item     string         `json:"item"`
+	Verdict  string         `json:"verdict" doc:"pass or fix_needed."`
+	Findings []GroupFinding `json:"findings,omitempty" doc:"High and medium findings only, at most [groups] max_findings. More are refused."`
+	Fixed    *ReviewFixed   `json:"fixed,omitempty" doc:"Fix commits the reviewer pushed to its review branch, if any."`
+	From     string         `json:"from,omitempty" doc:"The reviewer's session name. From a pane the pane's session."`
+	Checked  string         `json:"checked,omitempty" doc:"Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced."`
+	Reviewed string         `json:"reviewed,omitempty" doc:"Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced."`
+	Descends bool           `json:"descends,omitempty" doc:"Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced."`
+}
+
+// ReviewVerdictTaken answers review.verdict.
+type ReviewVerdictTaken struct {
+	Seq
+	State        GroupItemState `json:"state" doc:"ready after a pass, fix after fix_needed."`
+	Land         string         `json:"land,omitempty" doc:"After a pass: the commit the lane lands."`
+	FixesIgnored string         `json:"fixes_ignored,omitempty" doc:"Why the fixes were ignored, in one line."`
+}
+
+// GroupMessageParams is the home hab's note into a member on another hab (groups.md 6.2,
+// 6.3). Peer link only.
+type GroupMessageParams struct {
+	Group  string `json:"group"`
+	Member string `json:"member" doc:"The member's session name on the receiving hab."`
+	Text   string `json:"text" doc:"At most 8000 characters."`
 }
 
 // GroupMember is one member in the record (groups.md 5.1).
@@ -115,6 +215,8 @@ type GroupMember struct {
 	Compacts   int              `json:"compacts,omitempty"`
 	Replaced   string           `json:"replaced,omitempty" doc:"The session it replaced (groups.md 9.3)."`
 	Attempts   int              `json:"attempts,omitempty" doc:"Starts tried again by group.retry; each has its own idempotency key."`
+	// WorktreeRemoved comes with stage B4 (groups.md 7.3 step 7, 7.5).
+	WorktreeRemoved bool `json:"worktree_removed,omitempty" doc:"The hab removed its worktree: its session ended and the worktree had no uncommitted changes."`
 }
 
 // GroupReport is one report that waits for a coordinator that is not running (groups.md 5.5).
@@ -135,6 +237,10 @@ type GroupPause struct {
 type GroupLaneState struct {
 	Queue   []string `json:"queue"`
 	Landing string   `json:"landing,omitempty"`
+	// The fields below come with stage B4 (groups.md 7.3, 7.4).
+	Stopped string `json:"stopped,omitempty" doc:"Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again."`
+	Waits   string `json:"waits,omitempty" doc:"Why the lane waits: no remote, a fetch that failed. It tries again each minute."`
+	NoCI    bool   `json:"no_ci,omitempty" doc:"The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI."`
 }
 
 // Group is the group record (groups.md 5.1), kept by the home hab.
@@ -161,6 +267,20 @@ type Group struct {
 	Created      string               `json:"created"`
 	Updated      string               `json:"updated"`
 	Ended        string               `json:"ended,omitempty"`
+	// Moving, Moved, Pending, Tried and MoveFailed were added by B9 (groups.md 5.7).
+	Moving     *GroupMoveRef `json:"moving,omitempty" doc:"A hand-over to another hab runs: the lane and the scheduler take no new item."`
+	Moved      *GroupMoveRef `json:"moved,omitempty" doc:"A tombstone: the group moved home to this hab. The old home keeps it [groups] tombstone_keep."`
+	Pending    bool          `json:"pending,omitempty" doc:"A copy adopted from the old home, not yet committed: not published, runs nothing."`
+	Tried      uint64        `json:"tried,omitempty" doc:"The highest generation a move attempt used."`
+	MoveFailed string        `json:"move_failed,omitempty" doc:"Why the last move did not commit, for the card."`
+	From       *GroupFrom    `json:"from,omitempty" doc:"On a pending copy: the old home it came from."`
+}
+
+// GroupFrom is the old home of a pending copy (groups.md 5.7 step 7).
+type GroupFrom struct {
+	Device  string `json:"device" doc:"The old home's device id."`
+	Catalog uint64 `json:"catalog" doc:"The generation of the old home's catalog copy this hab held at the adopt: only a later copy can show the move failed."`
+	Label   string `json:"label,omitempty" doc:"This hab's label on the old home: the coordinator's line names the new home by it."`
 }
 
 // ConfirmGroup is the plan a kind group confirmation would start, or the change an amend adds.
@@ -193,6 +313,14 @@ type GroupAmendParams struct {
 
 type GroupRef struct {
 	Group string `json:"group"`
+}
+
+// GroupSyncParams is what the home hab pushes over each member link (groups.md 3.3, 5.6).
+type GroupSyncParams struct {
+	Group    string         `json:"group"`
+	Revision uint64         `json:"revision" doc:"The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's."`
+	Envelope *GroupEnvelope `json:"envelope,omitempty" doc:"The envelope as amended. Its home is the sending hab."`
+	Pause    *GroupPause    `json:"pause,omitempty" doc:"The pause reasons, while paused; absent when the group runs."`
 }
 
 type GroupListParams struct {
@@ -232,7 +360,8 @@ type GroupNoteParams struct {
 
 type GroupRetryParams struct {
 	Group  string `json:"group"`
-	Member string `json:"member" doc:"A failed member's name."`
+	Member string `json:"member" doc:"A failed member's name. Empty with lane."`
+	Lane   bool   `json:"lane,omitempty" doc:"Start the group's stopped lane again (groups.md 7.4), instead of a member."`
 }
 
 // MemberActionParams asks for a supervision action on a member (groups.md 9.4, stage B6).
@@ -274,4 +403,45 @@ type MemberAction struct {
 type MemberActionResult struct {
 	Seq
 	Action MemberAction `json:"action"`
+}
+
+// GroupMoveRef names the hab a move goes to (groups.md 5.7).
+type GroupMoveRef struct {
+	To         string `json:"to" doc:"The new home hab's device id."`
+	Label      string `json:"label,omitempty" doc:"Its label, as the hab that wrote this knows it."`
+	Generation uint64 `json:"generation,omitempty" doc:"The generation of the attempt: one above any the old home used for the group."`
+	Since      string `json:"since,omitempty" doc:"RFC 3339 time the move started (moving) or committed (moved)."`
+	Acked      bool   `json:"acked,omitempty" doc:"On a tombstone: the new home acknowledged group.adopt_commit."`
+}
+
+type GroupMoveParams struct {
+	Group  string `json:"group"`
+	Host   string `json:"host,omitempty" doc:"The new home: a peer label of the hab that takes the call, or its own host id."`
+	Device string `json:"device,omitempty" doc:"The new home by device id, in place of host: a queued move names its own hab this way."`
+	Cancel bool   `json:"cancel,omitempty" doc:"Cancel the move queued on this hab for the group."`
+}
+
+// GroupMoveResult answers group.move.
+type GroupMoveResult struct {
+	Seq
+	State string `json:"state" doc:"moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."`
+	Home  string `json:"home" doc:"The new home's device id."`
+	Text  string `json:"text" doc:"One line for the user, such as: <label> is offline; the group moves when it is back."`
+}
+
+type GroupAdoptParams struct {
+	Record     Group  `json:"record" doc:"The group record as the current home holds it."`
+	Generation uint64 `json:"generation" doc:"The generation the new home takes (groups.md 5.7 step 3)."`
+}
+
+type GroupAdoptCommitParams struct {
+	Group      string `json:"group"`
+	Generation uint64 `json:"generation"`
+	Record     *Group `json:"record,omitempty" doc:"The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start."`
+}
+
+type GroupTellParams struct {
+	Group   string `json:"group"`
+	Session string `json:"session" doc:"The coordinator's session id on the hab that takes the call."`
+	Text    string `json:"text" doc:"The report, or the waiting reports in one message."`
 }

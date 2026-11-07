@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/confirm"
@@ -13,6 +15,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // A group member's hab (groups.md 2.2, 3.3, 5.6): it keeps each member's envelope on its
@@ -63,10 +66,55 @@ func (r *groupRunnerRef) section() []api.CatalogGroup {
 	return nil
 }
 
-// groupPaused reports whether the catalog (this hab's own section and the copies) lists the
-// group as paused, by the user or for usage.
-func groupPaused(cl api.CatalogList, group string) bool {
+// groupSyncs keeps what each group's home hab pushed to this hab with group.sync (groups.md
+// 5.6): the pause, by the record's revision. The catalog copy's group entry carries the
+// revision too, so the newer of the two holds.
+type groupSyncs struct {
+	mu sync.Mutex
+	m  map[string]groupSynced
+}
+
+type groupSynced struct {
+	home  string
+	rev   uint64
+	pause *api.GroupPause
+}
+
+func newGroupSyncs() *groupSyncs { return &groupSyncs{m: map[string]groupSynced{}} }
+
+// take keeps a push from home; false when one of that revision or later from home is kept.
+func (p *groupSyncs) take(home string, s api.GroupSyncParams) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if old, ok := p.m[s.Group]; ok && old.home == home && old.rev >= s.Revision {
+		return false
+	}
+	var pause *api.GroupPause
+	if s.Pause != nil {
+		c := *s.Pause
+		pause = &c
+	}
+	p.m[s.Group] = groupSynced{home: home, rev: s.Revision, pause: pause}
+	return true
+}
+
+// paused reports whether the group is paused, by the user or for usage: by the latest push
+// from its home, unless the catalog (this hab's own section and the copies) lists a later
+// revision or another home. A push the catalog has caught up with is dropped.
+func (p *groupSyncs) paused(cl api.CatalogList, group string) bool {
 	g, ok := groupOf(cl, group)
+	if p != nil {
+		p.mu.Lock()
+		s, pushed := p.m[group]
+		if pushed && ok && (g.Home != s.home || g.Revision >= s.rev) {
+			delete(p.m, group)
+			pushed = false
+		}
+		p.mu.Unlock()
+		if pushed {
+			return s.pause != nil
+		}
+	}
 	return ok && g.Pause != nil
 }
 
@@ -75,7 +123,7 @@ func groupPaused(cl api.CatalogList, group string) bool {
 // 3.3). A start from a member is inside its envelope when its host and harness are the plan's,
 // its role is worker or reviewer, a worker works the member's own item within the envelope's
 // workers per lead, and the group is not paused (groups.md 3.3, 5.6).
-func memberEnvelope(store *structure.Store, host, self string, catalog func() api.CatalogList) func(from string, s api.ConfirmStart) (bool, error) {
+func memberEnvelope(store *structure.Store, host, self string, catalog func() api.CatalogList, syncs *groupSyncs) func(from string, s api.ConfirmStart) (bool, error) {
 	return func(from string, s api.ConfirmStart) (bool, error) {
 		ss, ok := store.SessionByName(from)
 		if !ok || ss.Group == nil || ss.Group.ID != s.Group {
@@ -103,7 +151,7 @@ func memberEnvelope(store *structure.Store, host, self string, catalog func() ap
 			return true, control.Errorf(api.ErrorKindInvalid, "%s is not a host of group %s's plan; the coordinator adds it with group_amend", s.Host, s.Group)
 		case !slices.Contains(env.Harnesses, s.Harness):
 			return true, control.Errorf(api.ErrorKindInvalid, "%s is not a harness of group %s's plan; the coordinator adds it with group_amend", s.Harness, s.Group)
-		case groupPaused(cl, s.Group):
+		case syncs.paused(cl, s.Group):
 			return true, control.Errorf(api.ErrorKindUnavailable, "group %s is paused; no new member starts until it is resumed", s.Group)
 		}
 		if role == groups.RoleWorker {
@@ -136,11 +184,56 @@ func memberDefaults(ss api.Session, s api.ConfirmStart) (api.GroupRole, string) 
 	return role, item
 }
 
+// memberGit runs git for a member's hab: the heads a lead submits and a reviewer fixes.
+var memberGit worktree.Git
+
+// memberFolder is the folder a member's session started in: its worktree.
+func memberFolder(ctx context.Context, folderOf func(context.Context, string) string, ss api.Session) string {
+	if folderOf == nil {
+		return ""
+	}
+	return folderOf(ctx, ss.ID)
+}
+
+// memberCommit is the full commit id rev names in a member's repository.
+func memberCommit(ctx context.Context, folderOf func(context.Context, string) string, ss api.Session, rev string) (string, error) {
+	dir := memberFolder(ctx, folderOf, ss)
+	if dir == "" {
+		return "", control.Errorf(api.ErrorKindUnavailable, "this hab does not know session %s's folder", ss.Name)
+	}
+	c, err := memberGit.Resolve(ctx, dir, rev)
+	if err != nil {
+		return "", control.Errorf(api.ErrorKindInvalid, "%s: commit your work on the branch first", errText(err))
+	}
+	return c, nil
+}
+
+// memberPush pushes a member's branch to the project's remote, so the lane and a member on
+// another host find its commits (groups.md 7.1). A project with no remote pushes nothing: the
+// lane then waits and says why.
+func memberPush(ctx context.Context, store *structure.Store, folderOf func(context.Context, string) string, ss api.Session, branch string) error {
+	pr, _ := store.Project(ss.Project)
+	dir := memberFolder(ctx, folderOf, ss)
+	if dir == "" || pr.Remote == "" {
+		return nil
+	}
+	remote := memberGit.RemoteFor(ctx, dir, pr.Remote)
+	if remote == "" {
+		return nil
+	}
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := memberGit.PushBranch(pctx, dir, remote, branch); err != nil {
+		return control.Errorf(api.ErrorKindUnavailable, "push %s to %s: %s", branch, remote, errText(err))
+	}
+	return nil
+}
+
 // groupHook answers the group methods from a pane (groups.md 15.2): the pane's session is the
 // coordinator of a new group, and the sender of a report or a note. Only the coordinator amends,
 // closes or retries. eventTurn reports whether a route is the Capcom engine's in an event turn,
 // which may not start, change or end a group (capcom-service.md 9.4); nil: never.
-func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane string) bool) hook.ChannelHandler {
+func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx context.Context, session string) string, eventTurn func(pane string) bool) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		ss, ok := store.SessionByPane(pane)
 		if !ok {
@@ -150,15 +243,32 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 			return nil, nil, control.Errorf(api.ErrorKindDenied, "%s is refused in a turn an event started: ask the user first", method)
 		}
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
-		coordinator := func(id string) error {
+		// record reads the group: on this hab, else from its home (a moved group, groups.md 5.7).
+		record := func(id string) (api.Group, bool, error) {
 			g, err := svc.Get(id)
+			if err == nil {
+				return g, true, nil
+			}
+			var r api.GroupResult
+			if ferr := svc.forward(ctx, id, "group.get", api.GroupRef{Group: id}, &r); ferr != nil {
+				return api.Group{}, false, err
+			}
+			return r.Group, false, nil
+		}
+		isCoordinator := func(g api.Group) bool {
+			return svc.CoordinatedBy(g, ss.ID) && groups.CoordinatorDevice(g) == svc.cfg.self
+		}
+		// coordinator checks the caller is the group's coordinator, and reports whether this
+		// hab is the group's home.
+		coordinator := func(id string) (bool, error) {
+			g, local, err := record(id)
 			if err != nil {
-				return err
+				return false, err
 			}
-			if !svc.CoordinatedBy(g, ss.ID) {
-				return control.Errorf(api.ErrorKindDenied, "only group %s's coordinator %s calls %s", id, g.Coordinator.Name, method)
+			if !isCoordinator(g) {
+				return false, control.Errorf(api.ErrorKindDenied, "only group %s's coordinator %s calls %s", id, g.Coordinator.Name, method)
 			}
-			return nil
+			return local, nil
 		}
 		// inGroup: the caller is a member of the group (its session record says so), or its
 		// coordinator on the home hab (groups.md 15.2: reports and notes come from members).
@@ -166,7 +276,7 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 			if ss.Group != nil && ss.Group.ID == id {
 				return nil
 			}
-			if g, err := svc.Get(id); err == nil && svc.CoordinatedBy(g, ss.ID) {
+			if g, _, err := record(id); err == nil && isCoordinator(g) {
 				return nil
 			}
 			return control.Errorf(api.ErrorKindDenied, "session %s is not a member of group %s", ss.Name, id)
@@ -185,8 +295,14 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := coordinator(p.Group); err != nil {
+			local, err := coordinator(p.Group)
+			if err != nil {
 				return nil, nil, err
+			}
+			if !local {
+				var r api.GroupCreated
+				err := svc.forward(ctx, p.Group, method, p, &r)
+				return r, nil, err
 			}
 			r, err := svc.Amend(ctx, p)
 			return r, nil, err
@@ -196,11 +312,13 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 				return nil, nil, bad(err)
 			}
 			g, err := svc.Get(p.Group)
-			if err != nil && ss.Group != nil && ss.Group.ID == p.Group {
-				// A member on another hab reads its group's record from the home.
-				var r api.GroupResult
-				err = svc.forward(ctx, p.Group, "group.get", p, &r)
-				return r, nil, err
+			if err != nil {
+				// A member on another hab, or the coordinator of a moved group, reads the record
+				// from the home.
+				r, _, rerr := record(p.Group)
+				if rerr == nil && ((ss.Group != nil && ss.Group.ID == p.Group) || isCoordinator(r)) {
+					return api.GroupResult{Group: r}, nil, nil
+				}
 			}
 			return api.GroupResult{Group: g}, nil, err
 		case "group.list":
@@ -262,18 +380,105 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := coordinator(p.Group); err != nil {
+			local, err := coordinator(p.Group)
+			if err != nil {
 				return nil, nil, err
+			}
+			if !local {
+				var r api.GroupResult
+				err := svc.forward(ctx, p.Group, method, p, &r)
+				return r, nil, err
 			}
 			g, err := svc.CloseAsCoordinator(ctx, p.Group)
 			return api.GroupResult{Group: g}, nil, err
+		case "lane.submit":
+			var p api.LaneSubmitParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			if ss.Group == nil || ss.Group.ID != p.Group || ss.Group.Role != groups.RoleLead || ss.Group.Item != p.Item {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "only item %s's lead in group %s submits it", p.Item, p.Group)
+			}
+			// This hab reads the head of the lead's branch: a pane's head is never taken.
+			head, err := memberCommit(ctx, folderOf, ss, groups.Branch(p.Group, p.Item))
+			if err != nil {
+				return nil, nil, err
+			}
+			// The push replaces the branch on the remote: never while the lane works on it, or
+			// for a submit the home hab would refuse.
+			g, err := memberGroup(ctx, svc, p.Group)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := groups.MaySubmit(g, p.Item); err != nil {
+				return nil, nil, err
+			}
+			if err := memberPush(ctx, store, folderOf, ss, groups.Branch(p.Group, p.Item)); err != nil {
+				return nil, nil, err
+			}
+			p.From, p.Head = ss.Name, head
+			r, err := svc.submit(ctx, p, svc.cfg.self)
+			return r, nil, err
+		case "review.verdict":
+			var p api.ReviewVerdictParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			if ss.Group == nil || ss.Group.ID != p.Group || ss.Group.Role != groups.RoleReviewer || ss.Group.Item != p.Item {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "only item %s's reviewer in group %s gives its verdict", p.Item, p.Group)
+			}
+			// This hab reads the review branch's head and checks it against the submitted
+			// head (groups.md 6.1, 6.4): the home hab may not see this repository. Every
+			// verdict names the head it reviewed, so one on an earlier submit is refused.
+			p.From, p.Checked, p.Reviewed, p.Descends = ss.Name, "", "", false
+			head, err := memberCommit(ctx, folderOf, ss, groups.ReviewBranch(p.Group, p.Item))
+			if err != nil {
+				return nil, nil, err
+			}
+			if f := p.Fixed; f != nil {
+				if f.Head != "" {
+					if named, err := memberCommit(ctx, folderOf, ss, f.Head); err != nil || named != head {
+						return nil, nil, control.Errorf(api.ErrorKindInvalid, "fixed.head %s is not the head %s of your review branch %s", f.Head, groups.Short7(head), groups.ReviewBranch(p.Group, p.Item))
+					}
+				}
+				fixed := *f
+				fixed.Head = head
+				p.Fixed = &fixed
+			}
+			g, err := memberGroup(ctx, svc, p.Group)
+			if err != nil {
+				return nil, nil, err
+			}
+			inReview := false
+			if ii := groups.ItemIndex(g, p.Item); ii >= 0 && g.Items[ii].Submitted != "" {
+				sub := g.Items[ii].Submitted
+				p.Checked, p.Reviewed = sub, head
+				p.Descends = head != sub && memberGit.IsAncestor(ctx, memberFolder(ctx, folderOf, ss), sub, head)
+				inReview = g.Items[ii].State == groups.ItemReview
+			}
+			if p.Verdict == "pass" && p.Descends && p.Fixed != nil && inReview {
+				// A pass with fixes lands the review head: the lane finds it on the remote.
+				if err := memberPush(ctx, store, folderOf, ss, groups.ReviewBranch(p.Group, p.Item)); err != nil {
+					return nil, nil, err
+				}
+			}
+			r, err := svc.verdict(ctx, p, svc.cfg.self)
+			return r, nil, err
+		case "group.move":
+			return nil, nil, control.Errorf(api.ErrorKindDenied, "an agent cannot move a group's home; the user moves it (groups.md 5.7)")
 		default: // group.retry
 			var p api.GroupRetryParams
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := coordinator(p.Group); err != nil {
+			local, err := coordinator(p.Group)
+			if err != nil {
 				return nil, nil, err
+			}
+			if !local {
+				var r api.GroupResult
+				err := svc.forward(ctx, p.Group, method, p, &r)
+				return r, nil, err
 			}
 			g, err := svc.Retry(ctx, p)
 			return api.GroupResult{Group: g}, nil, err
@@ -290,4 +495,16 @@ func groupWrite(method string) bool {
 		return true
 	}
 	return false
+}
+
+// memberGroup reads a group from this hab, or from its home hab.
+func memberGroup(ctx context.Context, svc *groupsService, id string) (api.Group, error) {
+	if g, err := svc.Get(id); err == nil {
+		return g, nil
+	}
+	var r api.GroupResult
+	if err := svc.forward(ctx, id, "group.get", api.GroupRef{Group: id}, &r); err != nil {
+		return api.Group{}, err
+	}
+	return r.Group, nil
 }

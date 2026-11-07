@@ -439,6 +439,7 @@ type ErrorData struct {
 	Server *RevisionRange `json:"server,omitempty" doc:"Server revision range, on revision_unsupported."`
 	Client *RevisionRange `json:"client,omitempty" doc:"Client revision range, on revision_unsupported."`
 	ID     string         `json:"id,omitempty" doc:"On every settings.set error: the id of the first refused row (app.md 20.5)."`
+	Home   string         `json:"home,omitempty" doc:"On moved: the device id of the group's new home hab (groups.md 5.7)."`
 }
 
 // --- Data connection (spec 5) ---

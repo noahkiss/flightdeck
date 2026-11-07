@@ -186,6 +186,14 @@ var Methods = []Method{
 	{"member.compact", "A sibling action (groups.md 9.4): compact a member's context as supervision does at group.compact_at. The member's hab runs it once the member is not in use, waiting up to [groups] sibling_wait, then it is skipped. Answers at once; a second action on the member while one runs gets conflict. From a pane, only a member of the group or its coordinator asks. Needs the groups capability.", MemberActionParams{}, MemberActionResult{}},
 	{"member.handoff", "A sibling action (groups.md 9.4): a hand-off note, then a fresh session under the member's name in its worktree; held messages move to it. Waits and answers as member.compact. Needs the groups capability.", MemberActionParams{}, MemberActionResult{}},
 	{"member.action", "One supervision action by its id, as the member's hab keeps it. Needs the groups capability.", MemberActionRef{}, MemberActionResult{}},
+	{"lane.submit", "Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.", LaneSubmitParams{}, LaneSubmitted{}},
+	{"review.verdict", "A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.", ReviewVerdictParams{}, ReviewVerdictTaken{}},
+	{"group.message", "The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.", GroupMessageParams{}, Empty{}},
+	{"group.sync", "A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.", GroupSyncParams{}, Empty{}},
+	{"group.move", "The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.", GroupMoveParams{}, GroupMoveResult{}},
+	{"group.adopt", "The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.", GroupAdoptParams{}, Empty{}},
+	{"group.adopt_commit", "The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.", GroupAdoptCommitParams{}, Empty{}},
+	{"group.tell", "A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.", GroupTellParams{}, Empty{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -260,7 +268,7 @@ var Enums = map[string][]string{
 	"BlockedKind":   {"permission", "question", "auth", "trust"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
 	"HookHealth":    {"missing"},
-	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "denied", "invalid"},
+	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "denied", "invalid", "moved"},
 	// Sets added for the clients' calls (spec 3.9).
 	"SendOrigin":      {"typed", "dictated", "voice"},
 	"ApprovalChoice":  {"allow", "deny", "answer", "allow_site"},
