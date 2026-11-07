@@ -3,6 +3,7 @@ package gffclient
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -248,5 +249,44 @@ func TestPasteInSidebar(t *testing.T) {
 func TestInfoHidesUnknown(t *testing.T) {
 	if got := infoText(api.HostStats{MemUsed: 1, MemTotal: 2}, []string{"cpu", "mem", "battery"}); got != "mem 50%" {
 		t.Errorf("infoText %q, want mem only", got)
+	}
+}
+
+// Superseded builds (gff-client.md 9.1): a hab older than the newest release version among
+// gff's own and the online habs', and an online hab's panes on a holder of another build.
+func TestHostWarningsSuperseded(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	host := func(label, version, build string, holders ...string) hosts.Host {
+		h := hosts.Host{Label: label, Status: hosts.Online, Welcome: api.Welcome{Version: version, Build: build}}
+		for _, b := range holders {
+			h.Structure.Panes = append(h.Structure.Panes, api.Pane{HolderBuild: b})
+		}
+		return h
+	}
+	offline := host("gone", "9.0.0", "x", "y")
+	offline.Status = hosts.Offline
+	offline.Since = now.Add(-2 * time.Minute)
+	for _, c := range []struct {
+		name string
+		hs   []hosts.Host
+		own  string
+		want []string
+	}{
+		{"all current", []hosts.Host{host("one", "1.2.0", "b1", "b1"), host("two", "1.2.0", "b1")}, "1.2.0", nil},
+		{"older than gff", []hosts.Host{host("one", "1.1.0", "b0")}, "1.2.0", []string{"one hab 1.1.0 superseded by 1.2.0"}},
+		{"older than a peer", []hosts.Host{host("one", "1.2.0-rc.1", "b0"), host("two", "1.2.0", "b1")}, "dev",
+			[]string{"one hab 1.2.0-rc.1 superseded by 1.2.0"}},
+		{"newer than gff", []hosts.Host{host("one", "1.3.0", "b1")}, "1.2.0", nil},
+		{"dev and no version never compared", []hosts.Host{host("one", "dev", "dev"), host("two", "", "b0"), host("three", "1.0.0", "b1")}, "2.0.0",
+			[]string{"three hab 1.0.0 superseded by 2.0.0"}},
+		{"offline hab neither compared nor raising the newest", []hosts.Host{offline, host("one", "1.0.0", "b1")}, "",
+			[]string{"gone offline 2m"}},
+		{"holders", []hosts.Host{host("one", "1.2.0", "b1", "b0", "b1", "b0"), host("two", "1.2.0", "b1", "b0")}, "",
+			[]string{"one holder build superseded: 2 panes", "two holder build superseded: 1 pane"}},
+		{"empty builds", []hosts.Host{host("one", "", "", "b0"), host("two", "", "b1", "")}, "", nil},
+	} {
+		if got := hostWarnings(c.hs, c.own, now); !slices.Equal(got, c.want) {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
 	}
 }

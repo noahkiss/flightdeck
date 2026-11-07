@@ -61,6 +61,7 @@ type Welcome struct {
 	Revision       int      `json:"revision" doc:"The revision this connection uses."`
 	Epoch          string   `json:"epoch" doc:"Random id of this gff-hab process."`
 	Build          string   `json:"build" doc:"gff-hab build string."`
+	Version        string   `json:"version,omitempty" doc:"gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.1). Optional, so a newer client accepts a welcome from an older revision 1 hab."`
 	Host           HostInfo `json:"host"`
 	Capabilities   []string `json:"capabilities" doc:"Optional features this host offers (spec 3.4)."`
 	ClientID       string   `json:"client_id"`

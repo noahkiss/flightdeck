@@ -192,6 +192,7 @@ type Stats interface {
 
 type Config struct {
 	Build        string
+	Version      string // the release version sent in every welcome; empty sends none
 	Host         api.HostInfo
 	DeviceID     string   // the hab's host-key fingerprint; sent in every welcome
 	Capabilities []string // strings for the features this hab offers (spec 3.4)

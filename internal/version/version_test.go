@@ -71,3 +71,40 @@ func TestLinkedVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestCompare(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want int
+		ok   bool
+	}{
+		{"1.2.3", "1.2.3", 0, true},
+		{"v1.2.3", "1.2.3", 0, true},
+		{"1.2.3", "1.2.4", -1, true},
+		{"1.10.0", "1.9.9", 1, true},
+		{"2.0.0", "1.99.99", 1, true},
+		{"1.2.3-rc.1", "1.2.3", -1, true},
+		{"1.2.3", "1.2.3-rc.9", 1, true},
+		{"1.2.3-rc.2", "1.2.3-rc.10", -1, true},
+		{"1.2.3-rc.1", "1.2.2", 1, true},
+		{"1.2.3-dry.1", "1.2.3-rc.1", -1, true},
+		{"dev", "1.2.3", 0, false},
+		{"1.2.3", "", 0, false},
+		{"1.2", "1.2.3", 0, false},
+		{"1.2.3.4", "1.2.3", 0, false},
+		{"01.2.3", "1.2.3", 0, false},
+		{"1.2.3-rc", "1.2.3", 0, false},
+		{"1.2.3-RC.1", "1.2.3", 0, false},
+		{"1.2.3-rc.01", "1.2.3", 0, false},
+		{"1.-2.3", "1.2.3", 0, false},
+		{"1.2.3+abc", "1.2.3", 0, false},
+	} {
+		got, ok := Compare(c.a, c.b)
+		if got != c.want || ok != c.ok {
+			t.Errorf("Compare(%q, %q) = %d, %v; want %d, %v", c.a, c.b, got, ok, c.want, c.ok)
+		}
+	}
+	if !IsRelease("0.1.0") || IsRelease("dev") {
+		t.Error("IsRelease")
+	}
+}

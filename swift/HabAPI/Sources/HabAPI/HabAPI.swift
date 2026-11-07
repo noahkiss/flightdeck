@@ -7878,6 +7878,8 @@ public struct Welcome: Codable, Sendable, Hashable {
     public var seq: UInt64
     /// The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab.
     public var time: String?
+    /// gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.1). Optional, so a newer client accepts a welcome from an older revision 1 hab.
+    public var version: String?
 
     enum CodingKeys: String, CodingKey {
         case build = "build"
@@ -7890,9 +7892,10 @@ public struct Welcome: Codable, Sendable, Hashable {
         case revision = "revision"
         case seq = "seq"
         case time = "time"
+        case version = "version"
     }
 
-    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64, time: String? = nil) {
+    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64, time: String? = nil, version: String? = nil) {
         self.build = build
         self.capabilities = capabilities
         self.clientId = clientId
@@ -7903,6 +7906,7 @@ public struct Welcome: Codable, Sendable, Hashable {
         self.revision = revision
         self.seq = seq
         self.time = time
+        self.version = version
     }
 }
 

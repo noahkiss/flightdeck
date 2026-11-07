@@ -219,7 +219,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar,
+		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Version: version, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar,
 			TitleTemplate: &settings.Workspace.Title, Workspace: settings.Workspace.Name, StatePath: state, StartupTabs: settings.Workspace.Tabs})
 	}
 	octx, cancel := context.WithTimeout(ctx, 30*time.Second)

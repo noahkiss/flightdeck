@@ -1449,6 +1449,7 @@ func serve(args []string) error {
 	}
 	s := control.New(control.Config{
 		Build:    build,
+		Version:  version,
 		Host:     api.HostInfo{ID: *hostID},
 		DeviceID: key.Fingerprint(),
 		Source:   agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc},

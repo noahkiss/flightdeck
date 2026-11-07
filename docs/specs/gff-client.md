@@ -1522,7 +1522,16 @@ width; the hints get the rest.
 warnings`), online hosts out of all, the workspace's name (5.5), and the clock. `[bar] clock` is a Go time layout (default
 `15:04`); empty hides the clock. Ctrl+O `!` lists the warnings on the bottom row: each host that
 is not online with its problem (`two offline 3m`, `connecting`, `update needed`, `host key
-changed`).
+changed`), then each online host whose build is superseded:
+
+- **Hab.** gff takes the newest release version among its own and each online hab's welcome
+  `version` (`hab-logic-api.md` 3.2). A hab whose version is older says so: `two hab 1.1.0
+  superseded by 1.2.0`. A pre-release is older than its release. A dev build, a hab that sends no
+  version and an offline hab are never compared. So after `brew upgrade gff` the local hab shows
+  as superseded until `gff-hab install` runs again.
+- **Holder.** A pane whose `holder_build` differs from its hab's welcome `build` runs on a holder
+  gff-hab drains (`hab-holder.md` 4.3). One line per hab counts them: `two holder build
+  superseded: 2 panes`. It goes once those panes end.
 
 **Usage row.** On by default (`[bar] usage = false` turns it off), under the tab bar, when the
 host has 8 rows or more. Readings come from `usage.list` when a host comes online and from
@@ -1562,6 +1571,7 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
 | `TestStatsRefreshRules` | No reading while the bars are hidden; at most one every 2 s; one at a time |
 | `TestUsageRowHeight` | The usage row shows from 8 rows |
 | `TestTabBarWarningsAndClock` | The warnings count (`1 warning`, `2 warnings`) and a configured clock layout |
+| `TestHostWarningsSuperseded` | A hab older than gff or than another online hab, a pre-release, dev builds and habs with no version never compared, an offline hab never raising the newest, panes on a holder of another build counted per hab |
 | `TestInfoOfflineAndWidth` | An offline host's figures are labelled, dimmed and aged; the info takes at most half the row |
 | `TestStatsHost` | Over a fake hab: the figures' host is the focused pane's hab when it lists `host-stats`, else this machine |
 | `TestDiskFigures`, `TestInfoHidesUnknown` | Disk as df counts it; an absent CPU figure hides |
@@ -1573,13 +1583,8 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
 | `TestInfoText` | The figures' text; the battery item hides with no battery; this machine's reader returns a reading |
 
 `hab.stats` now ships with `host-stats` (task-bw97v7dk). gff labels the focused hab's figures;
-older habs keep the local fallback. Usage window length/start, degraded usage and hab time also ship.
-
-**Remaining gap in the API and the hab.**
-
-| Gap | Effect now |
-|---|---|
-| No field says a hab or holder build is superseded (9.1 warnings) | The warnings list hosts that are not online only |
+older habs keep the local fallback. Usage window length/start, degraded usage, hab time and the
+welcome's `version` for superseded builds also ship. No gap remains in the API for the bars.
 
 ---
 
