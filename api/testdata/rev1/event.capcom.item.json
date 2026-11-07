@@ -1,0 +1,65 @@
+{
+  "data": {
+    "answer": {
+      "by": "by-19",
+      "choice": "choice-18",
+      "time": "time-20",
+      "x_unknown_field": "later"
+    },
+    "author": {
+      "address": "address-6",
+      "device": "device-5",
+      "kind": "flightdeck",
+      "x_unknown_field": "later"
+    },
+    "card": {
+      "choices": [
+        "choices-17"
+      ],
+      "ref": "ref-16",
+      "type": "type-15",
+      "x_unknown_field": "later"
+    },
+    "context": [
+      {
+        "host": "host-10",
+        "kind": "logbook",
+        "ref": "ref-9",
+        "title": "title-11",
+        "x_unknown_field": "later"
+      }
+    ],
+    "event": true,
+    "id": "id-3",
+    "images": [
+      "images-8"
+    ],
+    "kind": "divider",
+    "read": "read-22",
+    "summary": "summary-21",
+    "text": "text-7",
+    "time": "time-4",
+    "tools": [
+      {
+        "name": "name-13",
+        "summary": "summary-14",
+        "x_unknown_field": "later"
+      }
+    ],
+    "turn": "turn-12",
+    "x_unknown_field": "later"
+  },
+  "id": "id-25",
+  "revision": 23,
+  "seq": 24,
+  "type": "capcom.item",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
