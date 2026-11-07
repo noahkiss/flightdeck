@@ -29,6 +29,15 @@ public struct ChatUpdate: Sendable {
     public var generation: Int
 }
 
+/// One Capcom thread event (capcom-service.md 7.4): an item added or changed, or the typing
+/// mark, and which connection (generation) carried it, so a listener that sees a new
+/// generation reads the thread again.
+public enum CapcomUpdate: Sendable {
+    case item(CapcomItem, generation: Int)
+    /// The typing mark of the service session `session`.
+    case typing(session: String, on: Bool, generation: Int)
+}
+
 /// One `command.updated` event (hab-logic-api.md 2.5): the pane, its
 /// command, and which connection (generation) carried it. A listener that
 /// sees a new generation, or `dropped`, reads `command.list` again.
@@ -156,6 +165,7 @@ public actor HabConnection {
     private var commandTaps: [Int: AsyncStream<CommandUpdate>.Continuation] = [:]
     /// Listeners for `content.updated` events (app.md 4.7), by listener id.
     private var contentTaps: [Int: AsyncStream<ContentItem>.Continuation] = [:]
+    private var capcomTaps: [Int: AsyncStream<CapcomUpdate>.Continuation] = [:]
     private var nextTap = 1
     /// Counts live connections, so a chat listener can tell its seq apart.
     private var generation = 0
@@ -289,6 +299,19 @@ public actor HabConnection {
         return stream
     }
 
+    /// `capcom.item` and `capcom.typing` events of this hab, from now until the stream is
+    /// dropped (capcom-service.md 7.4).
+    public func capcomUpdates() -> AsyncStream<CapcomUpdate> {
+        let (stream, sink) = AsyncStream.makeStream(of: CapcomUpdate.self)
+        let id = nextTap
+        nextTap += 1
+        capcomTaps[id] = sink
+        sink.onTermination = { [weak self] _ in
+            Task { await self?.dropTap(id) }
+        }
+        return stream
+    }
+
     /// Calls a method on the live connection and says which connection
     /// answered, so a result's seq can be matched with `chatUpdates`.
     public func callTagged<P, R>(_ method: HabMethod<P, R>, _ params: P) async throws -> (R, Int) {
@@ -317,6 +340,7 @@ public actor HabConnection {
         chatTaps[id] = nil
         commandTaps[id] = nil
         contentTaps[id] = nil
+        capcomTaps[id] = nil
     }
 
     // MARK: - Run loop
@@ -576,6 +600,18 @@ public actor HabConnection {
         }
         if e.type == "round.updated" || e.type == "round.run_updated" {
             if RoundEvents.apply(e, to: &state) { publish() }
+            return
+        }
+        if e.type == "capcom.item" {
+            if !capcomTaps.isEmpty, let it = try? e.data.decode(CapcomItem.self) {
+                for (_, t) in capcomTaps { t.yield(.item(it, generation: generation)) }
+            }
+            return
+        }
+        if e.type == "capcom.typing" {
+            if !capcomTaps.isEmpty, let ty = try? e.data.decode(CapcomTyping.self) {
+                for (_, t) in capcomTaps { t.yield(.typing(session: e.id, on: ty.on, generation: generation)) }
+            }
             return
         }
         if e.type == "content.updated", !contentTaps.isEmpty, let it = try? e.data.decode(ContentItem.self) {

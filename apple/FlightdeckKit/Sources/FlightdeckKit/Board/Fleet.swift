@@ -24,6 +24,9 @@ public final class Fleet {
     public var approvals: ApprovalCenter?
     /// Host id to connection, for answers from the background.
     public var book: HabBook?
+
+    /// The connection of a hab in the app, by host id.
+    public func connection(_ id: String) -> HabConnection? { connections.first { $0.id == id } }
     /// The session's Live Activity (app.md 9); iPhone and iPad only.
     public var activities: LiveActivityTracker?
     /// Usage readings, alerts and the widget snapshot (app.md 14, 15).

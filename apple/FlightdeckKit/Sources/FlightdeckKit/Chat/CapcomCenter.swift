@@ -25,6 +25,12 @@ public final class CapcomCenter {
     public internal(set) var reading: [String: Int] = [:]
     /// The standing conversation's chat model, from the last `capcom.open` with no context.
     public internal(set) var standing: ChatModel?
+    /// The threads other hosts kept from when they were the home (capcom-service.md 7.1), by
+    /// host, in the app's order: "Earlier threads" at the top of the Capcom view.
+    public internal(set) var earlier: [CapcomEarlierThread] = []
+    /// A Capcom reply from a notification that did not reach the hab (7.6): it waits in the
+    /// composer once the Capcom view opens.
+    public var unsent: String?
     /// Why the last open of the standing conversation failed; nil after a success.
     public internal(set) var standingFailure: String?
     /// An open of the standing conversation is on its way.

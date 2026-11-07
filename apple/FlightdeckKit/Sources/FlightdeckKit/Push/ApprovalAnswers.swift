@@ -28,6 +28,11 @@ public enum PushCategory {
     public static let replyAction = "flightdeck.reply"
     public static let askAction = "flightdeck.ask"
 
+    /// A Capcom message (capcom-service.md 7.6): one Reply with a text field, sent to the
+    /// Capcom session with `session.send`.
+    public static let capcomReply = "capcom-reply"
+    public static let capcomReplyAction = "flightdeck.capcom-reply"
+
     /// The `push.register` features this build's categories cover. Sent in the same build
     /// that registers the Ask categories, never apart: iOS shows no actions for a category id
     /// the app did not register.
@@ -42,6 +47,8 @@ public enum NotificationIntent: Equatable, Sendable {
     case open(PushMeta)
     /// Open Capcom with the push's context attached (capcom.md 8.2). Never answers.
     case ask(PushMeta)
+    /// Send the text to the Capcom session from a Capcom message's Reply (capcom-service.md 7.6).
+    case capcomReply(host: String, session: String, text: String)
     /// Nothing to do (dismissed, or a push without our object).
     case none
 }
@@ -64,6 +71,10 @@ public enum NotificationAnswer {
             return .open(meta)
         case PushCategory.askAction:
             return .ask(meta)
+        case PushCategory.capcomReplyAction:
+            guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
+                  let session = meta.session, !session.isEmpty else { return .open(meta) }
+            return .capcomReply(host: meta.hab, session: session, text: t)
         default:
             return .none
         }

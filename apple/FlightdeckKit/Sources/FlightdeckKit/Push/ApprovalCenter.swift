@@ -18,7 +18,7 @@ public final class ApprovalCenter {
     public var presenting = false
 
     @ObservationIgnored private let board: Board
-    @ObservationIgnored private let answerer: ApprovalAnswerer
+    @ObservationIgnored public let answerer: ApprovalAnswerer
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "approvals")
     /// Posts a local notification (title, body, meta); the app sets it.

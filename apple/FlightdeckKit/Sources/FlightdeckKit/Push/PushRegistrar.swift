@@ -120,12 +120,14 @@ public final class PushRegistrar {
         k.append(.round)
         // Folder trust prompts (app.md 7.10).
         k.append(.trust)
+        // Capcom messages (capcom-service.md 7.6).
+        k.append(.capcom)
         return k
     }
 
     /// Kinds a hab built before them refuses as `invalid`, newest first; `register` drops them
     /// there one at a time, so a hab that knows `round` but not `trust` keeps its round pushes.
-    static let newerKinds: [PushKind] = [.trust, .round]
+    static let newerKinds: [PushKind] = [.capcom, .trust, .round]
 
     /// The params `push.register` sends, or nil with no token.
     public var params: PushRegisterParams? {

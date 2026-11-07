@@ -19,6 +19,9 @@ public struct ChatContext: Equatable, Sendable {
     public var isConsole = false
     /// The session is a Capcom session (capcom.md 7.2): its composer holds context chips.
     public var isCapcom = false
+    /// The session is the Capcom service (capcom-service.md 2.1, 7.6): no pane; the thread
+    /// replaces the transcript and there is no terminal.
+    public var isCapcomService = false
     /// A run session's round name ("Round" when the round is gone), for the badge (rounds.md 10.3).
     public var round: String?
     /// The hab's host id, which names this hab in a chip's host.
@@ -55,6 +58,8 @@ public enum SendGate: Equatable, Sendable {
     /// the hab's answer shows.
     public static func of(_ c: ChatContext) -> SendGate {
         guard c.online else { return .offline }
+        // The service thread takes every message, during a turn too (capcom-service.md 7.4).
+        if c.isCapcomService { return .now }
         if c.agent == nil && !c.sessionExited { return .now }
         switch c.agentStatus {
         case .idle, .done: return .now
@@ -147,6 +152,9 @@ public final class ChatModel {
     @ObservationIgnored var chipFiles: [String: DraftAttachment] = [:]
     /// Text "New conversation" carried here; the composer takes it once.
     public var handoff: String?
+    /// The Capcom service's thread (capcom-service.md 7.6), for a service session; nil for any
+    /// other. Made when the context first names the service.
+    public private(set) var thread: CapcomThread?
     /// Opens Capcom sessions for "New conversation"; the fleet sets it.
     @ObservationIgnored public weak var capcom: CapcomCenter?
 
@@ -205,6 +213,7 @@ public final class ChatModel {
     public func start() {
         viewers += 1
         content.start()
+        thread?.start()
         guard viewers == 1, let conn = connection else { return }
         listen = Task { [weak self] in
             let stream = await conn.chatUpdates()
@@ -222,6 +231,7 @@ public final class ChatModel {
         guard viewers > 0 else { return }
         viewers -= 1
         content.stop()
+        thread?.stop()
         guard viewers == 0 else { return }
         listen?.cancel()
         listen = nil
@@ -236,6 +246,13 @@ public final class ChatModel {
         guard c != old else { return }
         context = c
         content.update(c)
+        if c.isCapcomService, thread == nil {
+            let t = CapcomThread(habID: target.habID, session: target.session, connection: connection)
+            thread = t
+            for _ in 0..<viewers { t.start() }
+        } else if c.online, !old.online {
+            thread?.reconnected()
+        }
         if started, c.online, c.isCapcom, !old.online || !old.isCapcom {
             Task { await self.refreshPending() }
         }
@@ -487,6 +504,11 @@ public final class ChatModel {
     /// Stops the current turn: `session.interrupt`, else Escape through
     /// `pane.input` while the adapter is not built. Never a side effect of send.
     public func interrupt() async {
+        if let thread {
+            await thread.stopTurn()
+            notice = thread.notice
+            return
+        }
         guard let conn = connection, let session = target.session else { return }
         do {
             _ = try await conn.call(HabMethods.sessionInterrupt, SessionRef(session: session))
@@ -586,7 +608,7 @@ public final class ChatModel {
     /// whose harness has no adapter on the hab yet (Claude Code has one), with
     /// a known agent at its prompt. Never for a pane with no agent state.
     private var typesWithoutAdapter: Bool {
-        guard let a = context.agent, a.harness != "claude" else { return false }
+        guard !context.isCapcomService, let a = context.agent, a.harness != "claude" else { return false }
         return a.state == .idle || a.state == .done || a.state == .error
     }
 
@@ -702,6 +724,12 @@ extension ChatContext {
         c.sessionExited = session?.state == .exited
         c.isConsole = session.map { ConsoleOpener.isConsole($0, in: store) } ?? false
         c.isCapcom = session?.kind == .capcom
+        if c.isCapcom, (session?.pane ?? "").isEmpty, hab.state.welcome?.capabilities.contains(CapcomThread.capability) == true {
+            // The service session's agent state rides on the engine route (capcom-service.md 5.3).
+            c.isCapcomService = true
+            c.pane = nil
+            c.agent = store.agents[CapcomThread.engineRoute]
+        }
         if let r = session?.round { c.round = hab.state.rounds[r.round]?.name ?? "Round" }
         c.hostID = hab.state.welcome?.host.id ?? store.host ?? ""
         c.answersTrust = hab.state.welcome?.capabilities.contains(TrustCard.capability) ?? false
