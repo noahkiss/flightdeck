@@ -164,7 +164,7 @@ func TestStoreRoundTrip(t *testing.T) {
 func TestLoadKeys(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "hab.toml")
-	os.WriteFile(p, []byte("[groups]\ninbox_max = 5\ninbox_days = 3\nkeep_ended = 2\ntrust_hold = \"5s\"\n" +
+	os.WriteFile(p, []byte("[groups]\ninbox_max = 5\ninbox_days = 3\nkeep_ended = 2\ntrust_hold = \"5s\"\n"+
 		"handoff_note_wait = \"90s\"\nsibling_wait = \"30s\"\n"), 0o600)
 	var logs []string
 	k := LoadKeys(p, func(f string, a ...any) { logs = append(logs, f) })

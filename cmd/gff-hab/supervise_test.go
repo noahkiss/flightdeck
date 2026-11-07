@@ -94,9 +94,18 @@ func newSupFake(t *testing.T, harnessKind string) *supFake {
 			f.pct = pctOf(1)
 			return "s2", nil
 		},
-		note:    func(name, text string) error { f.mu.Lock(); f.notes = append(f.notes, name+": "+text); f.mu.Unlock(); return nil },
-		setting: func(id string) json.RawMessage { f.mu.Lock(); defer f.mu.Unlock(); return json.RawMessage(f.settings[id]) },
-		keys:    keys, tick: 20 * time.Millisecond, logf: t.Logf}
+		note: func(name, text string) error {
+			f.mu.Lock()
+			f.notes = append(f.notes, name+": "+text)
+			f.mu.Unlock()
+			return nil
+		},
+		setting: func(id string) json.RawMessage {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return json.RawMessage(f.settings[id])
+		},
+		keys: keys, tick: 20 * time.Millisecond, logf: t.Logf}
 	if harnessKind == "claude" {
 		cfg.compacts = f
 	}
