@@ -1202,13 +1202,16 @@ first consumer.
   model at `pace_small_at` and wait at `pace_wait_at`; event turns wait at `pace_event_stop`.
 - **Until.** A wait lasts until the start of the first later window day whose share takes the
   level under the step, else until the window resets. A window whose reset passed with no reading
-  since counts as 0% used. The governor rechecks at each reading, each turn's end, the next window
-  day and local midnight.
+  since counts as 0% used. The governor rechecks at each reading, each turn's end, each user
+  message, a `pace_*` edit (once the config file held for one 2 s check), the next window day and
+  local midnight. Its timer runs at most 5 minutes and each fire compares wall time, so a sleep
+  ends no wait late. The pace settings are read once per recheck, with no lock held.
 - **Readings.** The engine's `usage` messages are the SDK's `rate_limit_info`: `unifiedWindows`
   (a window per key, `utilization` a fraction, `resetsAt` Unix seconds) and the top-level window
   `rateLimitType` names. gff-hab stores them as a usage account with the harness `claude` and the
   key `usage.Key(host, "claude", <state>/capcom/engine)`, so `usage.list` shows Capcom's own
-  account.
+  account. The governor keeps each account's last weekly window in `<state>/governor.json`, so
+  after a restart it paces from that window until a new reading comes.
 - **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
   reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
   until local midnight. With the default steps user turns wait at 120% of `daily_usd`, and the
@@ -1222,12 +1225,15 @@ first consumer.
   with the SDK's `setModel`; at `wait` the items stay with the engine, untaken, until a new
   `pace`. Event batches, agent reports and round messages (sent as `agent`) wait at the event
   step, since no user typed them; the item's kind still gives the turn's origin. An item that
-  waits at the event step does not hold a user message after it: the user turn takes both. Input that arrives during a running turn joins it.
+  waits at the event step does not hold a user message after it: the user turn takes both. Input
+  that arrives during a running turn joins it, except while user turns wait: then only an item
+  with a send-now item at or after it, or an event-step item while event turns run, joins.
 - **The note.** The first user message during a wait gets the note "Pacing usage until
   <time>" in the thread, once per wait. The note is not model input.
 - **Send now.** `session.send` with `send_now: true` (the long-press menu; the app's half is
   task-7vm076x0) marks the item. While user turns wait, a marked item runs at once on the small
-  model, with the items waiting before it.
+  model, with the items waiting before it. Items queued after the last marked item wait for the
+  next pace.
 - **The catalog.** The `governor` section lists each consumer: basis, the two paces with their
   ends, the use and the share (`plan`), the spend and the cap in cents (`usd`), and today's
   tokens. gff's status board shows each consumer that is not at `ok`, or is unpaced, under

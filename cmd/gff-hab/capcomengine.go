@@ -175,7 +175,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		EngineKind:  func() string { return config().Engine },
 	})
 	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, key: habusage.Key(s.host, "claude", capcomengine.EngineDir(dir)),
-		config: config, link: e.link, thread: th, now: time.Now, logf: s.logf}
+		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
 	job := s.job
 	if job == nil {
 		job = capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile), Match: engineCommand}
