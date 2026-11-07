@@ -427,7 +427,17 @@ func TestReadToolsOverSSH(t *testing.T) {
 	if w := welcome(t, sockA); !slices.Contains(w.Capabilities, "read-tools") {
 		t.Fatalf("capabilities %v", w.Capabilities)
 	}
-	waitPeer(t, sockA, "bee", "a reaches b", func(p api.Peer) bool { return p.State == api.PeerStateOnline && p.Endpoint != "" })
+	// Reads need a's own link to b. The row says online once either link is up, and writing the
+	// first pin gives a's link a new connection (mesh.md 4.4): wait for the pin in a's peer
+	// file, then for a read over the new connection.
+	waitUntil(t, "a pinned b in its peer file", func() bool {
+		b, _ := os.ReadFile(filesA)
+		return strings.Contains(string(b), "device_id")
+	})
+	waitUntil(t, "a's own link to b answers a read", func() bool {
+		out, _ := exec.Command(bin, "read", "-socket", sockA, "file_read", "-host", "bee", filepath.Join(homeB, "notes.txt")).Output()
+		return strings.Contains(string(out), "notes on b")
+	})
 
 	c := startMCP(t, sockA)
 	if a := c.call("initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}}); a.Result == nil {
