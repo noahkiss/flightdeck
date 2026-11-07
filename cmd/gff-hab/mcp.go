@@ -44,7 +44,6 @@ const mcpRules = `Flightdeck tools: read hosts, projects, running agents, past s
 
 // mcpCmd is `gff-hab mcp [serve] [-socket path] [--skill]`.
 func mcpCmd(args []string, in io.Reader, out io.Writer) error {
-	clearCredentials()
 	if len(args) > 0 {
 		switch args[0] {
 		case "render":
@@ -55,6 +54,8 @@ func mcpCmd(args []string, in io.Reader, out io.Writer) error {
 			return mcpHeaderCmd(args[1:], out)
 		}
 	}
+	// launch and header keep the environment: a server they start may need these variables.
+	clearCredentials()
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
 	}

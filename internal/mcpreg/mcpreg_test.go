@@ -101,6 +101,8 @@ timeout = 5
 
 	bad := map[string]string{
 		"unknown key":         "[mcp]\nwrit = [\"codex\"]\n",
+		"empty provider":      "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\nenv = { A = { secret = \":r\" } }\n",
+		"empty reference":     "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\nenv = { A = { secret = \"p:\" } }\n",
 		"unknown provider":    "[[mcp.server]]\nname = \"a\"\ntransport = \"stdio\"\ncommand = \"x\"\nenv = { A = { secret = \"nope:r\" } }\n",
 		"provider no command": "[[mcp.provider]]\nname = \"p\"\ncommand = []\n",
 		"provider bad name":   "[[mcp.provider]]\nname = \"p q\"\ncommand = [\"x\"]\n",
