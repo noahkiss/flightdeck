@@ -189,6 +189,7 @@ var Methods = []Method{
 	{"lane.submit", "Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.", LaneSubmitParams{}, LaneSubmitted{}},
 	{"review.verdict", "A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.", ReviewVerdictParams{}, ReviewVerdictTaken{}},
 	{"group.message", "The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.", GroupMessageParams{}, Empty{}},
+	{"group.sync", "A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.", GroupSyncParams{}, Empty{}},
 }
 
 // Notifications is every notification the server sends on a control connection.

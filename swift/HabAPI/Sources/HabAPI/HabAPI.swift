@@ -1198,6 +1198,8 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
     public var members: Int?
     /// The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6).
     public var pause: GroupPause?
+    /// The group record's revision when this copy was made.
+    public var revision: UInt64?
     /// confirming, running, paused, ending, ended or dropped. An open set.
     public var state: String
     public var title: String?
@@ -1211,11 +1213,12 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
         case landed = "landed"
         case members = "members"
         case pause = "pause"
+        case revision = "revision"
         case state = "state"
         case title = "title"
     }
 
-    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, home: String? = nil, id: String, items: Int? = nil, landed: Int? = nil, members: Int? = nil, pause: GroupPause? = nil, state: String, title: String? = nil) {
+    public init(coordinator: CatalogMember? = nil, generation: UInt64? = nil, home: String? = nil, id: String, items: Int? = nil, landed: Int? = nil, members: Int? = nil, pause: GroupPause? = nil, revision: UInt64? = nil, state: String, title: String? = nil) {
         self.coordinator = coordinator
         self.generation = generation
         self.home = home
@@ -1224,6 +1227,7 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
         self.landed = landed
         self.members = members
         self.pause = pause
+        self.revision = revision
         self.state = state
         self.title = title
     }
@@ -4409,6 +4413,30 @@ public struct GroupRole: RawRepresentable, Codable, Sendable, Hashable {
     public static let lead = GroupRole(rawValue: "lead")
     public static let worker = GroupRole(rawValue: "worker")
     public static let reviewer = GroupRole(rawValue: "reviewer")
+}
+
+public struct GroupSyncParams: Codable, Sendable, Hashable {
+    /// The envelope as amended. Its home is the sending hab.
+    public var envelope: GroupEnvelope?
+    public var group: String
+    /// The pause reasons, while paused; absent when the group runs.
+    public var pause: GroupPause?
+    /// The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's.
+    public var revision: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case envelope = "envelope"
+        case group = "group"
+        case pause = "pause"
+        case revision = "revision"
+    }
+
+    public init(envelope: GroupEnvelope? = nil, group: String, pause: GroupPause? = nil, revision: UInt64) {
+        self.envelope = envelope
+        self.group = group
+        self.pause = pause
+        self.revision = revision
+    }
 }
 
 public struct GroupVerdict: Codable, Sendable, Hashable {
@@ -9924,6 +9952,8 @@ public enum HabMethods {
     public static let reviewVerdict = HabMethod<ReviewVerdictParams, ReviewVerdictTaken>(name: "review.verdict")
     /// The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.
     public static let groupMessage = HabMethod<GroupMessageParams, Empty>(name: "group.message")
+    /// A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.
+    public static let groupSync = HabMethod<GroupSyncParams, Empty>(name: "group.sync")
 }
 
 public enum HabNotification {
