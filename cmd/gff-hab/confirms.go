@@ -41,6 +41,8 @@ type confirmRunner struct {
 	// aliases returns the [aliases] table of this hab's config file now (harness-adapters.md,
 	// Spawn). Nil: none.
 	aliases func() aliases.Table
+	// store holds group members' envelopes (groups.md 3.3). Nil: a group start carries none.
+	store *structure.Store
 }
 
 // resolveAlias turns an alias in s.Harness into the harness and model it stands for, once: a
@@ -170,6 +172,18 @@ func (r *confirmRunner) RunStart(ctx context.Context, id, from string, s api.Con
 		// (groups.md 4.2, 12.6): the user answered this confirmation, or confirm.group_plan is
 		// off and nobody was asked.
 		p.TrustCover = groupCover(s, id, confirm.Confirmed(ctx))
+		if r.store != nil {
+			// A member's later start inside its envelope (groups.md 3.3): the new session is
+			// a member too, under the plan's confirmation, with the same envelope.
+			if ss, ok := r.store.SessionByName(from); ok && ss.Group != nil && ss.Group.ID == s.Group {
+				if env, ok := r.store.Envelope(ss.ID); ok {
+					role, item := memberDefaults(ss, s)
+					p.TrustCover.Confirmation = env.Confirmation
+					p.Group = &api.SessionGroup{ID: s.Group, Role: role, Item: item}
+					p.Envelope = &env
+				}
+			}
+		}
 	}
 	if r.self(s.Host) {
 		made, err := r.local(withOwnCover(ctx), p)

@@ -143,7 +143,7 @@ func (f *filter) pass(e structure.Event) bool {
 	case api.EventCapcomItem, api.EventCapcomTyping:
 		// The thread goes to subscribers to the home host (capcom-service.md 7.4).
 		return false
-	case EventRoundUpdated, EventRoundRunUpdated:
+	case EventRoundUpdated, EventRoundRunUpdated, EventGroupUpdated:
 		// The rounds are in the host snapshot only (rounds.md 13).
 		return false
 	case EventLogbookUpdated, EventLogbookConflict:

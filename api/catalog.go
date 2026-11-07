@@ -36,6 +36,13 @@ type CatalogGroup struct {
 	State       string         `json:"state" doc:"confirming, running, paused, ending, ended or dropped. An open set."`
 	Coordinator *CatalogMember `json:"coordinator,omitempty" doc:"The coordinator, when the group has one."`
 	Generation  uint64         `json:"generation,omitempty"`
+	// Home, Items, Landed, Members and Pause come with the group record (groups.md 5.1, stage
+	// B3). Optional, so a reader of an older copy sees none.
+	Home    string      `json:"home,omitempty" doc:"The home hab's device id."`
+	Items   int         `json:"items,omitempty" doc:"Plan items."`
+	Landed  int         `json:"landed,omitempty" doc:"Items landed."`
+	Members int         `json:"members,omitempty" doc:"Members started."`
+	Pause   *GroupPause `json:"pause,omitempty" doc:"The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."`
 }
 
 // CatalogMember names a session on a hab of the mesh.
@@ -141,6 +148,12 @@ type CatalogAgent struct {
 	Project string      `json:"project,omitempty" doc:"The project's name. Absent for an unfiled session."`
 	State   AgentStatus `json:"state"`
 	Since   string      `json:"since" doc:"RFC 3339 time the state began."`
+	// Group and ContextPct come with stage B3 of agent groups (groups.md 2.2): the home hab
+	// reads its members' states from the copies. Optional, so a reader of an older copy sees
+	// none.
+	Group      *SessionGroup `json:"group,omitempty" doc:"The session is a member of this group."`
+	ContextPct *int          `json:"context_pct,omitempty" doc:"How full its context window is, in whole percent; absent when unknown."`
+	ID         string        `json:"id,omitempty" doc:"The session's id on its host."`
 }
 
 type CatalogGetParams struct {

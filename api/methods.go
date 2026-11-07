@@ -170,6 +170,16 @@ var Methods = []Method{
 	{"heavy.take", "Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.", HeavyTakeParams{}, HeavyTaken{}},
 	{"heavy.release", "Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.", HeavyReleaseParams{}, Empty{}},
 	{"heavy.status", "Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.", HeavyStatusParams{}, HeavyStatus{}},
+	{"group.create", "Propose a group plan (groups.md 3): the hab checks it, files a Logbook plan record and a task per item, and asks one confirmation of kind group while confirm.group_plan is on (also with confirm.start_elsewhere on and a member elsewhere). Nothing starts before the answer. Needs the groups and logbook capabilities.", GroupCreateParams{}, GroupCreated{}},
+	{"group.amend", "Add items or members to a running group: one confirmation for the change, by the same setting rules (groups.md 3.3). Needs the groups capability.", GroupAmendParams{}, GroupCreated{}},
+	{"group.get", "One group's record (groups.md 5.1). Needs the groups capability.", GroupRef{}, GroupResult{}},
+	{"group.list", "The short form of each group this hab is the home of, newest first. Needs the groups capability.", GroupListParams{}, GroupList{}},
+	{"group.report", "A report to the group's coordinator (groups.md 5.5): a channel message from Flightdeck while it runs, else it waits in the record's inbox until its resume. Needs the groups capability.", GroupReportParams{}, GroupReported{}},
+	{"group.note", "A note the hab writes on an item's Logbook task, so it lands under logbook.approval agents too (groups.md 4.3). Needs the groups capability.", GroupNoteParams{}, Empty{}},
+	{"group.pause", "The user's pause: member habs hold messages into the group's members and new starts; working members finish their turn (groups.md 5.6). Needs the groups capability.", GroupRef{}, GroupResult{}},
+	{"group.resume", "Lift the user's pause. A usage pause stays (groups.md 5.6). Needs the groups capability.", GroupRef{}, GroupResult{}},
+	{"group.close", "End the group: no new starts; with group.close_members on, idle members are closed (groups.md 5.2). Needs the groups capability.", GroupRef{}, GroupResult{}},
+	{"group.retry", "Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.", GroupRetryParams{}, GroupResult{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -207,6 +217,7 @@ var Events = []EventDef{
 	{"confirm.closed", "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.", Confirmation{}},
 	{"round.updated", "A round was created, changed, paused, completed or deleted (data.deleted); the id is the round id (rounds.md 13). Host scope only. Not ephemeral: the rounds are in the host snapshot.", Round{}},
 	{"round.run_updated", "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.", RoundRun{}},
+	{"group.updated", "A group record changed; the id is the group id (groups.md 15.1). Host scope only. Not ephemeral: the groups are in the host snapshot.", Group{}},
 	{"hab.woke", "The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.", HabWoke{}},
 	{"logbook.updated", "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.", LogbookUpdated{}},
 	{"logbook.conflict", "A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.", LogbookConflict{}},
@@ -282,7 +293,7 @@ var Enums = map[string][]string{
 	// Sets added for the read tools (capcom.md 4).
 	"ReadHostState": {"ok", "partial", "offline", "update_needed", "error"},
 	// Sets added for confirmations (capcom.md 6.1).
-	"ConfirmKind":   {"start", "setup"},
+	"ConfirmKind":   {"start", "setup", "group"},
 	"ConfirmState":  {"open", "running", "done", "failed", "cancelled", "expired", "unknown"},
 	"ConfirmChoice": {"confirm", "cancel"},
 	// Sets added for Capcom (capcom.md 2.1).
@@ -307,6 +318,8 @@ var Enums = map[string][]string{
 	// Sets added for the Capcom thread (capcom-service.md 7.2); open, sent by the server.
 	"CapcomItemKind":   {"message", "tools", "agent", "round", "card", "note", "divider"},
 	"CapcomAuthorKind": {"user", "capcom", "agent", "flightdeck"},
+	// Sets added for agent groups (groups.md 2.1).
+	"GroupRole": {"lead", "worker", "reviewer"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -352,11 +365,13 @@ var Translators = map[int]Translator{}
 // (capcom.md 7). "rounds" means the round.* methods and the round.updated and
 // round.run_updated events work, the host snapshot carries the rounds, and a run session
 // carries Session.round (rounds.md 13). "heavy" means heavy.take, heavy.release and
-// heavy.status work, and the catalog carries the heavy section (groups.md 8). "round-lock"
+// heavy.status work, and the catalog carries the heavy section (groups.md 8). "groups" means
+// the group.* methods and the group.updated event work, the host snapshot carries the groups
+// this hab is the home of, and session.create takes group and envelope (groups.md 15.1). "round-lock"
 // means the hab delivers a channel message with the round mark under the round lock and
 // expires it at its deadline; its catalog lists the word too (rounds.md 5.2). "capcom-thread"
 // means this hab runs the Capcom service: the capcom.thread.page, capcom.interrupt,
 // capcom.status, capcom.pause and capcom.resume methods and the capcom.item and capcom.typing
 // events work, and session.send to the service session goes to the thread
 // (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread"}
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups"}

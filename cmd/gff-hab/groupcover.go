@@ -61,7 +61,18 @@ func ownCover(ctx context.Context) bool {
 func checkCoverParams(ctx context.Context, p api.SessionCreateParams, listed func(device string) bool) error {
 	c := p.TrustCover
 	if c == nil {
+		if p.Group != nil || p.Envelope != nil {
+			return control.Errorf(api.ErrorKindInvalid, "group and envelope come only with trust_cover, from a hab")
+		}
 		return nil
+	}
+	switch {
+	case p.Envelope != nil && p.Group == nil:
+		return control.Errorf(api.ErrorKindInvalid, "envelope needs group")
+	case p.Group != nil && (p.Group.ID != c.Group || !confirm.ValidGroupID(p.Group.Item) && p.Group.Item != ""):
+		return control.Errorf(api.ErrorKindInvalid, "group %q does not match trust_cover's group %q, or its item is not an item id", p.Group.ID, c.Group)
+	case p.Envelope != nil && p.Envelope.Group != c.Group:
+		return control.Errorf(api.ErrorKindInvalid, "envelope is for group %q, trust_cover for %q", p.Envelope.Group, c.Group)
 	}
 	if !ownCover(ctx) {
 		peer, ok := control.CallerPeer(ctx)

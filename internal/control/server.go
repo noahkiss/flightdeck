@@ -227,6 +227,7 @@ type Config struct {
 	Capcom       Capcom      // nil: capcom.open and capcom.assign answer unavailable
 	Rounds       Rounds      // nil: the round.* methods answer unavailable
 	Heavy        Heavy       // nil: the heavy.* methods answer unavailable
+	Groups       Groups      // nil: the group.* methods answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

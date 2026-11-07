@@ -41,6 +41,11 @@ const (
 	// CapcomApprovalMaxAge is the age at which a Capcom approval card expires, in minutes
 	// (capcom-service.md 5.3, 19.1). No 0: an open card holds a re-seed.
 	CapcomApprovalMaxAge = "capcom.approval_max_age"
+	// Agent groups' caps (groups.md 15.3), each on every hab.
+	GroupConfirmMaxAge = "group.confirm_max_age" // minutes
+	GroupMaxLeads      = "group.max_leads"
+	GroupMaxWorkers    = "group.max_workers"
+	GroupCloseMembers  = "group.close_members"
 )
 
 // DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
@@ -75,6 +80,10 @@ var Defs = []Def{
 	{ID: HeavyDiskMinFree, Default: json.RawMessage(`10`), check: checkInt(0, 4096), integer: true},
 	{ID: HeavyLongHold, Default: json.RawMessage(`60`), check: checkInt(5, 1440), integer: true},
 	{ID: CapcomApprovalMaxAge, Default: json.RawMessage(`10`), check: checkInt(1, 1440), integer: true},
+	{ID: GroupConfirmMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
+	{ID: GroupMaxLeads, Default: json.RawMessage(`3`), check: checkInt(1, 10), integer: true},
+	{ID: GroupMaxWorkers, Default: json.RawMessage(`2`), check: checkInt(0, 5), integer: true},
+	{ID: GroupCloseMembers, Default: json.RawMessage(`true`), check: checkBool},
 }
 
 func mustJSON(v any) json.RawMessage {

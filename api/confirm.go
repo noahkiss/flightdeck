@@ -56,13 +56,16 @@ type ConfirmResult struct {
 // Confirmation is one start or set-up an agent asked for: an open question to the user, or,
 // with confirm.start_elsewhere off, a record of what ran (capcom.md 6.1).
 type Confirmation struct {
-	ID         string         `json:"id" doc:"128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab."`
-	Kind       ConfirmKind    `json:"kind"`
-	State      ConfirmState   `json:"state" doc:"open: waits for the user. running: confirmed, the hab runs it. done, failed, cancelled, expired, unknown: closed. unknown: the hab lost the answer, such as a peer link that dropped mid-start."`
-	Record     bool           `json:"record,omitempty" doc:"The action ran at once, with no question: confirm.start_elsewhere is off, or the start is on the agent's own host. The card is a record with no buttons."`
-	From       string         `json:"from,omitempty" doc:"The requesting session's name on this hab. Absent for a request from outside a pane."`
-	Start      *ConfirmStart  `json:"start,omitempty" doc:"Kind start: the start as it will run, or ran."`
-	Setup      *ConfirmSetup  `json:"setup,omitempty" doc:"Kind setup: the set-up as it will run."`
+	ID     string        `json:"id" doc:"128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab."`
+	Kind   ConfirmKind   `json:"kind"`
+	State  ConfirmState  `json:"state" doc:"open: waits for the user. running: confirmed, the hab runs it. done, failed, cancelled, expired, unknown: closed. unknown: the hab lost the answer, such as a peer link that dropped mid-start."`
+	Record bool          `json:"record,omitempty" doc:"The action ran at once, with no question: confirm.start_elsewhere is off, or the start is on the agent's own host. The card is a record with no buttons."`
+	From   string        `json:"from,omitempty" doc:"The requesting session's name on this hab. Absent for a request from outside a pane."`
+	Start  *ConfirmStart `json:"start,omitempty" doc:"Kind start: the start as it will run, or ran."`
+	Setup  *ConfirmSetup `json:"setup,omitempty" doc:"Kind setup: the set-up as it will run."`
+	// Group comes with stage B3 of agent groups (groups.md 3.2). Optional, so an older client
+	// shows a kind group card as an action.
+	Group      *ConfirmGroup  `json:"group,omitempty" doc:"Kind group: the plan the confirmation starts, or the change an amend adds."`
 	Created    string         `json:"created" doc:"RFC 3339 time the hab took the request."`
 	ExpiresAt  string         `json:"expires_at,omitempty" doc:"RFC 3339 time an open confirmation expires, 60 minutes after it opened. An expired one never runs."`
 	Closed     string         `json:"closed,omitempty" doc:"RFC 3339 time it closed."`
@@ -76,6 +79,7 @@ type ConfirmRequestParams struct {
 	Kind   ConfirmKind   `json:"kind"`
 	Start  *ConfirmStart `json:"start,omitempty" doc:"Kind start."`
 	Setup  *ConfirmSetup `json:"setup,omitempty" doc:"Kind setup."`
+	Group  *ConfirmGroup `json:"group,omitempty" doc:"Kind group: only gff-hab's group.create and group.amend ask for it, never a pane."`
 	From   string        `json:"from,omitempty" doc:"The requesting session's name on this hab. The hook endpoint fills it from the pane's token."`
 	WaitMS int           `json:"wait_ms,omitempty" doc:"Wait up to this long for the answer; 0 answers at once. At most 120000. With no answer by then, the answer reaches the requesting session later as a message from Flightdeck."`
 }
@@ -94,6 +98,8 @@ type ConfirmEdits struct {
 	Harness string `json:"harness,omitempty"`
 	Model   string `json:"model,omitempty"`
 	Seed    string `json:"seed,omitempty" doc:"The edited seed, at most 8000 characters."`
+	// Plan comes with stage B3 of agent groups (groups.md 3.2).
+	Plan *GroupPlan `json:"plan,omitempty" doc:"Kind group: the edited plan. The user may change hosts, harnesses, models and names, drop an item or a member, and turn review off; the hab checks it again."`
 }
 
 type ConfirmAnswerParams struct {

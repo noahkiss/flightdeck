@@ -744,7 +744,13 @@ func agents(st api.Structure) []api.CatalogAgent {
 		if !ok {
 			name = a.Pane // an unfiled pane: its id is its only name
 		}
-		out = append(out, api.CatalogAgent{Session: name, Harness: a.Harness, Project: names[ss.Project], State: a.State, Since: a.At})
+		ca := api.CatalogAgent{Session: name, Harness: a.Harness, Project: names[ss.Project], State: a.State, Since: a.At}
+		if ss.Group != nil {
+			// A group member: its home hab reads it from this copy (groups.md 2.2). Only
+			// members carry the context use, so other agents' readings do not churn the catalog.
+			ca.Group, ca.ContextPct, ca.ID = ss.Group, ss.ContextPct, ss.ID
+		}
+		out = append(out, ca)
 	}
 	slices.SortFunc(out, func(a, b api.CatalogAgent) int { return strings.Compare(a.Session, b.Session) })
 	return out

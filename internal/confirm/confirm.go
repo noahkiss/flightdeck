@@ -62,6 +62,20 @@ type Runner interface {
 	RunStart(ctx context.Context, id, from string, s api.ConfirmStart) (api.ConfirmResult, error)
 }
 
+// GroupRunner checks and runs the group plans of kind group confirmations (groups.md 3.2).
+// gff-hab's group service implements it.
+type GroupRunner interface {
+	// CheckPlan checks a plan before it opens and after the user's edits, and returns it with
+	// its defaults filled in, and whether a member runs on another host than this hab.
+	CheckPlan(g api.ConfirmGroup) (api.ConfirmGroup, bool, error)
+	// RunGroup starts a confirmed plan, or adds a confirmed amend, under the confirmation id.
+	// confirmed is false for a record that ran with no question.
+	RunGroup(ctx context.Context, id string, g api.ConfirmGroup, confirmed bool) (api.ConfirmResult, error)
+	// GroupClosed hears a kind group confirmation that closed without running: cancelled or
+	// expired. It runs with no lock held.
+	GroupClosed(c api.Confirmation)
+}
+
 // Config is what New needs. Runner is required.
 type Config struct {
 	Runner Runner
@@ -82,6 +96,15 @@ type Config struct {
 	// its name when SessionID is nil): the answer to a request whose wait ended first
 	// (capcom.md 6.1). Nil: none is sent.
 	Notify func(session, text string) error
+	// Envelope checks a start with a group (groups.md 3.3): nil when the requesting session
+	// from is a member of that group and the start is inside the group's envelope, so it runs
+	// at once as a record; else the refusal. Nil: a group start asks while GroupPlan is on.
+	Envelope func(from string, s api.ConfirmStart) error
+	// Groups runs kind group confirmations. Nil: kind group answers unavailable.
+	Groups GroupRunner
+	// GroupTTL returns group.confirm_max_age, read when a plan's confirmation opens. Nil or 0:
+	// TTL.
+	GroupTTL func() time.Duration
 	// Targets lists the hosts a start can go to now, for confirm.list. Nil: none listed.
 	Targets func() []api.ConfirmTarget
 	TTL     time.Duration // default TTL
@@ -105,6 +128,7 @@ type Service struct {
 
 type entry struct {
 	c        api.Confirmation
+	ttl      time.Duration
 	expires  time.Time
 	timer    *time.Timer
 	fromID   string        // the requesting session's id, for the note
@@ -171,11 +195,13 @@ func CheckSeed(seed string) error {
 func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.Confirmation, error) {
 	switch p.Kind {
 	case "start":
+	case "group":
+		return s.requestGroup(ctx, p)
 	case "setup":
 		return api.Confirmation{}, control.Errorf(api.ErrorKindUnavailable,
 			"project set-up is not built yet (mesh.md 7, set up elsewhere); set the project up on that host by hand, then start there")
 	default:
-		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "kind %q is not one of start, setup", p.Kind)
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "kind %q is not one of start, setup, group", p.Kind)
 	}
 	if p.Start == nil {
 		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a start confirmation needs start")
@@ -198,9 +224,19 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	on := s.cfg.Enabled != nil && s.cfg.Enabled()
 	ask := on && !self // a start on the agent's own host never asks (capcom.md 6.4)
-	if st.Group != "" && (s.cfg.GroupPlan == nil || s.cfg.GroupPlan()) {
-		// A group start asks while confirm.group_plan is on, on any host: its answer is also
-		// the trust answer for the group's worktrees (groups.md 3.2, 4.2).
+	switch {
+	case st.Group != "" && s.cfg.Envelope != nil:
+		// A later start of a group's member (groups.md 3.3): inside the envelope its plan's
+		// confirmation covers it, so it asks nothing; outside it is refused, and the
+		// coordinator's group_amend asks for the change.
+		if err := s.cfg.Envelope(p.From, st); err != nil {
+			return api.Confirmation{}, err
+		}
+		ask = false
+	case st.Group != "" && (s.cfg.GroupPlan == nil || s.cfg.GroupPlan()):
+		// With no envelope check, a group start asks while confirm.group_plan is on, on any
+		// host: its answer is also the trust answer for the group's worktrees (groups.md 3.2,
+		// 4.2).
 		ask = true
 	}
 	now := s.cfg.Now()
@@ -210,11 +246,19 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 		// can look for it on the target.
 		st.Name = st.Harness + "-" + id[:6]
 	}
-	e := &entry{done: make(chan struct{}), c: api.Confirmation{
+	e := &entry{done: make(chan struct{}), ttl: s.cfg.TTL, c: api.Confirmation{
 		ID: id, Kind: "start", From: p.From, Start: &st, Created: stamp(now),
 	}}
-	if p.From != "" && s.cfg.SessionID != nil {
-		e.fromID = s.cfg.SessionID(p.From)
+	return s.open1(ctx, e, ask, wait)
+}
+
+// open1 opens e as a question when ask, else runs it at once as a record, and waits up to wait
+// for an open one's answer.
+func (s *Service) open1(ctx context.Context, e *entry, ask bool, wait time.Duration) (api.Confirmation, error) {
+	now := s.cfg.Now()
+	id := e.c.ID
+	if e.c.From != "" && s.cfg.SessionID != nil {
+		e.fromID = s.cfg.SessionID(e.c.From)
 	}
 	if !ask {
 		// The setting is off, or the start is on the agent's own host: it runs now, and the
@@ -233,7 +277,7 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	e.c.State = "open"
 	// Wall time, with no monotonic reading: a Mac's monotonic clock stops in sleep, so a card
 	// past its shown expiry would otherwise still take a confirm after a long sleep.
-	e.expires = now.Add(s.cfg.TTL).Round(0)
+	e.expires = now.Add(e.ttl).Round(0)
 	e.c.ExpiresAt = stamp(e.expires)
 	s.pub.Lock()
 	defer func() {
@@ -248,7 +292,7 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	s.open[e.c.ID] = e
 	s.order = append(s.order, e.c.ID)
-	e.timer = time.AfterFunc(s.cfg.TTL, func() { s.expire(id) })
+	e.timer = time.AfterFunc(e.ttl, func() { s.expire(id) })
 	c := e.c
 	if wait > 0 {
 		e.waiters++
@@ -278,6 +322,39 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	return e.c, nil
 }
 
+// requestGroup opens a kind group confirmation for a plan or an amend (groups.md 3.2): it asks
+// while confirm.group_plan is on, and with it off still asks once when confirm.start_elsewhere
+// is on and a member runs elsewhere. Its expiry is group.confirm_max_age.
+func (s *Service) requestGroup(ctx context.Context, p api.ConfirmRequestParams) (api.Confirmation, error) {
+	switch {
+	case s.cfg.Groups == nil:
+		return api.Confirmation{}, control.Errorf(api.ErrorKindUnavailable, "this hab keeps no groups")
+	case p.Group == nil:
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a group confirmation needs group")
+	case p.WaitMS < 0:
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "wait_ms must not be negative")
+	}
+	g, elsewhere, err := s.cfg.Groups.CheckPlan(*p.Group)
+	if err != nil {
+		return api.Confirmation{}, err
+	}
+	ask := s.cfg.GroupPlan == nil || s.cfg.GroupPlan()
+	if !ask && elsewhere && s.cfg.Enabled != nil && s.cfg.Enabled() {
+		ask = true
+	}
+	ttl := s.cfg.TTL
+	if s.cfg.GroupTTL != nil {
+		if d := s.cfg.GroupTTL(); d > 0 {
+			ttl = d
+		}
+	}
+	wait := time.Duration(min(p.WaitMS, int(MaxWait/time.Millisecond))) * time.Millisecond
+	e := &entry{done: make(chan struct{}), ttl: ttl, c: api.Confirmation{
+		ID: newID(), Kind: "group", From: p.From, Group: &g, Created: stamp(s.cfg.Now()),
+	}}
+	return s.open1(ctx, e, ask, wait)
+}
+
 // Answer answers an open confirmation (capcom.md 6.1): cancel closes it; confirm runs the
 // action with the user's edits and returns once it closed. The first answer wins; any later
 // one, or one after the expiry, answers conflict.
@@ -298,6 +375,11 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		s.mu.Unlock()
 		s.after(c, note)
 		return c, nil
+	}
+	if e.c.Kind == "group" {
+		g := *e.c.Group
+		s.mu.Unlock()
+		return s.answerGroup(client, p, g)
 	}
 	start := *e.c.Start
 	auto := start.Name == start.Harness+"-"+e.c.ID[:6]
@@ -358,6 +440,35 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 	return s.run(e), nil
 }
 
+// answerGroup confirms a kind group confirmation, with the user's edited plan checked again.
+func (s *Service) answerGroup(client string, p api.ConfirmAnswerParams, g api.ConfirmGroup) (api.Confirmation, error) {
+	edited := false
+	if p.Edits != nil && p.Edits.Plan != nil {
+		g.Plan, edited = *p.Edits.Plan, true
+		var err error
+		if g, _, err = s.cfg.Groups.CheckPlan(g); err != nil {
+			return api.Confirmation{}, err
+		}
+	}
+	s.pub.Lock()
+	s.mu.Lock()
+	e, err := s.answerableLocked(p.ID)
+	if err != nil {
+		s.mu.Unlock()
+		s.pub.Unlock()
+		return api.Confirmation{}, err
+	}
+	e.c.State, e.c.AnsweredBy, e.c.Edited, e.c.Group = "running", client, edited, &g
+	if e.timer != nil {
+		e.timer.Stop()
+	}
+	c := e.c
+	s.mu.Unlock()
+	s.publishLocked(EventRequested, c)
+	s.pub.Unlock()
+	return s.run(e), nil
+}
+
 // answerableLocked returns the open confirmation with the id, or why it cannot be answered.
 func (s *Service) answerableLocked(id string) (*entry, error) {
 	e, ok := s.open[id]
@@ -373,7 +484,7 @@ func (s *Service) answerableLocked(id string) (*entry, error) {
 		return nil, closedErr(e.c)
 	}
 	if !s.cfg.Now().Before(e.expires) {
-		note := s.closeLocked(e, "expired", "no answer within 60 minutes; nothing ran", nil)
+		note := s.closeLocked(e, "expired", expiredReason(e.ttl), nil)
 		c := e.c
 		go s.after(c, note)
 		return nil, closedErr(c)
@@ -396,10 +507,24 @@ func (s *Service) run(e *entry) api.Confirmation {
 	ctx, cancel := context.WithTimeout(context.Background(), RunTime)
 	defer cancel()
 	s.mu.Lock()
-	id, from, start := e.c.ID, e.c.From, *e.c.Start
-	ctx = context.WithValue(ctx, confirmedKey{}, !e.c.Record)
+	id, from, kind := e.c.ID, e.c.From, e.c.Kind
+	var start api.ConfirmStart
+	var group api.ConfirmGroup
+	if kind == "group" {
+		group = *e.c.Group
+	} else {
+		start = *e.c.Start
+	}
+	confirmed := !e.c.Record
+	ctx = context.WithValue(ctx, confirmedKey{}, confirmed)
 	s.mu.Unlock()
-	res, err := s.cfg.Runner.RunStart(ctx, id, from, start)
+	var res api.ConfirmResult
+	var err error
+	if kind == "group" {
+		res, err = s.cfg.Groups.RunGroup(ctx, id, group, confirmed)
+	} else {
+		res, err = s.cfg.Runner.RunStart(ctx, id, from, start)
+	}
 	s.mu.Lock()
 	var note string
 	switch {
@@ -428,10 +553,27 @@ func (s *Service) expire(id string) {
 		s.mu.Unlock()
 		return
 	}
-	note := s.closeLocked(e, "expired", "no answer within 60 minutes; nothing ran", nil)
+	note := s.closeLocked(e, "expired", expiredReason(e.ttl), nil)
 	c := e.c
 	s.mu.Unlock()
 	s.after(c, note)
+}
+
+// expiredReason says how long the confirmation waited.
+func expiredReason(ttl time.Duration) string {
+	return "no answer within " + span(ttl) + "; nothing ran"
+}
+
+// span says a duration in whole minutes, or hours when it is whole hours past one.
+func span(d time.Duration) string {
+	m := int(d.Round(time.Minute) / time.Minute)
+	switch {
+	case m > 60 && m%60 == 0:
+		return fmt.Sprintf("%d hours", m/60)
+	case m == 1:
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", m)
 }
 
 // closeLocked closes e. It returns the message for the requesting session when no request
@@ -462,6 +604,9 @@ func (s *Service) after(c api.Confirmation, note string) {
 	s.pub.Lock()
 	s.publishLocked(EventClosed, c)
 	s.pub.Unlock()
+	if c.Kind == "group" && s.cfg.Groups != nil && (c.State == "cancelled" || c.State == "expired") {
+		s.cfg.Groups.GroupClosed(c)
+	}
 	if note == "" || s.cfg.Notify == nil {
 		return
 	}
@@ -542,6 +687,21 @@ func CheckGroup(s api.ConfirmStart) error {
 
 // Message is the text a requesting session gets when the answer came after its wait.
 func Message(c api.Confirmation) string {
+	if c.Kind == "group" && c.Group != nil {
+		what := "the group plan " + c.Group.Plan.Title
+		if c.Group.Amend {
+			what = "the change to group " + c.Group.Group
+		}
+		switch c.State {
+		case "done":
+			return fmt.Sprintf("Confirmation %s: the owner confirmed %s; group %s runs. group_status shows it.", c.ID, what, c.Group.Group)
+		case "cancelled":
+			return fmt.Sprintf("Confirmation %s: the owner cancelled %s. Nothing started.", c.ID, what)
+		case "expired":
+			return fmt.Sprintf("Confirmation %s: %s for %s, so it expired. Nothing started.", c.ID, strings.TrimSuffix(c.Reason, "; nothing ran"), what)
+		}
+		return fmt.Sprintf("Confirmation %s: %s failed: %s.", c.ID, what, c.Reason)
+	}
 	where := "this host"
 	if c.Start != nil && c.Start.Host != "" {
 		where = c.Start.Host
@@ -559,7 +719,7 @@ func Message(c api.Confirmation) string {
 	case "cancelled":
 		return fmt.Sprintf("Confirmation %s: the owner cancelled the start on %s. Nothing ran.", c.ID, where)
 	case "expired":
-		return fmt.Sprintf("Confirmation %s: no answer within 60 minutes, so it expired. Nothing ran.", c.ID)
+		return fmt.Sprintf("Confirmation %s: %s, so it expired. Nothing ran.", c.ID, strings.TrimSuffix(c.Reason, "; nothing ran"))
 	case "unknown":
 		return fmt.Sprintf("Confirmation %s: the start on %s has an unknown outcome: %s.", c.ID, where, c.Reason)
 	}

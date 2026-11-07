@@ -120,6 +120,7 @@ const (
 const (
 	ConfirmKindStart ConfirmKind = "start"
 	ConfirmKindSetup ConfirmKind = "setup"
+	ConfirmKindGroup ConfirmKind = "group"
 )
 
 const (
@@ -179,6 +180,12 @@ const (
 	ErrorKindLocked              ErrorKind = "locked"
 	ErrorKindDenied              ErrorKind = "denied"
 	ErrorKindInvalid             ErrorKind = "invalid"
+)
+
+const (
+	GroupRoleLead     GroupRole = "lead"
+	GroupRoleWorker   GroupRole = "worker"
+	GroupRoleReviewer GroupRole = "reviewer"
 )
 
 const (
@@ -455,6 +462,7 @@ const (
 	EventConfirmClosed    EventType = "confirm.closed"
 	EventRoundUpdated     EventType = "round.updated"
 	EventRoundRunUpdated  EventType = "round.run_updated"
+	EventGroupUpdated     EventType = "group.updated"
 	EventHabWoke          EventType = "hab.woke"
 	EventLogbookUpdated   EventType = "logbook.updated"
 	EventLogbookConflict  EventType = "logbook.conflict"
@@ -569,6 +577,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventRoundRunUpdated:
 		var v RoundRun
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventGroupUpdated:
+		var v Group
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventHabWoke:
@@ -1355,5 +1367,75 @@ func (c Client) HeavyRelease(ctx context.Context, params HeavyReleaseParams) (Em
 func (c Client) HeavyStatus(ctx context.Context, params HeavyStatusParams) (HeavyStatus, error) {
 	var result HeavyStatus
 	err := c.Caller.Call(ctx, "heavy.status", params, &result)
+	return result, err
+}
+
+// GroupCreate calls group.create. Propose a group plan (groups.md 3): the hab checks it, files a Logbook plan record and a task per item, and asks one confirmation of kind group while confirm.group_plan is on (also with confirm.start_elsewhere on and a member elsewhere). Nothing starts before the answer. Needs the groups and logbook capabilities.
+func (c Client) GroupCreate(ctx context.Context, params GroupCreateParams) (GroupCreated, error) {
+	var result GroupCreated
+	err := c.Caller.Call(ctx, "group.create", params, &result)
+	return result, err
+}
+
+// GroupAmend calls group.amend. Add items or members to a running group: one confirmation for the change, by the same setting rules (groups.md 3.3). Needs the groups capability.
+func (c Client) GroupAmend(ctx context.Context, params GroupAmendParams) (GroupCreated, error) {
+	var result GroupCreated
+	err := c.Caller.Call(ctx, "group.amend", params, &result)
+	return result, err
+}
+
+// GroupGet calls group.get. One group's record (groups.md 5.1). Needs the groups capability.
+func (c Client) GroupGet(ctx context.Context, params GroupRef) (GroupResult, error) {
+	var result GroupResult
+	err := c.Caller.Call(ctx, "group.get", params, &result)
+	return result, err
+}
+
+// GroupList calls group.list. The short form of each group this hab is the home of, newest first. Needs the groups capability.
+func (c Client) GroupList(ctx context.Context, params GroupListParams) (GroupList, error) {
+	var result GroupList
+	err := c.Caller.Call(ctx, "group.list", params, &result)
+	return result, err
+}
+
+// GroupReport calls group.report. A report to the group's coordinator (groups.md 5.5): a channel message from Flightdeck while it runs, else it waits in the record's inbox until its resume. Needs the groups capability.
+func (c Client) GroupReport(ctx context.Context, params GroupReportParams) (GroupReported, error) {
+	var result GroupReported
+	err := c.Caller.Call(ctx, "group.report", params, &result)
+	return result, err
+}
+
+// GroupNote calls group.note. A note the hab writes on an item's Logbook task, so it lands under logbook.approval agents too (groups.md 4.3). Needs the groups capability.
+func (c Client) GroupNote(ctx context.Context, params GroupNoteParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "group.note", params, &result)
+	return result, err
+}
+
+// GroupPause calls group.pause. The user's pause: member habs hold messages into the group's members and new starts; working members finish their turn (groups.md 5.6). Needs the groups capability.
+func (c Client) GroupPause(ctx context.Context, params GroupRef) (GroupResult, error) {
+	var result GroupResult
+	err := c.Caller.Call(ctx, "group.pause", params, &result)
+	return result, err
+}
+
+// GroupResume calls group.resume. Lift the user's pause. A usage pause stays (groups.md 5.6). Needs the groups capability.
+func (c Client) GroupResume(ctx context.Context, params GroupRef) (GroupResult, error) {
+	var result GroupResult
+	err := c.Caller.Call(ctx, "group.resume", params, &result)
+	return result, err
+}
+
+// GroupClose calls group.close. End the group: no new starts; with group.close_members on, idle members are closed (groups.md 5.2). Needs the groups capability.
+func (c Client) GroupClose(ctx context.Context, params GroupRef) (GroupResult, error) {
+	var result GroupResult
+	err := c.Caller.Call(ctx, "group.close", params, &result)
+	return result, err
+}
+
+// GroupRetry calls group.retry. Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.
+func (c Client) GroupRetry(ctx context.Context, params GroupRetryParams) (GroupResult, error) {
+	var result GroupResult
+	err := c.Caller.Call(ctx, "group.retry", params, &result)
 	return result, err
 }

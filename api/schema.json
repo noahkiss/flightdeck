@@ -39,7 +39,8 @@
     "rounds",
     "heavy",
     "round-lock",
-    "capcom-thread"
+    "capcom-thread",
+    "groups"
   ],
   "methods": [
     {
@@ -483,6 +484,20 @@
             "items": {
               "type": "string"
             }
+          }
+        },
+        {
+          "name": "envelope",
+          "description": "With group: what the group's confirmed plan allows. A later start from this member inside it asks nothing, and is a member too.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupEnvelope"
+          }
+        },
+        {
+          "name": "group",
+          "description": "Only with trust_cover: the session is a member of this group.",
+          "schema": {
+            "$ref": "#/components/schemas/SessionGroup"
           }
         },
         {
@@ -3322,6 +3337,13 @@
           }
         },
         {
+          "name": "group",
+          "description": "Kind group: only gff-hab's group.create and group.amend ask for it, never a pane.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmGroup"
+          }
+        },
+        {
           "name": "kind",
           "required": true,
           "schema": {
@@ -3829,6 +3851,311 @@
       "x-params": {
         "$ref": "#/components/schemas/HeavyStatusParams"
       }
+    },
+    {
+      "name": "group.create",
+      "summary": "Propose a group plan (groups.md 3): the hab checks it, files a Logbook plan record and a task per item, and asks one confirmation of kind group while confirm.group_plan is on (also with confirm.start_elsewhere on and a member elsewhere). Nothing starts before the answer. Needs the groups and logbook capabilities.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "coordinator",
+          "description": "The coordinator's session name on this hab. From a pane the pane's session, whatever this says.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "plan",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/GroupPlan"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "description": "Wait up to this long for the confirmation's answer; 0 answers at once. At most 120000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupCreateParams"
+      }
+    },
+    {
+      "name": "group.amend",
+      "summary": "Add items or members to a running group: one confirmation for the change, by the same setting rules (groups.md 3.3). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "change",
+          "description": "The items and members to add. Title, brief and project are not read.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/GroupPlan"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAmendParams"
+      }
+    },
+    {
+      "name": "group.get",
+      "summary": "One group's record (groups.md 5.1). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.list",
+      "summary": "The short form of each group this hab is the home of, newest first. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "state",
+          "description": "Only groups in this state.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupListParams"
+      }
+    },
+    {
+      "name": "group.report",
+      "summary": "A report to the group's coordinator (groups.md 5.5): a channel message from Flightdeck while it runs, else it waits in the record's inbox until its resume. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "Who sends it: a member's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "One line or a short text, at most 4000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupReported"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupReportParams"
+      }
+    },
+    {
+      "name": "group.note",
+      "summary": "A note the hab writes on an item's Logbook task, so it lands under logbook.approval agents too (groups.md 4.3). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "At most 4000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupNoteParams"
+      }
+    },
+    {
+      "name": "group.pause",
+      "summary": "The user's pause: member habs hold messages into the group's members and new starts; working members finish their turn (groups.md 5.6). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.resume",
+      "summary": "Lift the user's pause. A usage pause stays (groups.md 5.6). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.close",
+      "summary": "End the group: no new starts; with group.close_members on, idle members are closed (groups.md 5.2). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.retry",
+      "summary": "Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "A failed member's name.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRetryParams"
+      }
     }
   ],
   "x-notifications": [
@@ -4035,6 +4362,13 @@
       "summary": "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/RoundRun"
+      }
+    },
+    {
+      "type": "group.updated",
+      "summary": "A group record changed; the id is the group id (groups.md 15.1). Host scope only. Not ephemeral: the groups are in the host snapshot.",
+      "data": {
+        "$ref": "#/components/schemas/Group"
       }
     },
     {
@@ -5152,8 +5486,21 @@
       "CatalogAgent": {
         "type": "object",
         "properties": {
+          "context_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How full its context window is, in whole percent; absent when unknown."
+          },
+          "group": {
+            "$ref": "#/components/schemas/SessionGroup",
+            "description": "The session is a member of this group."
+          },
           "harness": {
             "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "The session's id on its host."
           },
           "project": {
             "type": "string",
@@ -5348,8 +5695,31 @@
             "type": "integer",
             "format": "uint64"
           },
+          "home": {
+            "type": "string",
+            "description": "The home hab's device id."
+          },
           "id": {
             "type": "string"
+          },
+          "items": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plan items."
+          },
+          "landed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items landed."
+          },
+          "members": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Members started."
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause",
+            "description": "The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."
           },
           "state": {
             "type": "string",
@@ -6543,6 +6913,10 @@
           "model": {
             "type": "string"
           },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan",
+            "description": "Kind group: the edited plan. The user may change hosts, harnesses, models and names, drop an item or a member, and turn review off; the hab checks it again."
+          },
           "seed": {
             "type": "string",
             "description": "The edited seed, at most 8000 characters."
@@ -6560,11 +6934,44 @@
           "id"
         ]
       },
+      "ConfirmGroup": {
+        "type": "object",
+        "properties": {
+          "amend": {
+            "type": "boolean",
+            "description": "The plan is a change to a running group (group.amend): its new items and members."
+          },
+          "group": {
+            "type": "string",
+            "description": "The group id."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan"
+          },
+          "trust": {
+            "type": "string",
+            "description": "The trust rule the confirmation answers, in one line: which new worktrees, on which hosts, for which harnesses (groups.md 4.2)."
+          },
+          "warnings": {
+            "type": "array",
+            "description": "Lines the card shows above the buttons, such as one item: a single session costs less (groups.md 11).",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "group",
+          "plan",
+          "trust"
+        ]
+      },
       "ConfirmKind": {
         "type": "string",
         "x-known-values": [
           "start",
-          "setup"
+          "setup",
+          "group"
         ]
       },
       "ConfirmList": {
@@ -6609,6 +7016,10 @@
           "from": {
             "type": "string",
             "description": "The requesting session's name on this hab. The hook endpoint fills it from the pane's token."
+          },
+          "group": {
+            "$ref": "#/components/schemas/ConfirmGroup",
+            "description": "Kind group: only gff-hab's group.create and group.amend ask for it, never a pane."
           },
           "kind": {
             "$ref": "#/components/schemas/ConfirmKind"
@@ -6823,6 +7234,10 @@
           "from": {
             "type": "string",
             "description": "The requesting session's name on this hab. Absent for a request from outside a pane."
+          },
+          "group": {
+            "$ref": "#/components/schemas/ConfirmGroup",
+            "description": "Kind group: the plan the confirmation starts, or the change an amend adds."
           },
           "id": {
             "type": "string",
@@ -7822,6 +8237,703 @@
         },
         "required": [
           "path"
+        ]
+      },
+      "Group": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/GroupConfirmationRef"
+          },
+          "coordinator": {
+            "$ref": "#/components/schemas/GroupCoordinator"
+          },
+          "created": {
+            "type": "string"
+          },
+          "ended": {
+            "type": "string"
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "What the confirmed plan allows (groups.md 3.3). Absent while confirming."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "1 at creation; one more at each move of the home (groups.md 5.7)."
+          },
+          "home": {
+            "type": "string",
+            "description": "The home hab's device id."
+          },
+          "id": {
+            "type": "string",
+            "description": "64 random bits as 16 hex digits."
+          },
+          "inbox": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupReport"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupItem"
+            }
+          },
+          "lane": {
+            "$ref": "#/components/schemas/GroupLaneState"
+          },
+          "leftovers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupMember"
+            }
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan",
+            "description": "The plan as confirmed, with each amend merged in."
+          },
+          "plan_record": {
+            "type": "string",
+            "description": "The Logbook plan record id."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name in the home hab's catalog."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "state": {
+            "type": "string",
+            "description": "confirming, running, paused, ending, ended or dropped."
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "string"
+          },
+          "waits": {
+            "type": "array",
+            "description": "What holds the group now, one line each.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "title",
+          "project",
+          "home",
+          "generation",
+          "coordinator",
+          "inbox",
+          "state",
+          "confirmation",
+          "items",
+          "members",
+          "lane",
+          "pause",
+          "waits",
+          "leftovers",
+          "plan",
+          "created",
+          "updated"
+        ]
+      },
+      "GroupAmendParams": {
+        "type": "object",
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/GroupPlan",
+            "description": "The items and members to add. Title, brief and project are not read."
+          },
+          "group": {
+            "type": "string"
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "group",
+          "change"
+        ]
+      },
+      "GroupConfirmationRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The confirmation id, or none when confirm.group_plan was off."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ConfirmState"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "GroupCoordinator": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id."
+          },
+          "name": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "Its session id on the home hab."
+          }
+        },
+        "required": [
+          "session",
+          "name",
+          "address"
+        ]
+      },
+      "GroupCreateParams": {
+        "type": "object",
+        "properties": {
+          "coordinator": {
+            "type": "string",
+            "description": "The coordinator's session name on this hab. From a pane the pane's session, whatever this says."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan"
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Wait up to this long for the confirmation's answer; 0 answers at once. At most 120000."
+          }
+        },
+        "required": [
+          "plan"
+        ]
+      },
+      "GroupCreated": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/Confirmation",
+            "description": "The plan's confirmation, open or closed. Absent when none was asked."
+          },
+          "group": {
+            "$ref": "#/components/schemas/Group"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "group"
+        ]
+      },
+      "GroupEnvelope": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "type": "string",
+            "description": "The plan's confirmation id, or none when it started with no confirmation."
+          },
+          "group": {
+            "type": "string"
+          },
+          "harnesses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "home": {
+            "type": "string",
+            "description": "The home hab's device id."
+          },
+          "hosts": {
+            "type": "array",
+            "description": "The device ids of the plan's hosts.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_workers": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Workers per lead (group.max_workers when the plan was confirmed)."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's identity: its normalized remote, else root:\u003ccommit\u003e."
+          }
+        },
+        "required": [
+          "group",
+          "home",
+          "confirmation",
+          "project",
+          "hosts",
+          "harnesses",
+          "max_workers"
+        ]
+      },
+      "GroupItem": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/\u003citem\u003e."
+          },
+          "id": {
+            "type": "string"
+          },
+          "lead": {
+            "type": "string",
+            "description": "Its lead's session name."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it is stalled or waits."
+          },
+          "review": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, stalled, working, review, fix, ready, landing, landed or dropped."
+          },
+          "task": {
+            "type": "string",
+            "description": "Its Logbook task id."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "state"
+        ]
+      },
+      "GroupLane": {
+        "type": "object",
+        "properties": {
+          "fix_in_place": {
+            "type": "boolean",
+            "description": "A reviewer may fix in place on its review branch (groups.md 6.4)."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target branch. Absent: the project's default branch."
+          }
+        }
+      },
+      "GroupLaneState": {
+        "type": "object",
+        "properties": {
+          "landing": {
+            "type": "string"
+          },
+          "queue": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "queue"
+        ]
+      },
+      "GroupList": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogGroup"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "groups"
+        ]
+      },
+      "GroupListParams": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Only groups in this state."
+          }
+        }
+      },
+      "GroupMember": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AgentStatus",
+            "description": "Its agent state, from its hab or the catalog copy."
+          },
+          "agent_age": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab last confirmed that state with the member's hab."
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Starts tried again by group.retry; each has its own idempotency key."
+          },
+          "compacts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "context_pct": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device": {
+            "type": "string",
+            "description": "Its hab's device id."
+          },
+          "folder": {
+            "type": "string",
+            "description": "Its worktree on its host."
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "Its host, as the home hab labels it."
+          },
+          "item": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it failed."
+          },
+          "replaced": {
+            "type": "string",
+            "description": "The session it replaced (groups.md 9.3)."
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole"
+          },
+          "session": {
+            "type": "string",
+            "description": "Its session id on its host, once started."
+          },
+          "state": {
+            "type": "string",
+            "description": "planned, starting, running, exited or failed."
+          }
+        },
+        "required": [
+          "name",
+          "host",
+          "harness",
+          "role",
+          "item",
+          "state"
+        ]
+      },
+      "GroupNoteParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "At most 4000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "item",
+          "text"
+        ]
+      },
+      "GroupPause": {
+        "type": "object",
+        "properties": {
+          "until": {
+            "type": "string",
+            "description": "With usage: when the governor expects room."
+          },
+          "usage": {
+            "type": "string",
+            "description": "RFC 3339 time usage pacing paused it; absent when not."
+          },
+          "user": {
+            "type": "string",
+            "description": "RFC 3339 time the user paused the group; absent when not."
+          }
+        }
+      },
+      "GroupPlan": {
+        "type": "object",
+        "properties": {
+          "brief": {
+            "type": "string",
+            "description": "The task in full: every member's seed carries it."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPlanItem"
+            }
+          },
+          "lane": {
+            "$ref": "#/components/schemas/GroupLane"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPlanMember"
+            }
+          },
+          "project": {
+            "type": "string",
+            "description": "The project: its name or remote in the catalog. A group works on one repository."
+          },
+          "title": {
+            "type": "string",
+            "description": "The task, one line."
+          }
+        },
+        "required": [
+          "title",
+          "project",
+          "items",
+          "members"
+        ]
+      },
+      "GroupPlanItem": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "description": "An item whose branch this one stacks on (groups.md 7.2). It starts once that item reaches review."
+          },
+          "brief": {
+            "type": "string",
+            "description": "The item in full: its lead's seed carries it after the group's brief."
+          },
+          "id": {
+            "type": "string",
+            "description": "1 to 64 lowercase letters, digits and '-', unique in the plan."
+          },
+          "review": {
+            "type": "string",
+            "description": "on (the default) or off (groups.md 6.1)."
+          },
+          "title": {
+            "type": "string"
+          },
+          "touches": {
+            "type": "array",
+            "description": "Paths or item ids it overlaps.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ]
+      },
+      "GroupPlanMember": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string",
+            "description": "claude, codex or opencode, or an alias from the home hab's [aliases] table."
+          },
+          "host": {
+            "type": "string",
+            "description": "A peer label from the home hab's peer list, or its host id. Absent: the home hab."
+          },
+          "item": {
+            "type": "string",
+            "description": "The item it works on."
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its session name, free on every host. Absent: harness, six hex digits of the group id, role and item position, such as codex-3fa9c2-review-2."
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole",
+            "description": "lead, worker or reviewer."
+          }
+        },
+        "required": [
+          "role",
+          "item",
+          "harness"
+        ]
+      },
+      "GroupRef": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "GroupReport": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab took it."
+          },
+          "from": {
+            "type": "string",
+            "description": "Who sent it: a member's name, or Flightdeck."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "text"
+        ]
+      },
+      "GroupReportParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Who sends it: a member's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "One line or a short text, at most 4000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "text"
+        ]
+      },
+      "GroupReported": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "sent: a channel message to the running coordinator; waiting: it waits in the record's inbox."
+          }
+        },
+        "required": [
+          "seq",
+          "state"
+        ]
+      },
+      "GroupResult": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/Group"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "group"
+        ]
+      },
+      "GroupRetryParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string",
+            "description": "A failed member's name."
+          }
+        },
+        "required": [
+          "group",
+          "member"
+        ]
+      },
+      "GroupRole": {
+        "type": "string",
+        "x-known-values": [
+          "lead",
+          "worker",
+          "reviewer"
         ]
       },
       "HabStatsParams": {
@@ -11344,6 +12456,10 @@
           "exit": {
             "$ref": "#/components/schemas/ExitStatus"
           },
+          "group": {
+            "$ref": "#/components/schemas/SessionGroup",
+            "description": "Set on a session an agent group started: the group, the member's role and its item."
+          },
           "id": {
             "type": "string"
           },
@@ -11476,6 +12592,14 @@
               "type": "string"
             }
           },
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "With group: what the group's confirmed plan allows. A later start from this member inside it asks nothing, and is a member too."
+          },
+          "group": {
+            "$ref": "#/components/schemas/SessionGroup",
+            "description": "Only with trust_cover: the session is a member of this group."
+          },
           "harness": {
             "type": "string",
             "description": "Detection manifest id of a harness to start, such as claude. Needs that harness's adapter."
@@ -11560,6 +12684,24 @@
         "required": [
           "session",
           "active"
+        ]
+      },
+      "SessionGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole"
+          }
+        },
+        "required": [
+          "id",
+          "role"
         ]
       },
       "SessionKind": {
@@ -11949,6 +13091,13 @@
             "description": "The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability.",
             "items": {
               "$ref": "#/components/schemas/Confirmation"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "description": "The groups this hab is the home of (groups.md 5.1), in a host scope snapshot only. Absent with none, and from a hab without the groups capability.",
+            "items": {
+              "$ref": "#/components/schemas/Group"
             }
           },
           "host": {
