@@ -120,6 +120,10 @@ cache = "0s"
 	if w := welcome(t, e.sock); !strings.Contains(strings.Join(w.Capabilities, " "), "device-context") {
 		t.Fatalf("capabilities %v", w.Capabilities)
 	}
+	// Before this hab holds the mark it is no home host: it keeps no device context.
+	if _, err := callJSON[api.Empty](t, c, "device.context.put", api.DeviceContextPutParams{TZ: "Europe/Berlin"}); errKind(err) != api.ErrorKindUnavailable {
+		t.Fatalf("a put before the mark: %v", err)
+	}
 	run(t, "capcom", "assign", "-socket", e.sock, "self")
 	waitUntil(t, "the engine connected", func() bool {
 		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
