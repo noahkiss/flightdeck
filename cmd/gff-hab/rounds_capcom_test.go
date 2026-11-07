@@ -115,7 +115,10 @@ func TestRoundCapcomPeers(t *testing.T) {
 		return runs[0].Outcome != nil && runs[0].Outcome.Word == "told"
 	})
 
-	// A refusal skips the run and keeps its batch.
+	// A refusal skips the run and keeps its batch. a's own link to b must be up first: b may
+	// take its mail over the link it dialed while a's is still connecting, and a message queued
+	// for an offline home host ends the run "queued for Capcom".
+	waitPeer(t, a.sock, "bee", "a sees b online again", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
 	writeFile(t, answer, "refused Capcom moved to elsewhere\n")
 	a.must(t, "", "add", "cc-ev", "-mode", "capcom", "-on", "notice.raised", "-debounce", "1h", "look at these")
 	if out, err := exec.Command(bin, "notify", "-socket", a.sock, "-level", "active", "disk full").CombinedOutput(); err != nil {
