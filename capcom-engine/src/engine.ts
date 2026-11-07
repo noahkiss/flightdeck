@@ -16,7 +16,7 @@ import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, siteOf, textOf, toolSum
 import { Route, type Msg } from './route.js';
 import { configDir, findTranscript, handedIds, MARKER_RE } from './transcript.js';
 import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
-import { ContextAsks, type ContextMsg, type Credential, defaultSettings, helloReseed, type Item, itemLines, newTurnId, originOf, parseContext, parseCredential, parseSettings, redactor, type Settings } from './contract.js';
+import { admit, ContextAsks, type ContextMsg, type Credential, defaultSettings, helloReseed, type Item, itemLines, mayHand, newTurnId, originOf, type Pace, PACE_OK, parseContext, parseCredential, parsePace, parseSettings, redactor, type Settings } from './contract.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -43,16 +43,6 @@ export interface QueryHandle extends AsyncIterable<SDKMessage> {
 // The small model when hello names none: the provider's smallest current model, by its alias.
 export const DEFAULT_SMALL_MODEL = 'haiku';
 
-// isPaced: an item paced at the event step: event batches, and agent reports and round
-// messages (sent as agent), which no user typed (10.1).
-const isPaced = (i: Item): boolean => i.kind === 'event' || i.kind === 'agent';
-
-// The governor's answer (capcom-service.md 10.1): the pace of the next user turn and of the
-// next event turn. Until the first pace message, every turn runs.
-export interface Pace {
-  user: 'ok' | 'small' | 'wait';
-  event: 'ok' | 'wait';
-}
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryHandle;
 
 export interface EngineDeps {
@@ -65,7 +55,7 @@ export interface EngineDeps {
   flushTimeoutMs?: number;
 }
 
-export type { Credential, Item } from './contract.js';
+export type { Credential, Item, Pace } from './contract.js';
 
 interface Turn {
   id: string;
@@ -146,7 +136,7 @@ export class Engine {
   private summarizing?: Promise<void>; // the summary call that runs
   private asks = new ContextAsks();
   private exiting = false;
-  private pace: Pace = { user: 'ok', event: 'ok' };
+  private pace: Pace = PACE_OK;
   private paceGen = 0; // counts pace messages, so a pump that awaited admits again
   private model?: string; // the model the SDK session runs now; undefined: the SDK's default
   private nextOrigin?: 'user' | 'event'; // the origin of the turn the next hand begins
@@ -271,47 +261,9 @@ export class Engine {
   }
 
   private onPace(m: Msg): void {
-    const user = m.pace === 'small' || m.pace === 'wait' ? m.pace : 'ok';
-    const event = m.event_pace === 'wait' ? 'wait' : 'ok';
-    this.pace = { user, event };
+    this.pace = parsePace(m);
     this.paceGen++;
     void this.pump();
-  }
-
-  // admit decides whether the pending items may begin a turn now, and on which model
-  // (capcom-service.md 10.1). The head item's kind gives the turn's origin. An event turn that
-  // waits lets a later user message begin a user turn that takes the event with it, so a user
-  // message never waits behind an event; a send-now message runs, with every item before it,
-  // on the small model while user turns wait. null: the items wait for the next pace.
-  private admit(): { origin: 'user' | 'event'; small: boolean } | null {
-    const p = this.pace;
-    const head = this.pending[0];
-    if (!head) return null;
-    const sendNow = this.pending.some((i) => i.send_now);
-    const userTurn = (): { origin: 'user'; small: boolean } | null => {
-      if (p.user === 'ok') return { origin: 'user', small: false };
-      if (p.user === 'small') return { origin: 'user', small: true };
-      return sendNow ? { origin: 'user', small: true } : null;
-    };
-    // Paced as events: event batches, and agent reports and round messages (sent as agent),
-    // which no user typed. The turn's origin stays as the item's kind gives it.
-    const paced = isPaced;
-    const origin = head.kind === 'event' ? 'event' : 'user';
-    if (!paced(head)) return userTurn();
-    if (p.event === 'ok') return { origin, small: p.user !== 'ok' };
-    if (this.pending.some((i) => !paced(i))) return userTurn();
-    return null;
-  }
-
-  // mayHand says whether the head pending item may go to the SDK now, into the turn admit
-  // began or one already running. While user turns wait, a user item goes only with a send-now
-  // item at or after it, and a paced item only while event turns may run: an item queued after
-  // the last send-now one waits for the next pace, not the send-now turn (10.1).
-  private mayHand(): boolean {
-    if (this.pace.user !== 'wait') return true;
-    const head = this.pending[0]!;
-    if (this.pending.some((i) => i.send_now)) return true;
-    return isPaced(head) && this.pace.event === 'ok';
   }
 
   // useModel switches the SDK session's model before a turn begins.
@@ -338,14 +290,14 @@ export class Engine {
         }
         if (!this.turn) {
           // A new turn: the governor's pace decides (10.1).
-          const a = this.admit();
+          const a = admit(this.pending, this.pace);
           if (!a) break;
           const gen = this.paceGen;
           await this.useModel(a.small);
           if (!this.ready || this.turn || gen !== this.paceGen) continue; // admit again
           this.nextOrigin = a.origin;
         }
-        if (!this.mayHand()) break;
+        if (!mayHand(this.pending, this.pace)) break;
         const item = this.pending.shift()!;
         await this.hand(item);
       }
@@ -848,7 +800,7 @@ export class Engine {
       return;
     }
     // Items handed but not taken run as the SDK's next turn.
-    // Only items the pace let through were handed (mayHand), so the turn needs no admit.
+    // Only items the pace let through were handed (mayHand in contract.ts), so the turn needs no admit.
     const untaken = [...this.untaken];
     const left = untaken.map((u) => this.uuidToItem.get(u)!).filter(Boolean);
     if (left.length) this.beginTurn(this.uuidItems.get(untaken[0]!)?.kind === 'event' ? 'event' : 'user', left);
