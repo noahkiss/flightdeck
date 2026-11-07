@@ -182,6 +182,7 @@ const (
 	ErrorKindLocked              ErrorKind = "locked"
 	ErrorKindDenied              ErrorKind = "denied"
 	ErrorKindInvalid             ErrorKind = "invalid"
+	ErrorKindMoved               ErrorKind = "moved"
 )
 
 const (
@@ -1490,5 +1491,33 @@ func (c Client) MemberHandoff(ctx context.Context, params MemberActionParams) (M
 func (c Client) MemberAction(ctx context.Context, params MemberActionRef) (MemberActionResult, error) {
 	var result MemberActionResult
 	err := c.Caller.Call(ctx, "member.action", params, &result)
+	return result, err
+}
+
+// GroupMove calls group.move. The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.
+func (c Client) GroupMove(ctx context.Context, params GroupMoveParams) (GroupMoveResult, error) {
+	var result GroupMoveResult
+	err := c.Caller.Call(ctx, "group.move", params, &result)
+	return result, err
+}
+
+// GroupAdopt calls group.adopt. The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.
+func (c Client) GroupAdopt(ctx context.Context, params GroupAdoptParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "group.adopt", params, &result)
+	return result, err
+}
+
+// GroupAdoptCommit calls group.adopt_commit. The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.
+func (c Client) GroupAdoptCommit(ctx context.Context, params GroupAdoptCommitParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "group.adopt_commit", params, &result)
+	return result, err
+}
+
+// GroupTell calls group.tell. A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.
+func (c Client) GroupTell(ctx context.Context, params GroupTellParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "group.tell", params, &result)
 	return result, err
 }

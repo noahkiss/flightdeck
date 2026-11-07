@@ -1,0 +1,26 @@
+{
+  "client": {
+    "max": 8,
+    "min": 7,
+    "x_unknown_field": "later"
+  },
+  "hint": "hint-3",
+  "home": "home-10",
+  "id": "id-9",
+  "kind": "moved",
+  "seq": 4,
+  "server": {
+    "max": 6,
+    "min": 5,
+    "x_unknown_field": "later"
+  },
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

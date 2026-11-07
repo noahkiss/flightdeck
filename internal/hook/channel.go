@@ -47,9 +47,10 @@ var RoundMethods = []string{"round.list", "round.get", "round.create", "round.up
 // GroupMethods are the group methods the route takes (groups.md 15.2): the coordinator's and
 // the members' tools. The pane's session is the caller: the coordinator of a new group, the
 // sender of a report or a note. group.pause and group.resume are not on the route: the user
-// pauses a group.
+// pauses a group. group.move is, so that it answers denied: the user moves a group's home
+// (groups.md 5.7).
 var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.list", "group.report", "group.note",
-	"group.close", "group.retry", "member.compact", "member.handoff", "member.action"}
+	"group.close", "group.retry", "member.compact", "member.handoff", "member.action", "group.move"}
 
 // AgentMethods are the methods an agent calls about itself (harness-adapters.md, Self-compact).
 // The pane's token names the agent: it can act only on its own pane.

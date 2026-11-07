@@ -75,6 +75,8 @@ type GroupCoordinator struct {
 	Session string `json:"session" doc:"Its session id on the home hab."`
 	Name    string `json:"name"`
 	Address string `json:"address" doc:"Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id."`
+	// Device was added by B9: a moved group's coordinator may run on another hab than its home.
+	Device string `json:"device,omitempty" doc:"The device id of the hab the coordinator runs on. Absent in a record from before B9: the home hab."`
 }
 
 // GroupConfirmationRef is the plan's confirmation and its outcome.
@@ -161,6 +163,20 @@ type Group struct {
 	Created      string               `json:"created"`
 	Updated      string               `json:"updated"`
 	Ended        string               `json:"ended,omitempty"`
+	// Moving, Moved, Pending, Tried and MoveFailed were added by B9 (groups.md 5.7).
+	Moving     *GroupMoveRef `json:"moving,omitempty" doc:"A hand-over to another hab runs: the lane and the scheduler take no new item."`
+	Moved      *GroupMoveRef `json:"moved,omitempty" doc:"A tombstone: the group moved home to this hab. The old home keeps it [groups] tombstone_keep."`
+	Pending    bool          `json:"pending,omitempty" doc:"A copy adopted from the old home, not yet committed: not published, runs nothing."`
+	Tried      uint64        `json:"tried,omitempty" doc:"The highest generation a move attempt used."`
+	MoveFailed string        `json:"move_failed,omitempty" doc:"Why the last move did not commit, for the card."`
+	From       *GroupFrom    `json:"from,omitempty" doc:"On a pending copy: the old home it came from."`
+}
+
+// GroupFrom is the old home of a pending copy (groups.md 5.7 step 7).
+type GroupFrom struct {
+	Device  string `json:"device" doc:"The old home's device id."`
+	Catalog uint64 `json:"catalog" doc:"The generation of the old home's catalog copy this hab held at the adopt: only a later copy can show the move failed."`
+	Label   string `json:"label,omitempty" doc:"This hab's label on the old home: the coordinator's line names the new home by it."`
 }
 
 // ConfirmGroup is the plan a kind group confirmation would start, or the change an amend adds.
@@ -274,4 +290,45 @@ type MemberAction struct {
 type MemberActionResult struct {
 	Seq
 	Action MemberAction `json:"action"`
+}
+
+// GroupMoveRef names the hab a move goes to (groups.md 5.7).
+type GroupMoveRef struct {
+	To         string `json:"to" doc:"The new home hab's device id."`
+	Label      string `json:"label,omitempty" doc:"Its label, as the hab that wrote this knows it."`
+	Generation uint64 `json:"generation,omitempty" doc:"The generation of the attempt: one above any the old home used for the group."`
+	Since      string `json:"since,omitempty" doc:"RFC 3339 time the move started (moving) or committed (moved)."`
+	Acked      bool   `json:"acked,omitempty" doc:"On a tombstone: the new home acknowledged group.adopt_commit."`
+}
+
+type GroupMoveParams struct {
+	Group  string `json:"group"`
+	Host   string `json:"host,omitempty" doc:"The new home: a peer label of the hab that takes the call, or its own host id."`
+	Device string `json:"device,omitempty" doc:"The new home by device id, in place of host: a queued move names its own hab this way."`
+	Cancel bool   `json:"cancel,omitempty" doc:"Cancel the move queued on this hab for the group."`
+}
+
+// GroupMoveResult answers group.move.
+type GroupMoveResult struct {
+	Seq
+	State string `json:"state" doc:"moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."`
+	Home  string `json:"home" doc:"The new home's device id."`
+	Text  string `json:"text" doc:"One line for the user, such as: <label> is offline; the group moves when it is back."`
+}
+
+type GroupAdoptParams struct {
+	Record     Group  `json:"record" doc:"The group record as the current home holds it."`
+	Generation uint64 `json:"generation" doc:"The generation the new home takes (groups.md 5.7 step 3)."`
+}
+
+type GroupAdoptCommitParams struct {
+	Group      string `json:"group"`
+	Generation uint64 `json:"generation"`
+	Record     *Group `json:"record,omitempty" doc:"The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start."`
+}
+
+type GroupTellParams struct {
+	Group   string `json:"group"`
+	Session string `json:"session" doc:"The coordinator's session id on the hab that takes the call."`
+	Text    string `json:"text" doc:"The report, or the waiting reports in one message."`
 }
