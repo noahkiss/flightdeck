@@ -11,10 +11,10 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { parseHabAddr } from './addr.js';
+import { ENGINE_TOKEN_VAR, engineToken, parseHabAddr } from './addr.js';
 import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, textOf, toolSummary, UrlSet } from './policy.js';
 import { Route, type Msg } from './route.js';
-import { configDir, findTranscript, handedIds, markerLine, MARKER_RE } from './transcript.js';
+import { configDir, findTranscript, handedIds, markerLine, MARKER_RE, neutralise } from './transcript.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -154,7 +154,7 @@ export class Engine {
     const addr = parseHabAddr(this.d.env.GFF_HAB);
     this.route = new Route({
       socket: addr.socket,
-      token: addr.token,
+      token: engineToken(this.d.env[ENGINE_TOKEN_VAR]),
       backoffStartMs: this.d.backoffStartMs,
       onHello: (m) => this.onHello(m),
       onMessage: (m) => this.onMessage(m),
@@ -295,9 +295,9 @@ export class Engine {
     else if (item.kind === 'note') lines.push(`Flightdeck note${when ? ` at ${when}` : ''}.`);
     else if (when || item.author) lines.push(`Sent${item.author ? ` by ${item.author}` : ''}${when ? ` at ${when}` : ''}.`);
     for (const c of item.context ?? []) {
-      lines.push('', `[context: ${c.kind ?? 'item'}${c.title ? `: ${c.title}` : ''}]`, c.text ?? '');
+      lines.push('', `[context: ${c.kind ?? 'item'}${c.title ? `: ${neutralise(c.title).replace(/[\]\n]/g, ' ')}` : ''}]`, neutralise(c.text ?? ''));
     }
-    lines.push('', item.text ?? '');
+    lines.push('', neutralise(item.text ?? ''));
     const blocks: any[] = [];
     const images: any[] = [];
     for (const p of item.images ?? []) {
@@ -391,6 +391,7 @@ export class Engine {
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     delete env.ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env[ENGINE_TOKEN_VAR]; // the engine route's token stays in the engine (3.3)
     if (this.credential?.kind === 'api_key') env.ANTHROPIC_API_KEY = this.credential.value;
     else if (this.credential) env.CLAUDE_CODE_OAUTH_TOKEN = this.credential.value;
     env.CLAUDE_AGENT_SDK_CLIENT_APP = `gff-hab-capcom/${ENGINE_VERSION}`;

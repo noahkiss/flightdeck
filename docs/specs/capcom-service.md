@@ -235,9 +235,13 @@ The engine reaches gff-hab as a pane's agent does: through a token route.
   Capcom session as the actor, Capcom's pane rules apply (writes are proposals,
   `capcom.md` 6.2), and the channel tools work.
 - The engine's own control messages (4.2) go over the same socket, on a route for the engine:
-  `/capcom/<token>`. A token for any other session is refused there.
-- The token changes at each engine start. gff-hab writes it into the job's environment file
-  (0600) before it starts the job; the previous token is refused from then on.
+  `/capcom/<token>`, with a second token of its own in `GFF_HAB_CAPCOM_TOKEN`. The engine keeps
+  that one to itself: it removes it from the environment it hands the SDK, so the SDK's binary
+  and `gff-hab mcp` hold only the pane route token in `GFF_HAB`, which `/capcom/` refuses. A
+  process with `GFF_HAB` can call tools as Capcom, but can neither read `hello` (the credential)
+  nor take the engine's link. Any other token is refused there too.
+- Both tokens change at each engine start. gff-hab writes them into the job's environment file
+  (0600) before it starts the job; the previous tokens are refused from then on.
 - The job's environment also carries `CLAUDE_CONFIG_DIR` when the environment of
   `gff-hab install` set it, so the engine's sessions land where the user's `claude` looks (11).
 
@@ -355,10 +359,11 @@ From the engine to gff-hab:
 ### 4.4 Wire format (built in A2)
 
 **Start.** gff-hab starts the engine as `node <engine file>` in `<state>/capcom/engine/`, with
-`GFF_HAB` (`http+unix://<hook socket>/hooks/<token>`, 3.3) and, when set, `CLAUDE_CONFIG_DIR`
-in its environment. Nothing else in the environment names a credential.
+`GFF_HAB` (`http+unix://<hook socket>/hooks/<pane token>`, 3.3), `GFF_HAB_CAPCOM_TOKEN` (the
+engine route token) and, when set, `CLAUDE_CONFIG_DIR` in its environment. Nothing else in the
+environment names a credential.
 
-**Connect.** The engine sends `POST /capcom/<token>` on the hook socket with `Connection:
+**Connect.** The engine sends `POST /capcom/<GFF_HAB_CAPCOM_TOKEN>` on the hook socket with `Connection:
 Upgrade` and `Upgrade: gff-capcom/1`. gff-hab answers `101 Switching Protocols`, and the
 connection then carries one JSON object per line, UTF-8, each line at most 4 MiB, both ways. An
 unknown or old token gets `404`; a second connection while one is open replaces the first.
@@ -399,7 +404,9 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 - **After each `ready`** the engine sends `approval.request` again for every request still open,
   since a gff-hab that restarted holds none. gff-hab keeps one card per request id.
 - **Markers.** Each input the engine hands to the SDK starts with the line
-  `[flightdeck item <id>]`. At start, before it takes any input, the engine reads the resumed
+  `[flightdeck item <id>]`. In the item's text and context, a line that starts with
+  `[flightdeck` or `[context` has its `[` turned into `(`, so outside text cannot forge a marker
+  or a context header. At start, before it takes any input, the engine reads the resumed
   SDK session's transcript for these lines and keeps their ids as handed.
 - **SDK facts the engine builds on** (SDK 0.3.319, verified in A2 against the bundled binary
   and a fake Messages API):

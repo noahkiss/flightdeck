@@ -20,12 +20,15 @@ type fakeProc struct {
 	pid  int
 	done chan struct{}
 	once sync.Once
+	hold bool // Stop leaves it running: an engine that finishes its turn first
 }
 
 func (p *fakeProc) Done() <-chan struct{} { return p.done }
 func (p *fakeProc) Pid() int              { return p.pid }
 func (p *fakeProc) Stop(time.Duration) error {
-	p.exit()
+	if !p.hold {
+		p.exit()
+	}
 	return nil
 }
 func (p *fakeProc) exit() { p.once.Do(func() { close(p.done) }) }
@@ -207,8 +210,9 @@ func TestSupervisorCredentialSources(t *testing.T) {
 	}
 	spec := s.job.starts[0]
 	env, _ := os.ReadFile(filepath.Join(s.dir, EnvFile))
-	tok := s.sup.Token()
-	if !strings.Contains(string(env), "GFF_HAB=http+unix:///sock/hooks/"+tok) || !strings.Contains(string(env), "CLAUDE_CONFIG_DIR=/cfg") {
+	tok, pane := s.sup.Token(), s.sup.PaneToken()
+	if tok == pane || !strings.Contains(string(env), "GFF_HAB=http+unix:///sock/hooks/"+pane) || !strings.Contains(string(env), TokenVar+"="+tok) ||
+		!strings.Contains(string(env), "CLAUDE_CONFIG_DIR=/cfg") {
 		t.Fatalf("env file %q", env)
 	}
 	if fi, _ := os.Stat(filepath.Join(s.dir, EnvFile)); fi.Mode().Perm() != 0o600 {
@@ -388,14 +392,14 @@ func TestSupervisorRefusalCountClears(t *testing.T) {
 
 func TestSupervisorAdoptAndBuildDrain(t *testing.T) {
 	s := newSup(t, func(s *supT) { s.env["CLAUDE_CODE_OAUTH_TOKEN"] = "tok" })
-	writeEnvFile(filepath.Join(s.dir, EnvFile), []string{"GFF_HAB=http+unix:///sock/hooks/oldtoken0123456789"})
+	writeEnvFile(filepath.Join(s.dir, EnvFile), []string{"GFF_HAB=http+unix:///sock/hooks/oldpane0123456789", TokenVar + "=oldtoken0123456789"})
 	s.sup.cfg.Record.Update(func(r *Record) { r.Build = "build-1" })
 	s.sup.cfg.Build = func() string { return "build-2" }
 	old := &fakeProc{pid: 77, done: make(chan struct{})}
 	s.job.adopt = old
 	s.sup.Ensure(context.Background())
 	s.noStart()
-	if s.sup.Token() != "oldtoken0123456789" || s.sup.Status().State != StateRunning {
+	if s.sup.Token() != "oldtoken0123456789" || s.sup.PaneToken() != "oldpane0123456789" || s.sup.Status().State != StateRunning {
 		t.Fatalf("adopt: token %q, %+v", s.sup.Token(), s.sup.Status())
 	}
 	s.job.adopt = nil
@@ -418,6 +422,41 @@ func TestSupervisorPauseResume(t *testing.T) {
 	s.noStart()
 	s.sup.Resume(context.Background())
 	s.started()
+}
+
+// A resume while a pause drains is no crash: the engine exits after its turn and starts again
+// at once, with no crash counted (3.2, 11).
+func TestSupervisorResumeDuringPauseDrain(t *testing.T) {
+	s := newSup(t, func(s *supT) { s.env["CLAUDE_CODE_OAUTH_TOKEN"] = "tok" })
+	s.sup.Ensure(context.Background())
+	p := s.started()
+	p.hold = true
+	s.sup.Pause()
+	s.sup.Resume(context.Background())
+	s.noStart()
+	p.exit()
+	s.started()
+	if n := len(s.sup.cfg.Record.Get().Crashes); n != 0 {
+		t.Fatalf("%d crashes counted", n)
+	}
+}
+
+// A gff-hab restart while a pause drains keeps the pause: the adopted engine's exit starts
+// nothing, and the state is paused.
+func TestSupervisorAdoptPausedDrain(t *testing.T) {
+	s := newSup(t, func(s *supT) { s.env["CLAUDE_CODE_OAUTH_TOKEN"] = "tok" })
+	s.sup.cfg.Record.Update(func(r *Record) { r.Paused = true })
+	old := &fakeProc{pid: 77, done: make(chan struct{})}
+	s.job.adopt = old
+	s.sup.Ensure(context.Background())
+	s.job.adopt = nil
+	old.exit()
+	s.waitState(StatePaused)
+	s.clock.Advance(time.Hour)
+	s.noStart()
+	if n := len(s.sup.cfg.Record.Get().Crashes); n != 0 {
+		t.Fatalf("%d crashes counted", n)
+	}
 }
 
 func TestSupervisorNodeMissing(t *testing.T) {

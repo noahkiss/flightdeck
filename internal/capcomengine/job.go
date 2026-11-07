@@ -43,6 +43,10 @@ type Proc interface {
 // group never reaches it, and records its pid in PidFile so a later gff-hab adopts it.
 type ProcessJob struct {
 	PidFile string
+	// Match reports whether a live pid is the engine (its command line). Adopt takes the pid
+	// file's process only when it matches, so a pid reused after a reboot is never adopted or
+	// signalled. Nil adopts any live pid (tests).
+	Match func(pid int) bool
 }
 
 type process struct {
@@ -106,7 +110,7 @@ func (j ProcessJob) Adopt(context.Context) (Proc, bool) {
 		return nil, false
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil || pid <= 1 || !alive(pid) {
+	if err != nil || pid <= 1 || !alive(pid) || (j.Match != nil && !j.Match(pid)) {
 		os.Remove(j.PidFile)
 		return nil, false
 	}

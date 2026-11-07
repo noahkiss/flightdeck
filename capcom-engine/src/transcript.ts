@@ -6,6 +6,14 @@ import path from 'node:path';
 // A marker counts only at the start of a line.
 export const MARKER_RE = /^\[flightdeck item ([^\]\s]+)\]/gm;
 
+// neutralise turns every line of outside text that starts like one of the engine's own lines
+// (an item marker, the start check, a context header) into plain text: its "[" becomes "(". So a
+// message cannot forge a marker that the transcript scan reads back as handed (4.4), nor a
+// context block.
+export function neutralise(text: string): string {
+  return text.replace(/^(\s*)\[(?=\s*(flightdeck|context)\b)/gim, '$1(');
+}
+
 export function markerLine(id: string): string {
   return `[flightdeck item ${id}]`;
 }
