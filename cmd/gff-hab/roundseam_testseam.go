@@ -23,6 +23,9 @@ func init() {
 	if d, err := time.ParseDuration(os.Getenv("GFF_TEST_ROUND_MIN_BATCH")); err == nil && d > 0 {
 		rounds.MinDebounce, rounds.MinCooldown = d, d
 	}
+	if d, err := time.ParseDuration(os.Getenv("GFF_TEST_SUPERVISE_TICK")); err == nil && d > 0 {
+		superviseTickSeam = d
+	}
 	roundCapcomSeam = os.Getenv("GFF_TEST_CAPCOM_SERVICE")
 	roundGroupsSeam = os.Getenv("GFF_TEST_GROUPS")
 }

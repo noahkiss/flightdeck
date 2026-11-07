@@ -421,6 +421,11 @@ func TestHeavyRows(t *testing.T) {
 		GroupMaxLeads:      {"1": true, "10": true, "0": false, "11": false},
 		GroupMaxWorkers:    {"0": true, "5": true, "6": false, "-1": false},
 		GroupCloseMembers:  {"true": true, "false": true, "1": false},
+		// Context supervision (groups.md 9.1, stage B6): compact_at 0 is off.
+		GroupCompactAt:          {"0": true, "40": true, "99": true, "100": false, "-1": false},
+		GroupFreshAfterCompacts: {"1": true, "20": true, "0": false, "21": false},
+		GroupFreshTranscriptMB:  {"1": true, "64": true, "0": false, "65": false},
+		GroupHandoffAt:          {"20": true, "95": true, "19": false, "96": false, "60.5": false},
 	} {
 		d, ok := Lookup(id)
 		if !ok {

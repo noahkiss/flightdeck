@@ -515,6 +515,7 @@ func serve(args []string) error {
 	var roundsRef atomic.Pointer[roundsService]
 	var heavyRef atomic.Pointer[heavy.Lock] // set once the lock runs; the catalog reads its section
 	var groupsRef groupRunnerRef            // set once the group service runs (groups.md 5)
+	supRef := &supervisorRef{}              // set once context supervision runs (groups.md 9)
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
@@ -1386,7 +1387,12 @@ func serve(args []string) error {
 					s.Publish(e)
 				}
 			},
-			poke: cs.Poke,
+			poke:       cs.Poke,
+			supervisor: supRef,
+			noteName: func(name, text string) error {
+				_, err := chSvc.Note(name, text)
+				return err
+			},
 			logf: logger.Printf,
 		})
 		if err != nil {
@@ -1628,6 +1634,61 @@ func serve(args []string) error {
 			compacts.typing = func(pane string) bool { return roundsSvc.typedWithin(pane, compactTypingWindow) }
 		}
 	}
+	// Context supervision of this hab's group members (groups.md 9): the context nudge stays
+	// quiet for them.
+	nudges.member = func(pane string) bool {
+		ss, ok := store.SessionByPane(pane)
+		return ok && ss.Group != nil
+	}
+	var sup *superviseService
+	if groupsSvc != nil && agentSvc != nil && sessionActs != nil {
+		scfg := superviseConfig{host: *hostID, members: store.Members, session: store.Session, agents: agents,
+			reading: memberReading(nudges, findTranscript), setPct: store.SetContextPct, addCompact: store.AddCompact,
+			inUse: func(ss api.Session) string {
+				st, ok := agents.Get(ss.Pane)
+				why := agentUse(st, ok)
+				if why == "" && agentSvc.sendHeld(ss.Pane) {
+					why = lockSending
+				}
+				return why
+			},
+			guard: func(string, string) error { return nil },
+			send: func(ctx context.Context, session, text string, guard func(string) error) error {
+				return agentSvc.sendGuarded(ctx, "supervise", api.SessionSendParams{Session: session, Text: text}, guard)
+			},
+			record: func(ctx context.Context, id string) (api.Group, error) {
+				if g, err := groupsSvc.Get(id); err == nil {
+					return g, nil
+				}
+				var r api.GroupResult
+				err := groupsSvc.forward(ctx, id, "group.get", api.GroupRef{Group: id}, &r)
+				return r.Group, err
+			},
+			note: func(name, text string) error {
+				_, err := chSvc.Note(name, text)
+				return err
+			},
+			setting: setSvc.Value, keys: groupsSvc.cfg.keys, tick: superviseTickSeam, logf: logger.Printf}
+		if compacts != nil {
+			scfg.compacts = compacts
+		}
+		if roundsSvc != nil {
+			scfg.inUse, scfg.guard = roundsSvc.roundLock, roundsSvc.lockGuard
+		}
+		swap := &memberSwap{store: store, hold: chSvc.Hold, move: chSvc.Move, rename: sessionActs.RenameSession,
+			closePane: sessionActs.ClosePane, folder: sessionActs.folderOf, logf: logger.Printf,
+			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				if s := srv.Load(); s != nil {
+					return s.CreateSession(ctx, p)
+				}
+				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
+			}}
+		scfg.fresh = swap.swap
+		sup = newSupervisor(scfg)
+		supRef.set(sup)
+		sup.Start()
+		defer sup.Stop()
+	}
 	if lk != nil {
 		escaped := newEscapedSweeps(tokens, logger.Printf)
 		defer escaped.Close()
@@ -1694,6 +1755,9 @@ func serve(args []string) error {
 		}
 		habitSvc.Hook(pane, env)
 		_, opened := agents.Hook(pane, env)
+		if sup != nil {
+			sup.Observe(pane, env, store.SessionByPane) // before the compaction service ends ours
+		}
 		if compacts != nil {
 			compacts.Observe(pane, env)
 		}

@@ -38,6 +38,25 @@ var groupTools = []kitTool{
 	{Name: "group_note", Action: true, Doc: "Write a progress or hand-off note on your item's Logbook task. Flightdeck writes it, so it lands at once whatever the owner's approval setting.",
 		Args: []toolArg{argGroup, {Name: "item", Type: "string", Required: true, Doc: "The item id."}, {Name: "text", Type: "string", Required: true, Doc: "At most 4000 characters."}},
 		run:  runGroupNote},
+	{Name: "member_compact", Action: true, Doc: "Ask for another member of your group to be compacted: it sends its progress with group_note, then its context is compacted and it continues its item. Flightdeck does this on its own at the owner's level, so ask only when a member is clearly lost in a long context. It waits until nobody uses the member, at most the owner's sibling wait (10 minutes by default), then it is skipped. The tool answers at once; how it ended reaches you as a message from Flightdeck. Claude Code members only; use member_handoff for others.",
+		Args: []toolArg{argGroup, {Name: "member", Type: "string", Required: true, Doc: "The member's name, from group_status."}}, run: runMemberAction("member.compact")},
+	{Name: "member_handoff", Action: true, Doc: "Ask for another member of your group to start fresh: it writes a hand-off note with group_note, then a new session under its name, in its worktree, reads the notes and continues. Messages waiting for it reach the new session. Waits and answers as member_compact.",
+		Args: []toolArg{argGroup, {Name: "member", Type: "string", Required: true, Doc: "The member's name, from group_status."}}, run: runMemberAction("member.handoff")},
+}
+
+// runMemberAction runs a sibling action (groups.md 9.4).
+func runMemberAction(method string) func(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+	return func(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+		var r api.MemberActionResult
+		if err := c.Call(ctx, method, api.MemberActionParams{Group: a.str("group"), Member: a.str("member")}, &r); err != nil {
+			return nil, "", err
+		}
+		text := fmt.Sprintf("Asked: %s of %s, action %s, %s", r.Action.Kind, r.Action.Member, r.Action.ID, r.Action.State)
+		if r.Action.Reason != "" {
+			text += " (" + r.Action.Reason + ")"
+		}
+		return r, text + ". How it ends reaches you as a message from Flightdeck.\n", nil
+	}
 }
 
 // groupWait is how long group_create and group_amend wait for the answer, as start_session.

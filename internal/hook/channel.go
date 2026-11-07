@@ -49,7 +49,7 @@ var RoundMethods = []string{"round.list", "round.get", "round.create", "round.up
 // sender of a report or a note. group.pause and group.resume are not on the route: the user
 // pauses a group.
 var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.list", "group.report", "group.note",
-	"group.close", "group.retry"}
+	"group.close", "group.retry", "member.compact", "member.handoff", "member.action"}
 
 // AgentMethods are the methods an agent calls about itself (harness-adapters.md, Self-compact).
 // The pane's token names the agent: it can act only on its own pane.

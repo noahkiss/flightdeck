@@ -117,6 +117,10 @@ type Session struct {
 	// Group marks a group member (groups.md 2.1, stage B3). Optional, so a newer client reads
 	// a session from an older revision 1 hab.
 	Group *SessionGroup `json:"group,omitempty" doc:"Set on a session an agent group started: the group, the member's role and its item."`
+	// Compacts and Replaced come with context supervision (groups.md 9, stage B6). Optional,
+	// so a newer client reads a session from an older revision 1 hab.
+	Compacts int    `json:"compacts,omitempty" doc:"A group member's compactions that its hab counted toward group.fresh_after_compacts. Absent for none."`
+	Replaced string `json:"replaced,omitempty" doc:"The session this fresh member session replaced (groups.md 9.3). Absent for any other session."`
 }
 
 // SessionKind says what a session is for, beyond running a program. Open: a client shows an

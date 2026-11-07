@@ -1,0 +1,218 @@
+{
+  "hosts": [
+    {
+      "catalog": {
+        "actions": [
+          {
+            "command": "command-24",
+            "name": "name-23",
+            "x_unknown_field": "later"
+          }
+        ],
+        "agents": [
+          {
+            "compacts": 41,
+            "context_pct": 39,
+            "group": {
+              "id": "id-37",
+              "item": "item-38",
+              "role": "reviewer",
+              "x_unknown_field": "later"
+            },
+            "harness": "harness-34",
+            "id": "id-40",
+            "project": "project-35",
+            "replaced": "replaced-42",
+            "session": "session-33",
+            "since": "since-36",
+            "state": "exited",
+            "x_unknown_field": "later"
+          }
+        ],
+        "always_on": true,
+        "at": "at-9",
+        "capabilities": [
+          {
+            "declared": true,
+            "detected": true,
+            "name": "name-19",
+            "x_unknown_field": "later"
+          }
+        ],
+        "capcom": {
+          "assignment": 45,
+          "home": "home-46",
+          "service": "service-47",
+          "sessions": [
+            {
+              "harness": "harness-50",
+              "name": "name-49",
+              "session": "session-48",
+              "standing": true,
+              "x_unknown_field": "later"
+            }
+          ],
+          "x_unknown_field": "later"
+        },
+        "device_id": "device_id-6",
+        "generation": 8,
+        "groups": [
+          {
+            "coordinator": {
+              "capcom": true,
+              "device": "device-67",
+              "name": "name-69",
+              "session": "session-68",
+              "x_unknown_field": "later"
+            },
+            "generation": 70,
+            "home": "home-71",
+            "id": "id-64",
+            "items": 72,
+            "landed": 73,
+            "members": 74,
+            "pause": {
+              "until": "until-77",
+              "usage": "usage-76",
+              "user": "user-75",
+              "x_unknown_field": "later"
+            },
+            "state": "state-66",
+            "title": "title-65",
+            "x_unknown_field": "later"
+          }
+        ],
+        "harnesses": [
+          {
+            "name": "name-17",
+            "version": "version-18",
+            "x_unknown_field": "later"
+          }
+        ],
+        "heavy": {
+          "disk_low": true,
+          "holding": 59,
+          "slots": 58,
+          "volumes": [
+            {
+              "free_bytes": 62,
+              "path": "path-61",
+              "total_bytes": 63,
+              "x_unknown_field": "later"
+            }
+          ],
+          "waiting": 60,
+          "x_unknown_field": "later"
+        },
+        "host": "host-7",
+        "peers": [
+          "peers-43"
+        ],
+        "projects": [
+          {
+            "folders": [
+              {
+                "branch": "branch-30",
+                "dirty": true,
+                "head": "head-31",
+                "last_commit": "last_commit-32",
+                "path": "path-29",
+                "x_unknown_field": "later"
+              }
+            ],
+            "name": "name-25",
+            "remote": "remote-26",
+            "root_commit": "root_commit-27",
+            "summary": "summary-28",
+            "x_unknown_field": "later"
+          }
+        ],
+        "rounds": [
+          {
+            "completed": true,
+            "id": "id-51",
+            "last_run": "taken_over",
+            "last_run_at": "last_run_at-57",
+            "mode": "group",
+            "name": "name-52",
+            "next_slot": "next_slot-56",
+            "paused": true,
+            "project": "project-54",
+            "remote": "remote-55",
+            "trigger": "trigger-53",
+            "x_unknown_field": "later"
+          }
+        ],
+        "services": [
+          {
+            "health": "health-22",
+            "name": "name-20",
+            "url": "url-21",
+            "x_unknown_field": "later"
+          }
+        ],
+        "system": {
+          "arch": "arch-12",
+          "cores": 13,
+          "memory_bytes": 14,
+          "os": "os-10",
+          "os_version": "os_version-11",
+          "x_unknown_field": "later"
+        },
+        "toolchains": [
+          {
+            "name": "name-15",
+            "version": "version-16",
+            "x_unknown_field": "later"
+          }
+        ],
+        "watches": [
+          "watches-44"
+        ],
+        "x_unknown_field": "later"
+      },
+      "label": "label-4",
+      "own": true,
+      "seen_at": "seen_at-5",
+      "stale": true,
+      "x_unknown_field": "later"
+    }
+  ],
+  "projects": [
+    {
+      "key": "key-78",
+      "locations": [
+        {
+          "device_id": "device_id-82",
+          "folders": [
+            {
+              "branch": "branch-85",
+              "dirty": true,
+              "head": "head-86",
+              "last_commit": "last_commit-87",
+              "path": "path-84",
+              "x_unknown_field": "later"
+            }
+          ],
+          "label": "label-83",
+          "stale": true,
+          "x_unknown_field": "later"
+        }
+      ],
+      "name": "name-79",
+      "remote": "remote-80",
+      "root_commit": "root_commit-81",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

@@ -183,6 +183,9 @@ var Methods = []Method{
 	{"group.resume", "Lift the user's pause. A usage pause stays (groups.md 5.6). Needs the groups capability.", GroupRef{}, GroupResult{}},
 	{"group.close", "End the group: no new starts; with group.close_members on, idle members are closed (groups.md 5.2). Needs the groups capability.", GroupRef{}, GroupResult{}},
 	{"group.retry", "Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.", GroupRetryParams{}, GroupResult{}},
+	{"member.compact", "A sibling action (groups.md 9.4): compact a member's context as supervision does at group.compact_at. The member's hab runs it once the member is not in use, waiting up to [groups] sibling_wait, then it is skipped. Answers at once; a second action on the member while one runs gets conflict. From a pane, only a member of the group or its coordinator asks. Needs the groups capability.", MemberActionParams{}, MemberActionResult{}},
+	{"member.handoff", "A sibling action (groups.md 9.4): a hand-off note, then a fresh session under the member's name in its worktree; held messages move to it. Waits and answers as member.compact. Needs the groups capability.", MemberActionParams{}, MemberActionResult{}},
+	{"member.action", "One supervision action by its id, as the member's hab keeps it. Needs the groups capability.", MemberActionRef{}, MemberActionResult{}},
 }
 
 // Notifications is every notification the server sends on a control connection.

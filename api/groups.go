@@ -234,3 +234,44 @@ type GroupRetryParams struct {
 	Group  string `json:"group"`
 	Member string `json:"member" doc:"A failed member's name."`
 }
+
+// MemberActionParams asks for a supervision action on a member (groups.md 9.4, stage B6).
+type MemberActionParams struct {
+	Group  string `json:"group"`
+	Member string `json:"member" doc:"The member's session name, from group.get."`
+	From   string `json:"from,omitempty" doc:"Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user."`
+}
+
+// MemberActionRef names one supervision action.
+type MemberActionRef struct {
+	ID string `json:"id" doc:"The action id from member.compact or member.handoff."`
+}
+
+// MemberActionKind is what a supervision action does: compact or handoff.
+type MemberActionKind string
+
+// MemberActionState is where a supervision action stands: queued (it waits until the member is
+// not in use), running, done, skipped (the member stayed in use past [groups] sibling_wait) or
+// failed.
+type MemberActionState string
+
+// MemberAction is one supervision action on a member, by its own hab (groups.md 9.2 to 9.4).
+type MemberAction struct {
+	ID      string            `json:"id"`
+	Group   string            `json:"group"`
+	Member  string            `json:"member" doc:"The member's session name."`
+	Session string            `json:"session" doc:"The member's session id on its hab when the action began."`
+	Host    string            `json:"host" doc:"The member's host id."`
+	Kind    MemberActionKind  `json:"kind" doc:"compact or handoff."`
+	State   MemberActionState `json:"state" doc:"queued, running, done, skipped or failed."`
+	Reason  string            `json:"reason,omitempty" doc:"Why it waits, was skipped or failed; with done, a note such as no hand-off note."`
+	Asker   string            `json:"asker,omitempty" doc:"Who asked: a session name, Flightdeck for supervision's own, or absent for the user."`
+	Fresh   string            `json:"fresh,omitempty" doc:"With a done handoff: the new session's id."`
+	At      string            `json:"at" doc:"RFC 3339 time of its last change."`
+}
+
+// MemberActionResult answers member.compact, member.handoff and member.action.
+type MemberActionResult struct {
+	Seq
+	Action MemberAction `json:"action"`
+}

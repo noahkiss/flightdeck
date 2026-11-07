@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -227,7 +228,31 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 				return nil, nil, control.Errorf(api.ErrorKindDenied, "a member notes its own item %s", ss.Group.Item)
 			}
 			p.From = ss.Name
-			return api.Empty{}, nil, svc.Note(ctx, p)
+			err := svc.Note(ctx, p)
+			if sup := svc.cfg.supervisor.get(); err == nil && sup != nil {
+				sup.Noted(ss.ID) // a hand-off that waits for this note goes on (groups.md 9.3)
+			}
+			return api.Empty{}, nil, err
+		case "member.compact", "member.handoff":
+			// A sibling action (groups.md 9.4): a member of the group or its coordinator asks;
+			// an agent cannot act on a member outside its own group.
+			var p api.MemberActionParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			if err := inGroup(p.Group); err != nil {
+				return nil, nil, err
+			}
+			p.From = ss.Name
+			a, err := svc.MemberAction(ctx, api.MemberActionKind(strings.TrimPrefix(method, "member.")), p)
+			return api.MemberActionResult{Action: a}, nil, err
+		case "member.action":
+			var p api.MemberActionRef
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			a, err := svc.MemberActionGet(ctx, p.ID)
+			return api.MemberActionResult{Action: a}, nil, err
 		case "group.close":
 			var p api.GroupRef
 			if err := json.Unmarshal(params, &p); err != nil {

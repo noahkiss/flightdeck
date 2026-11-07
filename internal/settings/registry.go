@@ -46,6 +46,11 @@ const (
 	GroupMaxLeads      = "group.max_leads"
 	GroupMaxWorkers    = "group.max_workers"
 	GroupCloseMembers  = "group.close_members"
+	// Context supervision of group members (groups.md 9.1, 15.3), each on every hab.
+	GroupCompactAt          = "group.compact_at" // percent; 0 is off
+	GroupFreshAfterCompacts = "group.fresh_after_compacts"
+	GroupFreshTranscriptMB  = "group.fresh_transcript_mb"
+	GroupHandoffAt          = "group.handoff_at" // percent
 )
 
 // DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
@@ -84,6 +89,10 @@ var Defs = []Def{
 	{ID: GroupMaxLeads, Default: json.RawMessage(`3`), check: checkInt(1, 10), integer: true},
 	{ID: GroupMaxWorkers, Default: json.RawMessage(`2`), check: checkInt(0, 5), integer: true},
 	{ID: GroupCloseMembers, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: GroupCompactAt, Default: json.RawMessage(`40`), check: checkInt(0, 99), integer: true},
+	{ID: GroupFreshAfterCompacts, Default: json.RawMessage(`4`), check: checkInt(1, 20), integer: true},
+	{ID: GroupFreshTranscriptMB, Default: json.RawMessage(`4`), check: checkInt(1, 64), integer: true},
+	{ID: GroupHandoffAt, Default: json.RawMessage(`60`), check: checkInt(20, 95), integer: true},
 }
 
 func mustJSON(v any) json.RawMessage {

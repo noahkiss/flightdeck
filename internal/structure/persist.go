@@ -81,6 +81,11 @@ type sessionRecord struct {
 	// Group and Envelope mark a group member (groups.md 2.1, 3.3).
 	Group    *api.SessionGroup  `json:"group,omitempty"`
 	Envelope *api.GroupEnvelope `json:"envelope,omitempty"`
+	// Context supervision of a member (groups.md 9, stage B6): its context use, the compactions
+	// counted, and the session it replaced.
+	ContextPct *int   `json:"context_pct,omitempty"`
+	Compacts   int    `json:"compacts,omitempty"`
+	Replaced   string `json:"replaced,omitempty"`
 }
 
 // paneRecord keeps what gff-hab owns about a pane: its revision, plus the last size and build it

@@ -980,6 +980,8 @@ public struct CatalogAction: Codable, Sendable, Hashable {
 }
 
 public struct CatalogAgent: Codable, Sendable, Hashable {
+    /// A member's compactions its hab counted.
+    public var compacts: Int?
     /// How full its context window is, in whole percent; absent when unknown.
     public var contextPct: Int?
     /// The session is a member of this group.
@@ -989,6 +991,8 @@ public struct CatalogAgent: Codable, Sendable, Hashable {
     public var id: String?
     /// The project's name. Absent for an unfiled session.
     public var project: String?
+    /// The session this fresh member session replaced.
+    public var replaced: String?
     /// The session's name on its host.
     public var session: String
     /// RFC 3339 time the state began.
@@ -996,22 +1000,26 @@ public struct CatalogAgent: Codable, Sendable, Hashable {
     public var state: AgentStatus
 
     enum CodingKeys: String, CodingKey {
+        case compacts = "compacts"
         case contextPct = "context_pct"
         case group = "group"
         case harness = "harness"
         case id = "id"
         case project = "project"
+        case replaced = "replaced"
         case session = "session"
         case since = "since"
         case state = "state"
     }
 
-    public init(contextPct: Int? = nil, group: SessionGroup? = nil, harness: String, id: String? = nil, project: String? = nil, session: String, since: String, state: AgentStatus) {
+    public init(compacts: Int? = nil, contextPct: Int? = nil, group: SessionGroup? = nil, harness: String, id: String? = nil, project: String? = nil, replaced: String? = nil, session: String, since: String, state: AgentStatus) {
+        self.compacts = compacts
         self.contextPct = contextPct
         self.group = group
         self.harness = harness
         self.id = id
         self.project = project
+        self.replaced = replaced
         self.session = session
         self.since = since
         self.state = state
@@ -5786,6 +5794,106 @@ public struct MailResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct MemberAction: Codable, Sendable, Hashable {
+    /// Who asked: a session name, Flightdeck for supervision's own, or absent for the user.
+    public var asker: String?
+    /// RFC 3339 time of its last change.
+    public var at: String
+    /// With a done handoff: the new session's id.
+    public var fresh: String?
+    public var group: String
+    /// The member's host id.
+    public var host: String
+    public var id: String
+    /// compact or handoff.
+    public var kind: String
+    /// The member's session name.
+    public var member: String
+    /// Why it waits, was skipped or failed; with done, a note such as no hand-off note.
+    public var reason: String?
+    /// The member's session id on its hab when the action began.
+    public var session: String
+    /// queued, running, done, skipped or failed.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case asker = "asker"
+        case at = "at"
+        case fresh = "fresh"
+        case group = "group"
+        case host = "host"
+        case id = "id"
+        case kind = "kind"
+        case member = "member"
+        case reason = "reason"
+        case session = "session"
+        case state = "state"
+    }
+
+    public init(asker: String? = nil, at: String, fresh: String? = nil, group: String, host: String, id: String, kind: String, member: String, reason: String? = nil, session: String, state: String) {
+        self.asker = asker
+        self.at = at
+        self.fresh = fresh
+        self.group = group
+        self.host = host
+        self.id = id
+        self.kind = kind
+        self.member = member
+        self.reason = reason
+        self.session = session
+        self.state = state
+    }
+}
+
+public struct MemberActionParams: Codable, Sendable, Hashable {
+    /// Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user.
+    public var from: String?
+    public var group: String
+    /// The member's session name, from group.get.
+    public var member: String
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case group = "group"
+        case member = "member"
+    }
+
+    public init(from: String? = nil, group: String, member: String) {
+        self.from = from
+        self.group = group
+        self.member = member
+    }
+}
+
+public struct MemberActionRef: Codable, Sendable, Hashable {
+    /// The action id from member.compact or member.handoff.
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(id: String) {
+        self.id = id
+    }
+}
+
+public struct MemberActionResult: Codable, Sendable, Hashable {
+    public var action: MemberAction
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case action = "action"
+        case seq = "seq"
+    }
+
+    public init(action: MemberAction, seq: UInt64) {
+        self.action = action
+        self.seq = seq
+    }
+}
+
 public struct MeshChanged: Codable, Sendable, Hashable {
     /// What waits; a client skips a word it does not know.
     public var reasons: [MeshReason]
@@ -7703,6 +7811,8 @@ public struct SendOrigin: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct Session: Codable, Sendable, Hashable {
+    /// A group member's compactions that its hab counted toward group.fresh_after_compacts. Absent for none.
+    public var compacts: Int?
     /// How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed.
     public var contextPct: Int?
     /// The hab-owned folder a Capcom session runs in; a plain terminal resumes the harness from there. Absent for other sessions.
@@ -7720,6 +7830,8 @@ public struct Session: Codable, Sendable, Hashable {
     public var pane: String?
     /// Project id. Absent means unfiled.
     public var project: String?
+    /// The session this fresh member session replaced (groups.md 9.3). Absent for any other session.
+    public var replaced: String?
     public var revision: UInt64
     /// Set on a session a round's run started: the round and the run. Every client can badge and filter it.
     public var round: SessionRound?
@@ -7728,6 +7840,7 @@ public struct Session: Codable, Sendable, Hashable {
     public var title: String?
 
     enum CodingKeys: String, CodingKey {
+        case compacts = "compacts"
         case contextPct = "context_pct"
         case dir = "dir"
         case exit = "exit"
@@ -7738,13 +7851,15 @@ public struct Session: Codable, Sendable, Hashable {
         case name = "name"
         case pane = "pane"
         case project = "project"
+        case replaced = "replaced"
         case revision = "revision"
         case round = "round"
         case state = "state"
         case title = "title"
     }
 
-    public init(contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, round: SessionRound? = nil, state: SessionState, title: String? = nil) {
+    public init(compacts: Int? = nil, contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, replaced: String? = nil, revision: UInt64, round: SessionRound? = nil, state: SessionState, title: String? = nil) {
+        self.compacts = compacts
         self.contextPct = contextPct
         self.dir = dir
         self.exit = exit
@@ -7755,6 +7870,7 @@ public struct Session: Codable, Sendable, Hashable {
         self.name = name
         self.pane = pane
         self.project = project
+        self.replaced = replaced
         self.revision = revision
         self.round = round
         self.state = state
@@ -9474,6 +9590,12 @@ public enum HabMethods {
     public static let groupClose = HabMethod<GroupRef, GroupResult>(name: "group.close")
     /// Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.
     public static let groupRetry = HabMethod<GroupRetryParams, GroupResult>(name: "group.retry")
+    /// A sibling action (groups.md 9.4): compact a member's context as supervision does at group.compact_at. The member's hab runs it once the member is not in use, waiting up to [groups] sibling_wait, then it is skipped. Answers at once; a second action on the member while one runs gets conflict. From a pane, only a member of the group or its coordinator asks. Needs the groups capability.
+    public static let memberCompact = HabMethod<MemberActionParams, MemberActionResult>(name: "member.compact")
+    /// A sibling action (groups.md 9.4): a hand-off note, then a fresh session under the member's name in its worktree; held messages move to it. Waits and answers as member.compact. Needs the groups capability.
+    public static let memberHandoff = HabMethod<MemberActionParams, MemberActionResult>(name: "member.handoff")
+    /// One supervision action by its id, as the member's hab keeps it. Needs the groups capability.
+    public static let memberAction = HabMethod<MemberActionRef, MemberActionResult>(name: "member.action")
 }
 
 public enum HabNotification {

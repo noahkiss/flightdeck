@@ -178,6 +178,9 @@ type Service struct {
 	// finish save failed (the outcome the write had). A delivery round saves them, and writes
 	// none of them again. It lives in memory only, so a failed save cannot undo it.
 	settle map[string]outcome
+	// held counts the holds on deliveries to a session, by session id: a group member's
+	// fresh-session swap (Hold, groups.md 9.3).
+	held map[string]int
 
 	// The mesh.changed wake-up (mesh.md 6.5). Sender side, by target device id: fresh holds
 	// outboxes that gained an item not saved yet; woken holds devices told since their last
@@ -1097,7 +1100,7 @@ func (s *Service) deliverRound() {
 			continue
 		}
 		taken[sess] = true
-		if _, ok := s.settle[it.Message.ID]; ok || it.busy {
+		if _, ok := s.settle[it.Message.ID]; ok || it.busy || s.heldLocked(it.SessionID) {
 			continue
 		}
 		it.busy = true
