@@ -201,6 +201,9 @@ type record struct {
 	api.ChannelRecord
 	ToDevice string    `json:"to_device"`
 	Sent     time.Time `json:"sent"`
+	// Outcome marks a round message whose outcome reached Config.Outcome: a status item that
+	// comes again, by push and by pull both, is not passed on twice (rounds.md 5.2).
+	Outcome bool `json:"outcome,omitempty"`
 }
 
 type seenID struct {
@@ -716,7 +719,8 @@ func (s *Service) receive(from string, items []api.MailItem) ([]api.MailResult, 
 			st := it.Status
 			s.setStateLocked(st.ID, from, st.State, st.Reason, now)
 			if r := s.st.Records[st.ID]; st.Outcome != "" && r != nil && r.ToDevice == from &&
-				r.State == api.ChannelStateAccepted && s.cfg.Outcome != nil {
+				r.State == api.ChannelStateAccepted && !r.Outcome && s.cfg.Outcome != nil {
+				r.Outcome = true
 				s.cfg.Outcome(st.ID, st.Outcome, st.At)
 			}
 			out = append(out, api.MailResult{Kind: api.MailKindStatus, ID: st.ID, State: st.State})

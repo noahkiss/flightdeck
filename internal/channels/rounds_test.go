@@ -252,3 +252,30 @@ func TestEventBlockForged(t *testing.T) {
 	var d map[string]any
 	_ = json.Unmarshal(evs[1].Data, &d)
 }
+
+// TestRoundOutcomeOnceByPushAndPull: an outcome status item that arrives twice, by push and by
+// pull both, reaches Config.Outcome once.
+func TestRoundOutcomeOnceByPushAndPull(t *testing.T) {
+	cc := &fakeCapcom{answer: api.ChannelStateAccepted}
+	var out outcomes
+	a := newHabWith(t, "dev-a", "hosta", t.TempDir(), newLocal("alice"), func(c *Config) { c.Outcome = out.add })
+	b := newHabWith(t, "dev-b", "hostb", t.TempDir(), newLocal("bob"), func(c *Config) { c.Capcom = cc.take })
+	link(a, b, "bee", nil)
+	if _, err := a.s.SendRound(context.Background(), roundSend(hexID(1), "dev-b", CapcomName, "bee", time.Time{})); err != nil {
+		t.Fatal(err)
+	}
+	if r := final(t, a.s, hexID(1)); r.State != api.ChannelStateAccepted {
+		t.Fatalf("record %+v", r)
+	}
+	item := api.MailItem{Kind: api.MailKindStatus, Status: &api.ChannelStatus{ID: hexID(1), State: api.ChannelStateAccepted,
+		Outcome: "told", At: "2026-11-06T10:00:00Z"}}
+	for range 2 {
+		if _, err := a.s.receive("dev-b", []api.MailItem{item}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := out.list(); len(got) != 1 {
+		t.Fatalf("outcomes %v, want one", got)
+	}
+}
