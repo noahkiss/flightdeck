@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/aliases"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/confirm"
 	"github.com/noahkiss/flightdeck/internal/control"
@@ -37,6 +38,36 @@ type confirmRunner struct {
 	local func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	// name returns a session's name on this hab.
 	name func(id string) string
+	// aliases returns the [aliases] table of this hab's config file now (harness-adapters.md,
+	// Spawn). Nil: none.
+	aliases func() aliases.Table
+}
+
+// resolveAlias turns an alias in s.Harness into the harness and model it stands for, once: a
+// start that already names its alias is left as it is. An alias may shadow a harness word, so
+// the owner can give codex a model. A model the request names wins over the alias's.
+func (r *confirmRunner) resolveAlias(s api.ConfirmStart) api.ConfirmStart {
+	if s.Alias != "" || r.aliases == nil {
+		return s
+	}
+	if a, word, ok := r.aliases().Lookup(s.Harness); ok {
+		s.Alias, s.Harness = word, a.Harness
+		if s.Model == "" {
+			s.Model = a.Model
+		}
+	}
+	return s
+}
+
+// harnessWords lists the harnesses and the aliases, for a refusal.
+func (r *confirmRunner) harnessWords() string {
+	out := strings.Join(harnesses, ", ")
+	if r.aliases != nil {
+		if names := r.aliases().Names(); len(names) > 0 {
+			out += "; aliases from this hab's [aliases] table: " + strings.Join(names, ", ")
+		}
+	}
+	return out
 }
 
 var _ confirm.Runner = (*confirmRunner)(nil)
@@ -59,9 +90,10 @@ func (r *confirmRunner) link(label string) (confirmLink, bool) {
 
 // CheckStart checks a start and fills in its host label, project and branch.
 func (r *confirmRunner) CheckStart(s api.ConfirmStart) (api.ConfirmStart, bool, error) {
+	s = r.resolveAlias(s)
 	switch {
 	case !slices.Contains(harnesses, s.Harness):
-		return s, false, control.Errorf(api.ErrorKindInvalid, "harness %q is not one of %s", s.Harness, strings.Join(harnesses, ", "))
+		return s, false, control.Errorf(api.ErrorKindInvalid, "harness %q is not one of %s", s.Harness, r.harnessWords())
 	case !filepath.IsAbs(s.Folder):
 		return s, false, control.Errorf(api.ErrorKindInvalid, "folder %q is not an absolute path on the target host", s.Folder)
 	case strings.HasPrefix(s.Model, "-"):
@@ -126,6 +158,11 @@ func (r *confirmRunner) RunStart(ctx context.Context, id, from string, s api.Con
 		// failing the start after the owner confirmed it.
 		p.SeedFrom = sf
 	}
+	if s.Teammate && from != "" {
+		// The target files the session as reporting to from, a session on the hab at the other
+		// end of the call: this one, or over a peer link this hab, by the link's own hello.
+		p.ReportTo = from
+	}
 	if r.self(s.Host) {
 		made, err := r.local(ctx, p)
 		if err != nil {
@@ -137,7 +174,7 @@ func (r *confirmRunner) RunStart(ctx context.Context, id, from string, s api.Con
 				name = n
 			}
 		}
-		return api.ConfirmResult{Host: r.host, Session: made.Session, Name: name, Pane: made.Pane}, nil
+		return api.ConfirmResult{Host: r.host, Session: made.Session, Name: name, Pane: made.Pane, Address: name}, nil
 	}
 	l, ok := r.link(s.Host)
 	if !ok || !l.Online || l.Caller == nil {
@@ -152,7 +189,7 @@ func (r *confirmRunner) RunStart(ctx context.Context, id, from string, s api.Con
 		}
 		return api.ConfirmResult{}, fmt.Errorf("%w: the answer from %s was lost (%v); a session named %s may run there", confirm.ErrUnknown, s.Host, err, s.Name)
 	}
-	return api.ConfirmResult{Host: s.Host, Session: made.Session, Name: s.Name, Pane: made.Pane}, nil
+	return api.ConfirmResult{Host: s.Host, Session: made.Session, Name: s.Name, Pane: made.Pane, Address: s.Host + "/" + s.Name}, nil
 }
 
 // confirmService is what the pane route and the snapshot call; *confirm.Service is the one
@@ -166,7 +203,8 @@ type confirmService interface {
 
 // confirmHook answers the confirmation methods from a pane (capcom.md 6.1): the pane's session
 // is the requester, whatever the params say. confirm.answer is not on the route.
-func confirmHook(store *structure.Store, svc confirmService) hook.ChannelHandler {
+// folder, when not nil, fills a start's empty folder from the requesting session (spawn.go).
+func confirmHook(store *structure.Store, svc confirmService, folder func(context.Context, api.Session, string) (string, error)) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
 		switch method {
@@ -180,6 +218,15 @@ func confirmHook(store *structure.Store, svc confirmService) hook.ChannelHandler
 				return nil, nil, bad(err)
 			}
 			p.From = ss.Name
+			if p.Kind == "start" && p.Start != nil {
+				if p.Start.Folder == "" && folder != nil {
+					f, err := folder(ctx, ss, p.Start.Host)
+					if err != nil {
+						return nil, nil, err
+					}
+					p.Start.Folder = f
+				}
+			}
 			c, err := svc.Request(ctx, p)
 			return api.ConfirmRequested{Confirmation: c}, nil, err
 		case "confirm.get":

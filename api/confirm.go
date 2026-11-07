@@ -24,6 +24,10 @@ type ConfirmStart struct {
 	Model   string `json:"model,omitempty" doc:"A model for the harness, as the harness names it."`
 	Name    string `json:"name,omitempty" doc:"The new session's name. Absent: the target hab picks one."`
 	Seed    string `json:"seed,omitempty" doc:"The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf."`
+	// Alias and Teammate come with the spawn verb (harness-adapters.md, Spawn). Optional, so an
+	// older hab ignores them.
+	Alias    string `json:"alias,omitempty" doc:"The alias the request named, from the [aliases] table of the requesting hab's config file. Filled by the hab; harness and model are what the alias stands for."`
+	Teammate bool   `json:"teammate,omitempty" doc:"Report back to the requesting session: the target hab sends it the final agent message of each turn that a message from it began, as a channel message from the new session. Needs a requesting session."`
 }
 
 // ConfirmSetup is the project set-up a confirmation would run (mesh.md 7, set up elsewhere).
@@ -40,6 +44,8 @@ type ConfirmResult struct {
 	Session string `json:"session" doc:"The new session's id on the target hab."`
 	Name    string `json:"name,omitempty" doc:"The new session's name."`
 	Pane    string `json:"pane" doc:"The new session's pane id."`
+	// Address comes with the spawn verb. Optional, so a newer client reads an older hab.
+	Address string `json:"address,omitempty" doc:"The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."`
 }
 
 // Confirmation is one start or set-up an agent asked for: an open question to the user, or,

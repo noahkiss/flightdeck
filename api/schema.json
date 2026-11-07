@@ -527,6 +527,13 @@
           }
         },
         {
+          "name": "report_to",
+          "description": "A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "rows",
           "description": "Initial height. Default 24.",
           "schema": {
@@ -6233,6 +6240,10 @@
       "ConfirmResult": {
         "type": "object",
         "properties": {
+          "address": {
+            "type": "string",
+            "description": "The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."
+          },
           "host": {
             "type": "string",
             "description": "The target hab, as this hab labels it."
@@ -6284,6 +6295,10 @@
       "ConfirmStart": {
         "type": "object",
         "properties": {
+          "alias": {
+            "type": "string",
+            "description": "The alias the request named, from the [aliases] table of the requesting hab's config file. Filled by the hab; harness and model are what the alias stands for."
+          },
           "branch": {
             "type": "string",
             "description": "The folder's branch, from the catalog. Filled by the hab."
@@ -6315,6 +6330,10 @@
           "seed": {
             "type": "string",
             "description": "The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf."
+          },
+          "teammate": {
+            "type": "boolean",
+            "description": "Report back to the requesting session: the target hab sends it the final agent message of each turn that a message from it began, as a channel message from the new session. Needs a requesting session."
           }
         },
         "required": [
@@ -11057,6 +11076,10 @@
           "project_dir": {
             "type": "string",
             "description": "Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new."
+          },
+          "report_to": {
+            "type": "string",
+            "description": "A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability."
           },
           "rows": {
             "type": "integer",

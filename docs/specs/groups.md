@@ -877,6 +877,12 @@ As in section 10: a consumer per group, a check before a new turn, an event on c
 As in 4.1: host, harness alias, model, folder, name, seed and the group fields in; session id,
 name and address out; the seed as a start envelope naming the spawner.
 
+Built (task-6iwat66b, `harness-adapters.md` Spawn): the `spawn` tool with host, harness or alias,
+model, folder, name, seed and `mode` (teammate or detached); the `[aliases]` table; the address
+in `ConfirmResult.address`; teammate reports through `session.create`'s `report_to`. B2 adds
+`{group, role, item}` to `ConfirmStart` and the tool, and `trust_cover` to `session.create`,
+both optional fields beside these.
+
 ### 12.4 Self-compact (task-f2fhhr6p) — shared
 
 Self-compact compacts only the caller's own pane today. Supervision needs the same steps started

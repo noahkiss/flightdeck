@@ -24,6 +24,9 @@ type SessionCreateParams struct {
 	Model    string `json:"model,omitempty" doc:"With harness: the model to start it with, passed as --model. Needs the confirm capability."`
 	Seed     string `json:"seed,omitempty" doc:"The session's first message, at most 8000 characters. The hab delivers it once the agent can take it, marked as written by seed_from on the owner's behalf. Needs harness and the confirm capability."`
 	SeedFrom string `json:"seed_from,omitempty" doc:"Who wrote the seed, as host/session, shown in its envelope."`
+	// ReportTo comes with the spawn verb (harness-adapters.md, Spawn). Optional, so an older
+	// hab ignores it.
+	ReportTo string `json:"report_to,omitempty" doc:"A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability."`
 }
 
 // SessionCreated names the session and pane a create or resume made.

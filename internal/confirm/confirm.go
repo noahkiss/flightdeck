@@ -180,8 +180,13 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	if p.WaitMS < 0 {
 		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "wait_ms must not be negative")
 	}
+	if p.Start.Teammate && p.From == "" {
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a teammate reports to the session that asked for it: ask from a Flightdeck pane")
+	}
 	wait := time.Duration(min(p.WaitMS, int(MaxWait/time.Millisecond))) * time.Millisecond
-	st, self, err := s.cfg.Runner.CheckStart(*p.Start)
+	asked := *p.Start
+	asked.Alias = "" // the hab fills it, from its own alias table
+	st, self, err := s.cfg.Runner.CheckStart(asked)
 	if err != nil {
 		return api.Confirmation{}, err
 	}
@@ -299,6 +304,9 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 			return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a new host needs its folder: give folder with host")
 		}
 		apply(&start.Folder, ed.Folder)
+		if h := start.Harness; ed.Harness != "" && ed.Harness != h {
+			start.Alias = "" // the edited word may be an alias too: CheckStart reads it again
+		}
 		apply(&start.Harness, ed.Harness)
 		apply(&start.Model, ed.Model)
 		apply(&start.Seed, ed.Seed)

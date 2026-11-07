@@ -70,6 +70,12 @@ type actions struct {
 	created func(session string, p api.SessionCreateParams)
 	// adopt serves session.adopt and session.outside (adopt.go). nil: unavailable.
 	adopt *adopter
+	// mates keeps the sessions that report to their spawner (teammates.go). nil: a create
+	// with report_to answers unavailable.
+	mates *teammates
+	// self is this hab's own channel end (device id and host id), for a report_to from a
+	// caller on this hab.
+	self api.ChannelEnd
 }
 
 var _ control.Resumer = (*actions)(nil)
@@ -124,6 +130,20 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		return "", "", control.Errorf(api.ErrorKindInvalid, "model %q is not a model name", p.Model)
 	case p.SeedFrom != "" && !validSeedFrom(p.SeedFrom):
 		return "", "", control.Errorf(api.ErrorKindInvalid, "seed_from %q is not host/session: a host id of printable characters with no space, quote or bracket, then a session name of %s", p.SeedFrom, channels.NameRule)
+	case p.ReportTo != "" && p.Harness == "":
+		return "", "", control.Errorf(api.ErrorKindInvalid, "report_to needs harness: it reports the agent's turns")
+	case p.ReportTo != "" && !channels.ValidName(p.ReportTo):
+		return "", "", control.Errorf(api.ErrorKindInvalid, "report_to %q: use %s", p.ReportTo, channels.NameRule)
+	case p.ReportTo != "" && (a.mates == nil || a.self.DeviceID == ""):
+		return "", "", control.Errorf(api.ErrorKindUnavailable, "this hab cannot report a session's turns: it runs without channels")
+	}
+	var reportTo api.ChannelEnd
+	if p.ReportTo != "" {
+		reportTo = api.ChannelEnd{DeviceID: a.self.DeviceID, Host: a.self.Host, Session: p.ReportTo}
+		if peer, ok := control.CallerPeer(ctx); ok {
+			// Over a peer link: the session is on the dialing hab, named by the link's hello.
+			reportTo.DeviceID, reportTo.Host = peer.DeviceID, peer.Host
+		}
 	}
 	if p.Seed != "" {
 		if err := confirm.CheckSeed(p.Seed); err != nil {
@@ -226,6 +246,10 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 	if a.started != nil && p.Harness != "" {
 		a.started(pane, p.Harness, cwd)
 	}
+	if p.ReportTo != "" {
+		// Filed before the seed is queued, so the seed's delivery arms the first report.
+		a.mates.add(ss.ID, pane, reportTo)
+	}
 	if p.Seed != "" {
 		// The session runs; a seed that cannot be queued is logged, not an error, so a retry
 		// with the same idempotency key never starts a second session.
@@ -254,6 +278,9 @@ func (a *actions) resumeSession(ctx context.Context, session string, p api.Sessi
 	l.spawn.Cwd = cwd
 	if err := a.launch(ctx, l, func() { a.store.ResumeFailed(session, pane) }); err != nil {
 		return "", err
+	}
+	if a.mates != nil {
+		a.mates.repane(session, pane) // a teammate reports from its new pane
 	}
 	if a.startedIn != nil {
 		a.startedIn(session, cwd)

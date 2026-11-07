@@ -24,11 +24,12 @@ Every claim about a harness names its source in [Sources](#sources).
 10. [Usage](#usage)
 11. [Input delivery](#input-delivery)
 12. [Self-compact and the context nudge](#self-compact-and-the-context-nudge)
-13. [Permission answers](#permission-answers)
-14. [Edge cases](#edge-cases)
-15. [Fixtures](#fixtures)
-16. [Open decisions](#open-decisions)
-17. [Sources](#sources)
+13. [Spawn](#spawn)
+14. [Permission answers](#permission-answers)
+15. [Edge cases](#edge-cases)
+16. [Fixtures](#fixtures)
+17. [Open decisions](#open-decisions)
+18. [Sources](#sources)
 
 ## Terms
 
@@ -1212,6 +1213,98 @@ gff agent compact with a follow-up that points at it."
 - **Reset.** A compaction (`PreCompact`, `SessionStart` with `source` `compact`), a new native
   session in the pane, or a percentage back under the first level clears the levels noted.
 - **Off.** With `agent.context_nudge` at 0 the nudge adds nothing to a context event's answer.
+
+## Spawn
+
+Any agent can start a teammate or sub-agent for its own work, in another harness, on any host,
+with one call (task-6iwat66b). The owner can say "run a codex reviewer" or "a gpt reviewer" and
+get the right harness and model. Groups (`groups.md` 4.1, 12.3) start their members through the
+same verb; stage B2 adds the group fields and the trust cover.
+
+### The verb
+
+**Callers.** The agent kit's action tool `spawn` (`gff-hab mcp`, `gff-hab act spawn`). It runs in
+the agent's own pane and reaches gff-hab through `$GFF_HAB`; outside a pane it is refused. The
+manual (`gff-hab mcp --skill`) and the MCP rules tell agents when to use it.
+
+**Arguments.**
+
+| Argument | Meaning |
+|---|---|
+| `harness` (required) | `claude`, `codex`, `opencode`, or an alias from the owner's table |
+| `seed` (required) | The brief: role, task, what to report. At most 8000 characters, as `start_session`'s |
+| `folder` | Absent: the spawner's own working folder on this host; on another host, the folder of the same project there from the catalog (the one on the spawner's branch first) |
+| `host` | A peer label. Absent: this host |
+| `model` | Wins over the alias's model |
+| `name` | Absent: the harness and the confirmation id's first six hex digits, such as `codex-3fa9c2` |
+| `mode` | `teammate` (the default) or `detached` |
+
+The brief is `seed`, not `role`: B2 adds `role` (lead, reviewer) beside `group` and `item`.
+
+**What it does.** A spawn is a start, as `start_session`'s (`capcom.md` 6.4): `confirm.request`
+kind `start`, with `teammate` set in teammate mode. The confirmation rules do not change: a start
+on the spawner's own host never asks; on another host it asks while `confirm.start_elsewhere` is
+on. A start on a peer goes over the link this hab dialed, as `session.create` with the
+confirmation id as its idempotency key. The new session is an ordinary visible session: it shows
+in the app and in gff, its transcript stays where its harness writes it, and a plain terminal
+resumes it like any other (`claude --resume <id>`, `codex resume <id>`). The seed arrives through
+the channels inbox in its start envelope, which names the spawner.
+
+**Returns.** The confirmation, the mode and the new session's channel address as the spawner's
+hab sees it: its name on this hab, `label/name` on a peer (`ConfirmResult.address`).
+
+### Aliases
+
+The owner keeps the table in the hab's config file (`docs/examples/hab.toml`):
+
+```toml
+[aliases]
+gpt = { harness = "codex", model = "gpt-5.5" }
+opus = { harness = "claude", model = "opus" }
+```
+
+- The spawner's hab resolves the word, in its runner's start check, so `start_session` takes
+  aliases too. Lookup ignores case and surrounding space. An alias may shadow a harness word,
+  which gives that harness a model. A model the request names wins.
+- The start records the word as `ConfirmStart.alias`; the card shows the harness and model it
+  stands for. A start is resolved once: an `alias` a client sends is cleared, and a harness edit
+  on the card clears it so the edited word is read again.
+- An unknown word is refused `invalid`, naming the harnesses and the table's aliases.
+- gff-hab reads the table again when the file's size or time changes, so an edit needs no
+  rebuild or restart. A file that does not parse keeps the last good table; a bad entry (an
+  unknown harness, a model that starts with `-` or holds a space, an unknown key, a name outside
+  lowercase letters, digits, `.`, `_` and `-`, at most 32) is logged once and left out.
+
+### Teammate reports
+
+A teammate's result comes back to the spawner through channels.
+
+- **Who reports.** The hab that runs the teammate. `session.create` gains `report_to`, a session
+  name on the calling hab. The device comes from the call, never from the params: a call over a
+  peer link names the dialing hab by the link's hello, any other call this hab. The hab keeps
+  the list in `<state>/teammates.json`, follows a resumed session to its new pane, and drops a
+  removed session.
+- **What starts a report.** The seed, or a channel message from the spawner, written to the
+  teammate's agent (channels' `Delivering` hook, before the write, with the agent's revision).
+  A note from Flightdeck and another sender's message start none. A write that did not deliver
+  starts none.
+- **When it goes.** After that write the agent reports `working` or `blocked`, then `done` or
+  `error`. A `done` before any work is a state from the turn before, and ends nothing.
+- **What it says.** One channel message from the teammate's session: a first line from
+  Flightdeck, then the turn's final agent message (the last agent message after the last user
+  message, read as rounds read it, waiting up to 15 s for a transcript that trails the turn),
+  cut to fit one message. An `error` turn says so, with the harness's kind. An exit before the
+  turn's end says the session exited. A final message that cannot be read says so and points at
+  `transcript_read`.
+- **Detached.** Nothing comes back on its own; the seed's envelope still names the spawner.
+
+Limits, at the bar of the tools we studied:
+
+- What arms a report is kept in memory: a turn that a gff-hab restart interrupts is not
+  reported, and a turn that ends while gff-hab is down is not reported.
+- A spawner renamed after the spawn gets no report: the report goes by name.
+- The seed's reply line names `host id/session`. On a target that does not know the spawner's
+  hab by that name, `gff-hab send` to it does not resolve; the report does not depend on it.
 
 ## Permission answers
 
