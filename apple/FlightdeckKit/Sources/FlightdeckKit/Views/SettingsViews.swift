@@ -236,6 +236,13 @@ struct ValueControl: View {
 
     static let minutes: [Int64] = [0, 15, 30, 60, 120, 240, 480, 1440]
 
+    /// The picker's minutes for a range: the presets inside it, and the current value when it
+    /// is in the range but no preset.
+    static func minuteChoices(_ range: ClosedRange<Int64>, current: Int64) -> [Int64] {
+        let presets = minutes.filter(range.contains)
+        return presets.contains(current) || !range.contains(current) ? presets : (presets + [current]).sorted()
+    }
+
     var body: some View {
         switch def.kind {
         case .bool:
@@ -246,12 +253,19 @@ struct ValueControl: View {
                                                  set: { set(.string($0)) })) {
                 ForEach(words, id: \.word) { Text($0.title).tag($0.word) }
             }
-        case .integer:
+        case .integer(let range, let unit):
             let current: Int64 = { if case .int(let n)? = value { return n } else { return -1 } }()
-            Picker(def.title, selection: Binding(get: { current }, set: { set(.int($0)) })) {
-                ForEach(Self.minutes + (Self.minutes.contains(current) || current < 0 ? [] : [current]), id: \.self) { n in
-                    Text(n == 0 ? "Never" : "\(n) min").tag(n)
+            if unit == "min" {
+                let choices = Self.minuteChoices(range, current: current)
+                Picker(def.title, selection: Binding(get: { current }, set: { set(.int($0)) })) {
+                    ForEach(choices, id: \.self) { n in
+                        Text(n == 0 ? "Never" : "\(n) min").tag(n)
+                    }
                 }
+            } else if current < 0 {
+                Text(def.title)
+            } else {
+                Stepper("\(def.title): \(current)", value: Binding(get: { current }, set: { set(.int($0)) }), in: range)
             }
         case .page:
             Text(def.title)

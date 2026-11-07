@@ -1197,6 +1197,17 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
 
 ---
 
+### 7.7 Built choices: groups (task-pf1c4cpn)
+
+Agent groups (`groups.md` 5.4) on the status board: a "Groups" section below the sessions and
+above Rounds. Each group has a header line: title, state, home host, items landed of items
+(dropped items left out), members started, elapsed time, the pause reasons, the waits and the coordinator; "offline <time>" when
+the home host is down. A live group with its record at hand lists its items below the header,
+one line each: title, state, lead, and why it waits. The rows follow the rounds' stale rule
+(7.5). An ended or dropped group is one dim line, gone 24 hours after its end. A member's
+session row on the board shows "group <title>" as its context when it has no request. The
+section has no keys yet; the app holds the actions (`groups.md` 5.9).
+
 ## 8. Shortcut bar
 
 ### 8.1 Behaviour

@@ -563,8 +563,50 @@ it on the home hab.
   only, not at once over member links (5.6). The usage pause has its call but no governor
   (Part 14 G). Reviewers and plan workers stay planned (B7). The scheduler does not wait for a
   started worktree setup or fetch first (B4). Stall detection covers local leads only, and
-  `group.close` closes local members only. The app's group card and gff's board section come
-  later.
+  `group.close` closes local members only. The app's group card and gff's board section are
+  built after B3 (5.9).
+
+### 5.9 Built choices: the group card (task-pf1c4cpn)
+
+The client half of 5.4 and 3.2. Code: `apple/FlightdeckKit/Sources/FlightdeckKit/Groups/`
+(the records, the cards, the actions), `Confirm/GroupPlanDraft.swift` (the plan card's edits),
+`Views/GroupViews.swift`; `internal/board/groups.go`, `internal/gffclient/groups.go` and
+`internal/habconn/state.go` for gff.
+
+- **Records.** The app and gff keep each hab's groups from its host snapshot, then each
+  `group.updated` above the held revision. A hab's groups stay while it is offline, dimmed.
+  Neither calls `group.list`: the snapshot carries the records.
+- **Where.** The app shows a Groups section on the status board below the sessions, and the
+  groups a coordinator made above its chat. gff shows a Groups section on the board below the
+  sessions, above Rounds: one header line per group, then one line per item while the group is
+  live.
+- **Counts.** A card counts the items that are not dropped, those landed, and the members
+  started (with a session). The catalog's short form (`groups.Short`) counts the same way, so a
+  card keeps its numbers when its home host goes offline.
+- **Ended groups.** An ended or dropped group leaves the board 24 hours after its end; the
+  coordinator's view in the app keeps every group it made. Design call: records stay 30 days
+  (`[groups] keep_ended`), too many for the board, and no setting for one more cut-off.
+- **Offline home host.** gff shows the group another hab's catalog holds (the short form, with
+  no items) when that copy was confirmed after gff lost the host, else the last snapshot, by
+  the rule of rounds (`gff-client.md` 7.5). The app has no catalog reader yet, so it shows the
+  last snapshot.
+- **Members.** A member row opens the member's session, found on its hab by device id (no
+  device: the home hab); a member that has not started opens nothing. A member's session row
+  in the session list carries the group's title as a mark, in the app as a badge and in gff as
+  the row's context ("group <title>"); "group" when no hab in view holds the group.
+- **Actions in the app.** Pause, Resume (only the user's pause), Close (asks first), and Retry
+  for a failed or closed member, or one whose setup waited. A refusal shows on the card. gff's
+  section has no keys yet. Not built: drop and land now for an item, move home (B9), compact and
+  hand off for a member (B6), the usage line (Part 14 G).
+- **The plan card.** A confirmation of kind `group` shows the task, project, lane target, each
+  item with review on or off, each member (role, item, host, harness, model, name, "new
+  worktree"), the trust line and the warnings. Edit changes a member's host, harness, model
+  and name, drops a member or an item (its members go with it, and an item that stacked on it
+  no longer stacks), and turns review off or on. Confirm sends the whole edited plan as
+  `edits.plan`; the app refuses a plan with no item or an item with no lead before it sends.
+  An amend's card holds only the change: it may have no item, and the app refuses it only with
+  no item and no member, or a new item with no lead. Member rows are told apart by hab and
+  name, as the hab tells members apart.
 
 ---
 
