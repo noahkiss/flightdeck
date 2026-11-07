@@ -1164,7 +1164,7 @@ func (c Client) CapcomCardAnswer(ctx context.Context, params CapcomCardAnswerPar
 	return result, err
 }
 
-// DeviceContextPut calls device.context.put. Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link. Needs the device-context capability.
+// DeviceContextPut calls device.context.put. Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link; unavailable on a hab that does not hold the Capcom mark. Needs the device-context capability.
 func (c Client) DeviceContextPut(ctx context.Context, params DeviceContextPutParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "device.context.put", params, &result)
