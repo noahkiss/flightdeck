@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
@@ -22,9 +21,9 @@ import (
 // Submit is lane.submit on a control connection: a peer hab's forward of its lead's submit.
 // Anything else is refused: a submit comes from the lead's pane, whose hab reads the head.
 func (s *groupsService) Submit(ctx context.Context, p api.LaneSubmitParams) (api.LaneSubmitted, error) {
-	peer, ok := control.CallerPeer(ctx)
+	peer, ok := s.linkedPeer(ctx)
 	if !ok {
-		return api.LaneSubmitted{}, control.Errorf(api.ErrorKindDenied, "lane.submit comes from the item's lead, through its pane")
+		return api.LaneSubmitted{}, control.Errorf(api.ErrorKindDenied, "lane.submit comes from the item's lead, through its pane, or from a peer hab in this hab's peer list")
 	}
 	return s.submit(ctx, p, peer.DeviceID)
 }
@@ -69,7 +68,9 @@ func (s *groupsService) submit(ctx context.Context, p api.LaneSubmitParams, devi
 			case groups.MemberRunning:
 				if rm.Agent != api.AgentStatusExited {
 					s.memberNoteLocked(g, rm, newHeadText(*g, it))
+					break
 				}
+				s.tellLocked(g, fmt.Sprintf("item %s is submitted, but its reviewer %s exited; group_retry starts it again.", it.ID, rm.Name), "Flightdeck")
 			case groups.MemberFailed, groups.MemberExited:
 				s.tellLocked(g, fmt.Sprintf("item %s is submitted, but its reviewer %s is %s; group_retry starts it again.", it.ID, rm.Name, rm.State), "Flightdeck")
 			}
@@ -99,9 +100,9 @@ func (s *groupsService) isMember(g *api.Group, want, from, device, role string) 
 // Verdict is review.verdict on a control connection: a peer hab's forward of its reviewer's
 // verdict. Anything else is refused.
 func (s *groupsService) Verdict(ctx context.Context, p api.ReviewVerdictParams) (api.ReviewVerdictTaken, error) {
-	peer, ok := control.CallerPeer(ctx)
+	peer, ok := s.linkedPeer(ctx)
 	if !ok {
-		return api.ReviewVerdictTaken{}, control.Errorf(api.ErrorKindDenied, "review.verdict comes from the item's reviewer, through its pane")
+		return api.ReviewVerdictTaken{}, control.Errorf(api.ErrorKindDenied, "review.verdict comes from the item's reviewer, through its pane, or from a peer hab in this hab's peer list")
 	}
 	return s.verdict(ctx, p, peer.DeviceID)
 }
@@ -192,17 +193,48 @@ func (s *groupsService) memberNoteLocked(g *api.Group, m api.GroupMember, text s
 	}()
 }
 
+// maxGroupMessage bounds a group.message: every finding at the largest [groups] max_findings,
+// under the channels' 64 KiB text limit.
+const maxGroupMessage = 60000
+
+// linkedPeer is the peer hab a call came over, when it is not this hab and this hab's peer
+// list pins its device id. A hello alone names any device; the peer list is what this hab
+// trusts (groups.md 6.5).
+func (s *groupsService) linkedPeer(ctx context.Context) (api.PeerHello, bool) {
+	peer, ok := control.CallerPeer(ctx)
+	if !ok || peer.DeviceID == "" || peer.DeviceID == s.cfg.self || s.cfg.listedPeer == nil || !s.cfg.listedPeer(peer.DeviceID) {
+		return api.PeerHello{}, false
+	}
+	return peer, true
+}
+
+// homeOf reports whether device is group's home hab: its own catalog copy lists the group
+// with itself as the home. Another host's copy that claims the group is not taken.
+func homeOf(cl api.CatalogList, group, device string) bool {
+	for _, h := range cl.Hosts {
+		if h.Catalog.DeviceID != device {
+			continue
+		}
+		for _, g := range h.Catalog.Groups {
+			if g.ID == group && g.Home == device {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Message is group.message: the home hab's note into a member on this hab. Only over the link
 // from the group's home hab, as the catalog names it, and only into a member of that group.
 func (s *groupsService) Message(ctx context.Context, p api.GroupMessageParams) error {
-	peer, ok := control.CallerPeer(ctx)
+	peer, ok := s.linkedPeer(ctx)
 	if !ok {
-		return control.Errorf(api.ErrorKindDenied, "group.message comes from a group's home hab over the link")
+		return control.Errorf(api.ErrorKindDenied, "group.message comes from a group's home hab, a peer in this hab's peer list, over the link")
 	}
-	if strings.TrimSpace(p.Text) == "" || utf8.RuneCountInString(p.Text) > 8000 {
-		return control.Errorf(api.ErrorKindInvalid, "a message is 1 to 8000 characters")
+	if strings.TrimSpace(p.Text) == "" || len(p.Text) > maxGroupMessage {
+		return control.Errorf(api.ErrorKindInvalid, "a message is 1 to %d bytes", maxGroupMessage)
 	}
-	if cg, ok := groupOf(s.cfg.catalog(), p.Group); !ok || cg.Home != peer.DeviceID {
+	if !homeOf(s.cfg.catalog(), p.Group, peer.DeviceID) {
 		return control.Errorf(api.ErrorKindDenied, "%s is not group %s's home hab", peer.Host, p.Group)
 	}
 	ss, ok := s.cfg.store.SessionByName(p.Member)

@@ -312,34 +312,36 @@ func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx con
 			if ss.Group == nil || ss.Group.ID != p.Group || ss.Group.Role != groups.RoleReviewer || ss.Group.Item != p.Item {
 				return nil, nil, control.Errorf(api.ErrorKindDenied, "only item %s's reviewer in group %s gives its verdict", p.Item, p.Group)
 			}
-			p.From, p.Checked, p.Descends = ss.Name, "", false
-			if f := p.Fixed; f != nil && (len(f.Commits) > 0 || f.Head != "") {
-				// This hab checks that the review branch head descends from the submitted head
-				// (groups.md 6.4): the home hab may not see this repository.
-				rev := f.Head
-				if rev == "" {
-					rev = groups.ReviewBranch(p.Group, p.Item)
-				}
-				head, err := memberCommit(ctx, folderOf, ss, rev)
-				if err != nil {
-					return nil, nil, err
-				}
-				g, err := svc.Get(p.Group)
-				if err != nil {
-					var r api.GroupResult
-					if err = svc.forward(ctx, p.Group, "group.get", api.GroupRef{Group: p.Group}, &r); err != nil {
-						return nil, nil, err
+			// This hab reads the review branch's head and checks it against the submitted
+			// head (groups.md 6.1, 6.4): the home hab may not see this repository. Every
+			// verdict names the head it reviewed, so one on an earlier submit is refused.
+			p.From, p.Checked, p.Reviewed, p.Descends = ss.Name, "", "", false
+			head, err := memberCommit(ctx, folderOf, ss, groups.ReviewBranch(p.Group, p.Item))
+			if err != nil {
+				return nil, nil, err
+			}
+			if f := p.Fixed; f != nil {
+				if f.Head != "" {
+					if named, err := memberCommit(ctx, folderOf, ss, f.Head); err != nil || named != head {
+						return nil, nil, control.Errorf(api.ErrorKindInvalid, "fixed.head %s is not the head %s of your review branch %s", f.Head, groups.Short7(head), groups.ReviewBranch(p.Group, p.Item))
 					}
-					g = r.Group
 				}
 				fixed := *f
 				fixed.Head = head
 				p.Fixed = &fixed
-				if ii := groups.ItemIndex(g, p.Item); ii >= 0 && g.Items[ii].Submitted != "" {
-					sub := g.Items[ii].Submitted
-					p.Checked = sub
-					p.Descends = head != sub && memberGit.IsAncestor(ctx, memberFolder(ctx, folderOf, ss), sub, head)
+			}
+			g, err := svc.Get(p.Group)
+			if err != nil {
+				var r api.GroupResult
+				if err = svc.forward(ctx, p.Group, "group.get", api.GroupRef{Group: p.Group}, &r); err != nil {
+					return nil, nil, err
 				}
+				g = r.Group
+			}
+			if ii := groups.ItemIndex(g, p.Item); ii >= 0 && g.Items[ii].Submitted != "" {
+				sub := g.Items[ii].Submitted
+				p.Checked, p.Reviewed = sub, head
+				p.Descends = head != sub && memberGit.IsAncestor(ctx, memberFolder(ctx, folderOf, ss), sub, head)
 			}
 			r, err := svc.verdict(ctx, p, svc.cfg.self)
 			return r, nil, err

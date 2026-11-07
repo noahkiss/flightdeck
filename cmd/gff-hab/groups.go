@@ -50,6 +50,9 @@ type groupsConfig struct {
 	// closePane closes a member's pane on this hab.
 	closePane func(ctx context.Context, pane string) error
 	logbook   *lbsvc.Service // nil: group.create refuses, "groups need Logbook"
+	// listedPeer reports whether the peer list pins a device id: the review calls and
+	// group.message are taken only over such a peer's link. nil: none is.
+	listedPeer func(device string) bool
 	// note sends a message from Flightdeck to a session on this hab, by id.
 	note    func(session, text string) error
 	setting func(id string) json.RawMessage
@@ -748,6 +751,9 @@ func (s *groupsService) pass(id string) {
 		next := groups.NextLeads(*g, s.intSetting(settings.GroupMaxLeads, 3))
 		item, mi := "", -1
 		for _, it := range next {
+			if waitsForYes(*g, it) {
+				continue // its setup waits for the user's yes; group_retry tries it again
+			}
 			if i := groups.MemberIndex(*g, g.Items[groups.ItemIndex(*g, it)].Lead); i >= 0 && g.Members[i].State == groups.MemberPlanned {
 				item, mi = it, i
 				break
@@ -834,6 +840,13 @@ func (s *groupsService) pass(id string) {
 	}
 }
 
+// waitsForYes reports whether an item's member start waits for the user's yes to its
+// worktree setup: the waits line names it until group_retry clears it. The scheduler skips it,
+// so one waiting start never holds the others back.
+func waitsForYes(g api.Group, item string) bool {
+	return slices.ContainsFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, item+":") })
+}
+
 // nextReviewer returns the first item in review whose planned reviewer starts now, and the
 // reviewer's member index: in a running group only.
 func nextReviewer(g api.Group) (string, int) {
@@ -842,6 +855,9 @@ func nextReviewer(g api.Group) (string, int) {
 	}
 	for _, it := range g.Items {
 		if it.State != groups.ItemReview || it.Reviewer == "" {
+			continue
+		}
+		if waitsForYes(g, it.ID) {
 			continue
 		}
 		if i := groups.MemberIndex(g, it.Reviewer); i >= 0 && g.Members[i].State == groups.MemberPlanned {
@@ -1296,15 +1312,16 @@ func (s *groupsService) forward(ctx context.Context, group, method string, p, ou
 		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", group) // never forwarded twice
 	}
 	cl := s.cfg.catalog()
-	cg, ok := groupOf(cl, group)
-	if !ok || cg.Home == "" || cg.Home == s.cfg.self {
-		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
-	}
+	// The home is the host whose own catalog lists the group with itself as the home: another
+	// host's copy that claims the group is not taken.
 	label := ""
 	for _, h := range cl.Hosts {
-		if h.Catalog.DeviceID == cg.Home {
+		if !h.Own && h.Catalog.DeviceID != s.cfg.self && homeOf(cl, group, h.Catalog.DeviceID) {
 			label = h.Label
 		}
+	}
+	if label == "" {
+		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
 	}
 	l, ok := s.link(label)
 	if label == "" || !ok || !l.Online || l.Caller == nil {
@@ -1458,7 +1475,10 @@ func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.
 		ii := groups.ItemIndex(*g, m.Item)
 		waits := m.State == groups.MemberPlanned && ii >= 0 && (g.Items[ii].Reason != "" ||
 			slices.ContainsFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, m.Item+":") }))
-		if m.State != groups.MemberFailed && m.State != groups.MemberExited && !waits {
+		// A member whose agent exited counts as exited: a remote member's session record is
+		// on its own hab, so only its agent state says so.
+		gone := m.State == groups.MemberRunning && m.Agent == api.AgentStatusExited
+		if m.State != groups.MemberFailed && m.State != groups.MemberExited && !gone && !waits {
 			return control.Errorf(api.ErrorKindConflict, "member %s is %s; only a failed or closed member, or one whose setup waited, starts again", m.Name, m.State)
 		}
 		if !waits {
