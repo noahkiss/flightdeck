@@ -136,6 +136,23 @@ type Store struct {
 	panes     map[string]*paneState
 	gone      map[string]uint64 // tombstones: final revision of each gone pane
 	goneOrder []string          // tombstone ids, oldest first
+	// routes names a session for a route id that is no pane: the Capcom engine's route
+	// (capcom-service.md 3.3), so the pane route's handlers find the Capcom session.
+	routes map[string]string
+}
+
+// SetRoute makes SessionByPane(route) answer the session id; an empty session removes it.
+func (s *Store) SetRoute(route, session string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.routes == nil {
+		s.routes = map[string]string{}
+	}
+	if session == "" {
+		delete(s.routes, route)
+		return
+	}
+	s.routes[route] = session
 }
 
 // Open loads the state from cfg.Dir and matches it to the live holder panes. An unreadable or
@@ -539,6 +556,9 @@ type SessionSpec struct {
 	Dir  string
 	// Round marks a run session (rounds.md 7.2): Session.round. Nil for any other session.
 	Round *api.SessionRound
+	// NoPane files a session with no pane: the Capcom service session (capcom-service.md
+	// 2.1). Pane and NewPane must be unset.
+	NoPane bool
 }
 
 // CreateSession adds a session record for a live pane, or for a pane about to be spawned
@@ -560,6 +580,9 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	}
 	ps := s.panes[spec.Pane]
 	switch {
+	case spec.NoPane && (spec.Pane != "" || spec.NewPane):
+		return api.Session{}, fmt.Errorf("%w: a session with no pane names none", ErrInvalid)
+	case spec.NoPane:
 	case spec.NewPane && spec.Pane == "":
 		return api.Session{}, fmt.Errorf("%w: a new pane needs its id", ErrInvalid)
 	case spec.NewPane && ps != nil:
@@ -569,7 +592,7 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	case !spec.NewPane && ps == nil:
 		return api.Session{}, fmt.Errorf("%w: pane %q", ErrNotFound, spec.Pane)
 	}
-	if other := s.sessionByPane(spec.Pane); other != nil {
+	if other := s.sessionByPane(spec.Pane); other != nil && !spec.NoPane {
 		return api.Session{}, fmt.Errorf("%w: pane %s belongs to session %s", ErrConflict, spec.Pane, other.ID)
 	}
 	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning,
@@ -1014,6 +1037,9 @@ func (s *Store) sessionByPane(pane string) *sessionRecord {
 		if ss.Pane == pane {
 			return ss
 		}
+	}
+	if id, ok := s.routes[pane]; ok {
+		return s.session(id)
 	}
 	return nil
 }
