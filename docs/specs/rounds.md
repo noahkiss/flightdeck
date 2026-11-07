@@ -1746,13 +1746,14 @@ choice open:
 - **The agent kit (stage 10).** `gff-hab mcp` serves the round tools `round_ls` (`all`, `host`:
   from the catalog), `round_show`, `round_runs`, `round_add`, `round_edit`, `round_rm`,
   `round_pause`, `round_unpause` and `round_run`, with the CLI's flags as arguments (`_` for
-  `-`; `command` and `harness_args` are arrays), through the same door as the other tools; the
+  `-`; `command`, `harness_args` and `where` are arrays; stage 9's `on`, `debounce`, `cooldown`,
+  `mode capcom|group` and `group` too), through the same door as the other tools; the
   manual (`gff-hab mcp --skill`) has a Round tools section and a rule line. A round on the
   agent's own hab is made at once through the pane route, with the session as `created_by`, and
   no card. A round on another host (`round add -host`, `round_add` with `host`) is a
   `confirm.request` of kind `round` (`capcom.md` 6.1): the requesting hab checks that the host is
-  a peer online with `rounds`, that the round is `fresh` with no target (a target is a session on
-  the agent's own hab), and fills in the trigger in plain words and the project's name from the
+  a peer online with `rounds`, that the round has no target and is not `resume` or `fork` (a
+  target is a session on the agent's own hab), and fills in the trigger in plain words and the project's name from the
   peer's catalog. With the setting off the hab makes the round at once and the card is a record;
   on, the card waits up to 60 minutes and the tool waits 45 s, as `start_session` does; a cancel
   or an expiry makes nothing. `confirmation_read` and `gff-hab confirm show` show a round card in

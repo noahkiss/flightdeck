@@ -47,7 +47,7 @@ type ConfirmSetup struct {
 // agent's round on its own hab needs no confirmation and gets no card.
 type ConfirmRound struct {
 	Host    string    `json:"host" doc:"The runner: a peer label from the peer list. This hab is refused: a round here is made with round.create."`
-	Round   RoundSpec `json:"round" doc:"The round as the runner's round.create will get it. A fresh round only: a resume or fork target is a session on this hab."`
+	Round   RoundSpec `json:"round" doc:"The round as the runner's round.create will get it. Not a resume or fork round: its target is a session on this hab."`
 	RunNow  bool      `json:"run_now,omitempty" doc:"Also start one run once the round is made."`
 	Trigger string    `json:"trigger,omitempty" doc:"The trigger in plain words, such as every 1h or cron 0 9 * * 1-5 in UTC. Filled by the hab."`
 	Project string    `json:"project,omitempty" doc:"The project's name, from the catalog, when the hab knows it. Filled by the hab."`
