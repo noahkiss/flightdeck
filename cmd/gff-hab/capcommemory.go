@@ -37,7 +37,7 @@ func isCapcomGuide(r api.LogbookRecord) bool {
 }
 
 // guideWrite reports whether every change of a write creates or edits a capcom guide (6.4):
-// a create of a guide with no project and the tag capcom, or a title, body or note change, a
+// a create of a guide with no project and the tag capcom, or a title, body, status or note change, a
 // tag added, or a tag other than capcom removed, on such a guide. Anything else, in any change,
 // leaves the write a proposal.
 func (m *capcomMemory) guideWrite(ctx context.Context, changes []api.LogbookChange) bool {
@@ -71,7 +71,7 @@ func (m *capcomMemory) guideWrite(ctx context.Context, changes []api.LogbookChan
 				made[c.ID] = true
 			}
 		case api.LogbookChangeOpSet:
-			if (c.Field != "title" && c.Field != "body") || !guide(c.ID) {
+			if (c.Field != "title" && c.Field != "body" && c.Field != "status") || !guide(c.ID) {
 				return false
 			}
 		case api.LogbookChangeOpAdd, api.LogbookChangeOpRemove:

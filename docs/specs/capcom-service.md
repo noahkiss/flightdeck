@@ -622,7 +622,7 @@ The engine ends the SDK session and starts a fresh one.
   holds, and to name the preference it used.
 - **As built (A4).** The exception holds only for a `logbook.write` on the engine's route
   whose every change is one of: a create of a `guide` with no project, the tag `capcom` and no
-  links; a `set` of `title` or `body`, a note, a tag added, or a tag other than `capcom` removed,
+  links; a `set` of `title`, `body` or `status`, a note, a tag added, or a tag other than `capcom` removed,
   on such a guide. A write that asks `propose` stays a proposal. The pane Capcom keeps its
   proposals. The "Noted" line is a `note` item with a card of type `memory`: `ref` is the record
   (or the proposal at Safe), the one choice is `undo`, and the card keeps the record's revision.
