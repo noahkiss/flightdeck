@@ -1,11 +1,13 @@
 package board
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/hosts"
 )
 
@@ -21,7 +23,7 @@ func TestGroupOrder(t *testing.T) {
 	run := group("g1", "older", "running", "2026-01-02T09:00:00Z")
 	run.Items = []api.GroupItem{{ID: "a", Title: "API", State: "landed"}, {ID: "b", Title: "UI", State: "working", Lead: "lead-2"},
 		{ID: "c", Title: "Docs", State: "dropped"}}
-	run.Members = []api.GroupMember{{Name: "lead-2"}, {Name: "rev-1"}}
+	run.Members = []api.GroupMember{{Name: "lead-2", Session: "s2"}, {Name: "rev-1", Session: "s3"}, {Name: "planned"}}
 	run.Waits = []string{"disk on b"}
 	paused := group("g2", "held", "paused", "2026-01-02T11:00:00Z")
 	paused.Pause = api.GroupPause{User: "2026-01-02T11:30:00Z", Usage: "2026-01-02T11:40:00Z"}
@@ -128,5 +130,30 @@ func TestMemberMark(t *testing.T) {
 	}
 	if marks["lead"] != "Split the parser" || marks["lost"] != "group" || marks["plain"] != "" {
 		t.Fatalf("marks %v", marks)
+	}
+}
+
+// TestGroupCountsMatchTheCatalog: a live row and the catalog's short form of one record count
+// alike, so a card keeps its numbers when its home host goes offline.
+func TestGroupCountsMatchTheCatalog(t *testing.T) {
+	g := group("g1", "Split the parser", "running", "2026-01-01T09:00:00Z")
+	g.Items = []api.GroupItem{{ID: "a", State: "landed"}, {ID: "b", State: "working"}, {ID: "c", State: "dropped"}}
+	g.Members = []api.GroupMember{{Name: "lead-1", Session: "s1"}, {Name: "lead-2", Session: "s2"}, {Name: "rev-1"}}
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	live := GroupRows([]hosts.Host{{Label: "a", Status: hosts.Online, Welcome: api.Welcome{DeviceID: "A"},
+		Structure: api.Structure{Groups: []api.Group{g}}}}, nil, now)
+	cats := func(string) (GroupCopy, bool) {
+		return GroupCopy{Groups: []api.CatalogGroup{groups.Short(g)}, SeenAt: now}, true
+	}
+	copied := GroupRows([]hosts.Host{{Label: "a", Status: hosts.Offline, Since: now.Add(-time.Hour), Welcome: api.Welcome{DeviceID: "A"}}}, cats, now)
+	if len(live) != 1 || len(copied) != 1 {
+		t.Fatalf("rows %+v %+v", live, copied)
+	}
+	l, c := live[0], copied[0]
+	if l.Items != 2 || l.Landed != 1 || l.Members != 2 {
+		t.Fatalf("live counts %d/%d, %d", l.Landed, l.Items, l.Members)
+	}
+	if got, want := []int{c.Items, c.Landed, c.Members}, []int{l.Items, l.Landed, l.Members}; !slices.Equal(got, want) {
+		t.Fatalf("catalog counts %v, live %v", got, want)
 	}
 }

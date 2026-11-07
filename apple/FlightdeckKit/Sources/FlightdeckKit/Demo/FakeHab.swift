@@ -541,7 +541,8 @@ public actor FakeHab {
                 guard let i = g.members.firstIndex(where: { $0.name == p.member }) else {
                     throw FakeFailure(kind: .notFound, hint: "group \(g.id) has no member \(p.member)")
                 }
-                guard g.members[i].state == "failed" || g.members[i].state == "exited" else {
+                let waited = g.members[i].state == "planned" && !(g.items.first { $0.id == g.members[i].item }?.reason ?? "").isEmpty
+                guard g.members[i].state == "failed" || g.members[i].state == "exited" || waited else {
                     throw FakeFailure(kind: .conflict, hint: "member \(p.member) is \(g.members[i].state)")
                 }
                 g.members[i].state = "planned"

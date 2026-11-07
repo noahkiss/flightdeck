@@ -39,7 +39,7 @@ type CatalogGroup struct {
 	// Home, Items, Landed, Members and Pause come with the group record (groups.md 5.1, stage
 	// B3). Optional, so a reader of an older copy sees none.
 	Home    string      `json:"home,omitempty" doc:"The home hab's device id."`
-	Items   int         `json:"items,omitempty" doc:"Plan items."`
+	Items   int         `json:"items,omitempty" doc:"Plan items that are not dropped."`
 	Landed  int         `json:"landed,omitempty" doc:"Items landed."`
 	Members int         `json:"members,omitempty" doc:"Members started."`
 	Pause   *GroupPause `json:"pause,omitempty" doc:"The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."`

@@ -6,8 +6,17 @@ import HabAPI
 /// edited plan and checks it again (3.1); this only keeps the edits the card allows.
 public struct GroupPlanDraft: Equatable, Sendable {
     public private(set) var plan: GroupPlan
+    /// The card is an amend: the plan holds only the change (`group_amend`), so it may add
+    /// members to items already in the group and no item at all.
+    public let amend: Bool
+    /// A stable id per member, in plan order, for the editor's rows across drops.
+    public private(set) var memberIDs: [Int]
 
-    public init(_ plan: GroupPlan) { self.plan = plan }
+    public init(_ plan: GroupPlan, amend: Bool = false) {
+        self.plan = plan
+        self.amend = amend
+        memberIDs = Array(plan.members.indices)
+    }
 
     /// Sets one member's field. An empty host means the home hab; an empty model or name lets
     /// the hab choose.
@@ -26,11 +35,14 @@ public struct GroupPlanDraft: Equatable, Sendable {
     public mutating func dropMember(_ i: Int) {
         guard plan.members.indices.contains(i) else { return }
         plan.members.remove(at: i)
+        memberIDs.remove(at: i)
     }
 
     /// Drops an item and its members. An item that stacked on it no longer stacks.
     public mutating func dropItem(_ id: String) {
         plan.items.removeAll { $0.id == id }
+        let keep = plan.members.map { $0.item != id }
+        memberIDs = zip(memberIDs, keep).filter(\.1).map(\.0)
         plan.members.removeAll { $0.item == id }
         for i in plan.items.indices where plan.items[i].after == id { plan.items[i].after = nil }
     }
@@ -55,9 +67,14 @@ public struct GroupPlanDraft: Equatable, Sendable {
         return norm(plan) == norm(orig) ? nil : plan
     }
 
-    /// Why Confirm is off for this draft; nil when it can go. The hab checks the rest.
+    /// Why Confirm is off for this draft; nil when it can go. The hab checks the rest. An
+    /// amend needs an item or a member; each item it adds still needs a lead.
     public var problem: String? {
-        if plan.items.isEmpty { return "Keep at least one item" }
+        if amend {
+            if plan.items.isEmpty && plan.members.isEmpty { return "Keep at least one item or member" }
+        } else if plan.items.isEmpty {
+            return "Keep at least one item"
+        }
         for it in plan.items {
             let leads = plan.members.filter { $0.item == it.id && $0.role == .lead }.count
             if leads == 0 { return "\(it.title) has no lead: drop the item or keep its lead" }

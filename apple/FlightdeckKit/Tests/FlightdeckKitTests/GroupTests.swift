@@ -134,7 +134,7 @@ final class GroupTests: XCTestCase {
 
     func testTextLines() {
         var g = Self.group()
-        XCTAssertEqual(GroupText.counts(g), "0 of 2 landed · 2 members")
+        XCTAssertEqual(GroupText.counts(g), "0 of 2 landed · 1 started", "a member not started is not counted")
         XCTAssertEqual(GroupText.memberState(g.members[0]), "working", "a running member shows its agent state")
         XCTAssertEqual(GroupText.memberState(g.members[1]), "failed")
         XCTAssertNil(GroupText.lane(g))
@@ -142,7 +142,7 @@ final class GroupTests: XCTestCase {
         XCTAssertEqual(GroupText.lane(g), "landing API · queue: UI")
         g.items[1].state = "dropped"
         g.items[0].state = "landed"
-        XCTAssertEqual(GroupText.counts(g), "1 of 1 landed · 2 members")
+        XCTAssertEqual(GroupText.counts(g), "1 of 1 landed · 1 started", "a dropped item is not counted")
         g.pause = GroupPause(usage: "2026-11-07T10:00:00Z", user: "2026-11-07T10:00:00Z")
         XCTAssertEqual(GroupText.pause(g), "Paused by you and by usage")
         XCTAssertNil(GroupText.waits(g))
@@ -266,6 +266,74 @@ final class GroupTests: XCTestCase {
         XCTAssertEqual(d.problem, "UI has no lead: drop the item or keep its lead")
         d.dropItem("ui")
         XCTAssertEqual(d.problem, "Keep at least one item")
+    }
+
+    /// An amend's plan is only the change: members for items already in the group, no item.
+    func testAmendDraft() {
+        let change = GroupPlan(items: [], members: [GroupPlanMember(harness: "codex", item: "api", role: .worker),
+                                                    GroupPlanMember(harness: "claude", item: "api", role: .worker)],
+                               project: "tide-tables", title: "Split the parser")
+        var d = GroupPlanDraft(change, amend: true)
+        XCTAssertNil(d.problem, "a change that only adds members goes")
+        d.setMember(1, model: "opus")
+        XCTAssertNil(d.problem)
+        XCTAssertEqual(d.memberIDs, [0, 1])
+        d.dropMember(0)
+        XCTAssertEqual(d.memberIDs, [1], "a row keeps its id when one above it goes")
+        XCTAssertEqual(d.plan.members.map(\.model), ["opus"])
+        d.dropMember(0)
+        XCTAssertEqual(d.problem, "Keep at least one item or member")
+        var plan = Self.plan()
+        plan.items[1].after = nil
+        var full = GroupPlanDraft(plan)
+        full.dropItem("api")
+        XCTAssertEqual(full.memberIDs, [1], "an item's members leave with their ids")
+    }
+
+    func testAmendCardEditsGoOverTheHab() async throws {
+        let h = await hab()
+        await h.setCapability("confirm", true)
+        let change = GroupPlan(items: [], members: [GroupPlanMember(harness: "codex", item: "api", role: .worker)],
+                               project: "tide-tables", title: "Split the parser")
+        await h.requestConfirmation(Confirmation(created: Fixture.stamp(Date()), expiresAt: Fixture.stamp(Date().addingTimeInterval(3600)),
+                                                 group: ConfirmGroup(amend: true, group: "g1", plan: change, trust: ""),
+                                                 id: "amend1", kind: .group, state: .open))
+        let f = await fleet([h])
+        let confirms = try XCTUnwrap(f.confirms)
+        await eventually("amend card") { confirms.cards.contains { $0.confirmation.id == "amend1" } }
+        let card = try XCTUnwrap(confirms.cards.first { $0.confirmation.id == "amend1" })
+        var d = try XCTUnwrap(confirms.groupDraft(card))
+        XCTAssertTrue(d.amend)
+        d.setMember(0, model: "gpt-5")
+        confirms.setGroupDraft(d, for: card)
+        await confirms.confirm(card)
+        let answers = await h.confirmAnswers
+        XCTAssertEqual(answers.last?.edits?.plan?.members.first?.model, "gpt-5")
+        await f.setActive(false)
+    }
+
+    /// Two members of one name on two habs are two rows.
+    func testMemberRowIDs() {
+        let a = GroupMember(device: "A", harness: "claude", host: "a", item: "api", name: "w", role: .worker, state: "running")
+        var b = a
+        b.device = "B"
+        XCTAssertNotEqual(a.rowID, b.rowID)
+    }
+
+    /// Retry takes a planned member whose setup waited, as the hab does.
+    func testRetryAWaitingMember() async throws {
+        let h = await hab()
+        var g = Self.group()
+        g.members[1].state = "planned"
+        g.members[1].reason = nil
+        await h.loadGroup(g)
+        let f = await fleet([h])
+        await eventually("card") { f.groups.all.count == 1 }
+        let card = try XCTUnwrap(f.groups.all.first)
+        XCTAssertTrue(card.canRetry(card.group.members[1]), "the UI item waits with a reason")
+        await f.groups.retry(card, card.group.members[1])
+        XCTAssertNil(f.groups.errors[card.id])
+        await f.setActive(false)
     }
 
     func testPlanCardOverTheHab() async throws {

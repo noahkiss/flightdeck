@@ -598,6 +598,9 @@ The client half of 5.4 and 3.2. Code: `apple/FlightdeckKit/Sources/FlightdeckKit
   groups a coordinator made above its chat. gff shows a Groups section on the board below the
   sessions, above Rounds: one header line per group, then one line per item while the group is
   live.
+- **Counts.** A card counts the items that are not dropped, those landed, and the members
+  started (with a session). The catalog's short form (`groups.Short`) counts the same way, so a
+  card keeps its numbers when its home host goes offline.
 - **Ended groups.** An ended or dropped group leaves the board 24 hours after its end; the
   coordinator's view in the app keeps every group it made. Design call: records stay 30 days
   (`[groups] keep_ended`), too many for the board, and no setting for one more cut-off.
@@ -619,6 +622,9 @@ The client half of 5.4 and 3.2. Code: `apple/FlightdeckKit/Sources/FlightdeckKit
   and name, drops a member or an item (its members go with it, and an item that stacked on it
   no longer stacks), and turns review off or on. Confirm sends the whole edited plan as
   `edits.plan`; the app refuses a plan with no item or an item with no lead before it sends.
+  An amend's card holds only the change: it may have no item, and the app refuses it only with
+  no item and no member, or a new item with no lead. Member rows are told apart by hab and
+  name, as the hab tells members apart.
 
 ### 5.9 Built choices (stage B9, task-3vwhq3dn)
 

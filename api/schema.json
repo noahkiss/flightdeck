@@ -6378,7 +6378,7 @@
           "items": {
             "type": "integer",
             "format": "int64",
-            "description": "Plan items."
+            "description": "Plan items that are not dropped."
           },
           "landed": {
             "type": "integer",
