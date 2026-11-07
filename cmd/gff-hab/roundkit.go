@@ -42,9 +42,9 @@ func (r *confirmRunner) CheckRound(c api.ConfirmRound) (api.ConfirmRound, error)
 	switch {
 	case s.Name == "":
 		return c, control.Errorf(api.ErrorKindInvalid, "a round needs a name")
-	case s.Mode != api.RoundModeFresh || s.Target != "":
+	case s.Mode == api.RoundModeResume || s.Mode == api.RoundModeFork || s.Target != "":
 		// From a pane a round may target only the calling session, which lives on this hab.
-		return c, control.Errorf(api.ErrorKindInvalid, "a round on another host is a fresh one: a resume or fork round's target is a session on this hab, so make it here")
+		return c, control.Errorf(api.ErrorKindInvalid, "a round on another host is not a resume or fork round: its target is a session on this hab, so make it here")
 	case len(s.Prompt) > rounds.MaxPromptBytes:
 		return c, control.Errorf(api.ErrorKindInvalid, "prompt: %d bytes; the limit is %d", len(s.Prompt), rounds.MaxPromptBytes)
 	}
@@ -65,7 +65,7 @@ func (r *confirmRunner) CheckRound(c api.ConfirmRound) (api.ConfirmRound, error)
 			return c, control.Errorf(api.ErrorKindInvalid, "every: %v", err)
 		}
 	}
-	c.Trigger = rounds.TriggerWords(string(t.Kind), cron, t.Zone, t.At)
+	c.Trigger = rounds.TriggerWords(string(t.Kind), cron, t.Zone, t.At, t.Event)
 	c.Project = r.peerProject(c.Host, s.ProjectRemote, s.ProjectDir)
 	return c, nil
 }
@@ -195,7 +195,12 @@ func addElsewhere(ctx context.Context, c caller, spec api.RoundSpec, host string
 // roundFieldArgs are the definition arguments of round_add and round_edit, named as the CLI's
 // flags with _ for -.
 var roundFieldArgs = []toolArg{
-	{Name: "mode", Type: "string", Doc: "fresh (the default for add): a new session each run; resume: your own session gets the prompt (target self); fork: a new session from your conversation."},
+	{Name: "mode", Type: "string", Doc: "fresh (the default for add): a new session each run; resume: your own session gets the prompt (target self); fork: a new session from your conversation; capcom: each run messages Capcom; group: each run messages a group's coordinator."},
+	{Name: "on", Type: "string", Doc: "Run on this host's events instead of a schedule: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated."},
+	{Name: "where", Type: "array", Doc: "With on: filter fields, each key=value, a list comma-separated (status=done,dropped)."},
+	{Name: "debounce", Type: "string", Doc: "With on: how long a batch gathers events after its first. Absent: 30s."},
+	{Name: "cooldown", Type: "string", Doc: "With on: the least time between two event runs' starts. Absent: 5m."},
+	{Name: "group", Type: "string", Doc: "Mode group: the group id whose coordinator gets each run's message."},
 	{Name: "every", Type: "string", Doc: "A preset: 1m, 5m, 10m, 15m, 30m, 1h, 2h, 6h, 12h, 1d and the like."},
 	{Name: "cron", Type: "string", Doc: "A 5-field cron expression, instead of every."},
 	{Name: "tz", Type: "string", Doc: "The IANA time zone of cron or at. Absent: the runner's zone."},
@@ -211,7 +216,7 @@ var roundFieldArgs = []toolArg{
 	{Name: "cwd", Type: "string", Doc: "Fresh: the folder to start in, instead of the project's most recent one."},
 	{Name: "target", Type: "string", Doc: "Resume and fork: self, your own session. A round may target no other session."},
 	{Name: "timeout", Type: "string", Doc: "The longest a run may take, such as 30m. Absent: 60m."},
-	{Name: "wait", Type: "string", Doc: "Resume: how long a run waits for your session to be free. Absent: 10m."},
+	{Name: "wait", Type: "string", Doc: "Resume and group: how long a run waits for your session to be free, or for its delivery. Absent: 10m."},
 	{Name: "max_runs", Type: "integer", Doc: "Complete the round after this many finished runs."},
 	{Name: "expires", Type: "string", Doc: "Complete the round at this RFC 3339 time."},
 	{Name: "catch_up", Type: "string", Doc: "once (the default) or skip: what a slot missed while the host slept does."},
@@ -239,11 +244,11 @@ var roundTools = []kitTool{
 		Args:  []toolArg{roundNameArg, {Name: "limit", Type: "integer", Doc: "At most this many runs. Absent: 20."}},
 		Shell: "gff round runs <name>", run: runRoundRuns},
 	{Name: "round_add", Action: true,
-		Doc: "Make a round: a job Flightdeck runs on a schedule, by hand, or once. On this host it is made at once, with you as its creator. On another host (host) it goes through the owner's confirmation setting, as start_session does: with it on, the owner confirms it in Flightdeck first; the tool waits up to 45 s, then says it is still waiting, and the answer reaches you as a message. Give one trigger: every, cron, at or manual. Give a prompt, or a command.",
+		Doc: "Make a round: a job Flightdeck runs on a schedule, on events, by hand, or once. On this host it is made at once, with you as its creator. On another host (host) it goes through the owner's confirmation setting, as start_session does: with it on, the owner confirms it in Flightdeck first; the tool waits up to 45 s, then says it is still waiting, and the answer reaches you as a message. Give one trigger: every, cron, at, on or manual. Give a prompt, or a command.",
 		Args: append(append([]toolArg{roundNameArg}, roundFieldArgs...),
 			toolArg{Name: "paused", Type: "boolean", Doc: "Make the round paused."},
 			toolArg{Name: "run_now", Type: "boolean", Doc: "Also start one run now."},
-			toolArg{Name: "host", Type: "string", Doc: "Make the round on this host instead: a label from the hosts tool. A fresh round only."}),
+			toolArg{Name: "host", Type: "string", Doc: "Make the round on this host instead: a label from the hosts tool. Not a resume or fork round."}),
 		Shell: "gff round add <name> (-every <preset> | -cron <expr> | -at <time> | -manual) [-host <label>] <prompt>", run: runRoundAdd},
 	{Name: "round_edit", Action: true, Doc: "Change fields of a round you made on this host. Fields left out keep their value. round_pause and round_unpause change the pause.",
 		Args:  append([]toolArg{roundNameArg}, roundFieldArgs...),
@@ -295,7 +300,8 @@ func roundSpecArgs(spec *api.RoundSpec, a toolArgs, elsewhere bool) (bool, error
 	str := map[string]*string{"mode": &d.mode, "cron": &d.cron, "tz": &d.tz, "every": &d.every, "at": &d.at,
 		"project": &d.project, "remote": &d.remote, "cwd": &d.cwd, "target": &d.target, "harness": &d.harness,
 		"model": &d.model, "timeout": &d.timeout, "wait": &d.wait, "expires": &d.expires, "catch_up": &d.catchUp,
-		"on_finish": &d.onFinish, "notify": &d.notify}
+		"on_finish": &d.onFinish, "notify": &d.notify, "on": &d.on, "debounce": &d.debounce, "cooldown": &d.cooldown,
+		"group": &d.group}
 	for name, p := range str {
 		if _, ok := a[name]; ok {
 			*p, set[strings.ReplaceAll(name, "_", "-")] = a.str(name), true
@@ -303,6 +309,9 @@ func roundSpecArgs(spec *api.RoundSpec, a toolArgs, elsewhere bool) (bool, error
 	}
 	if _, ok := a["max_runs"]; ok {
 		d.maxRuns, set["max-runs"] = strconv.FormatInt(a.num("max_runs"), 10), true
+	}
+	if _, ok := a["where"]; ok {
+		d.where, set["where"] = a.list("where"), true
 	}
 	if _, ok := a["harness_args"]; ok {
 		d.harnessArgs, set["harness-arg"] = a.list("harness_args"), true

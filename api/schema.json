@@ -7244,7 +7244,7 @@
           },
           "round": {
             "$ref": "#/components/schemas/RoundSpec",
-            "description": "The round as the runner's round.create will get it. A fresh round only: a resume or fork target is a session on this hab."
+            "description": "The round as the runner's round.create will get it. Not a resume or fork round: its target is a session on this hab."
           },
           "run_now": {
             "type": "boolean",

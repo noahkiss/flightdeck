@@ -78,3 +78,21 @@ func TestRoundHostFromPane(t *testing.T) {
 		}
 	}
 }
+
+// TestRoundToolEvents: the round tools take stage 9's event trigger and message modes as the
+// CLI's -on, -where, -debounce, -cooldown, -mode and -group do.
+func TestRoundToolEvents(t *testing.T) {
+	spec := api.RoundSpec{Name: "x", Mode: api.RoundModeFresh}
+	if _, err := roundSpecArgs(&spec, toolArgs{"on": "logbook.updated", "where": []any{"status=done,dropped"},
+		"debounce": "10s", "cooldown": "2m", "mode": "group", "group": "g-1", "prompt": "look"}, false); err != nil {
+		t.Fatal(err)
+	}
+	tr := spec.Trigger
+	if tr.Kind != api.RoundTriggerKindEvent || tr.Event != "logbook.updated" || tr.Filter == nil ||
+		spec.DebounceMS != 10000 || spec.CooldownMS != 120000 || spec.Mode != "group" || spec.Group != "g-1" {
+		t.Fatalf("event round: %+v", spec)
+	}
+	if _, err := roundSpecArgs(&api.RoundSpec{Name: "y"}, toolArgs{"where": []any{"a=b"}, "manual": true}, false); err == nil {
+		t.Error("where with no on")
+	}
+}

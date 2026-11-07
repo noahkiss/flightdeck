@@ -80,7 +80,7 @@ type GroupRunner interface {
 // A round on the agent's own hab never comes here: it needs no confirmation and gets no card.
 type RoundRunner interface {
 	// CheckRound checks a round before it opens or runs: the host is a peer, online, with
-	// rounds; the round is a fresh one with a name. It returns the round with its trigger
+	// rounds; the round has a name and no target (no resume or fork). It returns the round with its trigger
 	// words and project filled in. An error that is a *control.Error keeps its kind.
 	CheckRound(r api.ConfirmRound) (api.ConfirmRound, error)
 	// RunRound makes the round on its runner. An error wrapping ErrUnknown leaves the outcome

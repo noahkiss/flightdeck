@@ -2482,7 +2482,7 @@ public struct ConfirmRound: Codable, Sendable, Hashable {
     public var host: String
     /// The project's name, from the catalog, when the hab knows it. Filled by the hab.
     public var project: String?
-    /// The round as the runner's round.create will get it. A fresh round only: a resume or fork target is a session on this hab.
+    /// The round as the runner's round.create will get it. Not a resume or fork round: its target is a session on this hab.
     public var round: RoundSpec
     /// Also start one run once the round is made.
     public var runNow: Bool?
