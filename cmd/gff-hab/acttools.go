@@ -116,6 +116,9 @@ func runSetup(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 
 // confirmationText says where a confirmation stands, for an agent.
 func confirmationText(c api.Confirmation) string {
+	if c.Kind == "group" || c.Start == nil {
+		return groupConfirmText(c)
+	}
 	var b strings.Builder
 	what := "the start"
 	if s := c.Start; s != nil {
