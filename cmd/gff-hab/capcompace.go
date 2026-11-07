@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,10 +27,14 @@ type capcomPacer struct {
 	usage  *habusage.Store
 	key    string // Capcom's own usage account key (app.md 14.1)
 	config func() capcom.ServiceConfig
-	link   *capcomengine.Link
-	thread *capcomthread.Store
-	now    func() time.Time
-	logf   func(string, ...any)
+	// configPath is the hab's config file: a pace_* edit rechecks once it held for one poll.
+	// "": no watch.
+	configPath string
+	poll       time.Duration // the config file check; 0: 2 s
+	link       *capcomengine.Link
+	thread     *capcomthread.Store
+	now        func() time.Time
+	logf       func(string, ...any)
 
 	sendMu sync.Mutex // one answer read and sent at a time
 	mu     sync.Mutex
@@ -37,25 +42,95 @@ type capcomPacer struct {
 	ans    governor.Answer
 	noted  time.Time // the wait the last note named; zero: none since the wait began
 	drifts map[string]bool
+	// The settings from the last config read: the governor asks for them at each recheck,
+	// and the config file is read only at start, on a change and on a user message.
+	pol   governor.Policy
+	acct  string
+	done  chan struct{} // closed by stop: ends the config watch
+	stamp fileStamp     // the config file as last read
 }
 
-// policy is Capcom's policy now: the pace_* keys, and under an API key the daily dollar cap.
-func (p *capcomPacer) policy() governor.Policy {
+// fileStamp tells a changed file: its size and modification time.
+type fileStamp struct {
+	size int64
+	mod  time.Time
+	ok   bool
+}
+
+func stampFile(path string) fileStamp {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	return fileStamp{size: fi.Size(), mod: fi.ModTime(), ok: true}
+}
+
+// refresh reads the config once: Capcom's policy, the pace_* keys and under an API key the
+// daily dollar cap; and its account, its own under the OAuth token (an API key has no plan
+// window). It reports whether either changed.
+func (p *capcomPacer) refresh() bool {
+	st := stampFile(p.configPath)
 	cfg := p.config()
 	pol := governor.Policy{DailyShare: cfg.Pace.DailyShare, EventStop: cfg.Pace.EventStop, SmallAt: cfg.Pace.SmallAt, WaitAt: cfg.Pace.WaitAt}
+	acct := p.key
 	if cfg.Auth == capcom.AuthAPIKey {
 		pol.DailyUSD = cfg.Limits.DailyUSD
+		acct = ""
 	}
-	return pol
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stamp = st
+	changed := pol != p.pol || acct != p.acct
+	p.pol, p.acct = pol, acct
+	return changed
 }
 
-// account is the account whose weekly window paces Capcom: its own, under the OAuth token. An
-// API key has no plan window.
+// policy is Capcom's policy as of the last config read.
+func (p *capcomPacer) policy() governor.Policy {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pol
+}
+
+// account is the account whose weekly window paces Capcom, as of the last config read.
 func (p *capcomPacer) account() string {
-	if p.config().Auth == capcom.AuthAPIKey {
-		return ""
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.acct
+}
+
+// watch rechecks once the config file changed and then held for one poll, so a pace_* edit
+// applies at once, also during a wait, and a file in the middle of a write is not read.
+func (p *capcomPacer) watch(done chan struct{}) {
+	d := p.poll
+	if d <= 0 {
+		d = 2 * time.Second
 	}
-	return p.key
+	t := time.NewTicker(d)
+	defer t.Stop()
+	var pending fileStamp
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+		st := stampFile(p.configPath)
+		p.mu.Lock()
+		same := st == p.stamp
+		p.mu.Unlock()
+		switch {
+		case same:
+			pending = fileStamp{}
+		case st != pending:
+			pending = st
+		default:
+			pending = fileStamp{}
+			if p.refresh() {
+				p.gov.Recheck()
+			}
+		}
+	}
 }
 
 // start registers Capcom with the governor: this hab holds the mark.
@@ -69,7 +144,16 @@ func (p *capcomPacer) start() {
 		return
 	}
 	p.on = true
+	var done chan struct{}
+	if p.configPath != "" {
+		done = make(chan struct{})
+		p.done = done
+	}
 	p.mu.Unlock()
+	p.refresh()
+	if done != nil {
+		go p.watch(done)
+	}
 	a := p.gov.Register(governor.Consumer{ID: capcomConsumer, Policy: p.policy, Account: p.account, OnChange: p.changed})
 	p.changed(a)
 }
@@ -82,6 +166,10 @@ func (p *capcomPacer) stop() {
 	p.mu.Lock()
 	on := p.on
 	p.on = false
+	if p.done != nil {
+		close(p.done)
+		p.done = nil
+	}
 	p.mu.Unlock()
 	if on {
 		p.gov.Unregister(capcomConsumer)
@@ -146,10 +234,21 @@ func (p *capcomPacer) turn(origin string, input, output int64, usd float64) {
 	}
 }
 
-// waiting adds the "Pacing usage until <time>" note when a user message arrives while user
-// turns wait: once per wait, not once per message. A send-now message gets none: it runs.
+// waiting rechecks when a user message arrives, with the config read again, so the message
+// meets the pace of now. Then it adds the "Pacing usage until <time>" note while user turns
+// wait: once per wait, not once per message. A send-now message gets none: it runs.
 func (p *capcomPacer) waiting(it capcomthread.Item) {
-	if it.Kind != capcomthread.KindMessage || it.Author.Kind != capcomthread.AuthorUser || it.SendNow || !it.Read.IsZero() {
+	if it.Kind != capcomthread.KindMessage || it.Author.Kind != capcomthread.AuthorUser || !it.Read.IsZero() {
+		return
+	}
+	p.mu.Lock()
+	on := p.on
+	p.mu.Unlock()
+	if on && p.gov != nil {
+		p.refresh()
+		p.gov.Recheck()
+	}
+	if it.SendNow {
 		return
 	}
 	p.mu.Lock()

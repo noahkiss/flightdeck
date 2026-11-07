@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -94,4 +95,50 @@ func TestCapcomServicePace(t *testing.T) {
 	if n := notesWith(threadText(t, c), "Pacing usage until "); n != 1 {
 		t.Fatalf("%d pacing notes after send now, want 1", n)
 	}
+}
+
+// The governor after a gff-hab restart and a pace_* edit (capcom-service.md 10.1): the last
+// weekly reading is kept in governor.json, so the wait holds with no new reading; a user message
+// rechecks with the config read again, so an edit that lifts the wait gives no pacing note; and
+// an edit alone reaches the engine once the file held for one check.
+func TestCapcomPaceRestartAndEdit(t *testing.T) {
+	e := newServiceEnv(t, "pace_daily_share = 10\n")
+	e.serve()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	waitUntil(t, "the engine connected", func() bool {
+		st, _ := callJSON[api.CapcomServiceStatus](t, e.control(), "capcom.status", api.CapcomServiceParams{})
+		return st.Connected
+	})
+	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
+	var g api.GovernorConsumer
+	waitUntil(t, "the wait", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
+
+	e.restart(false)
+	c := e.control()
+	waitUntil(t, "capcom in the catalog after the restart", func() bool {
+		var ok bool
+		g, ok = governorOf(t, e)
+		return ok
+	})
+	if g.Basis != "plan" || g.Pace != "wait" || g.UsedPct != 25 {
+		t.Fatalf("governor after a restart, before a reading: %+v", g)
+	}
+
+	// Share 20%: day 1's allowance is 40%, 25% is 62%. The message itself rechecks.
+	write := func(share string) {
+		t.Helper()
+		if err := os.WriteFile(e.config, []byte("[capcom]\nengine = \"claude\"\nrestart_delay = \"1s\"\npace_daily_share = "+share+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("20")
+	run(t, "capcom", "say", "-socket", e.sock, "hello")
+	if n := notesWith(threadText(t, c), "Pacing usage until "); n != 0 {
+		t.Fatalf("%d pacing notes after an edit that lifts the wait", n)
+	}
+	waitUntil(t, "ok in the catalog", func() bool { g, _ = governorOf(t, e); return g.Pace == "ok" })
+
+	// Share 9%: 18%, 25% is 139%. No message: the config watch rechecks.
+	write("9")
+	waitUntil(t, "the wait again from the edit", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
 }

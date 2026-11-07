@@ -362,3 +362,80 @@ func TestOnChangeReentrant(t *testing.T) {
 		t.Fatalf("heard %v", got)
 	}
 }
+
+// sleep moves wall time while the timer, monotonic, does not count it.
+func (c *clock) sleep(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	c.at = c.at.Add(d)
+}
+
+// A laptop that sleeps through a wait's end: the next timer fire, at most maxRecheck later,
+// compares wall time and ends the wait.
+func TestSleepEndsWaitOnTime(t *testing.T) {
+	g, c, acc, _ := setup(t, "")
+	acc.week("acct", t0, 18)
+	g.Register(capcom(DefaultPolicy))
+	a := check(t, g, "capcom", Wait, Wait)
+	c.mu.Lock()
+	armed := c.at.Sub(c.now)
+	c.mu.Unlock()
+	if armed > maxRecheck {
+		t.Fatalf("timer armed for %v, more than %v", armed, maxRecheck)
+	}
+	c.sleep(a.Until.Sub(c.Now()) + time.Minute) // asleep past the wait's end
+	check(t, g, "capcom", Wait, Wait)           // nothing fired yet
+	c.advance(maxRecheck)
+	check(t, g, "capcom", Ok, Ok)
+}
+
+// The last weekly window is kept in the state file: after a restart with no reading yet, the
+// governor still paces from it, also on a later day.
+func TestWindowAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "governor.json")
+	g, c, acc, _ := setup(t, path)
+	acc.week("acct", t0, 18)
+	g.Register(capcom(DefaultPolicy))
+	want := check(t, g, "capcom", Wait, Wait)
+	g.Close()
+
+	g2 := New(Config{Now: c.Now, After: c.After, Location: time.UTC, StatePath: path})
+	g2.Register(capcom(DefaultPolicy))
+	if a := check(t, g2, "capcom", Wait, Wait); !a.Until.Equal(want.Until) || a.Basis != BasisPlan {
+		t.Fatalf("after a restart: %+v, want until %v", a, want.Until)
+	}
+	g2.Close()
+
+	c.advance(24 * time.Hour) // day 1: allowance 30%, level 60
+	g3 := New(Config{Now: c.Now, After: c.After, Location: time.UTC, StatePath: path})
+	defer g3.Close()
+	g3.Register(capcom(DefaultPolicy))
+	if a := check(t, g3, "capcom", Ok, Ok); a.Basis != BasisPlan || a.Level != 60 {
+		t.Fatalf("a day later: %+v", a)
+	}
+}
+
+// Policy and Account run with no lock held: they may call back into the governor.
+func TestSettingsReadOutsideLock(t *testing.T) {
+	g, _, acc, _ := setup(t, "")
+	acc.week("acct", t0, 18)
+	reads := 0
+	c := Consumer{ID: "capcom",
+		Policy:  func() Policy { g.Check("capcom"); reads++; return DefaultPolicy },
+		Account: func() string { g.Check("capcom"); return "acct" }}
+	done := make(chan struct{})
+	go func() {
+		g.Register(c)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Register deadlocked: Policy ran under the lock")
+	}
+	check(t, g, "capcom", Wait, Wait)
+	if reads != 1 {
+		t.Fatalf("Policy read %d times in one recheck", reads)
+	}
+}
