@@ -207,6 +207,7 @@ func (w *watchSup) becomeReady() bool {
 		}
 		wt := w.get(e.Round.ID)
 		wt.state, wt.session, wt.pane, wt.started, wt.spec = watchRunning, ss.ID, ss.Pane, w.now(), watchSpec(e.Round)
+		wt.starts = max(wt.starts, 1) // the adopted watcher is this gff-hab's first; the next start is a restart
 		w.byPane[ss.Pane] = e.Round.ID
 		w.s.cfg.logf("rounds: round %s: its watcher runs on in pane %s", e.Round.Name, ss.Pane)
 	}
