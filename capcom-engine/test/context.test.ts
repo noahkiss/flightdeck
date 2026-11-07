@@ -118,6 +118,22 @@ test('a new conversation starts clean', async () => {
   });
 });
 
+// A hello that asks for a re-seed (the thread's last session was the Codex engine's) opens with
+// one: the summary and the seed, and no empty first session (4.4 hello `reseed`).
+test('hello with reseed switch opens with a re-seed', async () => {
+  await withRig({ hello: { reseed: 'switch' } }, async (r) => {
+    r.hab.context = () => material;
+    await r.hab.wait('context.request', (m) => m.for === 'reseed');
+    const ss = await r.hab.wait('session.started');
+    assert.equal(ss.why, 'reseed');
+    assert.equal(r.hab.of('session.started').length, 1);
+    assert.equal(r.sdk.summaryCalls.length, 1);
+    const seed = seedOf(r);
+    assert.ok(seed.includes('The user is vegetarian (lb-1)'));
+    await until(() => (r.engine as any).ready, 5000, 'ready');
+  });
+});
+
 // The PreCompact hook updates the summary before the compaction; compacted follows the summary.
 // With no answer from gff-hab in precompact_timeout the compaction goes ahead (6.3).
 test('a compaction updates the summary first, within precompact_timeout', async () => {
