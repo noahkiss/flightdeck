@@ -30,7 +30,12 @@ final class FakeCalendar: DeviceCalendarSource {
     var list: [DeviceEvent] = []
     var windows: [(Date, Date, [String]?)] = []
     init(_ a: ShareAuth) { authorization = a }
-    func requestAccess() async -> Bool { authorization == .granted }
+    /// What the system answers when asked.
+    var answer: ShareAuth = .granted
+    func requestAccess() async -> Bool {
+        if authorization == .notDetermined { authorization = answer }
+        return authorization == .granted
+    }
     func calendars() -> [DeviceCalendarInfo] { [DeviceCalendarInfo(id: "home", title: "Home")] }
     func events(from: Date, to: Date, calendars: [String]?) -> [DeviceEvent] {
         windows.append((from, to, calendars))
@@ -163,26 +168,64 @@ final class CapcomPersonalTests: XCTestCase {
     }
 
     func testPutGoesToTheHomeHabOnly() async throws {
+        // Both run a Capcom engine and list device-context; only bench holds the mark.
         let home = await sampleHab("bench")
-        await home.setDeviceContext(true)
         let other = await sampleHab("attic")
+        let third = await sampleHab("cellar")
+        for h in [home, other] {
+            await h.setCapability("capcom", true)
+            await h.setCapcomService(true)
+            await h.setDeviceContext(true)
+            await h.setCapcomHome(assignment: 2, home: home.deviceID)
+        }
         let f = Fleet()
         f.roundDefaults = defaults()
         let (r, _, _, _) = reporter()
         r.send = { [weak f] p in await f?.sendDeviceContextLive(p) ?? false }
         f.capcom.deviceContext = r
-        for h in [home, other] {
+        for h in [other, third, home] {
             f.add(HabConnection(id: h.hostID, transport: h.transport(), timing: fastTiming()), label: h.hostID)
         }
         await f.setActive(true)
         await eventually("online") { f.board.habs.allSatisfy { $0.state.status == .online } }
+        await eventually("home known") { f.capcom.entry == .ready(habID: "bench") }
         await eventually("a put on the home") { await !home.deviceContextPuts.isEmpty }
         let puts = await home.deviceContextPuts
         XCTAssertEqual(puts.last?.tz, "Europe/Berlin")
         let none = await other.deviceContextPuts
-        XCTAssertTrue(none.isEmpty, "a hab without device-context gets nothing")
-        XCTAssertEqual(f.deviceContextHome, "bench")
+        XCTAssertTrue(none.isEmpty, "a capable hab that is not the home gets nothing")
+        let none3 = await third.deviceContextPuts
+        XCTAssertTrue(none3.isEmpty)
+        XCTAssertEqual(f.deviceContextHome, "bench", "the background put goes to the home")
         await f.setActive(false)
+    }
+
+    func testDeviceLabelIsStableAndDistinct() {
+        let d = defaults()
+        let a = DeviceLabel.label(kind: "iPhone", defaults: d)
+        XCTAssertNotNil(a.wholeMatch(of: #/iPhone [0-9A-F]{4}/#), a)
+        XCTAssertEqual(DeviceLabel.label(kind: "iPhone", defaults: d), a, "the same label at every start")
+        XCTAssertEqual(DeviceLabel.label(kind: "iPad", defaults: d).suffix(4), a.suffix(4))
+        d.removePersistentDomain(forName: "flightdeck.tests.capcom-personal")
+        var seen: Set<String> = []
+        for _ in 0..<20 {
+            let e = UserDefaults(suiteName: "flightdeck.tests.capcom-personal")!
+            e.removePersistentDomain(forName: "flightdeck.tests.capcom-personal")
+            seen.insert(DeviceLabel.label(kind: "iPad", defaults: e))
+        }
+        XCTAssertGreaterThan(seen.count, 1, "a new device gets its own label")
+    }
+
+    func testFirstOpenAsksForCalendarWhenLocationWasAnswered() async {
+        let (r, l, _, puts) = reporter(location: .granted, calendar: .notDetermined)
+        XCTAssertTrue(r.shouldAsk, "calendar access is still to ask")
+        await r.askPermissions()
+        XCTAssertEqual(l.asked, 0, "location was answered already")
+        XCTAssertFalse(r.shouldAsk)
+        XCTAssertNotNil(puts().last?.calendar, "the snapshot goes once access is granted")
+        // Both answered: nothing to ask.
+        let (r2, _, _, _) = reporter(location: .denied, calendar: .granted)
+        XCTAssertFalse(r2.shouldAsk)
     }
 
     // MARK: - Cards
@@ -341,6 +384,33 @@ final class CapcomPersonalTests: XCTestCase {
         let answers = await a.capcomCardAnswers
         XCTAssertEqual(answers.count, 1, "Retry writes again without a second answer")
         XCTAssertNil(f.capcom.cards.failures[card.id])
+        m.stop()
+        await f.setActive(false)
+    }
+
+    func testLostClaimReplyOffersRetry() async throws {
+        let a = await cardHab()
+        let w = FakeWriter()
+        let (f, m, t) = try await open(a, writer: w)
+        let card = await a.addCapcomItem(kind: "card", author: "capcom", text: "Add dinner?", card: calendarCard())
+        await eventually("card") { t.items.contains { $0.id == card.id } }
+        let real = try XCTUnwrap(t.cardClaim)
+        // The hab takes the answer, then the reply is lost on the way back.
+        let o = await f.capcom.cards.add(card, claim: { p in
+            _ = try await real(p)
+            throw ConnectionClosed(detail: nil)
+        })
+        guard case .unconfirmed = o else { return XCTFail("want unconfirmed, got \(o)") }
+        XCTAssertTrue(w.writes.isEmpty, "nothing written without a confirmed answer")
+        XCTAssertEqual(f.capcom.cards.failures[card.id]?.hasPrefix("Not confirmed"), true)
+        await eventually("answered by this device") { t.items.first { $0.id == card.id }?.answer?.by == "phone" }
+        let answered = try XCTUnwrap(t.items.first { $0.id == card.id })
+        XCTAssertTrue(f.capcom.cards.canRetry(answered))
+        let r = await f.capcom.cards.retry(answered)
+        XCTAssertEqual(r, .added)
+        XCTAssertEqual(w.writes.count, 1)
+        let answers = await a.capcomCardAnswers
+        XCTAssertEqual(answers.count, 1)
         m.stop()
         await f.setActive(false)
     }

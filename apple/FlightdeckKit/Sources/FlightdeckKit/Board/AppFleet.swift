@@ -2,6 +2,9 @@ import FlightdeckShared
 import Foundation
 import HabAPI
 import os
+#if os(iOS)
+import UIKit
+#endif
 
 /// Builds the app's fleet: demo habs with `-FlightdeckDemo YES`, else the
 /// habs from the config file (the Mac), else none.
@@ -233,15 +236,36 @@ public enum AppFleet {
         throw TransportError("that hab is no longer in the app")
     }
 
-    static var clientLabel: String {
-        #if os(macOS)
-        return "mac"
-        #else
-        return "phone"
-        #endif
-    }
+    /// This device's hello label: its kind and a short id kept in the app's defaults, such as
+    /// "iPhone 3F2A". Each device needs its own: the hab keys device context and card answers
+    /// by it (capcom-service.md 8.1, 8.5).
+    @MainActor static var clientLabel: String { DeviceLabel.label(kind: DeviceLabel.kind) }
 
     static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+}
+
+/// A distinct, stable label for this device: the kind of device and four hex characters made
+/// once and kept. It names nothing personal.
+public enum DeviceLabel {
+    static let suffixKey = "flightdeck.device_label_suffix"
+
+    @MainActor
+    public static var kind: String {
+        #if os(macOS)
+        return "Mac"
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #endif
+    }
+
+    public static func label(kind: String, defaults: UserDefaults = .standard) -> String {
+        var suffix = defaults.string(forKey: suffixKey) ?? ""
+        if suffix.count != 4 || suffix.contains(where: { !$0.isHexDigit }) {
+            suffix = String(format: "%04X", UInt16.random(in: .min ... .max))
+            defaults.set(suffix, forKey: suffixKey)
+        }
+        return "\(kind) \(suffix)"
     }
 }
