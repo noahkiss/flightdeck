@@ -897,6 +897,9 @@ func serve(args []string) error {
 	// The Capcom session host (capcom.md 7): with the holder link, this hab can run Capcom.
 	var capcomSvc *capcomService
 	var capcomCtl control.Capcom
+	var capcomEng *capcomEngine
+	var capcomThreadCtl control.CapcomThread
+	var setRef atomic.Pointer[settings.Service]
 	if sessionActs != nil {
 		exe, err := osExecutable()
 		if err != nil {
@@ -936,6 +939,60 @@ func serve(args []string) error {
 				return recs[0], nil
 			}
 		}
+		// The Capcom service (capcom-service.md 12.4): only while [capcom] engine is set.
+		if svcCfg, _, _ := capcom.LoadServiceConfig(cpath); svcCfg.Engine != capcom.EngineNone {
+			eng, err := newCapcomEngine(capcomEngineSetup{
+				state: dir, configPath: cpath, exe: exe, hookSocket: hpath, device: key.Fingerprint(),
+				installed: *sf.init != "" && *sf.init != "none", store: store, svc: capcomSvc,
+				approval: func() time.Duration {
+					if v := setRef.Load(); v != nil {
+						var m int
+						if json.Unmarshal(v.Value(settings.CapcomApprovalMaxAge), &m) == nil && m > 0 {
+							return time.Duration(m) * time.Minute
+						}
+					}
+					return 10 * time.Minute
+				},
+				publish: func(e structure.Event) {
+					if s := srv.Load(); s != nil {
+						s.Publish(e)
+					}
+				},
+				notify: func(title, body string) {
+					if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+						logger.Printf("capcom: notice: %v", err)
+					}
+				},
+				logf: logger.Printf,
+			})
+			if err != nil {
+				return fmt.Errorf("capcom service: %w", err)
+			}
+			if agentSvc != nil && agentSvc.attachments != nil {
+				store := agentSvc.attachments
+				eng.attached = func(session string, ids []string) ([]string, error) {
+					recs, err := store.Files(session, ids)
+					if err != nil {
+						return nil, err
+					}
+					var paths []string
+					for _, r := range recs {
+						paths = append(paths, r.Path)
+					}
+					return paths, nil
+				}
+			}
+			capcomSvc.engine = eng
+			capcomEng = eng
+			sessionActs.reserved = func(name string) bool {
+				return name == capcomServiceName || strings.HasPrefix(name, capcomServiceName+"-")
+			}
+			if agentCalls != nil {
+				agentCalls = engineAgents{Agents: agentCalls, eng: eng}
+			}
+			capcomThreadCtl = eng
+			caps = append(caps, capcom.ServiceCapability)
+		}
 		if agentCalls != nil {
 			// The owner's next message carries the context attached to it (capcom.md 8.1).
 			agentCalls = capcomSender{Agents: agentCalls, cc: capcomSvc}
@@ -974,6 +1031,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer setSvc.Close()
+	setRef.Store(setSvc)
 	caps = append(caps, settings.Capability)
 	detectFacts, err := catalog.DetectFor(os.Getenv("GFF_HAB_DETECT"))
 	if err != nil {
@@ -1044,7 +1102,7 @@ func serve(args []string) error {
 	}
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
-	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, lock: func(ss api.Session) string {
+	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, capcom: capcomEng, lock: func(ss api.Session) string {
 		if r := roundsRef.Load(); r != nil {
 			return r.roundLock(ss)
 		}
@@ -1395,28 +1453,29 @@ func serve(args []string) error {
 				agentSvc.releaseUnwatched(s.Approvers)
 			}
 		},
-		Logf:        logger.Printf,
-		Permissions: permissionService{perms},
-		Trust:       trustCtl,
-		Detect:      explain,
-		Peers:       pm,
-		Catalog:     cs,
-		Push:        pushCtl,
-		Usage:       usageStore,
-		Stats:       &hoststats.Reader{Battery: true, DiskPath: dir},
-		Content:     contents,
-		Channels:    chSvc,
-		LogbookSync: lbSvc,
-		Worktrees:   wts,
-		Speech:      speechSvc,
-		Attachments: attachments,
-		Settings:    setSvc,
-		Reads:       reads,
-		Confirm:     cfSvc,
-		Capcom:      capcomCtl,
-		Rounds:      roundsCtl,
-		Heavy:       heavyLock,
-		Logbook:     lbVerbs,
+		Logf:         logger.Printf,
+		Permissions:  permissionService{perms},
+		Trust:        trustCtl,
+		Detect:       explain,
+		Peers:        pm,
+		Catalog:      cs,
+		Push:         pushCtl,
+		Usage:        usageStore,
+		Stats:        &hoststats.Reader{Battery: true, DiskPath: dir},
+		Content:      contents,
+		Channels:     chSvc,
+		LogbookSync:  lbSvc,
+		Worktrees:    wts,
+		Speech:       speechSvc,
+		Attachments:  attachments,
+		Settings:     setSvc,
+		Reads:        reads,
+		Confirm:      cfSvc,
+		Capcom:       capcomCtl,
+		CapcomThread: capcomThreadCtl,
+		Rounds:       roundsCtl,
+		Heavy:        heavyLock,
+		Logbook:      lbVerbs,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -1502,7 +1561,11 @@ func serve(args []string) error {
 	habitSvc := &habitService{svc: lbVerbs, store: store, host: *hostID, tracker: habits.New(nil), value: setSvc.Value,
 		off: &habits.OffFile{Path: cpath}, logf: logger.Printf}
 	ocs.SetBrief(habitSvc.OpencodeBrief) // the brief for opencode goes through its server (logbook.md 11.4)
-	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) string {
+	var hookTokens hook.Resolver = tokens
+	if capcomEng != nil {
+		hookTokens = engineTokens{panes: tokens, eng: capcomEng}
+	}
+	hooks := hook.NewServer(hookTokens, func(pane string, env harness.Envelope) string {
 		nudges.Observe(pane, env)
 		if usages.Hook(env) {
 			return "" // a status-line input: usage only
@@ -1518,6 +1581,9 @@ func serve(args []string) error {
 		return opened
 	}, logger.Printf)
 	hooks.SetChannels(channelHook(store, chSvc))
+	if capcomEng != nil {
+		hooks.SetEngine(capcomEng)
+	}
 	if compacts != nil {
 		hooks.SetAgent(compactHook(compacts))
 	}
@@ -1549,6 +1615,11 @@ func serve(args []string) error {
 	}()
 	defer hooks.Close()
 	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
+	if capcomEng != nil && capcomSvc.Home() == key.Fingerprint() {
+		// This hab holds the mark: the service session, and the engine adopted or started
+		// (capcom-service.md 3.2).
+		go capcomEng.start(context.Background())
+	}
 
 	stopped := make(chan struct{})
 	go func() {
