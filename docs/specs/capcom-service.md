@@ -373,7 +373,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 
 | Type (engine to hab) | Fields |
 |---|---|
-| `ready` | `engine`, `version`, `sdk_version`, `capabilities: [..]` (4.1 names) |
+| `ready` | `engine`, `version`, `sdk_version`, `capabilities: [..]` (4.1 names), `turn {turn, origin}` when a turn runs |
 | `session.started` | `session`, `why` (`first`, `restart`, `reseed`, `new`) |
 | `turn.started` | `turn`, `origin` (`user`, `event`), `items: [id]` |
 | `input.taken` | `item` |
@@ -389,6 +389,8 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 - **Resend.** The engine keeps each message it sent until it is acknowledged, and sends them
   again, in order and with new `seq` numbers, on the next connection. gff-hab drops a repeated
   `reply` by `turn` and `part`, and a repeated `input.taken` by item id.
+- **After each `ready`** the engine sends `approval.request` again for every request still open,
+  since a gff-hab that restarted holds none. gff-hab keeps one card per request id.
 - **Markers.** Each input the engine hands to the SDK starts with the line
   `[flightdeck item <id>]`. At start, before it takes any input, the engine reads the resumed
   SDK session's transcript for these lines and keeps their ids as handed.

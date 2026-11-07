@@ -88,6 +88,9 @@ type Item struct {
 	Answer *Answer    `json:"answer,omitempty"`
 	// Summary is a divider's summary: the text the fresh SDK session opened with (6.2).
 	Summary string `json:"summary,omitempty"`
+	// Model marks a note the model gets as input (a card answered, a confirmation outcome; 4.2).
+	// User messages, agent reports and round items always go to the model.
+	Model bool `json:"model,omitempty"`
 	// Read is when the engine took the message (input.taken, 7.3). Zero: not read yet.
 	Read time.Time `json:"read,omitzero"`
 }
@@ -104,6 +107,19 @@ type Answer struct {
 	Choice string    `json:"choice"`
 	By     string    `json:"by,omitempty"`
 	Time   time.Time `json:"time"`
+}
+
+// ForModel reports whether the item goes to the model as an input (4.2).
+func (it Item) ForModel() bool {
+	switch it.Kind {
+	case KindMessage:
+		return it.Author.Kind == AuthorUser
+	case KindAgent, KindRound:
+		return true
+	case KindNote:
+		return it.Model
+	}
+	return false
 }
 
 // line is one stored line: an item added, or a change to one.
