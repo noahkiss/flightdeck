@@ -299,6 +299,9 @@ func title(s string) string {
 type ClaudeRunning struct {
 	PID       int
 	SessionID string
+	// ProcStart is the process start Claude Code recorded for the pid, as it wrote it: on
+	// macOS ps's lstart in UTC, on Linux the start tick of /proc/<pid>/stat. "" when absent.
+	ProcStart string
 }
 
 // ClaudeRegistry reads Claude Code's registry of running sessions. Entries that do not read
@@ -312,12 +315,27 @@ func ClaudeRegistry(configDir string) []ClaudeRunning {
 			continue
 		}
 		var e struct {
-			PID       int    `json:"pid"`
-			SessionID string `json:"sessionId"`
+			PID       int             `json:"pid"`
+			SessionID string          `json:"sessionId"`
+			ProcStart json.RawMessage `json:"procStart"`
 		}
 		if json.Unmarshal(b, &e) == nil && e.PID > 0 && e.SessionID != "" {
-			out = append(out, ClaudeRunning{PID: e.PID, SessionID: e.SessionID})
+			out = append(out, ClaudeRunning{PID: e.PID, SessionID: e.SessionID, ProcStart: procStartText(e.ProcStart)})
 		}
 	}
 	return out
+}
+
+// procStartText reads a registry entry's procStart: a string, or a number written as one.
+// Anything else reads as absent.
+func procStartText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		return n.String()
+	}
+	return ""
 }

@@ -885,7 +885,11 @@ Resume of a session that is not Capcom's:
    Capcom's resume, `capcom.md` 7.6).
 2. With a harness seen and its id: `claude --resume <id>` (or `claude --session-id <id>` while
    Claude Code has no transcript for it), `codex resume <id>`, `opencode --session <id>`. The
-   model goes along when the session was created with that harness.
+   model goes along when the session was created with that harness. First gff-hab runs adopt's
+   live check (6.5): the owner may have resumed the conversation in a plain terminal since the
+   pane exited, and two writers on one transcript corrupt it. A process outside the hab that
+   runs it gives `conflict`, naming the pid; a process list that does not read gives
+   `unavailable`. Nothing starts.
 3. Else the start it was created with, again.
 4. Else `unavailable`: "how it started is not known" (a session from before the book).
 5. It runs in the session's folder (the content service's record), released old pane first,
@@ -941,8 +945,14 @@ files it as a new session:
 | No transcript holds the id | `not_found` |
 | The id is not a session id (letters, digits, `-` and `_` only) | `invalid` |
 | A session on this hab holds the conversation (its book entry names the id, or an agent in one of its panes reports it) | `conflict`, naming the session: resume that session instead |
-| A Claude Code process outside the hab runs it: its `sessions/<pid>.json` in the config folder names the id, and that pid is alive | `conflict`, naming the pid: quit it there first |
+| A Claude Code process outside the hab runs it: its `sessions/<pid>.json` in the config folder names the id, that pid is alive, and it is the process the entry recorded | `conflict`, naming the pid: quit it there first |
 | A process whose arguments hold the id as a word, beside a `claude` or `codex` word | `conflict`, naming the pid |
+
+A registry entry can outlive its process after a crash, and the pid can come back as another
+program. The entry records the process's start (`procStart`: on macOS ps's `lstart` in UTC, on
+Linux the start tick of `/proc/<pid>/stat`). gff-hab reads the pid's start now, in the same
+form, and ignores an entry whose start differs. An entry with no start, or a start that does
+not read, counts as live: a guess never frees a conversation.
 
 Known gap: a Codex conversation started as plain `codex` and still open in a terminal shows
 no id in its arguments, and Codex keeps no registry of running sessions. gff-hab does not see
@@ -970,7 +980,8 @@ first.
 |---|---|
 | `transcript` `TestOutside*` | Over hand-written transcripts in a temporary config folder and Codex home: the folder from Claude's records (the one that names the directory wins) and from Codex's `session_meta`, the first typed line (wrappers and tool results skipped), a missing id, the newest-first list with its limit, `sdk-*` transcripts left out of the list, Claude's running-session registry |
 | `cmd/gff-hab` `TestAdoptPlan`, `TestAdoptLive`, `TestAdoptParseProcs` | The harness found by id, an id under both, a bad id, opencode, another harness, a folder gone, a relative `cwd`; the registry with a live and a dead pid, a process whose arguments hold the id, gff-hab's own processes and a `grep` never counted; the book's holder; ps output |
-| `cmd/gff-hab` `TestSessionAdopt` | Real holder and gff-hab, a stand-in `claude` on gff-hab's PATH and hand-written transcripts: the list shows the conversation with its folder and title, and one the registry shows live as live; adopt of the live one is `conflict`, of an unknown id `not_found`; adopt starts `claude --resume <id>` in the recorded folder under the given name; a second adopt is refused with `conflict` naming the session; the list leaves it out; after the pane closes, `session.resume` starts it again with `--resume`; the transcript is byte-identical |
+| `cmd/gff-hab` `TestAdoptReusedPid`, `TestAdoptProcStart` | With fake process readers: a registry entry whose recorded start differs from the pid's start ignored; the same start (also with other spacing), an entry with no start and a start that does not read kept live; a process whose arguments hold the id live whatever the registry says. The start read for the test's own process against `ps -o lstart` in UTC (macOS) or `/proc/self/stat` (Linux), a pid that does not exist, the stat parser with a command name holding `)` |
+| `cmd/gff-hab` `TestSessionAdopt` | Real holder and gff-hab, a stand-in `claude` on gff-hab's PATH and hand-written transcripts: the list shows the conversation with its folder and title, and one the registry shows live as live; adopt of the live one is `conflict`, of an unknown id `not_found`; adopt starts `claude --resume <id>` in the recorded folder under the given name; a second adopt is refused with `conflict` naming the session; the list leaves it out; after the pane closes and the registry names the conversation with a live pid, `session.resume` is `conflict` and starts nothing; once the entry's start no longer matches the pid, `session.resume` starts it again with `--resume`; the transcript is byte-identical |
 
 ---
 

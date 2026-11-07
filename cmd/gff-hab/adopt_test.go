@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -127,6 +129,94 @@ func TestAdoptLive(t *testing.T) {
 	}
 }
 
+// TestAdoptReusedPid: a registry entry whose pid now names another process (its recorded start
+// differs from the pid's start) frees the conversation; the same start, a start that does not
+// read and an entry with no start keep it live.
+func TestAdoptReusedPid(t *testing.T) {
+	cfg := t.TempDir()
+	env := map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CODEX_HOME": t.TempDir()}
+	adoptWrite(t, filepath.Join(cfg, "sessions", "300.json"), `{"pid":300,"sessionId":"c1","procStart":"Fri Nov  6 05:36:59 2026"}`)
+	adoptWrite(t, filepath.Join(cfg, "sessions", "301.json"), `{"pid":301,"sessionId":"c2"}`)
+	adoptWrite(t, filepath.Join(cfg, "sessions", "302.json"), `{"pid":302,"sessionId":"c3","procStart":"154671"}`)
+	d := testAdopter(t, env, nil, map[int]bool{300: true, 301: true, 302: true})
+	start := map[int]string{300: "Sat Nov  7 09:00:00 2026", 301: "Sat Nov  7 09:00:00 2026", 302: "154671"}
+	d.started = func(pid int) (string, bool) { s, ok := start[pid]; return s, ok }
+	ctx := context.Background()
+	if err := d.outsideLive(ctx, "claude", "c1"); err != nil {
+		t.Fatalf("reused pid still live: %v", err)
+	}
+	if err := d.outsideLive(ctx, "claude", "c2"); errKind(err) != api.ErrorKindConflict {
+		t.Fatalf("entry with no start: %v", err)
+	}
+	if err := d.outsideLive(ctx, "claude", "c3"); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "pid 302") {
+		t.Fatalf("same start tick: %v", err)
+	}
+	// The same start, written with other spacing, is the same process.
+	start[300] = "Fri Nov 6 05:36:59 2026"
+	if err := d.outsideLive(ctx, "claude", "c1"); errKind(err) != api.ErrorKindConflict {
+		t.Fatalf("same start: %v", err)
+	}
+	// A start that does not read never frees a conversation.
+	delete(start, 300)
+	if err := d.outsideLive(ctx, "claude", "c1"); errKind(err) != api.ErrorKindConflict {
+		t.Fatalf("start unread: %v", err)
+	}
+	// A process whose arguments hold the id stays live whatever the registry says.
+	start[300] = "Sat Nov  7 09:00:00 2026"
+	d.procs = func(context.Context) ([]outsideProc, error) { return []outsideProc{{43, "claude --resume c1"}}, nil }
+	if err := d.outsideLive(ctx, "claude", "c1"); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "pid 43") {
+		t.Fatalf("argv: %v", err)
+	}
+}
+
+// TestAdoptProcStart: the start read for this test's own process in the registry's form: on
+// macOS ps's lstart in UTC, on Linux the start tick of /proc/<pid>/stat; and the stat parser.
+func TestAdoptProcStart(t *testing.T) {
+	for _, tc := range []struct {
+		line, want string
+		ok         bool
+	}{
+		{"42 (claude) S 1 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 9 0 154671 1000 10", "154671", true},
+		{"42 (a) b (c) S 1 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 9 0 777 1000 10", "777", true},
+		{"42 (claude) S 1 2 3", "", false},
+		{"no paren", "", false},
+	} {
+		if got, ok := statStart([]byte(tc.line)); got != tc.want || ok != tc.ok {
+			t.Errorf("%q: %q %v", tc.line, got, ok)
+		}
+	}
+	got, ok := procStart(os.Getpid())
+	var want string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(os.Getpid()))
+		cmd.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Skipf("ps: %v", err)
+		}
+		want = strings.Join(strings.Fields(string(out)), " ")
+		got = strings.Join(strings.Fields(got), " ")
+	case "linux":
+		b, err := os.ReadFile("/proc/self/stat")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, _ = statStart(b)
+	default:
+		if ok {
+			t.Fatalf("start read on %s: %q", runtime.GOOS, got)
+		}
+		return
+	}
+	if !ok || got != want {
+		t.Fatalf("procStart = %q %v, want %q", got, ok, want)
+	}
+	if _, ok := procStart(1 << 30); ok {
+		t.Fatal("a pid that does not exist read a start")
+	}
+}
+
 func TestAdoptParseProcs(t *testing.T) {
 	got := parseProcs([]byte("  1 /sbin/launchd\n 42 codex resume r1\nbad line\n 0 x\n"))
 	if len(got) != 2 || got[1].pid != 42 || got[1].args != "codex resume r1" {
@@ -217,6 +307,18 @@ func TestSessionAdopt(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitSession(t, c, res.Session, "exited", func(s api.Session) bool { return s.State == api.SessionStateExited })
+	// The owner resumed the conversation in a plain terminal meanwhile (Claude Code's registry
+	// names it with a live pid, this test's own): session.resume refuses a second writer.
+	running := filepath.Join(cfgDir, "sessions", strconv.Itoa(os.Getpid())+".json")
+	adoptWrite(t, running, `{"pid":`+strconv.Itoa(os.Getpid())+`,"sessionId":"`+native+`"}`)
+	if _, err := resume(t, c, res.Session); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "outside the hab") {
+		t.Fatalf("resume of a conversation live outside: %v", err)
+	}
+	if n := len(readLines(t, log)); n != 1 {
+		t.Fatalf("a refused resume started claude: %d starts", n)
+	}
+	// A stale entry whose pid now names another process frees it.
+	adoptWrite(t, running, `{"pid":`+strconv.Itoa(os.Getpid())+`,"sessionId":"`+native+`","procStart":"Thu Jan  1 00:00:00 1970"}`)
 	if _, err := resume(t, c, res.Session); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
