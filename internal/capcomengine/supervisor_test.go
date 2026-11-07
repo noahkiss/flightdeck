@@ -39,10 +39,15 @@ type fakeJob struct {
 	procs   []*fakeProc
 	adopt   *fakeProc
 	started chan *fakeProc
+	fail    error // Start fails with it
 }
 
 func (j *fakeJob) Start(_ context.Context, spec JobSpec) (Proc, error) {
 	j.mu.Lock()
+	if err := j.fail; err != nil {
+		j.mu.Unlock()
+		return nil, err
+	}
 	p := &fakeProc{pid: 1000 + len(j.procs), done: make(chan struct{})}
 	j.starts = append(j.starts, spec)
 	j.procs = append(j.procs, p)
@@ -407,6 +412,22 @@ func TestSupervisorAdoptAndBuildDrain(t *testing.T) {
 	s.started()
 	if s.sup.cfg.Record.Get().Build != "build-2" {
 		t.Fatal("the new build is not recorded")
+	}
+}
+
+// A start that fails leaves the build of before recorded: a build that never ran is not the
+// current one.
+func TestSupervisorFailedStartKeepsBuild(t *testing.T) {
+	s := newSup(t, func(s *supT) { s.env["CLAUDE_CODE_OAUTH_TOKEN"] = "tok" })
+	s.sup.cfg.Record.Update(func(r *Record) { r.Build = "build-1" })
+	s.sup.cfg.Build = func() string { return "build-2" }
+	s.job.mu.Lock()
+	s.job.fail = errors.New("no launchd")
+	s.job.mu.Unlock()
+	s.sup.Ensure(context.Background())
+	s.waitState(StateError)
+	if b := s.sup.cfg.Record.Get().Build; b != "build-1" {
+		t.Fatalf("after a failed start the record names %q, want build-1", b)
 	}
 }
 

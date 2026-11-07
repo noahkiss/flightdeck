@@ -325,11 +325,18 @@ func (s *Supervisor) start(ctx context.Context) {
 		return
 	}
 	// The build is recorded before the job runs, so a running engine is never recorded as an
-	// older build, even when gff-hab stops between the two.
+	// older build, even when gff-hab stops between the two. A start that fails puts the build
+	// before it back: a build that never ran is not the current one.
 	build := s.cfg.Build()
+	prev := s.cfg.Record.Get().Build
 	s.cfg.Record.Update(func(r *Record) { r.Build = build })
 	p, err := s.cfg.Job.Start(ctx, JobSpec{Argv: argv, Dir: dir, Env: append(s.cfg.BaseEnv(), envs...), Log: filepath.Join(s.cfg.Dir, LogFile)})
 	if err != nil {
+		s.cfg.Record.Update(func(r *Record) {
+			if r.Build == build {
+				r.Build = prev
+			}
+		})
 		fail("start the engine job: " + err.Error())
 		return
 	}
