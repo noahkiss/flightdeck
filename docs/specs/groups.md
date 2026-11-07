@@ -549,7 +549,9 @@ it on the home hab.
 - **The envelope** lives on each member's session record, so a member's hab decides a later
   start while the home hab sleeps.
 - **Members.** The home hab sees members through the catalog copies (an agent's `group` field)
-  every 5 s, also workers a lead started. A local lead that closes stalls its item, and the
+  every 5 s, also workers a lead started. An agent the record does not list counts only as a
+  worker or reviewer on a plan item, on a plan host and in a plan harness; a start from a
+  session that is not a member carries no `group` field. A local lead that closes stalls its item, and the
   coordinator hears it.
 - **Reports.** From a pane, only a member of the group or its coordinator reports or notes; a
   member notes its own item only. A report goes to a running coordinator as a Flightdeck note, else to the inbox
