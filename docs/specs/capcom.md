@@ -454,6 +454,10 @@ produces several, and a list is faster to judge than a string of interruptions.
 - The review list shows each proposal with its source quote. For each: approve, edit, or drop.
 - An approved proposal is applied, with who approved it (device id), when, and from which
   client.
+- The Capcom service's facts and preferences about the user (`capcom` guides) are the one
+  exception: they land at once outside Safe, with a "Noted" line and Undo
+  (`capcom-service.md` 6.4, E20). Its review opens at "New conversation" and from the pinned
+  line, since its thread never ends.
 - Closing a conversation without review leaves every proposal pending. Pending proposals show in
   the app's approvals area until the user reviews them. They never expire on their own.
 - Until the app view exists, `gff lb proposals`, `gff lb approve` and `gff lb reject` list and

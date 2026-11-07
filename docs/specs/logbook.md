@@ -1078,6 +1078,11 @@ memories are added without approval by default.
 
 Recommendation: **A.** The Capcom review is one batch at the end, not a prompt per record.
 
+Settled for memory (owner, 2026-11-06; `capcom-service.md` 6.4, E20): the Capcom service's
+`capcom` guides (no project, tag `capcom`) land at once with a "Noted" line and Undo, except at
+`logbook.approval = agents`, where they wait like every agent's write. Every other Capcom record
+stays a proposal (A). Built in Capcom stage A4.
+
 ### 15.2 Closeout default
 
 | Option | For | Against |
