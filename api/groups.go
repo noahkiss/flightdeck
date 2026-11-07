@@ -106,6 +106,21 @@ type GroupItem struct {
 	Stuck        string        `json:"stuck,omitempty" doc:"Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit."`
 	Verdict      *GroupVerdict `json:"verdict,omitempty" doc:"The reviewer's verdict on the submitted head. Absent while the reviewer reviews."`
 	Land         string        `json:"land,omitempty" doc:"The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."`
+	// The lane fields come with stage B4 (groups.md 7.3). Optional, so an older hab leaves
+	// them out.
+	Landed   string             `json:"landed,omitempty" doc:"The commit on the target once the item landed: the rebased head."`
+	NoCI     bool               `json:"no_ci,omitempty" doc:"The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI."`
+	Attempts []GroupLaneAttempt `json:"attempts,omitempty" doc:"The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run."`
+}
+
+// GroupLaneAttempt is one try of the lane on an item (groups.md 7.3). The rebased head is saved
+// before CI, so a restart after the land push finds it on the target.
+type GroupLaneAttempt struct {
+	At      string `json:"at" doc:"RFC 3339 time the try ended or saved its push."`
+	Target  string `json:"target,omitempty" doc:"The target commit the item was rebased on."`
+	Rebased string `json:"rebased,omitempty" doc:"The rebased head pushed to the item's branch."`
+	Outcome string `json:"outcome" doc:"pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later)."`
+	Step    string `json:"step,omitempty" doc:"Where it stopped: fetch, rebase, checks, push, ci, land or moving."`
 }
 
 // GroupFinding is one finding of a verdict (groups.md 6.3). Low findings are not reported.
@@ -198,6 +213,8 @@ type GroupMember struct {
 	Compacts   int              `json:"compacts,omitempty"`
 	Replaced   string           `json:"replaced,omitempty" doc:"The session it replaced (groups.md 9.3)."`
 	Attempts   int              `json:"attempts,omitempty" doc:"Starts tried again by group.retry; each has its own idempotency key."`
+	// WorktreeRemoved comes with stage B4 (groups.md 7.3 step 7, 7.5).
+	WorktreeRemoved bool `json:"worktree_removed,omitempty" doc:"The hab removed its worktree: its session ended and the worktree had no uncommitted changes."`
 }
 
 // GroupReport is one report that waits for a coordinator that is not running (groups.md 5.5).
@@ -218,6 +235,10 @@ type GroupPause struct {
 type GroupLaneState struct {
 	Queue   []string `json:"queue"`
 	Landing string   `json:"landing,omitempty"`
+	// The fields below come with stage B4 (groups.md 7.3, 7.4).
+	Stopped string `json:"stopped,omitempty" doc:"Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again."`
+	Waits   string `json:"waits,omitempty" doc:"Why the lane waits: no remote, a fetch that failed. It tries again each minute."`
+	NoCI    bool   `json:"no_ci,omitempty" doc:"The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI."`
 }
 
 // Group is the group record (groups.md 5.1), kept by the home hab.
@@ -315,7 +336,8 @@ type GroupNoteParams struct {
 
 type GroupRetryParams struct {
 	Group  string `json:"group"`
-	Member string `json:"member" doc:"A failed member's name."`
+	Member string `json:"member" doc:"A failed member's name. Empty with lane."`
+	Lane   bool   `json:"lane,omitempty" doc:"Start the group's stopped lane again (groups.md 7.4), instead of a member."`
 }
 
 // MemberActionParams asks for a supervision action on a member (groups.md 9.4, stage B6).
