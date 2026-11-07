@@ -82,7 +82,13 @@ func dividersOf(items []api.CapcomItem) []api.CapcomItem {
 // compaction adds a divider; "New conversation" adds one divider with an empty summary and
 // counts the proposals that wait.
 func TestCapcomServiceContext(t *testing.T) {
-	e := newServiceEnv(t, "reseed_at = 50\nseed_messages = 2\nseed_messages_chars = 60\nseed_logbook_bytes = 120\n")
+	for _, kind := range engineKinds {
+		t.Run(kind, func(t *testing.T) { testCapcomServiceContext(t, kind) })
+	}
+}
+
+func testCapcomServiceContext(t *testing.T, kind string) {
+	e := newServiceEnvFor(t, kind, "reseed_at = 50\nseed_messages = 2\nseed_messages_chars = 60\nseed_logbook_bytes = 120\n")
 	e.serve()
 	c := e.control()
 	run(t, "capcom", "assign", "-socket", e.sock, "self")
@@ -224,22 +230,102 @@ func TestCapcomServiceContext(t *testing.T) {
 	// The next turns run in the fresh session; a second turn past 50% re-seeds again only then.
 	e.sayWait(t, c, "after the re-seed")
 
-	// A compaction adds a divider with the summary at that moment.
+	// A compaction adds a divider with the summary at that moment. The Codex engine has no
+	// compaction events (4.1), so it adds none.
 	e.sayWait(t, c, "compact")
-	waitUntil(t, "the compaction divider", func() bool { return len(dividersOf(threadText(t, c))) == 2 })
+	want := 2
+	if kind == "codex" {
+		want = 1
+	}
+	waitUntil(t, "the compaction divider", func() bool { return len(dividersOf(threadText(t, c))) == want })
 
 	// New conversation: one divider, an empty summary, the proposals counted.
 	opened, err := callJSON[api.CapcomOpened](t, c, "capcom.open", api.CapcomOpenParams{New: true})
 	if err != nil || opened.Proposals < 2 {
 		t.Fatalf("capcom.open new: %+v %v", opened, err)
 	}
-	waitUntil(t, "the new conversation divider", func() bool { return len(dividersOf(threadText(t, c))) == 3 })
+	waitUntil(t, "the new conversation divider", func() bool { return len(dividersOf(threadText(t, c))) == want+1 })
 	nd := dividersOf(threadText(t, c))[0]
 	if nd.Text != "New conversation" || nd.Summary != "" {
 		t.Fatalf("new conversation divider %+v", nd)
 	}
 	rec, _ := capcomengine.OpenStore(filepath.Join(e.state, "capcom"))
-	if r := rec.Get(); r.Summary != "" || r.Sessions[len(r.Sessions)-1].Why != "new" {
+	if r := rec.Get(); r.Summary != "" || (r.Sessions[len(r.Sessions)-1].Why != "new" && r.Opening != "new") {
 		t.Fatalf("record after new conversation: %+v", r)
+	}
+	// The fresh conversation answers, and its session is recorded as new.
+	e.sayWait(t, c, "hello again")
+	rec, _ = capcomengine.OpenStore(filepath.Join(e.state, "capcom"))
+	if r := rec.Get(); r.Sessions[len(r.Sessions)-1].Why != "new" || r.Opening != "" {
+		t.Fatalf("record after the first turn of the new conversation: %+v", r)
+	}
+}
+
+// Switching engines keeps the thread and Logbook memory (capcom-service.md 18 A6): a thread
+// the Claude engine ran, with a capcom guide, goes on under the Codex engine after the config
+// names it and the service is paused and resumed. The new engine opens with a re-seed whose
+// seed holds the guide, the thread keeps its earlier items under one summary divider, the next
+// message gets its reply, and the new session is recorded as the Codex engine's.
+func TestCapcomServiceSwitch(t *testing.T) {
+	e := newServiceEnvFor(t, "claude", "")
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	waitUntil(t, "the engine connected", func() bool {
+		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.Connected
+	})
+	if w := lbReply(t, e.sayWait(t, c, "remember Likes tea")); w.State != api.LogbookWriteStateApplied {
+		t.Fatalf("the capcom guide: %+v", w)
+	}
+	first := e.sayWait(t, c, "hello under claude")
+	// The stub names its session only at a re-seed: one past reseed_at gives the thread a
+	// Claude session to switch from.
+	e.sayWait(t, c, "ctx 0.9")
+	waitUntil(t, "the claude session", func() bool {
+		rec, _ := capcomengine.OpenStore(filepath.Join(e.state, "capcom"))
+		return rec.Get().Current() != ""
+	})
+	before := len(threadText(t, c))
+
+	run(t, "capcom", "pause", "-socket", e.sock)
+	waitUntil(t, "the engine paused", func() bool {
+		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.State == "paused" && !st.Connected
+	})
+	cfg := "[capcom]\nengine = \"codex\"\nauth = \"api_key\"\nrestart_delay = \"1s\"\n"
+	if err := os.WriteFile(e.config, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "capcom", "resume", "-socket", e.sock)
+	waitUntil(t, "the switch re-seed", func() bool { return strings.Contains(e.stubLog(), "hello reseed switch") })
+	waitUntil(t, "the summary divider", func() bool { return len(dividersOf(threadText(t, c))) == 2 })
+	if d := dividersOf(threadText(t, c))[0]; d.Text != "Earlier messages summarised" {
+		t.Fatalf("divider %+v", d)
+	}
+	files, _ := filepath.Glob(filepath.Join(e.stubDir, "context-*.json"))
+	if len(files) != 1 {
+		t.Fatalf("context files %v", files)
+	}
+	var cx capcomengine.Message
+	b, _ := os.ReadFile(files[0])
+	if err := json.Unmarshal(b, &cx); err != nil || cx.Seed == nil || !strings.Contains(cx.Seed.Logbook, "Likes tea") {
+		t.Fatalf("the switch's seed has no memory: %s %v", b, err)
+	}
+
+	if reply := e.sayWait(t, c, "hello under codex"); reply == "" {
+		t.Fatal("no reply after the switch")
+	}
+	items := threadText(t, c)
+	if len(items) < before+3 || countReplies(items, first) == 0 {
+		t.Fatalf("the thread lost earlier items: %d before, %d now", before, len(items))
+	}
+	rec, _ := capcomengine.OpenStore(filepath.Join(e.state, "capcom"))
+	r := rec.Get()
+	if len(r.Sessions) < 2 || r.Sessions[len(r.Sessions)-1].EngineOf() != "codex" || r.Sessions[0].EngineOf() != "claude" {
+		t.Fatalf("sessions after the switch: %+v", r.Sessions)
+	}
+	if st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{}); st.Engine != "codex" {
+		t.Fatalf("status engine %q", st.Engine)
 	}
 }
