@@ -8572,6 +8572,10 @@
             "format": "double",
             "description": "Horizontal accuracy in metres."
           },
+          "country": {
+            "type": "string",
+            "description": "The ISO 3166-1 alpha-2 country code from the reverse geocoder: weather alerts need it."
+          },
           "lat": {
             "type": "number",
             "format": "double"

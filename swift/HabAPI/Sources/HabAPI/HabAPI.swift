@@ -3563,6 +3563,8 @@ public struct DeviceList: Codable, Sendable, Hashable {
 public struct DeviceLocation: Codable, Sendable, Hashable {
     /// Horizontal accuracy in metres.
     public var accuracy: Double
+    /// The ISO 3166-1 alpha-2 country code from the reverse geocoder: weather alerts need it.
+    public var country: String?
     public var lat: Double
     public var lon: Double
     /// The place name from the phone's reverse geocoder, such as a neighbourhood and city.
@@ -3572,14 +3574,16 @@ public struct DeviceLocation: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case accuracy = "accuracy"
+        case country = "country"
         case lat = "lat"
         case lon = "lon"
         case place = "place"
         case time = "time"
     }
 
-    public init(accuracy: Double, lat: Double, lon: Double, place: String? = nil, time: String) {
+    public init(accuracy: Double, country: String? = nil, lat: Double, lon: Double, place: String? = nil, time: String) {
         self.accuracy = accuracy
+        self.country = country
         self.lat = lat
         self.lon = lon
         self.place = place
