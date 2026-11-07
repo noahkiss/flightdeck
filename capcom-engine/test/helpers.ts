@@ -36,6 +36,8 @@ export interface TurnCtx {
   fold(): void;
   until(f: () => boolean): Promise<void>;
   authFail(): void;
+  // compact runs the PreCompact hooks, then emits compact_boundary, as an SDK compaction does.
+  compact(): Promise<void>;
   options: Options;
 }
 
@@ -51,7 +53,11 @@ export class FakeSdk {
   initTools = ['WebFetch', 'WebSearch', 'mcp__flightdeck__hosts'];
   initServers: { name: string; status: string }[] = [{ name: 'flightdeck', status: 'connected' }];
   script: Script = echo;
+  // The summary calls (persistSession false), kept apart from the session queries.
+  summaryCalls: { options: Options; prompt: string }[] = [];
+  summarize: (prompt: string) => Promise<string> | string = (prompt) => `summary: ${prompt.split('\n').filter((l) => l.includes(': ')).length} lines`;
   query = (p: { prompt: AsyncIterable<SDKUserMessage>; options: Options }): QueryHandle => {
+    if (p.options.persistSession === false) return new FakeSummary(this, p.prompt, p.options);
     this.calls.push(p.options);
     const q = new FakeQuery(this, p.prompt, p.options);
     this.queries.push(q);
@@ -159,6 +165,12 @@ export class FakeQuery implements QueryHandle {
         assistant([{ type: 'text', text: 'Not logged in' }], { error: 'authentication_failed' });
       },
       tool: (name, input, response) => this.runTool(name, input, response ?? '', assistant),
+      compact: async () => {
+        for (const m of this.options.hooks?.PreCompact ?? []) {
+          for (const h of m.hooks) await h({ hook_event_name: 'PreCompact', trigger: 'auto', custom_instructions: null } as any, undefined, { signal: this.abort.signal });
+        }
+        this.emit({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 900 } });
+      },
     };
     try {
       await this.sdk.script(ctx);
@@ -259,6 +271,52 @@ export function firstText(ctx: TurnCtx): string {
   return typeof c === 'string' ? c : (c?.[0]?.text ?? '');
 }
 
+// A summary call: one prompt in, the text of sdk.summarize out, then a result.
+class FakeSummary implements QueryHandle {
+  private out: SDKMessage[] = [];
+  private wake?: () => void;
+  private closed = false;
+  constructor(private sdk: FakeSdk, prompt: AsyncIterable<SDKUserMessage>, private options: Options) {
+    void this.run(prompt);
+  }
+  private async run(prompt: AsyncIterable<SDKUserMessage>): Promise<void> {
+    for await (const m of prompt) {
+      const c = m.message.content as any;
+      const text = typeof c === 'string' ? c : c.map((b: any) => b.text ?? '').join('\n');
+      this.sdk.summaryCalls.push({ options: this.options, prompt: text });
+      let got: string;
+      try {
+        got = await this.sdk.summarize(text);
+      } catch {
+        this.push({ type: 'result', subtype: 'error_during_execution', is_error: true });
+        return;
+      }
+      this.push({ type: 'assistant', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: got }] } });
+      this.push({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0, usage: {}, modelUsage: {} });
+      return;
+    }
+  }
+  private push(m: any): void {
+    this.out.push({ session_id: 'summary', uuid: fakeUuid(), ...m });
+    this.wake?.();
+  }
+  async interrupt(): Promise<unknown> {
+    return {};
+  }
+  close(): void {
+    this.closed = true;
+    this.wake?.();
+  }
+  async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
+    for (;;) {
+      while (this.out.length) yield this.out.shift()!;
+      if (this.closed) return;
+      await new Promise<void>((r) => (this.wake = r));
+      this.wake = undefined;
+    }
+  }
+}
+
 // ---- the fake gff-hab route ----
 
 export class FakeHab {
@@ -268,6 +326,8 @@ export class FakeHab {
   received: (Msg & { conn: number })[] = [];
   ackEngine = true;
   hello: Record<string, unknown> = {};
+  // The answer to each context.request; null leaves it unanswered.
+  context: ((m: Msg) => Record<string, unknown>) | null = () => ({ summary: '', through: '', recent: [], seed: {} });
   connections = 0;
   refused = 0;
   private server?: http.Server;
@@ -302,6 +362,9 @@ export class FakeHab {
           const m = JSON.parse(line) as Msg;
           this.received.push({ ...m, conn });
           if (m.type !== 'ack' && this.ackEngine && socket === this.sock) socket.write(JSON.stringify({ type: 'ack', ack: m.seq }) + '\n');
+          if (m.type === 'context.request' && this.context && socket === this.sock) {
+            this.send('context', { request: m.request, for: m.for, ...this.context(m) });
+          }
         }
       });
       socket.on('error', () => {});

@@ -15,6 +15,7 @@ import { ENGINE_TOKEN_VAR, engineToken, parseHabAddr } from './addr.js';
 import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, textOf, toolSummary, UrlSet } from './policy.js';
 import { Route, type Msg } from './route.js';
 import { configDir, findTranscript, handedIds, markerLine, MARKER_RE, neutralise } from './transcript.js';
+import { cleanSummary, type Recent, type SeedParts, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -66,8 +67,24 @@ export interface Item {
 
 interface Settings {
   model?: string;
+  small_model?: string;
   max_turns?: number;
   max_turn_usd?: number;
+  summary_max_chars: number;
+  precompact_timeout_ms: number;
+}
+
+// 19.2's defaults, when hello carries none.
+const SUMMARY_MAX_CHARS = 6000;
+const PRECOMPACT_TIMEOUT_MS = 30_000;
+
+// A context message from gff-hab (6): the summary at hand, the items since it, and for a
+// re-seed the seed's parts.
+interface ContextMsg {
+  summary: string;
+  through: string;
+  recent: Recent[];
+  seed?: SeedParts;
 }
 
 interface Turn {
@@ -122,7 +139,7 @@ export class Engine {
   private d: EngineDeps;
   private route!: Route;
   private credential?: Credential;
-  private settings: Settings = {};
+  private settings: Settings = { summary_max_chars: SUMMARY_MAX_CHARS, precompact_timeout_ms: PRECOMPACT_TIMEOUT_MS };
   private started = false;
 
   // The current SDK session.
@@ -144,6 +161,9 @@ export class Engine {
   private approvals = new Map<string, Approval>();
   private shuttingDown = false;
   private reseedPending?: string;
+  private reseeding = false; // a re-seed is under way: the context, the summary, the fresh session
+  private summarizing?: Promise<void>; // the summary call that runs
+  private contextWait = new Map<string, (c: ContextMsg) => void>();
   private exiting = false;
 
   constructor(d: EngineDeps) {
@@ -191,8 +211,12 @@ export class Engine {
     if (typeof s.route_backoff_max_ms === 'number') this.route.setBackoffMax(s.route_backoff_max_ms);
     this.settings = {
       model: typeof s.model === 'string' && s.model ? s.model : undefined,
+      small_model: typeof s.small_model === 'string' && s.small_model ? s.small_model : undefined,
       max_turns: typeof s.max_turns === 'number' && s.max_turns > 0 ? s.max_turns : undefined,
       max_turn_usd: typeof s.max_turn_usd === 'number' && s.max_turn_usd > 0 ? s.max_turn_usd : undefined,
+      summary_max_chars: typeof s.summary_max_chars === 'number' && s.summary_max_chars > 0 ? s.summary_max_chars : SUMMARY_MAX_CHARS,
+      precompact_timeout_ms:
+        typeof s.precompact_timeout_ms === 'number' && s.precompact_timeout_ms > 0 ? s.precompact_timeout_ms : PRECOMPACT_TIMEOUT_MS,
     };
     if (!this.started) {
       this.started = true;
@@ -237,6 +261,9 @@ export class Engine {
         break;
       case 'shutdown':
         this.shutdown();
+        break;
+      case 'context':
+        this.onContext(m);
         break;
       case 'pace':
         // The governor's answers belong to a later stage.
@@ -355,9 +382,158 @@ export class Engine {
   }
 
   private reseed(reason: string): void {
+    // A "new" asked for during another re-seed still runs after it: the user asked for a clean
+    // start.
+    if (this.reseeding && reason !== 'new') return;
     this.reseedPending = reason || 'reseed';
-    if (!this.turn && this.approvals.size === 0) void this.doReseed();
+    this.maybeReseed();
   }
+
+  // A re-seed waits for the turn to end and for every approval to be answered (6.2).
+  private maybeReseed(): void {
+    if (this.reseedPending && !this.reseeding && !this.turn && this.approvals.size === 0) void this.doReseed();
+  }
+
+  // ---- the summary (6.1) ----
+
+  private onContext(m: Msg): void {
+    const c: ContextMsg = {
+      summary: typeof m.summary === 'string' ? m.summary : '',
+      through: typeof m.through === 'string' ? m.through : '',
+      recent: Array.isArray(m.recent) ? (m.recent as Recent[]) : [],
+      seed: m.seed && typeof m.seed === 'object' ? (m.seed as SeedParts) : undefined,
+    };
+    const req = typeof m.request === 'string' ? m.request : '';
+    const w = req ? this.contextWait.get(req) : undefined;
+    if (w) {
+      this.contextWait.delete(req);
+      w(c);
+      return;
+    }
+    // A quiet update the hab sent on its own: only while nothing else runs.
+    if (m.for === 'quiet' && !this.turn && !this.reseeding && !this.summarizing && c.recent.length) {
+      void this.updateSummary(c, this.settings.precompact_timeout_ms);
+    }
+  }
+
+  // Ask gff-hab for the summary material (and the seed's parts for a re-seed); undefined when no
+  // answer comes in time.
+  private askContext(purpose: 'reseed' | 'compact', ms: number): Promise<ContextMsg | undefined> {
+    const request = randomUUID();
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        this.contextWait.delete(request);
+        resolve(undefined);
+      }, Math.max(1, ms));
+      this.contextWait.set(request, (c) => {
+        clearTimeout(t);
+        resolve(c);
+      });
+      this.send('context.request', { request, for: purpose });
+    });
+  }
+
+  // One summary call on the small model: the old summary and the new items in, the new summary
+  // out (6.1). It sends `summary` and returns the text, or the old summary when the call fails
+  // or runs past ms.
+  private async updateSummary(c: ContextMsg, ms: number): Promise<string> {
+    if (!c.recent.length) return c.summary;
+    if (this.summarizing) await this.summarizing;
+    let text = c.summary;
+    const run = (async () => {
+      const got = await this.summaryCall(c, ms);
+      if (got === undefined) return;
+      text = cleanSummary(got, this.settings.summary_max_chars);
+      if (text) this.send('summary', { text, through: c.through });
+      else text = c.summary;
+    })();
+    this.summarizing = run;
+    try {
+      await run;
+    } finally {
+      if (this.summarizing === run) this.summarizing = undefined;
+    }
+    return text;
+  }
+
+  private async summaryCall(c: ContextMsg, ms: number): Promise<string | undefined> {
+    const input = new InputStream();
+    let q: QueryHandle;
+    try {
+      q = this.d.query({ prompt: input, options: this.summaryOptions() });
+    } catch (e) {
+      this.log(`summary: the SDK did not start: ${(e as Error).message}`);
+      return undefined;
+    }
+    input.push({
+      type: 'user',
+      message: { role: 'user', content: summaryPrompt(c.summary, c.recent, this.settings.summary_max_chars) },
+      parent_tool_use_id: null,
+      uuid: randomUUID() as any,
+    });
+    input.end();
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), Math.max(1, ms));
+    });
+    const read = (async () => {
+      let out = '';
+      for await (const m of q) {
+        const a = m as any;
+        if (a.type === 'assistant' && !a.error && !a.parent_tool_use_id) {
+          for (const b of a.message?.content ?? []) if (b?.type === 'text' && typeof b.text === 'string') out += b.text;
+        }
+        if (a.type === 'result') return a.subtype === 'success' && !a.is_error ? out : undefined;
+      }
+      return undefined;
+    })().catch((e) => {
+      this.log(`summary: ${(e as Error).message}`);
+      return undefined;
+    });
+    const got = await Promise.race([read, timeout]);
+    clearTimeout(timer);
+    try {
+      q.close();
+    } catch {
+      // already closed
+    }
+    if (got === undefined) this.log('summary: no new summary; the old one stays');
+    return got;
+  }
+
+  // The summary call loads nothing: no project files, no tools, no MCP server, no transcript.
+  summaryOptions(): Options {
+    const opts = this.buildOptions('');
+    const out: Options = {
+      cwd: opts.cwd,
+      env: opts.env,
+      settingSources: [],
+      tools: [],
+      allowedTools: [],
+      disallowedTools: [...DENY_TOOLS, ...BASE_TOOLS],
+      mcpServers: {},
+      strictMcpConfig: true,
+      persistSession: false,
+      maxTurns: 1,
+      systemPrompt: SUMMARY_SYSTEM,
+      permissionMode: 'default',
+      canUseTool: async (name) => ({ behavior: 'deny', message: `${name} is not available to the summary.` }),
+      stderr: opts.stderr,
+    };
+    const model = this.settings.small_model ?? this.settings.model;
+    if (model) out.model = model;
+    return out;
+  }
+
+  // The PreCompact hook: update the summary first, within precompact_timeout; on a timeout the
+  // compaction goes ahead with the old summary (6.3).
+  private preCompact: HookCallback = async (input) => {
+    if ((input as any).hook_event_name !== 'PreCompact') return {};
+    const end = Date.now() + this.settings.precompact_timeout_ms;
+    const c = await this.askContext('compact', this.settings.precompact_timeout_ms);
+    if (c) await this.updateSummary(c, end - Date.now());
+    return {};
+  };
 
   private shutdown(): void {
     this.shuttingDown = true;
@@ -408,6 +584,8 @@ export class Engine {
       hooks: {
         PreToolUse: [{ matcher: 'WebFetch', hooks: [this.preWebFetch] }],
         PostToolUse: [{ hooks: [this.postToolUse] }],
+        // The SDK's own bound, a little past the engine's, so the engine's timeout decides.
+        PreCompact: [{ hooks: [this.preCompact], timeout: Math.ceil(this.settings.precompact_timeout_ms / 1000) + 5 }],
       },
       // Echo each streamed user message back: the read mark (7.3).
       extraArgs: { 'replay-user-messages': null },
@@ -422,7 +600,7 @@ export class Engine {
     return opts;
   }
 
-  private async startSession(why: 'first' | 'restart' | 'reseed' | 'new', resume = ''): Promise<void> {
+  private async startSession(why: 'first' | 'restart' | 'reseed' | 'new', resume = '', seed = ''): Promise<void> {
     const gen = ++this.gen;
     this.ready = false;
     this.handed = new Set();
@@ -458,7 +636,18 @@ export class Engine {
       shouldQuery: false,
       uuid: randomUUID() as any,
     });
-    void this.consume(gen, q, why, resume);
+    // The seed goes in the same way: no model call of its own; its text joins the first real
+    // message (6.2).
+    if (seed) {
+      input.push({
+        type: 'user',
+        message: { role: 'user', content: seed },
+        parent_tool_use_id: null,
+        shouldQuery: false,
+        uuid: randomUUID() as any,
+      });
+    }
+    void this.consume(gen, q, why, resume, seed ? 2 : 1);
   }
 
   private async loadUserUrls(file: string): Promise<void> {
@@ -483,9 +672,10 @@ export class Engine {
     }
   }
 
-  private async consume(gen: number, q: QueryHandle, why: string, resume: string): Promise<void> {
+  private async consume(gen: number, q: QueryHandle, why: string, resume: string, noQuery = 1): Promise<void> {
     let sawInit = false;
     let probeDone = false;
+    let noQueryLeft = noQuery; // the probe, and the seed: each answers one result
     try {
       for await (const m of q) {
         if (gen !== this.gen || this.exiting) break;
@@ -504,7 +694,7 @@ export class Engine {
           continue;
         }
         if (!probeDone) {
-          if (m.type === 'result' && sawInit) {
+          if (m.type === 'result' && sawInit && --noQueryLeft <= 0) {
             probeDone = true;
             this.ready = true;
             void this.pump();
@@ -517,9 +707,10 @@ export class Engine {
     } catch (e) {
       if (gen !== this.gen || this.exiting) return;
       if (!sawInit && resume) {
-        // The session would not resume: start a fresh one (3.4).
+        // The session would not resume: a re-seed replaces it (3.4).
         this.sendError(`resume of ${resume} failed: ${(e as Error).message}`, '', false);
-        void this.startSession('reseed');
+        this.reseedPending = 'restart_failed';
+        this.maybeReseed();
         return;
       }
       this.endTurn('error');
@@ -530,7 +721,8 @@ export class Engine {
     if (gen !== this.gen || this.exiting) return;
     if (!sawInit && resume) {
       this.sendError(`resume of ${resume} failed`, '', false);
-      void this.startSession('reseed');
+      this.reseedPending = 'restart_failed';
+      this.maybeReseed();
       return;
     }
     // The SDK ended on its own.
@@ -625,7 +817,7 @@ export class Engine {
       return;
     }
     if (this.reseedPending) {
-      await this.doReseed();
+      this.maybeReseed();
       return;
     }
     // Items handed but not taken run as the SDK's next turn.
@@ -640,16 +832,35 @@ export class Engine {
     this.turn = undefined;
   }
 
+  // A re-seed (6.2): ask gff-hab for the material, update the summary (not for a new
+  // conversation, whose summary is empty), end the SDK session and start a fresh one that opens
+  // with the seed. The pump holds new input until the fresh session is ready.
   private async doReseed(): Promise<void> {
-    const reason = this.reseedPending ?? 'reseed';
-    this.reseedPending = undefined;
-    this.closeQuery();
-    // Items handed but not taken go in again in the fresh session.
-    const left = [...this.untaken].map((u) => this.uuidItems.get(u)).filter((x): x is Item => !!x);
-    this.pending.unshift(...left);
-    // The summary and the seed belong to a later stage: the fresh session
-    // starts with an empty seed.
-    await this.startSession(reason === 'new' ? 'new' : 'reseed');
+    if (this.reseeding) return;
+    this.reseeding = true;
+    try {
+      for (;;) {
+        const reason = this.reseedPending ?? 'reseed';
+        const ms = this.settings.precompact_timeout_ms;
+        const end = Date.now() + ms;
+        const c = await this.askContext('reseed', ms);
+        if (this.exiting) return;
+        let summary = '';
+        if (reason !== 'new' && c) summary = await this.updateSummary(c, end - Date.now());
+        if (this.exiting) return;
+        if (this.reseedPending === 'new' && reason !== 'new') continue; // a new conversation came meanwhile
+        this.reseedPending = undefined;
+        this.closeQuery();
+        // Items handed but not taken go in again in the fresh session.
+        const left = [...this.untaken].map((u) => this.uuidItems.get(u)).filter((x): x is Item => !!x);
+        this.pending.unshift(...left);
+        await this.startSession(reason === 'new' ? 'new' : 'reseed', '', seedText(reason, summary, c?.seed));
+        return;
+      }
+    } finally {
+      this.reseeding = false;
+    }
+    if (!this.exiting) this.maybeReseed(); // a new conversation asked for while the fresh session started
   }
 
   private closeQuery(): void {
@@ -669,6 +880,8 @@ export class Engine {
     if (this.exiting) return;
     this.exiting = true;
     this.denyOpenApprovals('Capcom is stopping.');
+    for (const w of this.contextWait.values()) w({ summary: '', through: '', recent: [] });
+    this.contextWait.clear();
     this.closeQuery();
     await this.route.flush(this.d.flushTimeoutMs ?? 5000);
     this.route.close();
@@ -729,7 +942,7 @@ export class Engine {
     this.send('approval.request', body);
     const r = await answer;
     if (r.behavior === 'allow') return { behavior: 'allow', updatedInput: input };
-    if (this.reseedPending && !this.turn && this.approvals.size === 0) void this.doReseed();
+    this.maybeReseed();
     return r;
   };
 }
