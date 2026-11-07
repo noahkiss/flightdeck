@@ -59,7 +59,8 @@ var (
 	ctxN     int
 	codex    = os.Getenv("GFF_HAB_CAPCOM_KIND") == "codex"
 	inTurn   atomic.Bool
-	pendID   string // codex: the why of a fresh session whose id comes at its first turn
+	pendID   string              // codex: the why of a fresh session whose id comes at its first turn
+	taken    = map[string]bool{} // input item ids already queued: a resend is dropped, as the engines do
 )
 
 func logf(format string, args ...any) {
@@ -164,7 +165,7 @@ func session(sock, token string) error {
 			if codex {
 				send(map[string]any{"type": "ready", "engine": "codex", "version": "1", "capabilities": []string{"images", "interrupt", "resume_by_id"}})
 			} else {
-				send(map[string]any{"type": "ready", "engine": "stub", "version": "1", "capabilities": []string{"images", "interrupt", "mid_turn_input", "approval_callback", "compaction_events", "usage_events", "resume_by_id"}})
+				send(map[string]any{"type": "ready", "engine": "claude", "version": "1", "capabilities": []string{"images", "interrupt", "mid_turn_input", "approval_callback", "compaction_events", "usage_events", "resume_by_id"}})
 			}
 			// Resend what the last connection left unacknowledged, in order, with new numbers.
 			outMu.Lock()
@@ -177,6 +178,11 @@ func session(sock, token string) error {
 			}
 		case "input":
 			it := m["item"].(map[string]any)
+			if id, _ := it["id"].(string); taken[id] {
+				break
+			} else {
+				taken[id] = true
+			}
 			if inTurn.Load() {
 				logf("input during a turn %v", it["text"])
 			}
