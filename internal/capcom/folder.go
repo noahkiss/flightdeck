@@ -123,6 +123,25 @@ func WriteFolder(dir, harness, exe string, scope ReadScope) error {
 	if err != nil {
 		return err
 	}
+	return writeFiles(dir, files)
+}
+
+// WriteServiceFolder writes the Capcom service engine's folder (capcom-service.md 3.4): the
+// Claude files, with the service's manual (ServiceManual) as CLAUDE.md.
+func WriteServiceFolder(dir, exe string, scope ReadScope) error {
+	files, err := Files(Claude, exe, scope)
+	if err != nil {
+		return err
+	}
+	for i := range files {
+		if files[i].Path == "CLAUDE.md" {
+			files[i].Data = []byte(ServiceManual)
+		}
+	}
+	return writeFiles(dir, files)
+}
+
+func writeFiles(dir string, files []File) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

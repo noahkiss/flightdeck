@@ -158,7 +158,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		BaseEnv:    engineBaseEnv,
 		Build:      func() string { return engineBuild(s.exe) },
 		Prepare: func(dir string) error {
-			return capcom.WriteFolder(dir, capcom.Claude, s.exe, s.svc.readScope())
+			return capcom.WriteServiceFolder(dir, s.exe, s.svc.readScope())
 		},
 		RunSecret: func(ctx context.Context, argv []string, timeout time.Duration) (string, error) {
 			var out string
