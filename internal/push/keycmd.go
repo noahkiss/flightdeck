@@ -70,6 +70,16 @@ func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
 // "<what> <program> <error>". Every error names what, the program, the exit status and at
 // most a cut first line of stderr; never stdout.
 func RunSecret(ctx context.Context, what string, argv []string, timeout time.Duration, limit int, use func([]byte) error) error {
+	return runSecret(ctx, what, argv, timeout, limit, true, use)
+}
+
+// RunSecretNoStderr is RunSecret whose errors never quote stderr, for a command whose stderr
+// may echo a short secret that stderrHint cannot tell from a message (an MCP token).
+func RunSecretNoStderr(ctx context.Context, what string, argv []string, timeout time.Duration, limit int, use func([]byte) error) error {
+	return runSecret(ctx, what, argv, timeout, limit, false, use)
+}
+
+func runSecret(ctx context.Context, what string, argv []string, timeout time.Duration, limit int, quote bool, use func([]byte) error) error {
 	if len(argv) == 0 || argv[0] == "" {
 		return fmt.Errorf("%s names no program", what)
 	}
@@ -97,6 +107,7 @@ func RunSecret(ctx context.Context, what string, argv []string, timeout time.Dur
 	name := argv[0]
 	err := cmd.Run()
 	defer stdout.wipe()
+	defer stderr.wipe()
 	// A program that exits 0 but leaves a child holding stdout (an agent it started) has
 	// printed all it will: WaitDelay closed the pipe, and the output stands.
 	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
@@ -116,7 +127,7 @@ func RunSecret(ctx context.Context, what string, argv []string, timeout time.Dur
 				err = fmt.Errorf("exit status %d", ee.ExitCode())
 			}
 		}
-		if line := stderrHint(stderr.buf.Bytes()); line != "" {
+		if line := stderrHint(stderr.buf.Bytes()); quote && line != "" {
 			return fmt.Errorf("%s %s: %v: %s", what, name, err, line)
 		}
 		return fmt.Errorf("%s %s: %v", what, name, err)

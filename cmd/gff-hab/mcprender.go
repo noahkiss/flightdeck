@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/noahkiss/flightdeck/internal/mcpreg"
 )
@@ -22,6 +23,7 @@ func mcpRenderCmd(args []string, stdout io.Writer) error {
 	fs.Bool("dry-run", true, "print each harness's plan and diff and write nothing (the default)")
 	write := fs.String("write", "", "write this one harness's config (claude, codex or opencode); it must be in the config's write list")
 	claudeBin := fs.String("claude-bin", "claude", "the claude program whose own writer changes ~/.claude.json")
+	launcher := fs.String("launcher", "gff-hab", "the gff-hab program a server with secrets runs through (gff-hab mcp launch and mcp header)")
 	var force stringList
 	fs.Var(&force, "force", "replace or remove this owned server though it was edited by hand (repeatable)")
 	fs.Parse(args)
@@ -53,8 +55,13 @@ func mcpRenderCmd(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	cfgPath, err := filepath.Abs(*config)
+	if err != nil {
+		return err
+	}
 	r := &mcpreg.Renderer{Config: cfg, Env: mcpreg.EnvFrom(os.Getenv, home, dir), Host: *hostID,
-		Force: force, Claude: mcpreg.ExecClaude(*claudeBin)}
+		Force: force, Claude: mcpreg.ExecClaude(*claudeBin),
+		Launcher: mcpreg.Launcher{Program: *launcher, Config: cfgPath}}
 	if *write == "" {
 		for _, p := range r.PlanAll() {
 			p.Report(stdout)

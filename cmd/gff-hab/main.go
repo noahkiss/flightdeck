@@ -25,7 +25,9 @@
 //	gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
 //	gff-hab lb [--json] [--socket path] [--state dir] <verb> [args]
 //	gff-hab mcp [serve] [-socket path] [--skill]
-//	gff-hab mcp render -config file [-state dir] [-host-id id] [-dry-run | -write harness] [-force name]... [-claude-bin path]
+//	gff-hab mcp render -config file [-state dir] [-host-id id] [-dry-run | -write harness] [-force name]... [-claude-bin path] [-launcher path]
+//	gff-hab mcp launch -config file <name>
+//	gff-hab mcp header -config file <name>
 //	gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
@@ -174,7 +176,9 @@ const usage = `usage:
   gff-hab round ls|show|add|edit|rm|pause|unpause|run|runs|export|apply [-socket path | -via command] ...
   gff-hab group ls [-state s] | show|pause|resume|close <group>  [-socket path] [-json]
   gff-hab mcp [serve] [-socket path] [--skill]
-  gff-hab mcp render -config file [-state dir] [-host-id id] [-dry-run | -write harness] [-force name]... [-claude-bin path]
+  gff-hab mcp render -config file [-state dir] [-host-id id] [-dry-run | -write harness] [-force name]... [-claude-bin path] [-launcher path]
+  gff-hab mcp launch -config file <name>
+  gff-hab mcp header -config file <name>
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab agent compact [-json] [follow-up... | -]   (the same as gff agent; in an agent's pane)
   gff-hab hook [-t ms] [-wait] <harness> [event] < payload
