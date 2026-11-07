@@ -97,7 +97,7 @@ type builder struct {
 }
 
 // Build reflects the api package into a Document.
-func Build() (*Document, error) {
+func Build() (doc *Document, err error) {
 	b := &builder{
 		doc: &Document{
 			OpenRPC: "1.3.2",
@@ -114,14 +114,13 @@ func Build() (*Document, error) {
 		},
 		types: map[string]reflect.Type{},
 	}
-	var err error
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("apigen: %v", r)
+			doc, err = nil, fmt.Errorf("apigen: %v", r)
 		}
 	}()
 	b.build()
-	return b.doc, err
+	return b.doc, nil
 }
 
 func (b *builder) build() {

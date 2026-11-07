@@ -897,6 +897,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var deviceId: String
     /// Raised on every change of this catalog; kept across restarts.
     public var generation: UInt64
+    /// The usage governor's answer for each consumer this hab paces. Absent with none.
+    public var governor: CatalogGovernor?
     /// The groups this hab is the home of: the short form (groups.md 5.1). Absent with none.
     public var groups: [CatalogGroup]?
     /// Coding-agent harnesses found on PATH, with their versions.
@@ -928,6 +930,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case capcom = "capcom"
         case deviceId = "device_id"
         case generation = "generation"
+        case governor = "governor"
         case groups = "groups"
         case harnesses = "harnesses"
         case heavy = "heavy"
@@ -941,7 +944,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, governor: CatalogGovernor? = nil, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -950,6 +953,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.capcom = capcom
         self.deviceId = deviceId
         self.generation = generation
+        self.governor = governor
         self.groups = groups
         self.harnesses = harnesses
         self.heavy = heavy
@@ -1180,6 +1184,19 @@ public struct CatalogGetResult: Codable, Sendable, Hashable {
         self.catalog = catalog
         self.generation = generation
         self.seq = seq
+    }
+}
+
+public struct CatalogGovernor: Codable, Sendable, Hashable {
+    /// By id.
+    public var consumers: [GovernorConsumer]
+
+    enum CodingKeys: String, CodingKey {
+        case consumers = "consumers"
+    }
+
+    public init(consumers: [GovernorConsumer]) {
+        self.consumers = consumers
     }
 }
 
@@ -3628,6 +3645,63 @@ public struct FileReadParams: Codable, Sendable, Hashable {
         self.limit = limit
         self.offset = offset
         self.path = path
+    }
+}
+
+public struct GovernorConsumer: Codable, Sendable, Hashable {
+    /// plan: the plan's weekly window; usd: today's result cost against the daily dollar cap; none: unpaced, with no reading, its tokens counted. An open set.
+    public var basis: String
+    /// usd: the daily dollar cap, in US cents.
+    public var capCents: Int?
+    /// The next event turn's pace: ok or wait. An open set.
+    public var eventPace: String
+    /// RFC 3339 UTC time a wait of event turns ends.
+    public var eventUntil: String?
+    /// capcom, or group:<id>.
+    public var id: String
+    /// Today's input tokens, by the hab's local day.
+    public var inputTokens: Int?
+    /// Today's output tokens.
+    public var outputTokens: Int?
+    /// The next user turn's pace: ok, small (the small model) or wait. An open set.
+    public var pace: String
+    /// plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100.
+    public var sharePct: Int?
+    /// usd: today's reported cost, in US cents.
+    public var spentCents: Int?
+    /// RFC 3339 UTC time a wait of user turns ends.
+    public var until: String?
+    /// plan: the weekly window's used percentage, the whole account's.
+    public var usedPct: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case basis = "basis"
+        case capCents = "cap_cents"
+        case eventPace = "event_pace"
+        case eventUntil = "event_until"
+        case id = "id"
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case pace = "pace"
+        case sharePct = "share_pct"
+        case spentCents = "spent_cents"
+        case until = "until"
+        case usedPct = "used_pct"
+    }
+
+    public init(basis: String, capCents: Int? = nil, eventPace: String, eventUntil: String? = nil, id: String, inputTokens: Int? = nil, outputTokens: Int? = nil, pace: String, sharePct: Int? = nil, spentCents: Int? = nil, until: String? = nil, usedPct: Int? = nil) {
+        self.basis = basis
+        self.capCents = capCents
+        self.eventPace = eventPace
+        self.eventUntil = eventUntil
+        self.id = id
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.pace = pace
+        self.sharePct = sharePct
+        self.spentCents = spentCents
+        self.until = until
+        self.usedPct = usedPct
     }
 }
 
@@ -8147,6 +8221,8 @@ public struct SessionSendParams: Codable, Sendable, Hashable {
     /// A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing.
     public var idempotencyKey: String?
     public var origin: SendOrigin
+    /// The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it.
+    public var sendNow: Bool?
     public var session: String
     public var text: String
 
@@ -8154,14 +8230,16 @@ public struct SessionSendParams: Codable, Sendable, Hashable {
         case attachments = "attachments"
         case idempotencyKey = "idempotency_key"
         case origin = "origin"
+        case sendNow = "send_now"
         case session = "session"
         case text = "text"
     }
 
-    public init(attachments: [String]? = nil, idempotencyKey: String? = nil, origin: SendOrigin, session: String, text: String) {
+    public init(attachments: [String]? = nil, idempotencyKey: String? = nil, origin: SendOrigin, sendNow: Bool? = nil, session: String, text: String) {
         self.attachments = attachments
         self.idempotencyKey = idempotencyKey
         self.origin = origin
+        self.sendNow = sendNow
         self.session = session
         self.text = text
     }
