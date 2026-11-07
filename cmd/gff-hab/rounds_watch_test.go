@@ -90,6 +90,27 @@ func say(t *testing.T, dir string, lines ...string) {
 	}
 }
 
+// waitPaneHas reads pane from its first byte over a data connection until its output holds
+// every one of wants. Unlike ringBytes it leaves gff-hab running.
+func waitPaneHas(t *testing.T, e *habEnv, c *control.Client, pane, what string, wants ...string) {
+	t.Helper()
+	zero := uint64(0)
+	dc, err := e.open(c, pane, &zero, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dc.Close()
+	var l streamLog
+	startReader(dc, true).until(t, &l, what, false, func() bool {
+		for _, w := range wants {
+			if !bytes.Contains(l.text, []byte(w)) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func watcherOf(t *testing.T, c *control.Client, name string) api.RoundWatcher {
 	t.Helper()
 	r := getRound(t, c, name)
@@ -146,7 +167,7 @@ func TestWatchRound(t *testing.T) {
 	if !ok || ss.Name != "mail-watch" || ss.Round == nil || !ss.Round.Watcher || ss.Round.Round != r.ID || ss.Round.Run != "" {
 		t.Fatalf("the watcher session %+v", ss)
 	}
-	waitUntil(t, "the watcher's stderr in its pane", func() bool { return bytes.Contains(e.ringBytes(ss.Pane), []byte("watcher stderr line")) })
+	waitPaneHas(t, e, c, ss.Pane, "the watcher's stderr in its pane", "watcher stderr line")
 
 	// A burst makes one run: two mail events, a cursor, a bad line, another kind, a repeat.
 	say(t, wdir,
@@ -163,10 +184,7 @@ func TestWatchRound(t *testing.T) {
 	if b := eventFile(t, out); len(b.Events) != 2 || b.Events[0].Kind != "mail" || b.Events[1].Title != "Alert from alerts@example.net" {
 		t.Fatalf("events %+v", b)
 	}
-	waitUntil(t, "the events and the drop line in the pane", func() bool {
-		ring := e.ringBytes(ss.Pane)
-		return bytes.Contains(ring, []byte("event: Invoice 1042")) && bytes.Contains(ring, []byte("dropped 1 lines; the last: not a JSON object"))
-	})
+	waitPaneHas(t, e, c, ss.Pane, "the events and the drop line in the pane", "event: Invoice 1042", "dropped 1 lines; the last: not a JSON object")
 	if w := watcherOf(t, c, "mail"); w.Drops != 1 {
 		t.Errorf("drops %d, want 1 (quiet drops are not counted)", w.Drops)
 	}
@@ -302,16 +320,8 @@ func TestWatchPaneRefused(t *testing.T) {
 	mustRound(t, e, "add", "w", "-watch", "-project", repo, "-command", "--", "/bin/sleep", "60", "--", "/bin/true")
 	r := getRound(t, c, "w")
 	waitWatcher(t, c, "w", watchRunning)
-	var pane string
-	defer func() {
-		if t.Failed() {
-			t.Logf("pane: %q", e.ringBytes(pane))
-		}
-	}()
-	pane = e.spawn(c, "exec "+bin+` watch-pane -round `+r.ID+` -- /bin/sh -c 'echo "{\"title\":\"x\"}"; sleep 30'`)
-	waitUntil(t, "the refusal in the pane", func() bool {
-		return bytes.Contains(e.ringBytes(pane), []byte("gff-hab refused 1 lines")) && bytes.Contains(e.ringBytes(pane), []byte("not the watcher pane"))
-	})
+	pane := e.spawn(c, "exec "+bin+` watch-pane -round `+r.ID+` -- /bin/sh -c 'echo "{\"title\":\"x\"}"; sleep 30'`)
+	waitPaneHas(t, e, c, pane, "the refusal in the pane", "gff-hab refused 1 lines", "not the watcher pane")
 	if r := getRound(t, c, "w"); r.Pending != 0 {
 		t.Errorf("a refused line joined the batch: %d", r.Pending)
 	}
