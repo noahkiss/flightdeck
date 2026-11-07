@@ -190,7 +190,7 @@ func (m *mcpServer) handle(line []byte) {
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "flightdeck", "version": build},
-			"instructions":    mcpRules + "\n" + channelRules,
+			"instructions":    m.instructions(),
 		})
 	case "ping":
 		m.reply(msg.ID, map[string]any{})

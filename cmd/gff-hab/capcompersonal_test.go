@@ -108,6 +108,13 @@ service_id = "com.example.weather"
 cache = "0s"
 `)
 	e.env = append(e.env, "GFF_TEST_WEATHERKIT="+srv.URL, "GFF_TEST_APPLE_MAPS="+srv.URL)
+	logBuf := &syncBuffer{}
+	e.stderr = logBuf
+	t.Cleanup(func() {
+		if l := logBuf.String(); strings.Contains(l, "52.52") || strings.Contains(l, "Mitte") {
+			t.Errorf("gff-hab's log holds the location:\n%s", l)
+		}
+	})
 	e.serve()
 	c := e.control()
 	if w := welcome(t, e.sock); !strings.Contains(strings.Join(w.Capabilities, " "), "device-context") {
@@ -152,9 +159,8 @@ cache = "0s"
 
 	// Weather: cache 0 makes every call reach the fake endpoint; the reply carries the mark; the
 	// tool line loses the coordinates the stub put in its summary.
-	for range 2 {
-		r = replyTo(t, e, c, `personal weather personal.weather {"lat":52.52001,"lon":13.40495,"kinds":"current"}`)
-	}
+	replyTo(t, e, c, `personal weather personal.weather {"lat":52.52001,"lon":13.40495,"kinds":"current"}`)
+	r = replyTo(t, e, c, `personal weather personal.weather {"lat":52.52,"lon":13.41,"kinds":"current"}`)
 	if hits.Load() != 2 {
 		t.Fatalf("WeatherKit hits %d, want 2 with cache 0", hits.Load())
 	}
@@ -162,7 +168,7 @@ cache = "0s"
 		t.Fatalf("weather reply %q attribution %+v", r.Text, r.Attribution)
 	}
 	for _, l := range toolLines(t, c) {
-		if strings.Contains(l, "52.52") || strings.Contains(l, "13.40") {
+		if strings.Contains(l, "52.52") || strings.Contains(l, "13.40") || strings.Contains(l, "13.41") {
 			t.Fatalf("a tool line shows coordinates: %q", l)
 		}
 	}
