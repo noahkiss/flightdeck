@@ -150,8 +150,8 @@ func TestGroupPlanOnPeer(t *testing.T) {
 	var open []api.Confirmation
 	waitUntil(t, "the plan's confirmation", func() bool { open = openConfirmations(t, m.a); return len(open) > 0 })
 	time.Sleep(500 * time.Millisecond)
-	if open = openConfirmations(t, m.a); len(open) != 1 || open[0].Kind != "group" || open[0].Group == nil || len(open[0].Group.Plan.Members) != 3 {
-		t.Fatalf("want one group confirmation for three members: %+v", open)
+	if open = openConfirmations(t, m.a); len(open) != 1 || open[0].Kind != "group" || open[0].Group == nil || len(open[0].Group.Plan.Members) != 4 {
+		t.Fatalf("want one group confirmation for three members and the reviewer it adds for ui: %+v", open)
 	}
 	if !strings.Contains(open[0].Group.Trust, "group/"+open[0].Group.Group+"/") {
 		t.Fatalf("trust rule %q", open[0].Group.Trust)
@@ -205,6 +205,31 @@ func TestGroupPlanOnPeer(t *testing.T) {
 	waitUntil(t, "the report at the coordinator", func() bool {
 		return strings.Contains(readIn(work, "alice-in"), "from lead-ui: the button is in")
 	})
+
+	// Review across habs (groups.md 6, 16.2 B7): b reads its lead's head and forwards the submit
+	// to the home hab, which starts ui's reviewer (the same harness: none other is installed)
+	// on b. The reviewer's verdict comes back through b, and the findings reach the lead on b
+	// with group.message.
+	uiDir := strings.TrimSpace(readIn(work, "cwd."+uiPid))
+	c1 := commitIn(t, uiDir, "button.go", "package ui\n")
+	lt, _ := findIn(actionTools, "lane_submit")
+	if _, _, err := lt.run(ctx, hookCaller{uiAddr}, toolArgs{"group": gid, "item": "ui"}); err != nil {
+		t.Fatal(err)
+	}
+	if it := getGroup(t, m.a, gid).Items[1]; it.State != "review" || it.Submitted != c1 || !it.SameHarness {
+		t.Fatalf("after b's submit %+v", it)
+	}
+	rPid := memberIn(t, work, "-ui-review")
+	waitUntil(t, "the reviewer's seed on b", func() bool { return strings.Contains(readIn(work, "in."+rPid), c1) })
+	vt, _ := findIn(actionTools, "review_verdict")
+	if _, _, err := vt.run(ctx, hookCaller{readIn(work, "addr."+rPid)}, toolArgs{"group": gid, "item": "ui", "verdict": "fix_needed",
+		"findings": `[{"severity":"medium","title":"No label","text":"The button has no label."}]`}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the findings at b's lead", func() bool { return strings.Contains(readIn(work, "in."+uiPid), "The button has no label.") })
+	if it := getGroup(t, m.a, gid).Items[1]; it.State != "fix" {
+		t.Fatalf("after the verdict %+v", it)
+	}
 
 	// With the home hab stopped, the peer's lead starts a worker inside the envelope: no
 	// question, and the worker is a member of the group.
@@ -395,7 +420,7 @@ func TestGroupLifecycle(t *testing.T) {
 	waitUntil(t, "the drop message", func() bool {
 		return strings.Contains(readIn(work, "alice-in"), "the hab restarted before you answered")
 	})
-	if g := getGroup(t, e, gid); g.State != "running" || len(g.Members) != 2 {
+	if g := getGroup(t, e, gid); g.State != "running" || len(g.Members) != 4 {
 		t.Fatalf("the running group after the restart: %+v", g)
 	}
 }
