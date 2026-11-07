@@ -37,6 +37,8 @@ func (u *workspaceUI) draw() (int, int, bool) {
 	}
 	if u.mode == modeBoard {
 		u.drawBoard(rect{0, top, c.w, max(c.h-top-1, 1)})
+	} else if u.mode == modeThread || u.prompt != nil && u.prompt.back == modeThread {
+		u.drawThread(rect{0, top, c.w, max(c.h-top-1, 1)})
 	} else if u.sidebarShown() {
 		sw := min(SidebarWidth, c.w-1)
 		u.drawSidebar(rect{0, top, sw - 1, max(c.h-top-1, 1)})
@@ -44,7 +46,7 @@ func (u *workspaceUI) draw() (int, int, bool) {
 			c.canvas.set(sw-1, y, hcell{text: "│", style: dimStyle})
 		}
 	}
-	if len(c.tab().views) == 0 && u.mode != modeBoard {
+	if len(c.tab().views) == 0 && u.mode != modeBoard && u.mode != modeThread && u.thread == nil {
 		a := u.paneArea()
 		c.canvas.text(a.x+1, a.y+1, a.w-1, "empty tab: open a session from the sidebar", dimStyle)
 	}
