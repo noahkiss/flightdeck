@@ -751,8 +751,9 @@ func serve(args []string) error {
 		sessionActs.folderOf = contentSvc.Folder
 		general := &generalResumer{acts: sessionActs, book: resumes, folder: contentSvc.Folder,
 			complete: func() bool { return structure.Complete(hs) }, claudeTranscript: claudeTranscriptExists}
-		sessionActs.general = general.Resume
 		sessionActs.adopt = newAdopter(sessionActs, resumes, agents.Snapshot, logger.Printf)
+		general.live = sessionActs.adopt.outsideLive
+		sessionActs.general = general.Resume
 		caps = append(caps, "attachments")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.

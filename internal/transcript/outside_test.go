@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,8 +127,13 @@ func TestOutsideClaudeRegistry(t *testing.T) {
 	writeOutside(t, filepath.Join(cfg, "sessions", "100.json"), `{"pid":100,"sessionId":"s1","cwd":"/w"}`, time.Now())
 	writeOutside(t, filepath.Join(cfg, "sessions", "bad.json"), `{`, time.Now())
 	writeOutside(t, filepath.Join(cfg, "sessions", "0.json"), `{"pid":0,"sessionId":"s2"}`, time.Now())
+	writeOutside(t, filepath.Join(cfg, "sessions", "101.json"), `{"pid":101,"sessionId":"s3","procStart":" Fri Nov  6 05:36:59 2026 "}`, time.Now())
+	writeOutside(t, filepath.Join(cfg, "sessions", "102.json"), `{"pid":102,"sessionId":"s4","procStart":154671}`, time.Now())
+	writeOutside(t, filepath.Join(cfg, "sessions", "103.json"), `{"pid":103,"sessionId":"s5","procStart":{"x":1}}`, time.Now())
 	got := ClaudeRegistry(cfg)
-	if len(got) != 1 || got[0].PID != 100 || got[0].SessionID != "s1" {
+	slices.SortFunc(got, func(a, b ClaudeRunning) int { return a.PID - b.PID })
+	want := []ClaudeRunning{{100, "s1", ""}, {101, "s3", "Fri Nov  6 05:36:59 2026"}, {102, "s4", "154671"}, {103, "s5", ""}}
+	if !slices.Equal(got, want) {
 		t.Fatalf("registry: %+v", got)
 	}
 }

@@ -49,15 +49,18 @@ type adopter struct {
 	// procs lists the host's processes; alive says whether a pid runs.
 	procs func(ctx context.Context) ([]outsideProc, error)
 	alive func(pid int) bool
-	self  int
-	logf  func(string, ...any)
+	// started reads a pid's start time in the form Claude Code records in its registry's
+	// procStart; ok is false when it does not read.
+	started func(pid int) (string, bool)
+	self    int
+	logf    func(string, ...any)
 
 	op sync.Mutex // one adopt at a time: two adopts of one id never both pass the checks
 }
 
 func newAdopter(acts *actions, book *resumeBook, agents func() []api.AgentState, logf func(string, ...any)) *adopter {
 	return &adopter{acts: acts, book: book, agents: agents, getenv: os.Getenv, procs: listProcs,
-		alive: pidAlive, self: os.Getpid(), logf: logf}
+		alive: pidAlive, started: procStart, self: os.Getpid(), logf: logf}
 }
 
 var _ control.Adopter = (*actions)(nil)
@@ -189,7 +192,7 @@ func (d *adopter) view(ctx context.Context) outsideView {
 func (d *adopter) runner(v outsideView, harness, id string) int {
 	if harness == transcript.HarnessClaude {
 		for _, r := range v.registry {
-			if r.SessionID == id && r.PID != d.self && d.alive(r.PID) {
+			if r.SessionID == id && r.PID != d.self && d.alive(r.PID) && !d.reused(r) {
 				return r.PID
 			}
 		}
@@ -200,6 +203,33 @@ func (d *adopter) runner(v outsideView, harness, id string) int {
 		}
 	}
 	return 0
+}
+
+// reused says whether a registry entry's pid now names another process: the entry records a
+// process start and the pid's start, read now, differs. An entry with no start, or a start that
+// does not read, counts as the same process: a guess never frees a conversation.
+func (d *adopter) reused(r transcript.ClaudeRunning) bool {
+	if r.ProcStart == "" || d.started == nil {
+		return false
+	}
+	now, ok := d.started(r.PID)
+	return ok && strings.Join(strings.Fields(now), " ") != strings.Join(strings.Fields(r.ProcStart), " ")
+}
+
+// outsideLive refuses a conversation a process outside the hab runs: conflict when one runs it,
+// unavailable when the process list did not read. session.resume asks it before it starts a
+// harness's resume (gff-client.md 6.4), as Adopt does.
+func (d *adopter) outsideLive(ctx context.Context, harness, id string) error {
+	v := d.view(ctx)
+	if v.err != nil {
+		// Without the list, a terminal that runs the conversation stays unseen: never start a
+		// second writer on a guess.
+		return control.Errorf(api.ErrorKindUnavailable, "the process list did not read (%v): cannot tell whether a process outside the hab runs %s", v.err, id)
+	}
+	if pid := d.runner(v, harness, id); pid != 0 {
+		return control.Errorf(api.ErrorKindConflict, "a %s process outside the hab runs conversation %s (pid %d): quit it there first", harness, id, pid)
+	}
+	return nil
 }
 
 // runsConversation says whether a process's arguments hold the id as a word beside a word
@@ -231,14 +261,8 @@ func (d *adopter) Adopt(ctx context.Context, p api.SessionAdoptParams) (api.Sess
 	if name := d.holder(c.Harness, c.ID); name != "" {
 		return api.SessionAdopted{}, control.Errorf(api.ErrorKindConflict, "session %s holds %s conversation %s: resume that session", name, c.Harness, c.ID)
 	}
-	v := d.view(ctx)
-	if v.err != nil {
-		// Without the list, a terminal that runs the conversation stays unseen: never start a
-		// second writer on a guess.
-		return api.SessionAdopted{}, control.Errorf(api.ErrorKindUnavailable, "the process list did not read (%v): cannot tell whether a process outside the hab runs %s", v.err, c.ID)
-	}
-	if pid := d.runner(v, c.Harness, c.ID); pid != 0 {
-		return api.SessionAdopted{}, control.Errorf(api.ErrorKindConflict, "a %s process outside the hab runs conversation %s (pid %d): quit it there first", c.Harness, c.ID, pid)
+	if err := d.outsideLive(ctx, c.Harness, c.ID); err != nil {
+		return api.SessionAdopted{}, err
 	}
 	cwd := p.Cwd
 	switch {

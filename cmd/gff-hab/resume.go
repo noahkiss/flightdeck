@@ -297,6 +297,9 @@ type generalResumer struct {
 	// complete reports whether every holder the state names has been reached.
 	complete         func() bool
 	claudeTranscript func(id string) bool
+	// live refuses a conversation a process outside the hab runs (adopt's check): conflict, or
+	// unavailable when the process list does not read. nil checks nothing.
+	live func(ctx context.Context, harness, native string) error
 
 	op sync.Mutex // one resume at a time
 }
@@ -317,6 +320,13 @@ func (g *generalResumer) Resume(ctx context.Context, session string) (string, er
 		return "", control.Errorf(api.ErrorKindUnavailable, "session %s: its holder is not connected; its pane may still run", session)
 	}
 	e, _ := g.book.get(session)
+	if e.Seen != "" && e.Native != "" && g.live != nil {
+		// The owner may have resumed the conversation in a plain terminal since the pane
+		// exited (gff-client.md 6.4): a second writer on one transcript corrupts it.
+		if err := g.live(ctx, e.Seen, e.Native); err != nil {
+			return "", err
+		}
+	}
 	p, ok, err := resumeStart(e, g.claudeTranscript)
 	if err != nil {
 		return "", control.Errorf(api.ErrorKindUnavailable, "%v", err)
