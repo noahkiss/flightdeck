@@ -1134,6 +1134,49 @@ func TestResolveBareNames(t *testing.T) {
 	}
 }
 
+// A bare capcom resolves to the Capcom home host, never by the catalog copies, so two copies
+// that list it are no clash; capcom never clashes at create; a hab that lost the mark refuses
+// mail to capcom naming the new home (capcom-service.md 2.4).
+func TestResolveCapcom(t *testing.T) {
+	home, label := "", ""
+	a := newHabWith(t, "dev-a", "hosta", t.TempDir(), newLocal("alice"), func(c *Config) {
+		c.CapcomHome = func() (string, string) { return home, label }
+	})
+	a.peers.setList([]api.Peer{{Label: "bee", DeviceID: "dev-b"}, {Label: "sea", DeviceID: "dev-c"}})
+	a.cat = api.CatalogList{Hosts: []api.CatalogEntry{
+		{Label: "bee", Stale: true, Catalog: api.Catalog{DeviceID: "dev-b", Host: "hostb", Agents: []api.CatalogAgent{{Session: "capcom"}}}},
+		{Label: "sea", Catalog: api.Catalog{DeviceID: "dev-c", Host: "hostc", Agents: []api.CatalogAgent{{Session: "capcom"}}}},
+	}}
+	if _, err := a.s.resolve("capcom"); kind(err) != api.ErrorKindConflict {
+		t.Fatalf("no home known: %v", err)
+	}
+	home, label = "dev-c", "sea"
+	if tg, err := a.s.resolve("capcom"); err != nil || tg.address != "sea/capcom" || tg.device != "dev-c" {
+		t.Fatalf("home sea: %+v %v", tg, err)
+	}
+	home, label = "dev-a", ""
+	if tg, err := a.s.resolve("capcom"); err != nil || tg.device != "dev-a" || tg.address != "capcom" {
+		t.Fatalf("home here: %+v %v", tg, err)
+	}
+	home, label = "dev-z", ""
+	if _, err := a.s.resolve("capcom"); kind(err) != api.ErrorKindUnavailable {
+		t.Fatalf("home not a peer: %v", err)
+	}
+	if got := ClashLabel(a.cat, "dev-a", "capcom"); got != "" {
+		t.Fatalf("clash capcom: %q", got)
+	}
+
+	// This hab lost the mark to sea: mail to capcom names the new home.
+	home, label = "dev-c", "sea"
+	a.s.mu.Lock()
+	res := a.s.acceptLocked("dev-b", api.ChannelMessage{ID: strings.Repeat("ab", 16), At: time.Now().UTC().Format(time.RFC3339),
+		From: api.ChannelEnd{DeviceID: "dev-b", Host: "hostb", Session: "bob"}, To: api.ChannelEnd{DeviceID: "dev-a", Session: "capcom"}, Text: "hi"}, time.Now())
+	a.s.mu.Unlock()
+	if res.State != api.ChannelStateRefused || !strings.Contains(res.Reason, "Capcom moved to sea") {
+		t.Fatalf("mail to the old home: %+v", res)
+	}
+}
+
 // TestWaitTakesMessage: a waiting agent gets its message from the wait, which counts as
 // delivered; nothing reaches its PTY. A take not written goes back.
 func TestWaitTakesMessage(t *testing.T) {
