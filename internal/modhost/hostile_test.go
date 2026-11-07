@@ -157,6 +157,7 @@ exports.render = function () { var n = 0; for (var i = 0; i < 1000; i++) n += i;
 // TestHeapPressure: a heap already over the limit before a call is no module's fault: the call
 // is refused with ErrHeapPressure and the module keeps running.
 func TestHeapPressure(t *testing.T) {
+	skipViaProcess(t, "the pressure is this process's heap")
 	runtime.GC()
 	limits := Limits{Memory: heapBytes() + 32<<20}
 	m := newModule(t, writeBundle(t, "bystander", "", `
@@ -423,11 +424,11 @@ exports.act = function (name, args) { fd.exec(["true"], { timeout: args.t === "i
 func TestRequireBody(t *testing.T) {
 	b := writeBundle(t, "breakout", "", `}); globalThis.escaped = 1; (function () {`)
 	var se *ScriptError
-	if _, err := New(b, Options{}); !errors.As(err, &se) || se.Name != "SyntaxError" {
+	if _, err := newRunner(t, b, Options{}); !errors.As(err, &se) || se.Name != "SyntaxError" {
 		t.Errorf("err = %v, want a SyntaxError", err)
 	}
 	b = writeBundle(t, "breakout2", "", `}, function () {`)
-	if _, err := New(b, Options{}); !errors.As(err, &se) || se.Name != "SyntaxError" {
+	if _, err := newRunner(t, b, Options{}); !errors.As(err, &se) || se.Name != "SyntaxError" {
 		t.Errorf("sequence: err = %v, want a SyntaxError", err)
 	}
 }

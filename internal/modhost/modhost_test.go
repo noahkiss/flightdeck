@@ -29,9 +29,9 @@ func load(t *testing.T, name string) *Bundle {
 	return b
 }
 
-func newModule(t *testing.T, b *Bundle, opts Options) *Module {
+func newModule(t *testing.T, b *Bundle, opts Options) Runner {
 	t.Helper()
-	m, err := New(b, opts)
+	m, err := newRunner(t, b, opts)
 	if err != nil {
 		t.Fatalf("New(%s): %v", b.Manifest.ID, err)
 	}
@@ -206,19 +206,19 @@ func TestLoadRefusesBadBundles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(b, Options{}); err == nil || !strings.Contains(err.Error(), "exports no render") {
+	if _, err := newRunner(t, b, Options{}); err == nil || !strings.Contains(err.Error(), "exports no render") {
 		t.Errorf("no render: %v", err)
 	}
 	os.WriteFile(filepath.Join(dir, "main.js"), []byte("exports.render = function ( {"), 0o600)
 	b, _ = Load(dir)
 	var se *ScriptError
-	if _, err := New(b, Options{}); !errors.As(err, &se) || se.Func != "load" {
+	if _, err := newRunner(t, b, Options{}); !errors.As(err, &se) || se.Func != "load" {
 		t.Errorf("syntax error: %v, want a load ScriptError", err)
 	}
 	os.WriteFile(filepath.Join(dir, "main.js"), []byte("for (;;) {}"), 0o600)
 	b, _ = Load(dir)
 	var te *TimeoutError
-	if _, err := New(b, Options{Limits: Limits{Load: 50 * time.Millisecond}}); !errors.As(err, &te) || te.Func != "load" {
+	if _, err := newRunner(t, b, Options{Limits: Limits{Load: 50 * time.Millisecond}}); !errors.As(err, &te) || te.Func != "load" {
 		t.Errorf("endless top level: %v, want a load TimeoutError", err)
 	}
 }
@@ -650,7 +650,7 @@ exports.act = function (name) {
 		t.Errorf("render after the hostile calls: %v, want the module still running", err)
 	}
 	// A getter on module.exports that throws fails the load, without a panic.
-	_, err := New(writeBundle(t, "hostile-exports", "", `
+	_, err := newRunner(t, writeBundle(t, "hostile-exports", "", `
 Object.defineProperty(module, "exports", { get: function () { throw new Error("no exports"); } });
 `), Options{})
 	if !errors.As(err, &se) || se.Func != "load" || se.Message != "no exports" {
