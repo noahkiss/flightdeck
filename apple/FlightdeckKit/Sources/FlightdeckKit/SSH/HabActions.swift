@@ -46,6 +46,10 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         let reply = UNTextInputNotificationAction(identifier: PushCategory.replyAction, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Answer")
         // Ask opens the app at Capcom; it never answers (capcom.md 8.5).
         let ask = UNNotificationAction(identifier: PushCategory.askAction, title: "Ask an agent", options: [.foreground])
+        // A Capcom message's Reply (capcom-service.md 7.6). The device key signs the call, so it
+        // asks for unlock as the question's Reply does.
+        let capcomReply = UNTextInputNotificationAction(identifier: PushCategory.capcomReplyAction, title: "Reply", options: [.authenticationRequired],
+                                                        textInputButtonTitle: "Send", textInputPlaceholder: "Message Capcom")
         return [
             UNNotificationCategory(identifier: pingCategory, actions: [ping], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.approval, actions: [deny, approve], intentIdentifiers: []),
@@ -56,6 +60,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             UNNotificationCategory(identifier: PushCategory.approvalDenyAsk, actions: [deny, open, ask], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.openAsk, actions: [open, ask], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.ask, actions: [ask], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.capcomReply, actions: [capcomReply], intentIdentifiers: []),
         ]
     }
 
@@ -126,6 +131,14 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             await rounds?.open(m)
         case .ask(let m):
             await capcom?.ask(m)
+        case .capcomReply(let host, let session, let text):
+            guard let answerer = await approvals?.answerer else {
+                await notify("Not sent", "Open Flightdeck to reply to Capcom.")
+                return
+            }
+            _ = await CapcomReply.send(host: host, session: session, text: text, answerer: answerer, center: capcom) { title, body in
+                await Self.post(title, body, meta: nil)
+            }
         case .none:
             break
         }

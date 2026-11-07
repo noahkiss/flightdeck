@@ -301,6 +301,73 @@ public actor FakeHab {
     public func failNextCapcom(kind: ErrorKind, hint: String) { nextCapcomFailure = Failure(kind: kind, hint: hint) }
     /// What waits for a Capcom session's next message.
     public func capcomPending(_ session: String) -> [CapcomContextItem] { capcomWaiting[session] ?? [] }
+
+    // MARK: The Capcom service (capcom-service.md 7), with the capability `capcom-thread`
+
+    /// While on, `capcom.open` answers the service session (kind capcom, no pane), and the
+    /// thread calls and events run (capcom-service.md 7.4).
+    public private(set) var capcomService = false
+    /// The thread, oldest first, folded by id.
+    public private(set) var capcomThread: [CapcomItem] = []
+    private var capcomThreadN = 0
+    /// How many `capcom.interrupt` calls were answered.
+    public private(set) var capcomInterrupts = 0
+    /// Every `capcom.thread.page` received, oldest first.
+    public private(set) var capcomPages: [CapcomThreadPageParams] = []
+    private var capcomInterruptUnavailable = false
+    /// Pending proposals `logbook.list` answers for a session (capcom-service.md 6.4).
+    private var capcomProposals: [String: [LogbookRecord]] = [:]
+
+    public func setCapcomService(_ on: Bool) {
+        capcomService = on
+        setCapability("capcom-thread", on)
+        setCapability("capcom", on || capabilities.contains("capcom"))
+    }
+
+    /// A new thread item id, after every one so far.
+    public func nextCapcomItemID() -> String {
+        capcomThreadN += 1
+        return String(format: "c%016d", capcomThreadN)
+    }
+
+    /// Adds or replaces a thread item and sends `capcom.item`.
+    @discardableResult
+    public func putCapcomItem(_ it: CapcomItem) async -> CapcomItem {
+        if let i = capcomThread.firstIndex(where: { $0.id == it.id }) {
+            capcomThread[i] = it
+        } else {
+            capcomThread.append(it)
+            capcomThread.sort { $0.id < $1.id }
+        }
+        await emit(type: "capcom.item", id: it.id, revision: nil, data: it)
+        return it
+    }
+
+    /// Adds an item of `kind` by `author`, with a fresh id.
+    @discardableResult
+    public func addCapcomItem(kind: String, author: String, text: String? = nil, tools: [CapcomToolCall]? = nil, card: CapcomCard? = nil,
+                              summary: String? = nil, event: Bool? = nil, address: String? = nil) async -> CapcomItem {
+        let it = CapcomItem(author: CapcomAuthor(address: address, kind: CapcomAuthorKind(rawValue: author)), card: card, event: event, id: nextCapcomItemID(),
+                            kind: CapcomItemKind(rawValue: kind), summary: summary, text: text, time: Fixture.stamp(Date()), tools: tools)
+        return await putCapcomItem(it)
+    }
+
+    /// Sends `capcom.typing` for the service session.
+    public func setCapcomTyping(_ on: Bool) async {
+        guard let sid = capcomStanding else { return }
+        await emit(type: "capcom.typing", id: sid, revision: nil, data: CapcomTyping(on: on))
+    }
+
+    /// Marks a user message read, as the engine's `input.taken` does.
+    public func markCapcomRead(_ id: String) async {
+        guard var it = capcomThread.first(where: { $0.id == id }) else { return }
+        it.read = Fixture.stamp(Date())
+        await putCapcomItem(it)
+    }
+
+    public func setCapcomInterruptUnavailable(_ on: Bool) { capcomInterruptUnavailable = on }
+
+    public func setCapcomProposals(session: String, _ records: [LogbookRecord]) { capcomProposals[session] = records }
     private var nextAnswerFailure: Failure?
 
     /// Makes the next `approval.answer` fail with this error.
@@ -703,6 +770,8 @@ public actor FakeHab {
         }
         guard let s = sessions[p.session] else { return Failure(kind: .notFound, hint: "no session \(p.session)") }
         if s.state == .exited { return Failure(kind: .conflict, hint: "session \(p.session) has exited") }
+        // The service thread takes every message, never refused as busy (capcom-service.md 7.4).
+        if capcomService, s.kind == .capcom, (s.pane ?? "").isEmpty { return nil }
         guard let pane = s.pane, let a = agents[pane] else {
             return Failure(kind: .unavailable, hint: "session \(p.session) has no agent state")
         }
@@ -966,6 +1035,12 @@ public actor FakeHab {
                 capcomWaiting[p.session] = nil
             }
             await reply(c, id: id, result: Empty(seq: c.seq))
+            if capcomService, sessions[p.session]?.kind == .capcom, (sessions[p.session]?.pane ?? "").isEmpty {
+                let it = CapcomItem(attachments: p.attachments, author: CapcomAuthor(device: "fake-device", kind: CapcomAuthorKind(rawValue: "user")),
+                                    context: carried.isEmpty ? nil : carried, id: nextCapcomItemID(), kind: CapcomItemKind(rawValue: "message"),
+                                    text: p.text, time: Fixture.stamp(Date()))
+                await putCapcomItem(it)
+            }
             if let hook = onSend { Task { await hook(p) } }
         case HabMethods.pushRegister.name, HabMethods.pushRegisterActivity.name:
             guard capabilities.contains("push") else {
@@ -1014,6 +1089,28 @@ public actor FakeHab {
             notices.append(p)
             noticeTitles["n\(notices.count)"] = p.title
             await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
+        case HabMethods.capcomThreadPage.name:
+            guard capcomService else {
+                await fail(c, id: id, kind: .unavailable, hint: "capcom.thread.page needs the Capcom service (fake hab)")
+                break
+            }
+            let p = (try? params.decode(CapcomThreadPageParams.self)) ?? CapcomThreadPageParams()
+            capcomPages.append(p)
+            let limit = min(max(p.limit ?? 200, 1), 200)
+            var older = capcomThread
+            if let b = p.before { older = older.filter { $0.id < b } }
+            let page = Array(older.reversed().prefix(limit))
+            await reply(c, id: id, result: CapcomThreadPage(items: page, more: older.count > page.count, seq: c.seq))
+        case HabMethods.capcomInterrupt.name:
+            guard capcomService, !capcomInterruptUnavailable else {
+                await fail(c, id: id, kind: .unavailable, hint: "capcom.interrupt: no engine is connected")
+                break
+            }
+            capcomInterrupts += 1
+            await reply(c, id: id, result: Empty(seq: c.seq))
+        case HabMethods.logbookList.name where capabilities.contains("logbook"):
+            let p = (try? params.decode(LogbookListParams.self)) ?? LogbookListParams()
+            await reply(c, id: id, result: LogbookRecords(records: capcomProposals[p.session ?? ""] ?? [], seq: c.seq))
         case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name, HabMethods.capcomPending.name,
              HabMethods.capcomAssign.name:
             await capcomCall(method, params, c, id: id)
@@ -1065,6 +1162,22 @@ public actor FakeHab {
             }
             if p.choice == .answer {
                 await fail(c, id: id, kind: .unavailable, hint: "answering a question is not built yet; answer it in the terminal")
+                break
+            }
+            // A Capcom approval card (capcom-service.md 5.3): the first answer wins, and only a
+            // choice the card offers.
+            if capcomService, p.pane == CapcomThread.engineRoute || p.pane.isEmpty {
+                guard var it = capcomThread.first(where: { $0.card?.ref == p.request }), it.answer == nil else {
+                    await fail(c, id: id, kind: .conflict, hint: "Capcom approval \(p.request) is not open: answered already, or expired")
+                    break
+                }
+                guard it.card?.choices.contains(p.choice.rawValue) == true else {
+                    await fail(c, id: id, kind: .invalid, hint: "Capcom approval \(p.request) does not offer \(p.choice.rawValue)")
+                    break
+                }
+                await reply(c, id: id, result: Empty(seq: c.seq))
+                it.answer = CapcomAnswer(by: "fake-device", choice: p.choice.rawValue, time: Fixture.stamp(Date()))
+                await putCapcomItem(it)
                 break
             }
             // The real hab's rule: only the pane's open request, and only once.
@@ -1192,9 +1305,16 @@ public actor FakeHab {
                     if !items.isEmpty { _ = try adding(items, to: sid) }
                     capcomStanding = sid
                     started = true
-                    await put(Session(dir: "/state/capcom/\(capcomCount)", id: sid, kind: .capcom, name: name, pane: pane, revision: 0, state: .running))
-                    await put(Fixture.pane(pane, session: sid))
-                    await put(Fixture.agent(pane: pane, harness: "claude", state: .idle))
+                    if capcomService {
+                        // The service session (capcom-service.md 2.1): no pane; its agent state
+                        // rides on the engine route.
+                        await put(Session(dir: "/state/capcom/engine", id: sid, kind: .capcom, name: name, pane: "", revision: 0, state: .running))
+                        await put(Fixture.agent(pane: CapcomThread.engineRoute, harness: "capcom", state: .idle))
+                    } else {
+                        await put(Session(dir: "/state/capcom/\(capcomCount)", id: sid, kind: .capcom, name: name, pane: pane, revision: 0, state: .running))
+                        await put(Fixture.pane(pane, session: sid))
+                        await put(Fixture.agent(pane: pane, harness: "claude", state: .idle))
+                    }
                 } else if let sid = capcomStanding, var s = sessions[sid], s.state == .exited {
                     // The real hab resumes an exited standing conversation (capcom.md 7.6).
                     if !items.isEmpty { _ = try adding(items, to: sid) }
