@@ -351,7 +351,15 @@ const (
 	RoundTriggerKindCron   RoundTriggerKind = "cron"
 	RoundTriggerKindOnce   RoundTriggerKind = "once"
 	RoundTriggerKindEvent  RoundTriggerKind = "event"
+	RoundTriggerKindWatch  RoundTriggerKind = "watch"
 	RoundTriggerKindManual RoundTriggerKind = "manual"
+)
+
+const (
+	RoundWatcherStateStarting RoundWatcherState = "starting"
+	RoundWatcherStateRunning  RoundWatcherState = "running"
+	RoundWatcherStateBackoff  RoundWatcherState = "backoff"
+	RoundWatcherStateStopped  RoundWatcherState = "stopped"
 )
 
 const (
@@ -1346,6 +1354,13 @@ func (c Client) RoundRun(ctx context.Context, params RoundRef) (RoundRunResult, 
 func (c Client) RoundRuns(ctx context.Context, params RoundRunsParams) (RoundRuns, error) {
 	var result RoundRuns
 	err := c.Caller.Call(ctx, "round.runs", params, &result)
+	return result, err
+}
+
+// RoundWatchEvent calls round.watch_event. A page of the lines a watch round's watcher printed, from its wrapper (rounds.md 4.4): events join the pending batch, a cursor line is kept. Pane route only: the calling pane must be the round's watcher pane, else denied. Needs the rounds capability.
+func (c Client) RoundWatchEvent(ctx context.Context, params RoundWatchEventParams) (RoundWatchEventResult, error) {
+	var result RoundWatchEventResult
+	err := c.Caller.Call(ctx, "round.watch_event", params, &result)
 	return result, err
 }
 
