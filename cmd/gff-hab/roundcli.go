@@ -442,7 +442,9 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	def.via = *via != "" || *host != ""
-	fromPane := *sock == "" && *via == "" && os.Getenv(hook.Env) != ""
+	// From a pane by $GFF_HAB alone, as confirm.answer's guard: -socket must not turn an
+	// agent's -host into a direct dial that skips the owner's confirmation.
+	fromPane := os.Getenv(hook.Env) != ""
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	needName := func() error {
@@ -487,6 +489,8 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		return errors.New("round ls: give -host or -all, not both")
 	case verb == "move" && *host == "":
 		return errors.New("round move needs -host: the peer that becomes the round's runner")
+	case *host != "" && fromPane && (*sock != "" || *via != ""):
+		return fmt.Errorf("round %s -host is not available from a pane with -socket or -via: from an agent, a round on another host goes through the owner's confirmation", verb)
 	case *host != "" && fromPane && verb != "add":
 		// From a pane only a new round reaches another host, through the owner's confirmation
 		// (rounds.md 12 Q1); a direct dial would skip it and the pane route's narrowing.

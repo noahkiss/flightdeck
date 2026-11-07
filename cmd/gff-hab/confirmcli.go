@@ -141,12 +141,42 @@ func confirmationCard(c api.Confirmation) string {
 			fmt.Fprintf(&b, "  seed:\n%s\n", indent(s.Seed))
 		}
 	}
+	if r := c.Round; r != nil {
+		s := r.Round
+		fmt.Fprintf(&b, "  runner:    %s\n  round:     %s\n  mode:      %s\n  trigger:   %s\n", r.Host, s.Name, orNone(string(s.Mode)), orNone(r.Trigger))
+		project := r.Project
+		switch {
+		case project == "" && s.ProjectRemote != "":
+			project = s.ProjectRemote
+		case project == "" && s.ProjectDir != "":
+			project = s.ProjectDir
+		}
+		fmt.Fprintf(&b, "  project:   %s\n", orNone(project))
+		if s.Harness != "" {
+			fmt.Fprintf(&b, "  harness:   %s\n", s.Harness)
+		}
+		if s.Model != "" {
+			fmt.Fprintf(&b, "  model:     %s\n", s.Model)
+		}
+		if len(s.Command) > 0 {
+			fmt.Fprintf(&b, "  command:   %s\n", strings.Join(s.Command, " "))
+		}
+		if s.Prompt != "" {
+			fmt.Fprintf(&b, "  prompt:\n%s\n", indent(s.Prompt))
+		}
+		if r.RunNow {
+			b.WriteString("  run now:   yes\n")
+		}
+	}
 	if c.ExpiresAt != "" && c.State == "open" {
 		if t, err := time.Parse(time.RFC3339Nano, c.ExpiresAt); err == nil {
 			fmt.Fprintf(&b, "  expires:   %s (in %s)\n", c.ExpiresAt, time.Until(t).Round(time.Minute))
 		}
 	}
-	if c.Result != nil {
+	switch {
+	case c.Result != nil && c.Result.Round != "":
+		fmt.Fprintf(&b, "  made:      round %s on %s (%s)\n", c.Result.Name, c.Result.Host, c.Result.Round)
+	case c.Result != nil:
 		fmt.Fprintf(&b, "  started:   %s on %s (session %s)\n", c.Result.Name, c.Result.Host, c.Result.Session)
 	}
 	if c.Reason != "" {
