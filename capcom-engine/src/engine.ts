@@ -14,8 +14,9 @@ import type {
 import { ENGINE_TOKEN_VAR, engineToken, parseHabAddr } from './addr.js';
 import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, textOf, toolSummary, UrlSet } from './policy.js';
 import { Route, type Msg } from './route.js';
-import { configDir, findTranscript, handedIds, markerLine, MARKER_RE, neutralise } from './transcript.js';
-import { cleanSummary, type Recent, type SeedParts, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
+import { configDir, findTranscript, handedIds, MARKER_RE } from './transcript.js';
+import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
+import { ContextAsks, type ContextMsg, type Credential, defaultSettings, helloReseed, type Item, itemLines, newTurnId, originOf, parseContext, parseCredential, parseSettings, redactor, type Settings } from './contract.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -49,43 +50,7 @@ export interface EngineDeps {
   flushTimeoutMs?: number;
 }
 
-export interface Credential {
-  kind: 'oauth_token' | 'api_key';
-  value: string;
-}
-
-export interface Item {
-  id: string;
-  kind?: string;
-  author?: string;
-  time?: string;
-  tz?: string;
-  text?: string;
-  images?: string[];
-  context?: { kind?: string; title?: string; text?: string }[];
-}
-
-interface Settings {
-  model?: string;
-  small_model?: string;
-  max_turns?: number;
-  max_turn_usd?: number;
-  summary_max_chars: number;
-  precompact_timeout_ms: number;
-}
-
-// 19.2's defaults, when hello carries none.
-const SUMMARY_MAX_CHARS = 6000;
-const PRECOMPACT_TIMEOUT_MS = 30_000;
-
-// A context message from gff-hab (6): the summary at hand, the items since it, and for a
-// re-seed the seed's parts.
-interface ContextMsg {
-  summary: string;
-  through: string;
-  recent: Recent[];
-  seed?: SeedParts;
-}
+export type { Credential, Item } from './contract.js';
 
 interface Turn {
   id: string;
@@ -139,7 +104,7 @@ export class Engine {
   private d: EngineDeps;
   private route!: Route;
   private credential?: Credential;
-  private settings: Settings = { summary_max_chars: SUMMARY_MAX_CHARS, precompact_timeout_ms: PRECOMPACT_TIMEOUT_MS };
+  private settings: Settings = defaultSettings();
   private started = false;
 
   // The current SDK session.
@@ -157,13 +122,12 @@ export class Engine {
   private totalCost = 0;
 
   private turn?: Turn;
-  private turnSeq = 0;
   private approvals = new Map<string, Approval>();
   private shuttingDown = false;
   private reseedPending?: string;
   private reseeding = false; // a re-seed is under way: the context, the summary, the fresh session
   private summarizing?: Promise<void>; // the summary call that runs
-  private contextWait = new Map<string, (c: ContextMsg) => void>();
+  private asks = new ContextAsks();
   private exiting = false;
 
   constructor(d: EngineDeps) {
@@ -186,11 +150,7 @@ export class Engine {
 
   // ---- logging and redaction ----
 
-  private redact(s: string): string {
-    const v = this.credential?.value;
-    if (v && v.length >= 4) s = s.split(v).join('[redacted]');
-    return s;
-  }
+  private redact = redactor(() => this.credential?.value);
 
   private log(line: string): void {
     (this.d.log ?? ((l: string) => process.stderr.write(l + '\n')))(this.redact(line));
@@ -209,26 +169,23 @@ export class Engine {
   private onHello(m: Msg): Record<string, unknown> {
     const s = (m.settings ?? {}) as Record<string, unknown>;
     if (typeof s.route_backoff_max_ms === 'number') this.route.setBackoffMax(s.route_backoff_max_ms);
-    this.settings = {
-      model: typeof s.model === 'string' && s.model ? s.model : undefined,
-      small_model: typeof s.small_model === 'string' && s.small_model ? s.small_model : undefined,
-      max_turns: typeof s.max_turns === 'number' && s.max_turns > 0 ? s.max_turns : undefined,
-      max_turn_usd: typeof s.max_turn_usd === 'number' && s.max_turn_usd > 0 ? s.max_turn_usd : undefined,
-      summary_max_chars: typeof s.summary_max_chars === 'number' && s.summary_max_chars > 0 ? s.summary_max_chars : SUMMARY_MAX_CHARS,
-      precompact_timeout_ms:
-        typeof s.precompact_timeout_ms === 'number' && s.precompact_timeout_ms > 0 ? s.precompact_timeout_ms : PRECOMPACT_TIMEOUT_MS,
-    };
+    this.settings = parseSettings(s);
     if (!this.started) {
       this.started = true;
-      const c = m.credential as Partial<Credential> | undefined;
-      if (c && (c.kind === 'oauth_token' || c.kind === 'api_key') && typeof c.value === 'string' && c.value) {
-        this.credential = { kind: c.kind, value: c.value };
-      }
+      this.credential = parseCredential(m.credential, ['oauth_token', 'api_key']);
       const resume = typeof m.sdk_session === 'string' ? m.sdk_session : '';
+      const opening = helloReseed(m);
       queueMicrotask(() => {
         if (!this.credential) {
           this.sendError('hello carried no credential', 'auth', true);
           void this.exit(1);
+          return;
+        }
+        if (opening) {
+          // The thread's last session was another engine's, or a fresh session that never
+          // started: open with a re-seed (4.4 hello `reseed`).
+          this.reseedPending = opening;
+          void this.doReseed();
           return;
         }
         void this.startSession(resume ? 'restart' : 'first', resume);
@@ -311,20 +268,12 @@ export class Engine {
     this.uuidItems.set(msg.uuid!, item);
     this.untaken.add(msg.uuid!);
     if (item.kind === 'message' || item.kind === undefined) this.userUrls.addText(item.text ?? '');
-    if (!this.turn) this.beginTurn(item.kind === 'event' ? 'event' : 'user', [item.id]);
+    if (!this.turn) this.beginTurn(originOf(item), [item.id]);
     this.input.push(msg);
   }
 
   private async toUserMessage(item: Item): Promise<SDKUserMessage> {
-    const lines = [markerLine(item.id)];
-    const when = [item.time, item.tz ? `(${item.tz})` : ''].filter(Boolean).join(' ');
-    if (item.kind === 'agent') lines.push(`Channel message from ${item.author ?? 'an agent'}${when ? ` at ${when}` : ''}.`);
-    else if (item.kind === 'note') lines.push(`Flightdeck note${when ? ` at ${when}` : ''}.`);
-    else if (when || item.author) lines.push(`Sent${item.author ? ` by ${item.author}` : ''}${when ? ` at ${when}` : ''}.`);
-    for (const c of item.context ?? []) {
-      lines.push('', `[context: ${c.kind ?? 'item'}${c.title ? `: ${neutralise(c.title).replace(/[\]\n]/g, ' ')}` : ''}]`, neutralise(c.text ?? ''));
-    }
-    lines.push('', neutralise(item.text ?? ''));
+    const lines = itemLines(item);
     const blocks: any[] = [];
     const images: any[] = [];
     for (const p of item.images ?? []) {
@@ -351,7 +300,7 @@ export class Engine {
 
   private beginTurn(origin: 'user' | 'event', items: string[]): void {
     this.turn = {
-      id: `t${Date.now().toString(36)}-${++this.turnSeq}`,
+      id: newTurnId(),
       origin,
       part: 0,
       interrupted: false,
@@ -397,19 +346,8 @@ export class Engine {
   // ---- the summary (6.1) ----
 
   private onContext(m: Msg): void {
-    const c: ContextMsg = {
-      summary: typeof m.summary === 'string' ? m.summary : '',
-      through: typeof m.through === 'string' ? m.through : '',
-      recent: Array.isArray(m.recent) ? (m.recent as Recent[]) : [],
-      seed: m.seed && typeof m.seed === 'object' ? (m.seed as SeedParts) : undefined,
-    };
-    const req = typeof m.request === 'string' ? m.request : '';
-    const w = req ? this.contextWait.get(req) : undefined;
-    if (w) {
-      this.contextWait.delete(req);
-      w(c);
-      return;
-    }
+    if (this.asks.answer(m)) return;
+    const c = parseContext(m);
     // A quiet update the hab sent on its own: only while nothing else runs.
     if (m.for === 'quiet' && !this.turn && !this.reseeding && !this.summarizing && c.recent.length) {
       void this.updateSummary(c, this.settings.precompact_timeout_ms);
@@ -419,18 +357,7 @@ export class Engine {
   // Ask gff-hab for the summary material (and the seed's parts for a re-seed); undefined when no
   // answer comes in time.
   private askContext(purpose: 'reseed' | 'compact', ms: number): Promise<ContextMsg | undefined> {
-    const request = randomUUID();
-    return new Promise((resolve) => {
-      const t = setTimeout(() => {
-        this.contextWait.delete(request);
-        resolve(undefined);
-      }, Math.max(1, ms));
-      this.contextWait.set(request, (c) => {
-        clearTimeout(t);
-        resolve(c);
-      });
-      this.send('context.request', { request, for: purpose });
-    });
+    return this.asks.ask((t, f) => this.send(t, f), purpose, ms);
   }
 
   // One summary call on the small model: the old summary and the new items in, the new summary
@@ -884,8 +811,7 @@ export class Engine {
     if (this.exiting) return;
     this.exiting = true;
     this.denyOpenApprovals('Capcom is stopping.');
-    for (const w of this.contextWait.values()) w({ summary: '', through: '', recent: [] });
-    this.contextWait.clear();
+    this.asks.drain();
     this.closeQuery();
     await this.route.flush(this.d.flushTimeoutMs ?? 5000);
     this.route.close();

@@ -9,6 +9,6 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node18',
-  external: ['@anthropic-ai/claude-agent-sdk'],
+  external: ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'],
   logLevel: 'info',
 });
