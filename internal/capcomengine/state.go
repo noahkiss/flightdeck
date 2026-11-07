@@ -31,6 +31,8 @@ type Record struct {
 	Paused  bool        `json:"paused,omitempty"`
 	Stopped string      `json:"stopped,omitempty"` // why the restarts stopped; "": they run
 	Crashes []time.Time `json:"crashes,omitempty"`
+	// Build names the engine build last started (3.2: an install drains the old build).
+	Build string `json:"build,omitempty"`
 	// Summary is the summary at hand (6.1, filled from A4), shown by a divider.
 	Summary string `json:"summary,omitempty"`
 }
