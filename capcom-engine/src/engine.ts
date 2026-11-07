@@ -849,6 +849,10 @@ export class Engine {
         if (reason !== 'new' && c) summary = await this.updateSummary(c, end - Date.now());
         if (this.exiting) return;
         if (this.reseedPending === 'new' && reason !== 'new') continue; // a new conversation came meanwhile
+        // A quiet update still running goes out before the fresh session starts, so it can never
+        // land on the new conversation's empty summary (7.5).
+        if (this.summarizing) await this.summarizing;
+        if (this.exiting) return;
         this.reseedPending = undefined;
         this.closeQuery();
         // Items handed but not taken go in again in the fresh session.

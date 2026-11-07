@@ -34,6 +34,11 @@ func (c *conn) handleCapcomCard(m message) {
 		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintNoCapcomThread, m.Method))
 		return
 	}
+	if c.peer != nil {
+		// An undo writes to Logbook as a person: only on the hab the person talks to (logbook.md D3).
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "capcom.card.answer does not run over a peer link: answer on the Capcom home host"))
+		return
+	}
 	if p.Item == "" || p.Choice == "" {
 		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "capcom.card.answer: item and choice are required"))
 		return

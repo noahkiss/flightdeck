@@ -137,6 +137,11 @@ func (l *Link) sessionStarted() {
 func (l *Link) storeSummary(text, through string) {
 	text = cut(text, l.limits().SummaryMaxChars)
 	l.cfg.Record.Update(func(r *Record) {
+		// A summary that covers less than the one at hand is stale: a quiet update that ended
+		// after a new conversation cleared the summary (7.5).
+		if through != "" && through < r.SummaryThrough {
+			return
+		}
 		r.Summary = text
 		if through != "" {
 			r.SummaryThrough = through
@@ -210,6 +215,7 @@ func (l *Link) seed(lim ContextLimits) *Seed {
 			s.Messages = append(s.Messages, r)
 		}
 	}
+	budget := lim.SeedMessagesChars // the open part shares the messages' cap
 	for _, it := range l.cfg.Thread.After("", openCard) {
 		line := fmt.Sprintf("%s card %s: %s", it.Card.Type, it.ID, oneLine(it.Text))
 		if it.Card.Ref != "" {
@@ -218,14 +224,19 @@ func (l *Link) seed(lim ContextLimits) *Seed {
 		if len(it.Card.Choices) > 0 {
 			line += " [" + strings.Join(it.Card.Choices, ", ") + "]"
 		}
+		if budget -= utf8.RuneCountInString(line); budget < 0 {
+			break
+		}
 		s.Open = append(s.Open, line)
 	}
 	return s
 }
 
-// openCard is a card that waits for an answer. A memory card is no question to the user.
+// openCard is a card that waits for an answer. A memory card is no question to the user, and an
+// approval card is never open at a re-seed (the engine holds one until every approval is
+// answered): one with no answer was left by an engine that is gone.
 func openCard(it capcomthread.Item) bool {
-	return it.Kind == capcomthread.KindCard && it.Card != nil && it.Card.Type != capcomthread.CardMemory && it.Answer == nil &&
+	return it.Kind == capcomthread.KindCard && it.Card != nil && it.Card.Type != capcomthread.CardMemory && it.Card.Type != "approval" && it.Answer == nil &&
 		len(it.Card.Choices) > 0
 }
 
