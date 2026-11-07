@@ -144,7 +144,7 @@ struct CapcomRowView: View {
                     }
                 }
             }
-        case .capcom(_, let text, let wroteFirst):
+        case .capcom(_, let text, let wroteFirst, let marks):
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     if wroteFirst {
@@ -157,6 +157,7 @@ struct CapcomRowView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+                    ForEach(marks, id: \.self) { CapcomMarkView(mark: $0) }
                 }
                 Spacer(minLength: 40)
             }
@@ -177,7 +178,11 @@ struct CapcomRowView: View {
                 Label(line, systemImage: "arrow.down.message").font(.caption).foregroundStyle(.secondary)
             }
         case .card(let it):
-            CapcomCardRow(item: it, thread: thread)
+            if CapcomEventDraft.of(it) != nil {
+                CapcomEventCardView(item: it, thread: thread)
+            } else {
+                CapcomCardRow(item: it, thread: thread)
+            }
         case .note(_, let text):
             Text(text)
                 .font(.caption)

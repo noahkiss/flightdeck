@@ -113,6 +113,9 @@ struct CapcomHostSettingsView: View {
                     }
                 }
             }
+            if let r = center.deviceContext {
+                CapcomShareSettings(reporter: r)
+            }
             if let sites = center.sites {
                 Section {
                     if sites.isEmpty {
@@ -212,7 +215,10 @@ struct CapcomScreen: View {
         // do not fire again when the content swaps between the state and the conversation.
         ZStack {
             if let m = center.standing {
-                SessionView(model: m, compact: compact, close: close)
+                VStack(spacing: 0) {
+                    if let r = center.deviceContext { CapcomPermissionAsk(reporter: r) }
+                    SessionView(model: m, compact: compact, close: close)
+                }
                     .id(m.target)
                     .environment(\.capcomEarlier, center.earlier)
                     .onAppear {
