@@ -83,6 +83,19 @@ test('an event turn waits at its own step, and a user message does not wait behi
   });
 });
 
+test('an agent report waits at the event step, as no user typed it', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    r.hab.send('pace', { pace: 'ok', event_pace: 'wait', event_until: '2026-11-08T00:00:00Z' });
+    r.hab.input('a1', 'a report', { kind: 'agent', author: 'bee/bob' });
+    await sleep(150);
+    assert.equal(r.hab.of('turn.started').length, 0, 'an agent turn began past event_stop');
+    r.hab.send('pace', { pace: 'ok', event_pace: 'ok' });
+    await ended(r, 1);
+    assert.equal(r.hab.of('turn.started')[0]!.origin, 'user');
+  });
+});
+
 test('with no small model in hello the small model is the default alias', async () => {
   await withRig({ hello: { settings: { model: 'fake-model', max_turns: 7 } } }, async (r) => {
     await started(r);
