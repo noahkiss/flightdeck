@@ -45,6 +45,9 @@ const mcpRules = `Flightdeck tools: read hosts, projects, running agents, past s
 // mcpCmd is `gff-hab mcp [serve] [-socket path] [--skill]`.
 func mcpCmd(args []string, in io.Reader, out io.Writer) error {
 	clearCredentials()
+	if len(args) > 0 && args[0] == "render" {
+		return mcpRenderCmd(args[1:], out)
+	}
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
 	}
