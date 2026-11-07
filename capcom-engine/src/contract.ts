@@ -158,3 +158,67 @@ export function redactor(value: () => string | undefined): (s: string) => string
     return v && v.length >= 4 ? s.split(v).join('[redacted]') : s;
   };
 }
+
+// ---- the governor's pace (10.1) ----
+
+// The governor's answer: the pace of the next user turn and of the next event turn. Until the
+// first pace message, every turn runs.
+export interface Pace {
+  user: 'ok' | 'small' | 'wait';
+  event: 'ok' | 'wait';
+}
+
+export const PACE_OK: Pace = { user: 'ok', event: 'ok' };
+
+// parsePace reads a pace message; an unknown word is ok.
+export function parsePace(m: Msg): Pace {
+  const user = m.pace === 'small' || m.pace === 'wait' ? m.pace : 'ok';
+  const event = m.event_pace === 'wait' ? 'wait' : 'ok';
+  return { user, event };
+}
+
+// isPaced: an item paced at the event step: event batches, and agent reports and round
+// messages (sent as agent), which no user typed.
+export function isPaced(i: Item): boolean {
+  return i.kind === 'event' || i.kind === 'agent';
+}
+
+// admit decides whether the pending items may begin a turn now, and on which model. The head
+// item's kind gives the turn's origin. An event turn that waits lets a later user message begin
+// a user turn that takes the event with it, so a user message never waits behind an event; a
+// send-now message runs, with every item before it, on the small model while user turns wait.
+// null: the items wait for the next pace.
+export function admit(pending: readonly Item[], p: Pace): { origin: 'user' | 'event'; small: boolean } | null {
+  const head = pending[0];
+  if (!head) return null;
+  const sendNow = pending.some((i) => i.send_now);
+  const userTurn = (): { origin: 'user'; small: boolean } | null => {
+    if (p.user === 'ok') return { origin: 'user', small: false };
+    if (p.user === 'small') return { origin: 'user', small: true };
+    return sendNow ? { origin: 'user', small: true } : null;
+  };
+  if (!isPaced(head)) return userTurn();
+  if (p.event === 'ok') return { origin: originOf(head), small: p.user !== 'ok' };
+  if (pending.some((i) => !isPaced(i))) return userTurn();
+  return null;
+}
+
+// mayHand says whether the head of pending may go to the model now, into the turn admit began
+// or one already running. While user turns wait, a user item goes only with a send-now item at
+// or after it, and a paced item only while event turns may run: an item queued after the last
+// send-now one waits for the next pace, not the send-now turn.
+export function mayHand(pending: readonly Item[], p: Pace): boolean {
+  if (p.user !== 'wait') return true;
+  const head = pending[0];
+  if (!head) return false;
+  if (pending.some((i) => i.send_now)) return true;
+  return isPaced(head) && p.event === 'ok';
+}
+
+// handCount is how many items from the head of pending one admitted turn takes, for an engine
+// that hands a turn's items at once (mayHand item by item).
+export function handCount(pending: readonly Item[], p: Pace): number {
+  let n = 0;
+  while (n < pending.length && mayHand(pending.slice(n), p)) n++;
+  return n;
+}
