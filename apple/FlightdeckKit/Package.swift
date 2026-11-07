@@ -24,14 +24,14 @@ let package = Package(
         // an in-memory backend). The version scheme is <major.minor>.<yyyymmdd>,
         // so pin it exactly and review the binary checksum on every bump.
         // 1.6.20260909 is commit 7e45d271, Ghostty 82938b633ba6.
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260909"),
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20261003"),
         // The in-app SSH carrier (transport.md 4.8). swift-nio-ssh is pre-1.0,
         // so pin it exactly; swift-nio follows semver.
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.15.1"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.104.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.105.0"),
         // Parakeet TDT on Core ML, as the on-device spike measured it. Pre-1.0:
         // pin it exactly.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.2"),
     ],
     targets: [
         .target(
