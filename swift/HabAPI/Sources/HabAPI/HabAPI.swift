@@ -1276,7 +1276,7 @@ public struct CatalogGroup: Codable, Sendable, Hashable {
     /// The home hab's device id.
     public var home: String?
     public var id: String
-    /// Plan items.
+    /// Plan items that are not dropped.
     public var items: Int?
     /// Items landed.
     public var landed: Int?
