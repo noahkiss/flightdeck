@@ -229,7 +229,15 @@ export class CodexEngine {
   private onInput(item: Item): void {
     if (!item || typeof item.id !== 'string' || !item.id) return;
     if (this.shuttingDown || this.exiting) return;
-    if (this.handed.has(item.id) || this.pending.some((p) => p.id === item.id)) return;
+    if (this.handed.has(item.id)) {
+      // gff-hab sends an item again only while it holds no take of it: the take was lost. Once
+      // Codex started the item's turn the model has it, so say so again; an item of a turn not
+      // started yet is taken when it starts.
+      const t = this.turn;
+      if (!(t && !t.taken && t.items.includes(item.id))) this.send('input.taken', { item: item.id });
+      return;
+    }
+    if (this.pending.some((p) => p.id === item.id)) return;
     this.pending.push(item);
     this.pump();
   }

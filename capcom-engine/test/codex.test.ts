@@ -574,3 +574,16 @@ test('the pinned Codex CLI is found beside the SDK', { skip: !['darwin', 'linux'
   const bin = findCodexBinary(new URL('../src/codexbin.ts', import.meta.url).href);
   assert.ok((await fs.stat(bin)).isFile());
 });
+
+test('an input sent again after its take was lost is taken again and runs no second turn', async () => {
+  await withRig({}, async (r) => {
+    r.codex.script = async (ctx) => ctx.say('done');
+    await codexStarted(r);
+    r.hab.input('it1', 'first');
+    await r.hab.wait('turn.ended');
+    r.hab.input('it1', 'first');
+    await until(() => r.hab.of('input.taken').filter((m) => m.item === 'it1').length === 2, 5000, 'taken again');
+    await sleep(100);
+    assert.equal(r.codex.turns.length, 1);
+  });
+});
