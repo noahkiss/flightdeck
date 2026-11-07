@@ -34,6 +34,8 @@ export interface CodexTurnCtx {
   item(item: Partial<ThreadItem> & { type: string }): void;
   fail(message: string): void; // turn.failed, then the CLI exits 1
   context(used: number): Promise<void>; // a token_count at this share of the window
+  // a token_count with rate limits, as CLI 0.167 writes it from a login's response headers
+  limits(rateLimits: Record<string, unknown> | null, timestamp?: string): Promise<void>;
   until(f: () => boolean): Promise<void>;
 }
 export type CodexScript = (ctx: CodexTurnCtx) => Promise<void>;
@@ -203,6 +205,19 @@ export class FakeThread implements CodexThreadLike {
       context: (used) =>
         this.fake.appendRollout(id, [
           { type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: Math.round(used * 100000), output_tokens: 0 }, model_context_window: 100000 } } },
+        ]),
+      limits: (rateLimits, timestamp = new Date().toISOString()) =>
+        this.fake.appendRollout(id, [
+          {
+            timestamp,
+            ordinal: ++n,
+            type: 'event_msg',
+            payload: {
+              type: 'token_count',
+              info: { last_token_usage: { input_tokens: 100, output_tokens: 5 }, model_context_window: 258400 },
+              rate_limits: rateLimits,
+            },
+          },
         ]),
       until: async (f) => {
         while (!f()) {

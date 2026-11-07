@@ -177,7 +177,8 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		Logbook:     e.logbookPart,
 		EngineKind:  func() string { return config().Engine },
 	})
-	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, key: habusage.Key(s.host, "claude", capcomengine.EngineDir(dir)),
+	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, host: s.host, dir: capcomengine.EngineDir(dir),
+		engine: func() string { return e.link.Status().Engine },
 		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
 	job := s.job
 	if job == nil {
