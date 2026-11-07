@@ -539,6 +539,8 @@ it on the home hab.
 - **Automatic names** count the whole plan: an amend's members are named with the group's
   items and members in view, and a second member of one role on one item gets `-2`, `-3`.
 - **Card edits.** An item the user adds on the card gets its Logbook task when the plan runs.
+  The hab writes an edited title and brief to the plan record, and an item's edited title and
+  brief to its task.
 - **Worktrees.** A start tried again finds the branch's worktree. When the list marks its setup
   as waiting for the user's yes (`setup_pending`), the item waits again; when the worktree was
   removed, a new one goes on the existing branch.
