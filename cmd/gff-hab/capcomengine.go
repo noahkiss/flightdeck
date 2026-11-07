@@ -93,7 +93,7 @@ type capcomEngineSetup struct {
 	agents     *harness.Store
 	svc        *capcomService
 	logbook    *lbsvc.Service // nil: no Logbook
-	host       string
+	host       string         // the hab's host id; also Capcom's usage account key
 	approval   func() time.Duration
 	publish    func(structure.Event)
 	notify     func(title, body string)
@@ -102,7 +102,6 @@ type capcomEngineSetup struct {
 	// The usage governor (10.1): nil runs Capcom unpaced, with no pace message.
 	governor *governor.Governor
 	usage    *habusage.Store
-	host     string // the hab's host id, for Capcom's usage account key
 }
 
 // pushesMessage reports whether a thread item is a Capcom message, the one kind that pushes
