@@ -999,7 +999,10 @@ running it where the user can see it.
   run-session filter was the other choice, but it leaves the records, the name suffixes and the
   state file growing, and the filter is on by default. Nothing that needs the user goes: only a
   succeeded run's record, and only a session the run made (`Session.round.run` names the run). A
-  record that does not exit within 30 seconds of the close stays until retention. At start,
+  record stays while any round names its session as its target: an agent in the run may have
+  scheduled a follow-up with `-target self`. Only a known end counts: an exit status, or a pane
+  gone while every holder answered. A record that shows exited because its holder was not
+  reached yet stays, since its program may still run. A record that does not exit within 30 seconds of the close stays until retention. At start,
   gff-hab removes the exited records of succeeded runs that a stopped gff-hab or an older build
   left. The app's Open session on such a run finds no row and opens nothing.
 - **Never closed:** a run that failed, timed out, is blocked, or was taken over. The user should
@@ -1493,9 +1496,9 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   with a prompt failed the same way.) Before stage 6 the scheduler's notices were only logged,
   and a set-aside state file raised one plain notice.
 - **Retention.** The prune of 7.6 runs when a run ends and at start; it removes the session
-  records of the runs it drops when they have exited. A succeeded run with `on_finish close`
-  loses its record earlier, once its pane closed and its program exited (7.6), and at start
-  for one a stopped gff-hab left.
+  records of the runs it drops when they have exited, except a session a round names as its
+  target. A succeeded run with `on_finish close` loses its record earlier, once its pane closed
+  and its program exited (7.6), and at start for one a stopped gff-hab left.
 - **Export and apply.** The file is `[[rounds]]` tables with the definition fields, the trigger
   as `cron`, `every`, `at` or `manual = true`, `zone`, durations as Go text (`timeout = "1h0m0s"`),
   the project as `project_remote` (or `project` when it has no remote), and `paused`. Apply fills

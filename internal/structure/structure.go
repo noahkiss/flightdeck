@@ -721,7 +721,39 @@ func (s *Store) CloseSession(id string) error {
 	if i < 0 {
 		return fmt.Errorf("%w: session %s", ErrNotFound, id)
 	}
+	s.closeSessionLocked(i)
+	return nil
+}
+
+// CloseExitedSession removes a session record only when its program is known to have ended:
+// the state is exited, no resume points it at a new pane, and either the holder reported an
+// exit status, or the pane is gone while the holder list is complete (a pane closed by
+// pane.close leaves no status). A session that shows exited only because its holder was not
+// reached yet stays: its program may still run, and the pane's first sight revives it. The
+// check and the removal hold one lock. It reports whether the record went.
+func (s *Store) CloseExitedSession(id string) (bool, error) {
+	complete := Complete(s.holders) // asked before the lock: a holder link may call back in
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := slices.IndexFunc(s.sessions, func(x *sessionRecord) bool { return x.ID == id })
+	if i < 0 {
+		return false, fmt.Errorf("%w: session %s", ErrNotFound, id)
+	}
 	ss := s.sessions[i]
+	if ss.State != stateExited || ss.Spawning || ss.Resuming {
+		return false, nil
+	}
+	if ss.Exit == nil && (!complete || (ss.Pane != "" && s.panes[ss.Pane] != nil)) {
+		return false, nil
+	}
+	s.closeSessionLocked(i)
+	return true, nil
+}
+
+// closeSessionLocked removes the session record at index i. The caller holds s.mu.
+func (s *Store) closeSessionLocked(i int) {
+	ss := s.sessions[i]
+	id := ss.ID
 	s.sessions = slices.Delete(s.sessions, i, i+1)
 	events := []Event{{SessionDeleted, ss.ID, ss.Revision + 1, api.Deleted{}}}
 	if p := s.project(ss.Project); p != nil {
@@ -734,7 +766,6 @@ func (s *Store) CloseSession(id string) error {
 		events = append(events, s.paneEvent(ss.Pane))
 	}
 	s.commit(events)
-	return nil
 }
 
 // ResumeSession points an exited session at a new pane the caller spawns right after this call

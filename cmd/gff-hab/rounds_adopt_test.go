@@ -434,6 +434,83 @@ func TestRoundDropFinishedAtStart(t *testing.T) {
 	}
 }
 
+// TestRoundDropKeepsTargetsAndLostPanes: a succeeded run's session stays when a round names it
+// as its target, such as a follow-up an agent in the run scheduled with -target self, and when
+// it shows exited with no exit status because its holder was not reached yet: its program may
+// still run (rounds.md 7.6). Once the follow-up round goes, and once the holder reports the
+// real exit, the record goes.
+func TestRoundDropKeepsTargetsAndLostPanes(t *testing.T) {
+	state := t.TempDir()
+	e := seedRound(t, state)
+	holder := structure.NewFakeHolder(hpane("p1"), hpane("p2"))
+	code := 0
+	holder.Exit("p1", api.ExitStatus{Code: &code})
+	st, err := structure.Open(structure.Config{Dir: state, Holders: holder})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRun, lostRun := rounds.NewID("run"), rounds.NewID("run")
+	target, err := st.CreateSession(structure.SessionSpec{Name: "target", Pane: "p1", Index: -1, Round: &api.SessionRound{Round: e.Round.ID, Run: targetRun}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost, err := st.CreateSession(structure.SessionSpec{Name: "lost", Pane: "p2", Index: -1, Round: &api.SessionRound{Round: e.Round.ID, Run: lostRun}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	rst, _, err := rounds.Open(state, rounds.Options{Zone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	follow, err := rst.Create(rounds.Round{Name: "follow-up", Mode: rounds.ModeResume, Target: target.ID, Prompt: "carry on",
+		Trigger: rounds.Trigger{Kind: rounds.TriggerManual}}, target.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	writeRuns(t, state, e.Round.ID, []rounds.Run{
+		{ID: targetRun, Number: 1, RoundID: e.Round.ID, Trigger: rounds.TriggerManual, State: rounds.RunSucceeded, SessionID: target.ID, Created: now, EndedAt: &now},
+		{ID: lostRun, Number: 2, RoundID: e.Round.ID, Trigger: rounds.TriggerManual, State: rounds.RunSucceeded, SessionID: lost.ID, Created: now, EndedAt: &now},
+	})
+
+	// The start after a restart: p2's holder is not reached yet, so its session shows exited
+	// with no exit status.
+	restarted := structure.NewFakeHolder(hpane("p1"))
+	restarted.Exit("p1", api.ExitStatus{Code: &code})
+	restarted.SetPartial(true)
+	svc, sst := fakeRoundsServiceWith(t, state, restarted, nil)
+	if ss, ok := sst.Session(lost.ID); !ok || ss.State != api.SessionStateExited || ss.Exit != nil {
+		t.Fatalf("the lost pane's session = %+v %v, want exited with no status", ss, ok)
+	}
+	svc.dropFinished()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	svc.dropSession(ctx, targetRun, target.ID)
+	svc.dropSession(ctx, lostRun, lost.ID)
+	cancel()
+	if _, ok := sst.Session(target.ID); !ok {
+		t.Error("the follow-up round's target was removed")
+	}
+	if _, ok := sst.Session(lost.ID); !ok {
+		t.Error("a session whose holder was not reached was removed")
+	}
+
+	// The follow-up round goes, and the holder comes back with p2's real exit.
+	if err := svc.store.Delete(follow.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	restarted.Add(hpane("p2"))
+	restarted.Exit("p2", api.ExitStatus{Code: &code})
+	waitFor(t, "p2's exit", 5*time.Second, func() bool { ss, ok := sst.Session(lost.ID); return ok && ss.Exit != nil })
+	svc.dropFinished()
+	for name, id := range map[string]string{"target": target.ID, "lost": lost.ID} {
+		if _, ok := sst.Session(id); ok {
+			t.Errorf("the %s session stayed once nothing needed it", name)
+		}
+	}
+}
+
 // writeRuns puts runs in the rounds state file directly: many runs in one write.
 func writeRuns(t *testing.T, state, roundID string, runs []rounds.Run) {
 	t.Helper()
