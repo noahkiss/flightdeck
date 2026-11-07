@@ -1268,7 +1268,9 @@ opus = { harness = "claude", model = "opus" }
   which gives that harness a model. A model the request names wins.
 - The start records the word as `ConfirmStart.alias`; the card shows the harness and model it
   stands for. A start is resolved once: an `alias` a client sends is cleared, and a harness edit
-  on the card clears it so the edited word is read again.
+  on the card clears it so the edited word is read again. That edit also drops the old alias's
+  model, unless the same edit names a model: the new word's alias, or the harness's default,
+  picks it.
 - An unknown word is refused `invalid`, naming the harnesses and the table's aliases.
 - gff-hab reads the table again when the file's size or time changes, so an edit needs no
   rebuild or restart. A file that does not parse keeps the last good table; a bad entry (an
@@ -1284,6 +1286,12 @@ A teammate's result comes back to the spawner through channels.
   peer link names the dialing hab by the link's hello, any other call this hab. The hab keeps
   the list in `<state>/teammates.json`, follows a resumed session to its new pane, and drops a
   removed session.
+- **Capability `teammates`.** A hab that takes `report_to` lists it in its welcome. The
+  spawner's hab refuses a teammate start on a peer without it (`unavailable`, naming mode
+  detached), before any card, so an older hab never drops `report_to` unseen.
+- **Only to a listed hab.** A report goes to a peer by its label. A `report_to` over a link
+  from a hab this hab's peer list does not name is refused `unavailable` before the start, as
+  no report could reach it.
 - **What starts a report.** The seed, or a channel message from the spawner, written to the
   teammate's agent (channels' `Delivering` hook, before the write, with the agent's revision).
   A note from Flightdeck and another sender's message start none. A write that did not deliver

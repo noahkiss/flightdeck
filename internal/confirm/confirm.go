@@ -305,6 +305,11 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		}
 		apply(&start.Folder, ed.Folder)
 		if h := start.Harness; ed.Harness != "" && ed.Harness != h {
+			if start.Alias != "" && ed.Model == "" {
+				// The model may be the old alias's, which does not fit the new harness: the new
+				// word's alias, or the harness's default, picks it.
+				start.Model = ""
+			}
 			start.Alias = "" // the edited word may be an alias too: CheckStart reads it again
 		}
 		apply(&start.Harness, ed.Harness)

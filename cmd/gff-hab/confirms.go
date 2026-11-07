@@ -116,6 +116,8 @@ func (r *confirmRunner) CheckStart(s api.ConfirmStart) (api.ConfirmStart, bool, 
 			return s, false, control.Errorf(api.ErrorKindUnavailable, "%s is offline, or only its own link to this hab is up; start elsewhere, or once it is back", s.Host)
 		case !slices.Contains(l.Caps, confirm.Capability):
 			return s, false, control.Errorf(api.ErrorKindUnavailable, "%s runs a gff-hab without the confirm capability; update it first", s.Host)
+		case s.Teammate && !slices.Contains(l.Caps, teammatesCapability):
+			return s, false, control.Errorf(api.ErrorKindUnavailable, "%s runs a gff-hab that cannot report a teammate's turns; update it, or spawn with mode detached", s.Host)
 		}
 	}
 	s.Project, s.Branch = r.folderFacts(s.Host, self, s.Folder)
