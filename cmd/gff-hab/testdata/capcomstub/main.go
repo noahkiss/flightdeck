@@ -8,8 +8,11 @@
 // Inputs that steer it: "slow" waits for $STUB_DIR/release before its reply; "crash" exits 3;
 // "route" calls channel.status on the pane route with its token and replies with the answer;
 // "lbwrite" files a Logbook task on the pane route and replies with the answer;
-// "approve" asks approval.request for a WebFetch and replies with the answer it got. With the
-// file $STUB_DIR/crashstart present it exits 3 at once, before it connects.
+// "approve" asks approval.request for a WebFetch and replies with the answer it got;
+// "usage <pct>" sends a usage reading of a weekly window <pct> used that started a day and an
+// hour ago (capcom-service.md 10.1). It logs each pace message and each input's send_now mark,
+// and reports 100 input and 10 output tokens and 1 cent a turn. With the file
+// $STUB_DIR/crashstart present it exits 3 at once, before it connects.
 //
 // The context manager (capcom-service.md 6): "remember <title>" files a capcom guide on the pane
 // route, "guide <title>" a guide with no tag, "everywhere <title>" one tagged capcom and everywhere, "edit <id> <title>" retitles a record; "ctx <n>"
@@ -197,6 +200,9 @@ func session(sock, token string) error {
 			reason, _ := m["reason"].(string)
 			logf("reseed %s", reason)
 			reseeds <- reason
+		case "pace":
+			s := func(k string) string { v, _ := m[k].(string); return v }
+			logf("pace %s %s %s %s", s("pace"), s("until"), s("event_pace"), s("event_until"))
 		case "interrupt":
 			logf("interrupt")
 		case "shutdown":
@@ -278,6 +284,9 @@ func turns(sock, token string) {
 		turnN++
 		turn := fmt.Sprintf("t%d-%d", os.Getpid(), turnN)
 		logf("input %s %s", id, text)
+		if now, _ := it["send_now"].(bool); now {
+			logf("send_now %s", id)
+		}
 		origin := "user"
 		if t, ok := strings.CutPrefix(text, "event:"); ok {
 			origin, text = "event", t
@@ -325,6 +334,13 @@ func turns(sock, token string) {
 			reply = "route: " + routeCall(sock, token, `{"method":"channel.status","params":{"id":"m-none"}}`)
 		case "lbwrite":
 			reply = "lb: " + routeCall(sock, token, `{"method":"logbook.write","params":{"idempotency_key":"stub-lb-1","changes":[{"op":"create","type":"task","title":"from capcom"}]}}`)
+		default:
+			var pct float64
+			if _, err := fmt.Sscanf(text, "usage %g", &pct); err == nil {
+				reset := time.Now().Add(6*24*time.Hour - time.Hour).Unix()
+				send(map[string]any{"type": "usage", "reading": map[string]any{"status": "allowed",
+					"rateLimitType": "seven_day", "utilization": pct / 100, "resetsAt": reset}})
+			}
 		case "approve":
 			if codex {
 				reply = "no approvals here"
@@ -338,7 +354,7 @@ func turns(sock, token string) {
 		}
 		send(map[string]any{"type": "reply", "turn": turn, "part": 0, "text": reply})
 		inTurn.Store(false)
-		send(map[string]any{"type": "turn.ended", "turn": turn, "result": "success", "context_used": used})
+		send(map[string]any{"type": "turn.ended", "turn": turn, "result": "success", "context_used": used, "input_tokens": 100, "output_tokens": 10, "cost_usd": 0.01})
 	}
 }
 
