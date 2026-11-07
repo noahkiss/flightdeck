@@ -2,7 +2,8 @@
 // speaks the same wire format as the Claude engine (engine.ts) and declares what Codex lacks
 // (4.1): no mid-turn input (gff-hab holds a message until the turn ends), no approval callback
 // (no tool that needs a card: Codex has no web fetch), no compaction events (gff-hab re-seeds
-// earlier), no usage events (the governor counts tokens).
+// earlier). Its usage events are the plan windows of the rollout's token_count records, sent at
+// each turn's end (10.1): `codex exec --json` carries none.
 //
 // The Codex SDK runs `codex exec` once per turn on a thread it can resume by id. The engine runs
 // the CLI through a wrapper (codexbin.ts) that adds --ignore-user-config and --ignore-rules, so
@@ -36,14 +37,14 @@ import {
 } from './contract.js';
 import { CODEX_FEATURES_OFF, offeredTools, onCodexSurface, TURN_ITEMS } from './codexpolicy.js';
 import { toolSummary } from './policy.js';
-import { codexHome, findRollout, rolloutContext, rolloutHandedIds } from './rollout.js';
+import { codexHome, findRollout, rolloutHandedIds, rolloutTurnEnd } from './rollout.js';
 import { Route, type Msg } from './route.js';
 import { START_CHECK_KEY, startProbe } from './startcheck.js';
 import { CODEX_SDK_VERSION, ENGINE_VERSION } from './version.js';
 
-// What the Codex engine has (4.1). It lacks mid_turn_input, approval_callback,
-// compaction_events and usage_events.
-export const CODEX_CAPABILITIES = ['images', 'interrupt', 'resume_by_id'];
+// What the Codex engine has (4.1). It lacks mid_turn_input, approval_callback and
+// compaction_events. Its usage events come from the rollout at each turn's end.
+export const CODEX_CAPABILITIES = ['images', 'interrupt', 'resume_by_id', 'usage_events'];
 
 // The model when [capcom] model is unset. The pinned CLI's newer models are code-mode only:
 // their requests carry a JavaScript `exec` tool and sub-agent tools, which the start check
@@ -118,6 +119,7 @@ export class CodexEngine {
   private sessionId = '';
   private sessionWhy = 'first';
   private rollout?: string;
+  private limitsSent = ''; // the rate-limit records of the last usage message
   private resumeUnproven = false; // a resumed thread whose CLI has not yet started a turn
   private seed = ''; // a fresh session's seed: it joins the first message (6.2)
   private ready = false;
@@ -591,7 +593,14 @@ export class CodexEngine {
     else if (t.violation) result = 'error';
     if (!this.sessionId && thread.id) this.onThreadStarted(thread.id);
     if (!this.rollout && this.sessionId) this.rollout = await findRollout(codexHome(this.d.env), this.sessionId);
-    const used = await rolloutContext(this.rollout);
+    const { used, rateLimits } = await rolloutTurnEnd(this.rollout);
+    // The plan windows the turn's responses carried, as the usage reading (10.1): once per
+    // turn, before its end, and only when they changed.
+    const limits = JSON.stringify(rateLimits);
+    if (rateLimits.length && limits !== this.limitsSent) {
+      this.limitsSent = limits;
+      this.send('usage', { reading: { rollout: rateLimits } });
+    }
     this.send('turn.ended', {
       turn: t.id,
       result,
