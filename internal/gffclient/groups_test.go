@@ -54,9 +54,9 @@ func TestBoardGroups(t *testing.T) {
 	hst.waitScreen("the live group with its items, and the catalog's group", func(s string) bool {
 		g := row(s, "Split the parser")
 		r := row(s, "Remote work")
-		return line(s, " Groups") >= 0 && strings.Contains(g, "running") && strings.Contains(g, "0/2 landed · 1 members · 1h") &&
+		return line(s, " Groups") >= 0 && strings.Contains(g, "running") && strings.Contains(g, "0/2 landed · 0 started · 1h") &&
 			strings.Contains(g, "coordinator coord") && strings.Contains(s, "· Parser UI") && strings.Contains(s, "waits for api") &&
-			strings.Contains(r, "three") && strings.Contains(r, "1/3 landed · 4 members") && strings.Contains(r, "paused by you") &&
+			strings.Contains(r, "three") && strings.Contains(r, "1/3 landed · 4 started") && strings.Contains(r, "paused by you") &&
 			strings.Contains(r, "offline")
 	})
 
@@ -84,7 +84,7 @@ func TestGroupText(t *testing.T) {
 	g := board.GroupRow{Host: "one", Title: "Split the parser", State: "ended", Items: 2, Landed: 2, Members: 3,
 		Created: now.Add(-5 * time.Hour), Ended: now.Add(-3 * time.Hour)}
 	got := groupText(now, g)
-	if !strings.Contains(got, "Split the parser") || !strings.Contains(got, "ended") || !strings.Contains(got, "2/2 landed · 3 members · 2h") {
+	if !strings.Contains(got, "Split the parser") || !strings.Contains(got, "ended") || !strings.Contains(got, "2/2 landed · 3 started · 2h") {
 		t.Fatalf("text %q", got)
 	}
 	u := &workspaceUI{groups: []board.GroupRow{g, {Host: "two", Title: "Other", State: "running"}}}

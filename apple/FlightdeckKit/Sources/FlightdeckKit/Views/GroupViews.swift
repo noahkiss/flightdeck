@@ -181,7 +181,8 @@ struct GroupCardView: View {
     private var members: some View {
         DisclosureGroup(isExpanded: $showMembers) {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(g.members, id: \.name) { m in memberRow(m) }
+                // The hab tells members apart by name and hab: one name may run on two habs.
+                ForEach(g.members, id: \.rowID) { m in memberRow(m) }
             }
         } label: {
             Text("Members")
@@ -298,8 +299,8 @@ struct GroupPlanCard: View {
             Text("Items").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             ForEach(plan.items, id: \.id) { itemRow($0) }
             Text("Members").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            ForEach(Array(plan.members.enumerated()), id: \.offset) { i, m in
-                if editing { memberEditor(i, m) } else { memberLine(m) }
+            ForEach(Array(zip(draft.memberIDs, plan.members).enumerated()), id: \.element.0) { i, e in
+                if editing { memberEditor(i, e.1) } else { memberLine(e.1) }
             }
             if !group.trust.isEmpty {
                 Label(group.trust, systemImage: "checkmark.shield")
@@ -320,7 +321,7 @@ struct GroupPlanCard: View {
                     if center.isEdited(card) {
                         Button("Undo changes") {
                             center.resetDraft(card)
-                            draft = GroupPlanDraft(group.plan)
+                            draft = GroupPlanDraft(group.plan, amend: group.amend == true)
                         }
                         .controlSize(.small)
                     }
@@ -407,4 +408,9 @@ struct GroupPlanCard: View {
         .padding(6)
         .background(.background, in: RoundedRectangle(cornerRadius: 6))
     }
+}
+
+extension GroupMember {
+    /// A member row's id: its hab's device id and its name, as the hab tells members apart.
+    var rowID: String { (device ?? "") + "/" + name }
 }

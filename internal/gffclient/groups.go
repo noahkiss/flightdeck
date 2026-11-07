@@ -58,7 +58,7 @@ func (u *workspaceUI) groupLines(now time.Time) []groupLine {
 // groupText is a group's header line: title, state, home host, then the counts, the elapsed
 // time, the pause reasons, the waits and the coordinator.
 func groupText(now time.Time, g board.GroupRow) string {
-	parts := []string{fmt.Sprintf("%d/%d landed", g.Landed, g.Items), fmt.Sprintf("%d members", g.Members)}
+	parts := []string{fmt.Sprintf("%d/%d landed", g.Landed, g.Items), fmt.Sprintf("%d started", g.Members)}
 	if !g.Created.IsZero() {
 		end := now
 		if !g.Ended.IsZero() {
