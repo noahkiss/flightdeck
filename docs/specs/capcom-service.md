@@ -386,6 +386,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | `approval.answer` | `request`, `allow` (bool), `message` |
 | `shutdown` | none |
 | `context` | `request` (the `context.request` it answers; absent for a quiet update), `for` (`reseed`, `compact`, `quiet`), `summary`, `through` (the newest item `recent` holds, else the summary's), `recent: [{id, kind, author, time, text}]`, and for `reseed` `seed {logbook, messages: [{id, kind, author, time, text}], open: [line]}` |
+| `sites` | `sites`: the whole allowed list (A3, 5.3) |
 
 | Type (engine to hab) | Fields |
 |---|---|
@@ -395,7 +396,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | `input.taken` | `item` |
 | `reply` | `turn`, `part` (0, 1, ... within the turn), `text` |
 | `tool` | `turn`, `name`, `summary` |
-| `approval.request` | `request`, `tool`, `input` (object), `reason` |
+| `approval.request` | `request`, `tool`, `input` (object), `reason`, `site` (a WebFetch's site, A3) |
 | `turn.ended` | `turn`, `result` (`success`, `interrupted`, `limit`, `error`), `input_tokens`, `output_tokens`, `cost_usd`, `context_used` (0 to 1) |
 | `summary` | `text`, `through` (item id) |
 | `compacted` | none |
@@ -811,6 +812,9 @@ Code: `apple/FlightdeckKit/Sources/FlightdeckKit/Chat/CapcomThread.swift`, `Chat
 - **Which session is the service.** Kind `capcom`, no pane, on a hab whose welcome lists
   `capcom-thread`. Its agent state is the engine route's (`capcom-engine`). The send gate is
   always open while the hab is online.
+- **Typing.** `capcom.typing` has no snapshot, so each read of the newest page also reads
+  `capcom.status` and clears the mark when no turn runs; going offline clears it. One page read
+  runs at a time, and a new connection reads again.
 - **Marks.** Delivered and Read show under the newest user message only, as Messages does.
 - **Tool line.** Each tool once with its count, in order: "searched the web ×2, read a
   transcript". A tap lists each call's summary.
@@ -819,7 +823,9 @@ Code: `apple/FlightdeckKit/Sources/FlightdeckKit/Chat/CapcomThread.swift`, `Chat
   is stored in `<state>/capcom/files`.
 - **Approval cards.** Deny, Allow this site, Allow, in that order. "Allow this site" is offered
   only for a `WebFetch` request with an http or https URL. A site is the host, lowercase, with no
-  port and no leading `www.`. The hab keeps the list in `engine.json`, sends it to the engine in
+  port and no leading `www.`, as the engine names it in `approval.request`'s `site` (WHATWG URL:
+  punycode, IPv6 in brackets), so one parser keeps and matches it; gff-hab reads the URL itself
+  only when the engine names none. One lock orders each list sent and the hello's list. The hab keeps the list in `engine.json`, sends it to the engine in
   each `hello` and in a `sites` message whenever it changes, before the answer that added it.
   `capcom.status` lists it; `capcom.site.remove` takes one off. Settings, Capcom host, lists
   them as "Allowed sites" with Remove.

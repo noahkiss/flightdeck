@@ -38,6 +38,9 @@ public final class CapcomThread {
     @ObservationIgnored private var proposalsAgain = false
     /// Items that arrive while a page loads; applied after it.
     @ObservationIgnored private var buffer: [CapcomItem]?
+    /// One newest-page read at a time; a call meanwhile reads once more after it.
+    @ObservationIgnored private var tailBusy = false
+    @ObservationIgnored private var tailAgain = false
 
     public init(habID: String, session: String?, connection: HabConnection?) {
         self.habID = habID
@@ -87,23 +90,42 @@ public final class CapcomThread {
 
     // MARK: - Pages
 
-    /// Loads the newest page and merges it with what is held.
+    /// Loads the newest page and merges it with what is held. One read runs at a time, so an
+    /// older page never lands over items an event already changed. The typing mark has no
+    /// snapshot (7.4): it is read again from `capcom.status`, so a missed "off" does not stick.
     public func loadTail() async {
         guard let conn = connection else { return }
-        if items.isEmpty { load = .loading }
-        buffer = buffer ?? []
-        do {
-            let page = try await conn.call(HabMethods.capcomThreadPage, CapcomThreadPageParams(limit: pageSize))
-            let fresh = items.isEmpty
-            for it in page.items.reversed() { apply(it) }
-            if fresh { hasOlder = page.more }
-            load = .ready
-        } catch {
-            if items.isEmpty { load = ChatModel.loadState(for: error) }
+        if tailBusy {
+            tailAgain = true
+            return
         }
-        flush()
+        tailBusy = true
+        defer { tailBusy = false }
+        repeat {
+            tailAgain = false
+            if items.isEmpty { load = .loading }
+            buffer = buffer ?? []
+            do {
+                let page = try await conn.call(HabMethods.capcomThreadPage, CapcomThreadPageParams(limit: pageSize))
+                let fresh = items.isEmpty
+                for it in page.items.reversed() { apply(it) }
+                if fresh { hasOlder = page.more }
+                load = .ready
+            } catch {
+                if items.isEmpty { load = ChatModel.loadState(for: error) }
+            }
+            flush()
+            if session != nil {
+                if let st = try? await conn.call(HabMethods.capcomStatus, CapcomServiceParams()) {
+                    typing = typing && st.turn != nil
+                }
+            }
+        } while tailAgain
         if session != nil { await refreshProposals() }
     }
+
+    /// The hab went offline: no typing can be known until it is back.
+    public func wentOffline() { typing = false }
 
     /// Loads the page before the oldest item held.
     public func loadOlder() async {
@@ -128,7 +150,11 @@ public final class CapcomThread {
     private func receive(_ u: CapcomUpdate) {
         switch u {
         case .item(let it, let g):
-            if let generation, g != generation { self.generation = g }
+            if let generation, g != generation {
+                // A new connection: events may have been missed while it changed hands.
+                self.generation = g
+                Task { await self.loadTail() }
+            }
             if generation == nil { generation = g }
             if buffer != nil { buffer?.append(it) } else { apply(it) }
             // A proposal Capcom filed shows as a card; the pinned line counts again.

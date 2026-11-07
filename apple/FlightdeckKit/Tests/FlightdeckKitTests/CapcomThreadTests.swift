@@ -104,6 +104,24 @@ final class CapcomThreadTests: XCTestCase {
         await f.setActive(false)
     }
 
+    /// capcom.typing has no snapshot: a read of the thread with no turn running clears a
+    /// mark whose "off" was missed, and going offline clears it too.
+    func testTypingDoesNotStick() async throws {
+        let a = await serviceHab("bench")
+        let f = await fleet([a])
+        let (m, t) = try await open(f)
+        await a.setCapcomTyping(true)
+        await eventually("typing") { t.typing }
+        await t.loadTail()
+        XCTAssertFalse(t.typing, "no turn runs on the hab")
+        await a.setCapcomTyping(true)
+        await eventually("typing again") { t.typing }
+        t.wentOffline()
+        XCTAssertFalse(t.typing)
+        m.stop()
+        await f.setActive(false)
+    }
+
     func testStop() async throws {
         let a = await serviceHab("bench")
         let f = await fleet([a])

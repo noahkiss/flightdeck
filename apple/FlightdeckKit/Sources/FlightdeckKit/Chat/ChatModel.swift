@@ -252,6 +252,8 @@ public final class ChatModel {
             for _ in 0..<viewers { t.start() }
         } else if c.online, !old.online {
             thread?.reconnected()
+        } else if !c.online, old.online {
+            thread?.wentOffline()
         }
         if started, c.online, c.isCapcom, !old.online || !old.isCapcom {
             Task { await self.refreshPending() }

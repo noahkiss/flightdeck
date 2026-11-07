@@ -876,7 +876,8 @@ export class Engine {
       // keep the raw text
     }
     const request = randomUUID();
-    const body = { request, tool: 'WebFetch', input: { ...input }, reason: `Capcom wants to open ${shown}` };
+    // The site rides along, so gff-hab keeps exactly what siteOf matches (5.3).
+    const body = { request, tool: 'WebFetch', input: { ...input }, reason: `Capcom wants to open ${shown}`, site: siteOf(url) ?? '' };
     const answer = new Promise<PermissionResult>((resolve) => {
       this.approvals.set(request, { resolve, url, body });
     });

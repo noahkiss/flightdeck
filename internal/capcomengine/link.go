@@ -42,6 +42,7 @@ type Approval struct {
 	Input   json.RawMessage
 	Reason  string
 	Item    string // the card item in the thread
+	Site    string // a WebFetch's site, for "Allow this site"; "" offers none
 	Opened  time.Time
 	Expires time.Time
 }
@@ -89,6 +90,9 @@ type Link struct {
 	typingT  func() bool
 	kick     chan struct{}
 	cx       ctxState
+	// sitesMu orders the allowed-site lists the engine gets: each save and its send, and the
+	// hello's read and send, hold it, so a later list never arrives before an earlier one.
+	sitesMu sync.Mutex
 }
 
 type openApproval struct {
@@ -190,6 +194,7 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 		old.rw.Close()
 	}
 	l.changed()
+	l.sitesMu.Lock()
 	rec := l.cfg.Record.Get()
 	hello.Type = THello
 	hello.LastItem = l.cfg.Thread.Last()
@@ -197,6 +202,7 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 	c.resume = hello.SDKSession
 	hello.Sites = rec.Sites
 	err := l.send(c, hello)
+	l.sitesMu.Unlock()
 	if err == nil {
 		err = l.read(c)
 	}
@@ -573,7 +579,7 @@ func (l *Link) openApproval(m Message) {
 	opened := card.Time
 	age := l.cfg.ApprovalMaxAge()
 	left := max(0, opened.Add(age).Sub(l.cfg.Now()))
-	a := &openApproval{Approval: Approval{Request: m.Request, Tool: m.Tool, Input: m.Input, Reason: m.Reason, Item: card.ID, Opened: opened, Expires: opened.Add(age)}}
+	a := &openApproval{Approval: Approval{Request: m.Request, Tool: m.Tool, Input: m.Input, Reason: m.Reason, Item: card.ID, Site: requestSite(m), Opened: opened, Expires: opened.Add(age)}}
 	l.mu.Lock()
 	if _, open := l.approval[m.Request]; open {
 		l.mu.Unlock()
@@ -592,8 +598,20 @@ const (
 	ChoiceDeny      = "deny"
 )
 
+// requestSite is a WebFetch request's site: the engine's own when it names one, else gff-hab's
+// reading of the URL.
+func requestSite(m Message) string {
+	if m.Tool != "WebFetch" {
+		return ""
+	}
+	if s := strings.ToLower(strings.TrimSpace(m.Site)); s != "" {
+		return s
+	}
+	return SiteOf(m.Input)
+}
+
 func approvalChoices(m Message) []string {
-	if m.Tool == "WebFetch" && SiteOf(m.Input) != "" {
+	if requestSite(m) != "" {
 		return []string{ChoiceAllow, ChoiceAllowSite, ChoiceDeny}
 	}
 	return []string{ChoiceAllow, ChoiceDeny}
@@ -672,9 +690,7 @@ func (l *Link) resolve(request, choice, by string) (capcomthread.Item, error) {
 	switch choice {
 	case ChoiceAllow, ChoiceDeny, "expired":
 	case ChoiceAllowSite:
-		if a.Tool == "WebFetch" {
-			site = SiteOf(a.Input)
-		}
+		site = a.Site
 		if site == "" {
 			l.mu.Unlock()
 			return capcomthread.Item{}, ErrChoice
@@ -728,6 +744,8 @@ func (l *Link) RemoveSite(site string) error {
 
 // setSites changes the kept list and hands the engine the new one.
 func (l *Link) setSites(fn func([]string) []string) error {
+	l.sitesMu.Lock()
+	defer l.sitesMu.Unlock()
 	var sites []string
 	err := l.cfg.Record.Update(func(r *Record) {
 		r.Sites = fn(r.Sites)
