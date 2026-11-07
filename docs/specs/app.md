@@ -850,6 +850,10 @@ gets the chips, in the Capcom view (4.10).
 
 ### 4.10 Capcom view and entry row (app side)
 
+With the Capcom service (`capcom-service.md` 7.6, built in A3): the view shows the thread in
+place of the transcript, with no Chat and Terminal switch, no console and no terminal; Stop
+shows while Capcom types. Built choices are in `capcom-service.md` 7.6.1.
+
 The dedicated Capcom view (`capcom.md` 7.2, 8.2). Code: `Chat/CapcomStanding.swift` (the home
 and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row and the screen),
 `Views/SessionViews.swift` (the Capcom style), `Views/BoardViews.swift` (navigation),
@@ -1247,6 +1251,9 @@ holds one request. Top to bottom:
 - **Buttons:** Deny and Allow, equal size, Allow on the right. A chat icon opens the session at the
   request, where the broader choices live.
 
+A Capcom web fetch card (`capcom-service.md` 5.3) adds "Allow this site" between Deny and Allow,
+in the thread and on its card: Allow, and keep the site so later fetches on it need no card.
+
 After an answer the sheet closes and the row leaves rank 1. If the request resolves elsewhere while
 the sheet is open, the buttons turn off and the sheet says where it was answered.
 
@@ -1284,6 +1291,9 @@ the context bar, the title, then the command on one line in the accent colour, t
   answer with `conflict`.
 - When neither time applies (a keystroke answer path, and no hab limit: `approval.max_age` 0),
   no countdown shows.
+- **Capcom approvals** expire after `capcom.approval_max_age` (default 10 minutes), whatever
+  `approval.max_age` says. An expired one is denied and its card says "Expired"; there is no
+  terminal to answer in (`capcom-service.md` 5.3).
 - The countdown runs on the device from `expires_at`. The hab's clock decides; the app corrects for
   the offset it measured on connect (3.2).
 
@@ -2909,6 +2919,7 @@ Budgets are maximums. The hab counts words and characters; it keeps to both.
 | Usage free | 5 words: "Claude 5h window reset" | 3 words: the plan label | None | None |
 | Console command finished | 5 words: "<command> finished" | 4 words: project · hab | 6 words: "Exit 0 · 3m 12s" | None |
 | Could not reach | 4 words: "Could not reach <hab>" | None | 6 words: "Open Flightdeck to retry." | None |
+| Capcom message | "Capcom" | None | 40 words, 240 chars: the reply text | Reply (`capcom-service.md` 7.6) |
 
 ### 16.3 Edge cases
 

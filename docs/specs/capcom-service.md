@@ -801,6 +801,43 @@ another thread.
 - The Capcom board row (`app.md` 4.10) shows the session state the engine drives: idle,
   working, blocked (an approval card), offline, error.
 
+### 7.6.1 Built choices (A3, task-cp5tvo4d)
+
+Code: `apple/FlightdeckKit/Sources/FlightdeckKit/Chat/CapcomThread.swift`, `Chat/CapcomEarlier.swift`,
+`Views/CapcomThreadViews.swift`, `Push/CapcomReply.swift`, `apple/NotificationService`; on the hab
+`internal/push/capcom.go`, `internal/capcomengine/link.go` (sites). Tests: `CapcomThreadTests`,
+`TestLinkAllowSite`, `TestCapcomMessage`, `TestCapcomServiceStub`, `TestThreadLines`.
+
+- **Which session is the service.** Kind `capcom`, no pane, on a hab whose welcome lists
+  `capcom-thread`. Its agent state is the engine route's (`capcom-engine`). The send gate is
+  always open while the hab is online.
+- **Marks.** Delivered and Read show under the newest user message only, as Messages does.
+- **Tool line.** Each tool once with its count, in order: "searched the web ×2, read a
+  transcript". A tap lists each call's summary.
+- **Thumbnails.** A user message's thread item keeps its attachment ids (`attachments`, beside
+  `images`), so clients read thumbnails with `attachment.get`. A photo for the service session
+  is stored in `<state>/capcom/files`.
+- **Approval cards.** Deny, Allow this site, Allow, in that order. "Allow this site" is offered
+  only for a `WebFetch` request with an http or https URL. A site is the host, lowercase, with no
+  port and no leading `www.`. The hab keeps the list in `engine.json`, sends it to the engine in
+  each `hello` and in a `sites` message whenever it changes, before the answer that added it.
+  `capcom.status` lists it; `capcom.site.remove` takes one off. Settings, Capcom host, lists
+  them as "Allowed sites" with Remove.
+- **Earlier threads.** Every other online hab with `capcom-thread` whose thread holds items,
+  read when the Capcom view appears.
+- **Proposals line.** `logbook.list {type: proposal, status: pending, session}` on the home,
+  read at load and after a card or note arrives. A tap lists the proposals; review itself is
+  Logbook's approval stage.
+- **Push.** Kind `capcom`, title "Capcom", no subtitle, body cut to 40 words and 240
+  characters, category `capcom-reply`, collapse id `capcom-<item>`, the item id in the
+  metadata, no Ask action. The notification service extension turns it into a communication
+  notification (`INSendMessageIntent`, sender "Capcom" with a drawn avatar). iOS refuses that
+  without the Communication Notifications capability, and the plain banner shows: the
+  capability must be enabled for the app id in the signing store before the entitlement is
+  added. Reply asks for unlock, since the device key signs the call, and sends
+  `session.send` with an idempotency key; on failure a "Not sent" notice, and the text waits
+  in the Capcom composer.
+
 ### 7.7 gff and the command line
 
 - `gff` shows the Capcom session's thread as text in its chat pane: one line per item, cards as
@@ -808,6 +845,9 @@ another thread.
 - `gff-hab capcom say [-socket path | -via command] <text...|->` sends a message;
   `gff-hab capcom thread [-follow] [-limit n]` prints the thread. `gff-hab capcom stop` sends
   `capcom.interrupt`.
+- Built in A3: gff has no chat pane, so opening the service session shows its thread in a mode
+  of its own over the pane area (`internal/gffclient/capcom.go`): Enter or `m` writes a message,
+  `s` stops the turn, the arrows and PageUp/PageDown scroll, Esc or `q` returns.
 
 ---
 
