@@ -141,19 +141,27 @@ func TestSubmitAndVerdict(t *testing.T) {
 	if r, _ := Submit(&g, "a", "c2", now); !r.Restart || g.Items[0].Submitted != "c2" || g.Items[0].Submits != 2 {
 		t.Fatalf("a new head: %+v %+v", r, g.Items[0])
 	}
-	out, err := TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "fix_needed", Findings: finding(2)}, now)
+	// A verdict names the head it reviewed: one on the earlier submit c1 is refused after c2.
+	if _, err := TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Checked: "c1", Reviewed: "c1"}, now); err == nil || g.Items[0].State != ItemReview {
+		t.Fatalf("a pass on the earlier head: %v %+v", err, g.Items[0])
+	}
+	// A review branch that does not hold the submitted head is refused.
+	if _, err := TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Checked: "c2", Reviewed: "x9"}, now); err == nil || !strings.Contains(err.Error(), "does not descend") {
+		t.Fatalf("a review branch off the submitted head: %v", err)
+	}
+	out, err := TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "fix_needed", Findings: finding(2), Checked: "c2", Reviewed: "c2"}, now)
 	if err != nil || out.State != ItemFix || g.Items[0].Verdict.Head != "c2" {
 		t.Fatalf("fix_needed %+v %v", out, err)
 	}
 	if line := VerdictLine("a", *g.Items[0].Verdict); line != "item a: fix needed, 2 findings" {
 		t.Fatalf("line %q", line)
 	}
-	if _, err := TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass"}, now); err == nil {
+	if _, err := TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Checked: "c2", Reviewed: "c2"}, now); err == nil {
 		t.Fatal("a verdict while the item is in fix")
 	}
 	Submit(&g, "a", "c3", now)
-	fixed := &api.ReviewFixed{Commits: []string{"f1"}, Head: "f1"}
-	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c3", Descends: true}, now)
+	fixed := &api.ReviewFixed{Commits: []string{"f1"}}
+	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c3", Reviewed: "f1", Descends: true}, now)
 	if out.State != ItemReady || out.Land != "f1" || g.Items[0].Land != "f1" || len(g.Lane.Queue) != 1 {
 		t.Fatalf("pass with fixes %+v %+v %v", out, g.Items[0], g.Lane.Queue)
 	}
@@ -169,19 +177,15 @@ func TestSubmitAndVerdict(t *testing.T) {
 	if g.Items[0].State != ItemReview || len(g.Lane.Queue) != 0 {
 		t.Fatalf("resubmit from ready %+v %v", g.Items[0], g.Lane.Queue)
 	}
-	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c4", Descends: false}, now)
-	if out.Land != "c4" || !strings.Contains(out.FixesIgnored, "does not descend") {
-		t.Fatalf("fixes that do not descend %+v", out)
-	}
-	Submit(&g, "a", "c5", now)
-	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c4", Descends: true}, now)
-	if out.Land != "c5" || !strings.Contains(out.FixesIgnored, "not checked") {
-		t.Fatalf("fixes checked against an older head %+v", out)
+	// Fixes named with no commit past the submitted head are ignored; the submitted head lands.
+	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c4", Reviewed: "c4"}, now)
+	if out.Land != "c4" || !strings.Contains(out.FixesIgnored, "no commit past") {
+		t.Fatalf("fixes on no new commit %+v", out)
 	}
 	off := false
 	g.Plan.Lane.FixInPlace = &off
 	Submit(&g, "a", "c6", now)
-	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c6", Descends: true}, now)
+	out, _ = TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "pass", Fixed: fixed, Checked: "c6", Reviewed: "f2", Descends: true}, now)
 	if out.Land != "c6" || !strings.Contains(out.FixesIgnored, "does not allow") {
 		t.Fatalf("fixes the plan does not allow %+v", out)
 	}
@@ -198,7 +202,7 @@ func TestSubmitAndVerdict(t *testing.T) {
 	}
 	// The lead hears every finding; the coordinator's line holds none of their text.
 	g.Items[0].State = ItemReview
-	TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "fix_needed", Findings: []api.GroupFinding{{Severity: "medium", Title: "Leak", Place: "x.go:9", Text: "The file stays open."}}}, now)
+	TakeVerdict(&g, api.ReviewVerdictParams{Item: "a", Verdict: "fix_needed", Checked: "c6", Reviewed: "c6", Findings: []api.GroupFinding{{Severity: "medium", Title: "Leak", Place: "x.go:9", Text: "The file stays open."}}}, now)
 	text := FindingsText(g, g.Items[0], *g.Items[0].Verdict)
 	if !strings.Contains(text, "[medium] Leak (x.go:9): The file stays open.") || !strings.Contains(text, "lane_submit") {
 		t.Fatalf("findings text %q", text)
