@@ -50,6 +50,9 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         // asks for unlock as the question's Reply does.
         let capcomReply = UNTextInputNotificationAction(identifier: PushCategory.capcomReplyAction, title: "Reply", options: [.authenticationRequired],
                                                         textInputButtonTitle: "Send", textInputPlaceholder: "Message Capcom")
+        // A calendar or reminder card's Add (capcom-service.md 8.5): the device key signs the
+        // claim, and the write goes to this device's calendar, so it asks for unlock.
+        let cardAdd = UNNotificationAction(identifier: PushCategory.capcomCardAddAction, title: "Add", options: [.authenticationRequired])
         return [
             UNNotificationCategory(identifier: pingCategory, actions: [ping], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.approval, actions: [deny, approve], intentIdentifiers: []),
@@ -61,6 +64,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             UNNotificationCategory(identifier: PushCategory.openAsk, actions: [open, ask], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.ask, actions: [ask], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.capcomReply, actions: [capcomReply], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.capcomCard, actions: [cardAdd], intentIdentifiers: []),
         ]
     }
 
@@ -139,8 +143,36 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             _ = await CapcomReply.send(host: host, session: session, text: text, answerer: answerer, center: capcom) { title, body in
                 await Self.post(title, body, meta: nil)
             }
+        case .capcomCardAdd(let host, let item):
+            await addCard(host: host, item: item)
         case .none:
             break
+        }
+    }
+
+    /// The card push's Add: claim the card, then write it here. Only a failure posts.
+    @MainActor
+    private func addCard(host: String, item: String) async {
+        guard let answerer = approvals?.answerer, let cards = capcom?.cards else {
+            await notify("Not added", "Open Flightdeck to add it.")
+            return
+        }
+        guard cards.canWrite else {
+            await notify("Not added", "Add it from your phone.")
+            return
+        }
+        let o = await cards.addFromPush(item: item) { p in
+            try await answerer.call(host: host, HabMethods.capcomCardAnswer, p)
+        }
+        switch o {
+        case .added, .dismissed, .none:
+            break
+        case .conflict:
+            await notify("Not added", "Another device answered this card.")
+        case .refused(let why):
+            await notify("Not added", why)
+        case .writeFailed(let why):
+            await notify("Not added", "\(why) Open Flightdeck to retry.")
         }
     }
 

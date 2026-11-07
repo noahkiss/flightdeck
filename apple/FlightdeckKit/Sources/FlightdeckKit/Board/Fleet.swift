@@ -199,6 +199,33 @@ public final class Fleet {
         Task { @MainActor [weak self] in
             await self?.capcom.habOnline(id)
         }
+        // The Capcom home takes this device's context (capcom-service.md 8.1).
+        if w.capabilities.contains(DeviceContextReporter.capability) {
+            roundDefaults.set(w.host.id, forKey: Self.deviceContextHomeKey)
+            Task { @MainActor [weak self] in
+                await self?.capcom.deviceContext?.homeOnline()
+            }
+        }
+    }
+
+    /// The host id of the last hab whose welcome listed `device-context`.
+    static let deviceContextHomeKey = "capcom.device_context.home"
+    public var deviceContextHome: String? { roundDefaults.string(forKey: Self.deviceContextHomeKey) }
+
+    /// Sends a `device.context.put` on the live connection of a hab whose welcome lists
+    /// `device-context`; false when none is online or the call failed. The hab never passes it
+    /// to a peer, so no other hab gets it.
+    public func sendDeviceContextLive(_ p: DeviceContextPutParams) async -> Bool {
+        for c in connections {
+            guard await c.isWelcomed, await c.has(capability: DeviceContextReporter.capability) else { continue }
+            do {
+                _ = try await c.call(HabMethods.deviceContextPut, p)
+                return true
+            } catch {
+                return false
+            }
+        }
+        return false
     }
 
     /// Connects every hab (visible) or closes every connection (background).
@@ -228,6 +255,7 @@ public final class Fleet {
                 for c in connections { await c.retryNow() }
                 terminals.setActive(true)
                 focus.setActive(true)
+                Task { @MainActor [weak self] in await self?.capcom.deviceContext?.appOpened() }
             } else {
                 // Tell the habs the session left the screen before the
                 // connections close; a hab that misses it drops the focus

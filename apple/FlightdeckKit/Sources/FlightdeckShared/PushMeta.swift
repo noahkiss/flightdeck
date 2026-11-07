@@ -21,6 +21,8 @@ public struct PushMeta: Sendable, Equatable, Codable {
     /// The round and run of a round notification (rounds.md 10.2).
     public var round: String?
     public var run: String?
+    /// A Capcom message's or card's thread item (capcom-service.md 7.6, 8.5).
+    public var item: String?
     /// The item "Ask an agent" hands to `capcom.open` as its one context item, unread
     /// (capcom.md 8.5). Present while some host runs Capcom.
     public var capcomContext: CapcomItem?
@@ -43,12 +45,12 @@ public struct PushMeta: Sendable, Equatable, Codable {
     enum CodingKeys: String, CodingKey {
         case v, kind, hab, session, pane, state, request
         case expiresAt = "expires_at"
-        case notice, round, run
+        case notice, round, run, item
         case capcomContext = "capcom_context"
         case capcomHome = "capcom_home"
     }
 
-    public init(v: Int = 1, kind: String, hab: String, session: String? = nil, pane: String? = nil, state: String? = nil, request: String? = nil, expiresAt: String? = nil, notice: String? = nil, capcomContext: CapcomItem? = nil, capcomHome: String? = nil, round: String? = nil, run: String? = nil) {
+    public init(v: Int = 1, kind: String, hab: String, session: String? = nil, pane: String? = nil, state: String? = nil, request: String? = nil, expiresAt: String? = nil, notice: String? = nil, capcomContext: CapcomItem? = nil, capcomHome: String? = nil, round: String? = nil, run: String? = nil, item: String? = nil) {
         self.v = v
         self.kind = kind
         self.hab = hab
@@ -62,6 +64,7 @@ public struct PushMeta: Sendable, Equatable, Codable {
         self.capcomHome = capcomHome
         self.round = round
         self.run = run
+        self.item = item
     }
 
     /// The key under which a push and a local notification carry the object.

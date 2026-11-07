@@ -65,6 +65,16 @@
 	<string>Scans a hab's pairing code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connects to habs on your network over SSH.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Capcom reads your location only when a question needs it.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Capcom keeps your latest location ready for questions about where you are.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Capcom reads the calendars you pick to answer questions about your day.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Adds the events you tap Add on.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Adds the reminders you tap Add on.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hears what you say in voice mode and dictation.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
