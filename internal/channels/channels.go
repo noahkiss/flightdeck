@@ -128,6 +128,11 @@ type Config struct {
 	Peers   Peers  // nil: only sessions on this hab are reachable
 	Catalog func() api.CatalogList
 	Local   Local
+	// CapcomHome returns the device id of the host the highest-counter Capcom belief names,
+	// and its label in the peer list ("" when it has none, or when it is this hab). A bare
+	// capcom resolves to it, not by names in the catalog copies (capcom-service.md 2.4). Nil, or
+	// an empty device: capcom resolves as any name does.
+	CapcomHome func() (device, label string)
 	// Publish hears every change of a record this hab sent (channel.message), in order. It is
 	// called with the service's lock held, so it must not call back into the service.
 	Publish func(api.ChannelRecord)
@@ -501,11 +506,29 @@ func messagesIn(q []outItem) int {
 	return n
 }
 
+// capcomHome is the Capcom home host as CapcomHome reports it, or "" when none is known.
+func (s *Service) capcomHome() (device, label string) {
+	if s.cfg.CapcomHome == nil {
+		return "", ""
+	}
+	return s.cfg.CapcomHome()
+}
+
 // resolve turns an address into a target (mesh.md 6.5, Addresses and names).
 func (s *Service) resolve(to string) (target, error) {
 	var pl api.PeerList
 	if s.cfg.Peers != nil {
 		pl = s.cfg.Peers.List()
+	}
+	if to == CapcomName {
+		switch dev, label := s.capcomHome(); {
+		case dev == s.cfg.Self:
+			return target{device: s.cfg.Self, session: to, address: to}, nil
+		case dev != "" && label == "":
+			return target{}, control.Errorf(api.ErrorKindUnavailable, "the Capcom home host (device %s) is not in the peer list: add it as a peer", shortID(dev))
+		case dev != "":
+			return target{device: dev, session: to, address: label + "/" + to, label: label}, nil
+		}
 	}
 	if label, name, ok := strings.Cut(to, "/"); ok {
 		if label == "" || name == "" {
@@ -562,9 +585,31 @@ func (s *Service) resolve(to string) (target, error) {
 	return found[0], nil
 }
 
+// capcomMoved returns the label of the Capcom home host when it is another hab, else "".
+func (s *Service) capcomMoved() string {
+	dev, label := s.capcomHome()
+	if dev == "" || dev == s.cfg.Self {
+		return ""
+	}
+	return label
+}
+
+// shortID is a device id cut for a message.
+func shortID(id string) string {
+	if len(id) > 16 {
+		return id[:16]
+	}
+	return id
+}
+
 // ClashLabel returns where a name is in use on a peer: the label (or host id) of the first
 // catalog copy, stale ones included, that lists an agent with that name; "" when none does.
+// capcom never clashes between habs: a stale copy that still lists it never blocks the new home
+// (capcom-service.md 2.4).
 func ClashLabel(l api.CatalogList, self, name string) string {
+	if name == CapcomName {
+		return ""
+	}
 	for _, e := range l.Hosts {
 		if e.Own || e.Catalog.DeviceID == self {
 			continue
@@ -722,6 +767,8 @@ func (s *Service) acceptLocked(from string, m api.ChannelMessage, now time.Time)
 	case strings.TrimSpace(m.Text) == "" || len(m.Text) > MaxText:
 		refuse("the message is %d bytes; it must hold text, at most %d bytes", len(m.Text), MaxText)
 	case s.roundAcceptLocked(m, &res, now):
+	case !ok && m.To.Session == CapcomName && s.capcomMoved() != "":
+		refuse("Capcom moved to %s: send to capcom, or to %s/capcom", s.capcomMoved(), s.capcomMoved())
 	case !ok:
 		refuse("no session named %s on this host", m.To.Session)
 	case !ValidName(m.To.Session):

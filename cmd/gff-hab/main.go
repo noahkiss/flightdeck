@@ -1113,6 +1113,22 @@ func serve(args []string) error {
 	chSvc, err := channels.New(channels.Config{
 		Self: key.Fingerprint(), Host: *hostID, State: dir,
 		Peers: channelPeers{pm}, Catalog: cs.List, Local: cl,
+		CapcomHome: func() (string, string) {
+			c := capcomRef.Load()
+			if c == nil {
+				return "", ""
+			}
+			dev := c.Home()
+			if dev == "" || dev == key.Fingerprint() {
+				return dev, ""
+			}
+			for _, p := range pm.List().Peers {
+				if p.DeviceID == dev {
+					return dev, p.Label
+				}
+			}
+			return dev, ""
+		},
 		Publish: func(r api.ChannelRecord) {
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: control.EventChannelMessage, ID: r.ID, Data: r})
