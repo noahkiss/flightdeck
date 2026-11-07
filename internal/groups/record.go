@@ -86,11 +86,35 @@ func AddPlan(g *api.Group, p api.GroupPlan) {
 	for _, m := range p.Members {
 		g.Members = append(g.Members, api.GroupMember{Name: m.Name, Host: m.Host, Harness: m.Harness, Model: m.Model,
 			Role: m.Role, Item: m.Item, State: MemberPlanned})
-		if m.Role == RoleLead {
-			if i := ItemIndex(*g, m.Item); i >= 0 {
+		if i := ItemIndex(*g, m.Item); i >= 0 {
+			switch m.Role {
+			case RoleLead:
 				g.Items[i].Lead = m.Name
+			case RoleReviewer:
+				// One reviewer reviews an item (groups.md 6.2): the first the plan names.
+				if g.Items[i].Reviewer == "" {
+					g.Items[i].Reviewer = m.Name
+					g.Items[i].ReviewBranch = ReviewBranch(g.ID, m.Item)
+				}
 			}
 		}
+	}
+	for i := range g.Items {
+		it := &g.Items[i]
+		if it.Review == "off" {
+			it.Reviewer, it.ReviewBranch, it.SameHarness = "", "", false
+			continue
+		}
+		var lead, rev string
+		for _, m := range g.Members {
+			switch m.Name {
+			case it.Lead:
+				lead = m.Harness
+			case it.Reviewer:
+				rev = m.Harness
+			}
+		}
+		it.SameHarness = it.Reviewer != "" && lead != "" && lead == rev
 	}
 }
 

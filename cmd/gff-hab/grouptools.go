@@ -9,6 +9,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/groups"
 )
 
 // The agent kit's group tools (groups.md 15.2): the coordinator proposes, amends, closes and
@@ -42,6 +43,15 @@ var groupTools = []kitTool{
 		Args: []toolArg{argGroup, {Name: "member", Type: "string", Required: true, Doc: "The member's name, from group_status."}}, run: runMemberAction("member.compact")},
 	{Name: "member_handoff", Action: true, Doc: "Ask for another member of your group to start fresh: it writes a hand-off note with group_note, then a new session under its name, in its worktree, reads the notes and continues. Messages waiting for it reach the new session. Waits and answers as member_compact.",
 		Args: []toolArg{argGroup, {Name: "member", Type: "string", Required: true, Doc: "The member's name, from group_status."}}, run: runMemberAction("member.handoff")},
+	{Name: "lane_submit", Action: true, Doc: "Submit your item for review: commit your work on your item's branch first. Flightdeck reads the branch's head and starts the item's reviewer, in another harness, on that commit, or tells a running reviewer of the new head. Its findings reach you as a message from Flightdeck; after fixes, call lane_submit again. With review off the item is ready for the lane at once. Lead only.",
+		Args: []toolArg{argGroup, {Name: "item", Type: "string", Required: true, Doc: "Your item's id."}},
+		run:  runLaneSubmit},
+	{Name: "review_verdict", Action: true, Doc: "End your review with the verdict: pass, or fix_needed with the findings the lead must fix. Report high and medium findings only, the most severe first; more than the group's limit are refused. If you fixed findings in place, name the commits on your review branch. The coordinator gets one line; your full review stays in your transcript. Reviewer only.",
+		Args: []toolArg{argGroup, {Name: "item", Type: "string", Required: true, Doc: "The item you review."},
+			{Name: "verdict", Type: "string", Required: true, Doc: "pass or fix_needed."},
+			{Name: "findings", Type: "string", Doc: `The findings as JSON: [{"severity": "high", "title": "...", "place": "path/file.go:42", "text": "one paragraph"}]. Severity high or medium.`},
+			{Name: "fixed", Type: "string", Doc: "The fix commits you pushed to your review branch, separated by spaces or commas. Absent: none."}},
+		run: runReviewVerdict},
 }
 
 // runMemberAction runs a sibling action (groups.md 9.4).
@@ -57,6 +67,47 @@ func runMemberAction(method string) func(ctx context.Context, c caller, a toolAr
 		}
 		return r, text + ". How it ends reaches you as a message from Flightdeck.\n", nil
 	}
+}
+
+func runLaneSubmit(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+	var r api.LaneSubmitted
+	if err := c.Call(ctx, "lane.submit", api.LaneSubmitParams{Group: a.str("group"), Item: a.str("item")}, &r); err != nil {
+		return nil, "", err
+	}
+	short := groups.Short7(r.Head)
+	switch {
+	case r.State == groups.ItemReady:
+		return r, fmt.Sprintf("Submitted %s with review off: the item is ready for the lane.\n", short), nil
+	case r.Restart:
+		return r, fmt.Sprintf("Submitted %s. The review restarts on it: the reviewer %s is told.\n", short, r.Reviewer), nil
+	}
+	return r, fmt.Sprintf("Submitted %s for review by %s. Its verdict reaches you as a message from Flightdeck.\n", short, r.Reviewer), nil
+}
+
+func runReviewVerdict(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+	p := api.ReviewVerdictParams{Group: a.str("group"), Item: a.str("item"), Verdict: a.str("verdict")}
+	if f := strings.TrimSpace(a.str("findings")); f != "" {
+		if err := json.Unmarshal([]byte(f), &p.Findings); err != nil {
+			return nil, "", control.Errorf(api.ErrorKindInvalid, "findings is not a JSON list of findings: %v", err)
+		}
+	}
+	if f := strings.FieldsFunc(a.str("fixed"), func(r rune) bool { return r == ',' || r == ' ' || r == '\n' }); len(f) > 0 {
+		p.Fixed = &api.ReviewFixed{Commits: f}
+	}
+	var r api.ReviewVerdictTaken
+	if err := c.Call(ctx, "review.verdict", p, &r); err != nil {
+		return nil, "", err
+	}
+	var b strings.Builder
+	if r.State == groups.ItemReady {
+		fmt.Fprintf(&b, "Verdict taken: the item is ready for the lane at %s.\n", groups.Short7(r.Land))
+	} else {
+		b.WriteString("Verdict taken: the findings went to the lead. Its next submit reaches you as a message from Flightdeck.\n")
+	}
+	if r.FixesIgnored != "" {
+		fmt.Fprintf(&b, "Your fixes were ignored: %s.\n", r.FixesIgnored)
+	}
+	return r, b.String(), nil
 }
 
 // groupWait is how long group_create and group_amend wait for the answer, as start_session.
@@ -170,6 +221,35 @@ func groupText(g api.Group) string {
 			fmt.Fprintf(&b, ": %s", it.Reason)
 		}
 		b.WriteString("\n")
+		switch {
+		case it.Review == "off":
+			b.WriteString("  no review\n")
+		case it.Reviewer != "":
+			fmt.Fprintf(&b, "  reviewer %s", it.Reviewer)
+			if it.SameHarness {
+				b.WriteString(" (same harness)")
+			}
+			if it.Submitted != "" {
+				fmt.Fprintf(&b, ", submitted %s", groups.Short7(it.Submitted))
+			}
+			if it.Stuck != "" {
+				fmt.Fprintf(&b, ", no verdict: %s", it.Stuck)
+			}
+			b.WriteString("\n")
+		}
+		if v := it.Verdict; v != nil {
+			fmt.Fprintf(&b, "  %s\n", groups.VerdictLine(it.ID, *v))
+			for _, f := range v.Findings {
+				fmt.Fprintf(&b, "  - [%s] %s", f.Severity, f.Title)
+				if f.Place != "" {
+					fmt.Fprintf(&b, " (%s)", f.Place)
+				}
+				b.WriteString("\n")
+			}
+			if v.FixesIgnored != "" {
+				fmt.Fprintf(&b, "  fixes ignored: %s\n", v.FixesIgnored)
+			}
+		}
 	}
 	b.WriteString("Members:\n")
 	for _, m := range g.Members {

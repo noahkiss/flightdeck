@@ -4100,49 +4100,114 @@ public struct GroupEnvelope: Codable, Sendable, Hashable {
     }
 }
 
+public struct GroupFinding: Codable, Sendable, Hashable {
+    /// File and line, such as api/groups.go:42. At most 200 characters.
+    public var place: String?
+    /// high or medium.
+    public var severity: String
+    /// One paragraph, at most 2000 characters.
+    public var text: String
+    /// One line, at most 200 characters.
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case place = "place"
+        case severity = "severity"
+        case text = "text"
+        case title = "title"
+    }
+
+    public init(place: String? = nil, severity: String, text: String, title: String) {
+        self.place = place
+        self.severity = severity
+        self.text = text
+        self.title = title
+    }
+}
+
 public struct GroupItem: Codable, Sendable, Hashable {
     public var after: String?
     /// group/<group>/<item>.
     public var branch: String?
     public var id: String
+    /// RFC 3339 time the reviewer was first seen idle with no verdict on this head.
+    public var idleSince: String?
+    /// The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes.
+    public var land: String?
     /// Its lead's session name.
     public var lead: String?
     /// Why it is stalled or waits.
     public var reason: String?
     public var review: String?
+    /// group/<group>/<item>-review: the reviewer's own branch (groups.md 6.4).
+    public var reviewBranch: String?
+    /// RFC 3339 time the review of the submitted head began.
+    public var reviewSince: String?
+    /// Its reviewer's session name: a member with role reviewer. Absent with review off.
+    public var reviewer: String?
+    /// The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness.
+    public var sameHarness: Bool?
     /// queued, stalled, working, review, fix, ready, landing, landed or dropped.
     public var state: String
+    /// Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit.
+    public var stuck: String?
+    /// How many times the lead submitted.
+    public var submits: Int?
+    /// The full commit id of the lead's last lane_submit.
+    public var submitted: String?
     /// Its Logbook task id.
     public var task: String?
     public var title: String
+    /// The reviewer's verdict on the submitted head. Absent while the reviewer reviews.
+    public var verdict: GroupVerdict?
 
     enum CodingKeys: String, CodingKey {
         case after = "after"
         case branch = "branch"
         case id = "id"
+        case idleSince = "idle_since"
+        case land = "land"
         case lead = "lead"
         case reason = "reason"
         case review = "review"
+        case reviewBranch = "review_branch"
+        case reviewSince = "review_since"
+        case reviewer = "reviewer"
+        case sameHarness = "same_harness"
         case state = "state"
+        case stuck = "stuck"
+        case submits = "submits"
+        case submitted = "submitted"
         case task = "task"
         case title = "title"
+        case verdict = "verdict"
     }
 
-    public init(after: String? = nil, branch: String? = nil, id: String, lead: String? = nil, reason: String? = nil, review: String? = nil, state: String, task: String? = nil, title: String) {
+    public init(after: String? = nil, branch: String? = nil, id: String, idleSince: String? = nil, land: String? = nil, lead: String? = nil, reason: String? = nil, review: String? = nil, reviewBranch: String? = nil, reviewSince: String? = nil, reviewer: String? = nil, sameHarness: Bool? = nil, state: String, stuck: String? = nil, submits: Int? = nil, submitted: String? = nil, task: String? = nil, title: String, verdict: GroupVerdict? = nil) {
         self.after = after
         self.branch = branch
         self.id = id
+        self.idleSince = idleSince
+        self.land = land
         self.lead = lead
         self.reason = reason
         self.review = review
+        self.reviewBranch = reviewBranch
+        self.reviewSince = reviewSince
+        self.reviewer = reviewer
+        self.sameHarness = sameHarness
         self.state = state
+        self.stuck = stuck
+        self.submits = submits
+        self.submitted = submitted
         self.task = task
         self.title = title
+        self.verdict = verdict
     }
 }
 
 public struct GroupLane: Codable, Sendable, Hashable {
-    /// A reviewer may fix in place on its review branch (groups.md 6.4).
+    /// A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true.
     public var fixInPlace: Bool?
     /// The target branch. Absent: the project's default branch.
     public var target: String?
@@ -4269,6 +4334,26 @@ public struct GroupMember: Codable, Sendable, Hashable {
         self.role = role
         self.session = session
         self.state = state
+    }
+}
+
+public struct GroupMessageParams: Codable, Sendable, Hashable {
+    public var group: String
+    /// The member's session name on the receiving hab.
+    public var member: String
+    /// At most 8000 characters.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case group = "group"
+        case member = "member"
+        case text = "text"
+    }
+
+    public init(group: String, member: String, text: String) {
+        self.group = group
+        self.member = member
+        self.text = text
     }
 }
 
@@ -4518,6 +4603,43 @@ public struct GroupRole: RawRepresentable, Codable, Sendable, Hashable {
     public static let lead = GroupRole(rawValue: "lead")
     public static let worker = GroupRole(rawValue: "worker")
     public static let reviewer = GroupRole(rawValue: "reviewer")
+}
+
+public struct GroupVerdict: Codable, Sendable, Hashable {
+    /// RFC 3339 time the home hab took it.
+    public var at: String
+    /// At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings.
+    public var findings: [GroupFinding]
+    /// The fix commits the reviewer named.
+    public var fixed: [String]?
+    /// The review branch head the lane takes: it descends from the submitted head.
+    public var fixedHead: String?
+    /// Why the reviewer's fixes were ignored, in one line. The card shows it.
+    public var fixesIgnored: String?
+    /// The submitted head the verdict is on.
+    public var head: String
+    /// pass or fix_needed.
+    public var verdict: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case findings = "findings"
+        case fixed = "fixed"
+        case fixedHead = "fixed_head"
+        case fixesIgnored = "fixes_ignored"
+        case head = "head"
+        case verdict = "verdict"
+    }
+
+    public init(at: String, findings: [GroupFinding], fixed: [String]? = nil, fixedHead: String? = nil, fixesIgnored: String? = nil, head: String, verdict: String) {
+        self.at = at
+        self.findings = findings
+        self.fixed = fixed
+        self.fixedHead = fixedHead
+        self.fixesIgnored = fixesIgnored
+        self.head = head
+        self.verdict = verdict
+    }
 }
 
 public struct HabStatsParams: Codable, Sendable, Hashable {
@@ -4859,6 +4981,56 @@ public struct InputParams: Codable, Sendable, Hashable {
         self.data = data
         self.pane = pane
         self.text = text
+    }
+}
+
+public struct LaneSubmitParams: Codable, Sendable, Hashable {
+    /// The lead's session name. From a pane the pane's session.
+    public var from: String?
+    public var group: String
+    /// Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced.
+    public var head: String?
+    public var item: String
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case group = "group"
+        case head = "head"
+        case item = "item"
+    }
+
+    public init(from: String? = nil, group: String, head: String? = nil, item: String) {
+        self.from = from
+        self.group = group
+        self.head = head
+        self.item = item
+    }
+}
+
+public struct LaneSubmitted: Codable, Sendable, Hashable {
+    public var head: String
+    /// A review of an earlier head ran: it restarts on this head, and the reviewer is told.
+    public var restart: Bool?
+    public var reviewer: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case head = "head"
+        case restart = "restart"
+        case reviewer = "reviewer"
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(head: String, restart: Bool? = nil, reviewer: String? = nil, seq: UInt64, state: String) {
+        self.head = head
+        self.restart = restart
+        self.reviewer = reviewer
+        self.seq = seq
+        self.state = state
     }
 }
 
@@ -7096,6 +7268,87 @@ public struct ResizeFrame: Codable, Sendable, Hashable {
         self.owner = owner
         self.reason = reason
         self.rows = rows
+    }
+}
+
+public struct ReviewFixed: Codable, Sendable, Hashable {
+    /// The fix commits on the review branch.
+    public var commits: [String]?
+    /// The review branch head. Absent: the review branch's head in the reviewer's repository. The reviewer's hab sets the full commit id.
+    public var head: String?
+
+    enum CodingKeys: String, CodingKey {
+        case commits = "commits"
+        case head = "head"
+    }
+
+    public init(commits: [String]? = nil, head: String? = nil) {
+        self.commits = commits
+        self.head = head
+    }
+}
+
+public struct ReviewVerdictParams: Codable, Sendable, Hashable {
+    /// Set by the reviewer's hab: the submitted head it checked fixed.head against. A pane's value is replaced.
+    public var checked: String?
+    /// Set by the reviewer's hab: fixed.head descends from checked and is not checked itself. A pane's value is replaced.
+    public var descends: Bool?
+    /// High and medium findings only, at most [groups] max_findings. More are refused.
+    public var findings: [GroupFinding]?
+    /// Fix commits the reviewer pushed to its review branch, if any.
+    public var fixed: ReviewFixed?
+    /// The reviewer's session name. From a pane the pane's session.
+    public var from: String?
+    public var group: String
+    public var item: String
+    /// pass or fix_needed.
+    public var verdict: String
+
+    enum CodingKeys: String, CodingKey {
+        case checked = "checked"
+        case descends = "descends"
+        case findings = "findings"
+        case fixed = "fixed"
+        case from = "from"
+        case group = "group"
+        case item = "item"
+        case verdict = "verdict"
+    }
+
+    public init(checked: String? = nil, descends: Bool? = nil, findings: [GroupFinding]? = nil, fixed: ReviewFixed? = nil, from: String? = nil, group: String, item: String, verdict: String) {
+        self.checked = checked
+        self.descends = descends
+        self.findings = findings
+        self.fixed = fixed
+        self.from = from
+        self.group = group
+        self.item = item
+        self.verdict = verdict
+    }
+}
+
+public struct ReviewVerdictTaken: Codable, Sendable, Hashable {
+    /// Why the fixes were ignored, in one line.
+    public var fixesIgnored: String?
+    /// After a pass: the commit the lane lands.
+    public var land: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// ready after a pass, fix after fix_needed.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case fixesIgnored = "fixes_ignored"
+        case land = "land"
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(fixesIgnored: String? = nil, land: String? = nil, seq: UInt64, state: String) {
+        self.fixesIgnored = fixesIgnored
+        self.land = land
+        self.seq = seq
+        self.state = state
     }
 }
 
@@ -9865,6 +10118,12 @@ public enum HabMethods {
     public static let memberHandoff = HabMethod<MemberActionParams, MemberActionResult>(name: "member.handoff")
     /// One supervision action by its id, as the member's hab keeps it. Needs the groups capability.
     public static let memberAction = HabMethod<MemberActionRef, MemberActionResult>(name: "member.action")
+    /// Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.
+    public static let laneSubmit = HabMethod<LaneSubmitParams, LaneSubmitted>(name: "lane.submit")
+    /// A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.
+    public static let reviewVerdict = HabMethod<ReviewVerdictParams, ReviewVerdictTaken>(name: "review.verdict")
+    /// The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.
+    public static let groupMessage = HabMethod<GroupMessageParams, Empty>(name: "group.message")
 }
 
 public enum HabNotification {
