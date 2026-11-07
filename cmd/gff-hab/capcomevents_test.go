@@ -59,6 +59,11 @@ func TestDeliverRound(t *testing.T) {
 	if e.DeliverRound(roundMsg("m2", "time-sensitive")); !e.events.Waiting()[1].Urgent {
 		t.Fatal("a time-sensitive round message is not urgent")
 	}
+	// A crash after the thread took it and before the queue did: the retry queues it.
+	lost, _, _ := e.thread.Add(capcomthread.Item{Kind: capcomthread.KindRound, Key: "round:m9", Text: "lost"})
+	if st, _ := e.DeliverRound(roundMsg("m9", "")); st != api.ChannelStateDuplicate || !e.events.Holds(lost.ID) {
+		t.Fatalf("the retry of a lost one: %s, held %v", st, e.events.Holds(lost.ID))
+	}
 	set[settings.CapcomEventsRoundMessages] = "false"
 	if st, r := e.DeliverRound(roundMsg("m3", "")); st != api.ChannelStateDeclined || r != "off" {
 		t.Fatalf("off: %s %s", st, r)

@@ -350,6 +350,9 @@ func (l *Link) handle(c *conn, m Message) {
 		running := ""
 		if t := m.RunningTurn(); t != nil {
 			l.st.Turn, l.st.Origin = t.Turn, t.Origin
+			// The turn's items are not known again after a reconnect: its origin says whether a
+			// user began it (9.4). An agent report's turn counts as a user turn then.
+			l.st.UserTurn = t.Origin == "user"
 			running = t.Turn
 		}
 		c.ready = true
@@ -596,7 +599,12 @@ func (l *Link) pump() {
 			}
 			c.sent = it.ID
 		}
-		if !ok || l.cfg.Events == nil {
+		l.mu.Lock()
+		busy := l.st.Turn != ""
+		l.mu.Unlock()
+		if !ok || l.cfg.Events == nil || busy {
+			// A batch never joins a running turn: outside text must not sit in a turn that may
+			// act (9.4). The turn's end wakes the pump.
 			continue
 		}
 		for _, b := range l.cfg.Events.Released() {

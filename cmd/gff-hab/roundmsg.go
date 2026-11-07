@@ -472,6 +472,12 @@ func (s *roundsService) adoptMessage(run rounds.Run) {
 func (s *roundsService) outcome(id, word, at string) {
 	s.goBg(func() {
 		run, ok := s.store.RunByMessage(id)
+		// Capcom's turn can end before the run records its accepted answer, which comes off
+		// the channels goroutine: wait a little for it.
+		for i := 0; ok && run.EndedAt == nil && i < 50; i++ {
+			time.Sleep(100 * time.Millisecond)
+			run, ok = s.store.RunByMessage(id)
+		}
 		if !ok || !awaitsOutcome(run) {
 			return
 		}

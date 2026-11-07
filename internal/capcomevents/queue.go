@@ -227,6 +227,23 @@ func (q *Queue) locLocked() *time.Location {
 	return q.cfg.Host
 }
 
+// Holds reports whether a thread item waits or is in a released batch.
+func (q *Queue) Holds(item string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, w := range q.st.Waiting {
+		if w.Item == item {
+			return true
+		}
+	}
+	for _, b := range q.st.Released {
+		if slices.Contains(b.Items, item) {
+			return true
+		}
+	}
+	return false
+}
+
 // Waiting returns the events that wait, oldest first.
 func (q *Queue) Waiting() []Event {
 	q.mu.Lock()
