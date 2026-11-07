@@ -477,6 +477,7 @@ produces several, and a list is faster to judge than a string of interruptions.
 | Session start | Host, project, folder, branch, harness, model if set, the seed |
 | Project set-up | Host, repository, branch, the bootstrap command the project declares |
 | Round on another host | Runner host, round name, mode, the trigger in plain words, project, harness and model if set, the prompt or command, run now |
+| Group plan (`groups.md` 3.2) | The task, project, lane target and fix in place, the brief, each item (after, review off, touches) with its members (role, name, host, harness and model), the trust rule, the warnings |
 | Proposal | Kind, project, title, body, source quote |
 
 ### 6.4 Built choices (task-ph00sdci)

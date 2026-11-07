@@ -74,12 +74,7 @@ struct ConfirmCardView: View {
         }
     }
 
-    private var title: String {
-        switch c.kind {
-        case .setup: return c.record == true ? "Project set-up" : "Set up a project?"
-        default: return c.record == true ? "Session start" : "Start a session?"
-        }
-    }
+    private var title: String { ConfirmCardContent.title(c) }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -114,14 +109,7 @@ struct ConfirmCardView: View {
             }
             .font(.callout)
             if let seed = s.seed, !seed.isEmpty {
-                Text(seed)
-                    .font(.callout)
-                    .lineLimit(editing ? nil : 6)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 6))
-                    .accessibilityLabel("Seed: \(seed)")
+                longText(seed, label: "Seed", clamp: !editing)
             }
         } else if let s = c.setup {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
@@ -131,7 +119,71 @@ struct ConfirmCardView: View {
                 row("Bootstrap", s.bootstrap, mono: true)
             }
             .font(.callout)
+        } else if let r = c.round {
+            factGrid(ConfirmCardContent.roundFacts(r))
+            if let p = r.round.prompt, !p.isEmpty {
+                longText(p, label: "Prompt")
+            }
+        } else if let g = c.group {
+            groupFacts(g)
         }
+    }
+
+    @ViewBuilder
+    private func groupFacts(_ g: ConfirmGroup) -> some View {
+        factGrid(ConfirmCardContent.groupFacts(g))
+        if let b = g.plan.brief, !b.isEmpty {
+            longText(b, label: "Brief")
+        }
+        ForEach(ConfirmCardContent.groupItems(g, home: card.habLabel), id: \.id) { item in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title.isEmpty ? item.id : "\(item.id): \(item.title)")
+                    .font(.callout.weight(.medium))
+                    .lineLimit(2)
+                ForEach(item.notes, id: \.self) { n in
+                    Text(n)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(item.members, id: \.self) { m in
+                    Text(m)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .textSelection(.enabled)
+            .accessibilityElement(children: .combine)
+        }
+        if !g.trust.isEmpty {
+            Text(g.trust)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(g.warnings ?? [], id: \.self) { w in
+            Label(w, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private func factGrid(_ facts: [ConfirmCardContent.Fact]) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+            ForEach(facts, id: \.label) { f in row(f.label, f.value, mono: f.mono) }
+        }
+        .font(.callout)
+    }
+
+    /// A seed, prompt or brief: six lines unless `clamp` is off.
+    private func longText(_ text: String, label: String, clamp: Bool = true) -> some View {
+        Text(text)
+            .font(.callout)
+            .lineLimit(clamp ? 6 : nil)
+            .textSelection(.enabled)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 6))
+            .accessibilityLabel("\(label): \(text)")
     }
 
     @ViewBuilder
@@ -219,7 +271,7 @@ struct ConfirmCardView: View {
             Text(ConfirmCenter.outcome(c))
                 .lineLimit(2)
             Spacer()
-            if let s = c.start?.harness {
+            if let s = c.start?.harness ?? c.round?.round.harness {
                 Text(harnessName(s))
                     .foregroundStyle(.secondary)
             }
