@@ -1,0 +1,104 @@
+{
+  "data": {
+    "answered_by": "answered_by-42",
+    "closed": "closed-41",
+    "created": "created-39",
+    "edited": true,
+    "expires_at": "expires_at-40",
+    "from": "from-4",
+    "group": {
+      "amend": true,
+      "group": "group-21",
+      "plan": {
+        "brief": "brief-23",
+        "items": [
+          {
+            "after": "after-29",
+            "brief": "brief-27",
+            "id": "id-25",
+            "review": "review-30",
+            "title": "title-26",
+            "touches": [
+              "touches-28"
+            ],
+            "x_unknown_field": "later"
+          }
+        ],
+        "lane": {
+          "fix_in_place": true,
+          "target": "target-36",
+          "x_unknown_field": "later"
+        },
+        "members": [
+          {
+            "harness": "harness-33",
+            "host": "host-32",
+            "item": "item-31",
+            "model": "model-34",
+            "name": "name-35",
+            "role": "reviewer",
+            "x_unknown_field": "later"
+          }
+        ],
+        "project": "project-24",
+        "title": "title-22",
+        "x_unknown_field": "later"
+      },
+      "trust": "trust-37",
+      "warnings": [
+        "warnings-38"
+      ],
+      "x_unknown_field": "later"
+    },
+    "id": "id-3",
+    "kind": "group",
+    "reason": "reason-48",
+    "record": true,
+    "result": {
+      "address": "address-47",
+      "host": "host-43",
+      "name": "name-45",
+      "pane": "pane-46",
+      "session": "session-44",
+      "x_unknown_field": "later"
+    },
+    "setup": {
+      "bootstrap": "bootstrap-20",
+      "branch": "branch-19",
+      "host": "host-17",
+      "repository": "repository-18",
+      "x_unknown_field": "later"
+    },
+    "start": {
+      "alias": "alias-13",
+      "branch": "branch-8",
+      "folder": "folder-6",
+      "group": "group-14",
+      "harness": "harness-9",
+      "host": "host-5",
+      "item": "item-16",
+      "model": "model-10",
+      "name": "name-11",
+      "project": "project-7",
+      "role": "role-15",
+      "seed": "seed-12",
+      "teammate": true,
+      "x_unknown_field": "later"
+    },
+    "state": "unknown",
+    "x_unknown_field": "later"
+  },
+  "id": "id-51",
+  "revision": 49,
+  "seq": 50,
+  "type": "confirm.requested",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
