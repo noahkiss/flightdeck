@@ -6586,6 +6586,7 @@ public struct PushKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let usage = PushKind(rawValue: "usage")
     public static let round = PushKind(rawValue: "round")
     public static let trust = PushKind(rawValue: "trust")
+    public static let capcom = PushKind(rawValue: "capcom")
 }
 
 public struct PushRegisterParams: Codable, Sendable, Hashable {

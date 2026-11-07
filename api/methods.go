@@ -268,7 +268,7 @@ var Enums = map[string][]string{
 	"ChatEvent":       {"compaction", "permission", "interrupt", "command", "notice", "reset", "unknown"},
 	"PlanStepStatus":  {"pending", "in_progress", "done"},
 	"PushEnvironment": {"development", "production"},
-	"PushKind":        {"permission", "question", "auth", "error", "done", "usage", "round", "trust"},
+	"PushKind":        {"permission", "question", "auth", "error", "done", "usage", "round", "trust", "capcom"},
 	"NoticeLevel":     {"passive", "active", "time-sensitive"},
 	"CommandState":    {"running", "done", "unknown"},
 	// Sets added for rich content (app.md 4.7).

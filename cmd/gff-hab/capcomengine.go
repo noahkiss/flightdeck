@@ -49,6 +49,7 @@ type capcomEngine struct {
 	config   func() capcom.ServiceConfig
 	publish  func(structure.Event)
 	notify   func(title, body string)
+	message  func(item capcomthread.Item, session string)         // pushes a Capcom message (7.6); nil: none
 	attached func(session string, ids []string) ([]string, error) // attachment ids to stored image paths
 	device   string
 	logf     func(string, ...any)
@@ -87,7 +88,14 @@ type capcomEngineSetup struct {
 	approval   func() time.Duration
 	publish    func(structure.Event)
 	notify     func(title, body string)
+	message    func(item capcomthread.Item, session string)
 	logf       func(string, ...any)
+}
+
+// pushesMessage reports whether a thread item is a Capcom message, the one kind that pushes
+// (7.6): Capcom's own text, not a card, note, tools line or the user's message.
+func pushesMessage(it capcomthread.Item) bool {
+	return it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorCapcom && strings.TrimSpace(it.Text) != ""
 }
 
 // newCapcomEngine opens the thread and the engine record. It starts nothing: start does, when
@@ -123,13 +131,20 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		s.logf("capcom: %s was not readable and was set aside: %v", capcomengine.StateFile, err)
 	}
 	e := &capcomEngine{dir: dir, store: s.store, svc: s.svc, thread: th, rec: rec, config: config, publish: s.publish,
-		notify: s.notify, device: s.device, logf: s.logf, agents: s.agents}
+		notify: s.notify, message: s.message, device: s.device, logf: s.logf, agents: s.agents}
 	if s.logbook != nil {
 		e.memory = &capcomMemory{svc: s.logbook, host: s.host}
 	}
 	th.Watch(func(it capcomthread.Item) {
 		e.publish(structure.Event{Type: api.EventCapcomItem, ID: it.ID, Data: apiItem(it)})
 		e.publishChat(it)
+		// A Capcom message is a communication push (7.6). The thread notifies a capcom
+		// message once, when it is added: a repeated reply is dropped before it.
+		if e.message != nil && pushesMessage(it) {
+			if session := e.Session(); session != "" {
+				e.message(it, session)
+			}
+		}
 	})
 	e.link = capcomengine.NewLink(capcomengine.LinkConfig{
 		Thread: th, Record: rec,

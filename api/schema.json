@@ -11664,7 +11664,8 @@
           "done",
           "usage",
           "round",
-          "trust"
+          "trust",
+          "capcom"
         ]
       },
       "PushRegisterParams": {

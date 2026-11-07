@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
+	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/service"
 )
 
@@ -94,5 +95,24 @@ func TestMCPClearsCredential(t *testing.T) {
 	}
 	if strings.Contains(string(out), "planted-") {
 		t.Fatal("a child's environment holds the credential")
+	}
+}
+
+// Only Capcom's own messages push (capcom-service.md 7.6).
+func TestCapcomPushesMessage(t *testing.T) {
+	for _, c := range []struct {
+		it   capcomthread.Item
+		want bool
+	}{
+		{capcomthread.Item{Kind: capcomthread.KindMessage, Author: capcomthread.Author{Kind: capcomthread.AuthorCapcom}, Text: "hi"}, true},
+		{capcomthread.Item{Kind: capcomthread.KindMessage, Author: capcomthread.Author{Kind: capcomthread.AuthorCapcom}, Text: "  "}, false},
+		{capcomthread.Item{Kind: capcomthread.KindMessage, Author: capcomthread.Author{Kind: capcomthread.AuthorUser}, Text: "hi"}, false},
+		{capcomthread.Item{Kind: capcomthread.KindCard, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: "card"}, false},
+		{capcomthread.Item{Kind: capcomthread.KindNote, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: "note"}, false},
+		{capcomthread.Item{Kind: capcomthread.KindTools, Author: capcomthread.Author{Kind: capcomthread.AuthorCapcom}, Text: "x"}, false},
+	} {
+		if got := pushesMessage(c.it); got != c.want {
+			t.Errorf("%+v: %v", c.it, got)
+		}
 	}
 }
