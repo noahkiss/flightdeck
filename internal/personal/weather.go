@@ -126,8 +126,10 @@ func (w *Weather) Get(ctx context.Context, q WeatherQuery) (Report, error) {
 			return Report{}, fmt.Errorf("weather kind %q: want one of %s", k, strings.Join(WeatherKinds, ", "))
 		}
 	}
-	if q.Country == "" {
-		// Alerts need a country; without one they are left out, not refused.
+	noAlerts := false
+	if q.Country == "" && slices.Contains(kinds, KindAlerts) {
+		// Alerts need a country; without one they are left out, not refused, and the text says so.
+		noAlerts = true
 		kinds = slices.DeleteFunc(slices.Clone(kinds), func(k string) bool { return k == KindAlerts })
 	}
 	lat, lon := round2(q.Lat), round2(q.Lon)
@@ -159,7 +161,11 @@ func (w *Weather) Get(ctx context.Context, q WeatherQuery) (Report, error) {
 		w.prune(life)
 		w.mu.Unlock()
 	}
-	return Report{Data: got, Text: weatherText(got, kinds, q.Zone, w.now())}, nil
+	text := weatherText(got, kinds, q.Zone, w.now())
+	if noAlerts {
+		text = "Alerts: left out, no country given.\n" + text
+	}
+	return Report{Data: got, Text: text}, nil
 }
 
 // prune drops cache entries past their life. The caller holds w.mu.
