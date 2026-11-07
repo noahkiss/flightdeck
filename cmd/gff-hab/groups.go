@@ -139,6 +139,7 @@ type groupsService struct {
 	syncWant map[string]uint64
 	synced   map[string]uint64
 	syncing  map[string]bool
+	peerSeen map[string]string // group and member name: the peer copy's SeenAt last asked about
 	closed   bool
 	wg       sync.WaitGroup
 	stop     chan struct{}
@@ -163,7 +164,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	}
 	s := &groupsService{cfg: cfg, st: st, groups: map[string]*api.Group{}, running: map[string]bool{}, again: map[string]bool{},
 		panes: map[string]string{}, syncKey: map[string]string{}, syncWant: map[string]uint64{}, synced: map[string]uint64{},
-		syncing: map[string]bool{}, stop: make(chan struct{})}
+		syncing: map[string]bool{}, peerSeen: map[string]string{}, stop: make(chan struct{})}
 	s.laneInit()
 	loaded, problems := st.Load(cfg.now())
 	for _, p := range problems {
@@ -357,19 +358,13 @@ func (s *groupsService) syncMembers(id string) {
 
 // pushSync sends one group.sync to a member's hab over the link this hab dialed.
 func (s *groupsService) pushSync(cl api.CatalogList, dev string, p api.GroupSyncParams) bool {
-	label := ""
-	for _, h := range cl.Hosts {
-		if !h.Own && h.Catalog.DeviceID == dev {
-			label = h.Label
-		}
-	}
-	l, ok := s.link(label)
-	if label == "" || !ok || !l.Online || l.Caller == nil {
+	c, label, err := s.peerCaller(cl, dev)
+	if err != nil {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := l.Caller.Call(ctx, "group.sync", p, &api.Empty{}); err != nil {
+	if err := c.Call(ctx, "group.sync", p, &api.Empty{}); err != nil {
 		s.cfg.logf("groups: %s: group.sync to %s: %v", p.Group, label, err)
 		return false
 	}
@@ -1061,11 +1056,9 @@ func (s *groupsService) pass(id string) {
 			g.Leftovers = appendOnce(g.Leftovers, fmt.Sprintf("member %s on %s, folder %s", m.Name, m.Host, m.Folder))
 			s.saveLocked(g)
 			s.mu.Unlock()
-			if res.device == s.cfg.self && s.cfg.closePane != nil && s.boolSetting(settings.GroupCloseMembers, true) {
+			if res.Pane != "" && s.boolSetting(settings.GroupCloseMembers, true) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				if err := s.cfg.closePane(ctx, res.Pane); err != nil {
-					s.cfg.logf("groups: %s: closing pane %s: %v", g.ID, res.Pane, err)
-				}
+				s.closeMemberPane(ctx, s.cfg.catalog(), res.device, res.Pane)
 				cancel()
 			}
 			return
@@ -1438,6 +1431,7 @@ func (s *groupsService) watch() {
 		s.mu.Unlock()
 		for _, id := range ids {
 			s.refresh(id)
+			s.checkPeerMembers(id)
 			s.syncMembers(id)
 		}
 	}
@@ -1497,12 +1491,7 @@ func (s *groupsService) refresh(id string) {
 		switch {
 		case !ok:
 			m.State, changed = groups.MemberExited, true
-			if m.Role == groups.RoleLead {
-				if ii := groups.ItemIndex(*g, m.Item); ii >= 0 && !inLane(g.Items[ii].State) {
-					g.Items[ii].State, g.Items[ii].Reason = groups.ItemStalled, "its lead's session was closed"
-					s.tellLocked(g, fmt.Sprintf("Lead %s of item %s was closed. The item is stalled; group_retry starts a new lead.", m.Name, m.Item), "Flightdeck")
-				}
-			}
+			s.stallLocked(g, *m)
 		case ss.State == "exited":
 			m.Agent = "exited"
 		}
@@ -1514,6 +1503,126 @@ func (s *groupsService) refresh(id string) {
 	if changed {
 		s.saveLocked(g)
 		go s.kick(g.ID)
+	}
+}
+
+// checkPeerMembers asks a peer hab about its running members that its latest catalog copy no
+// longer lists as agents (groups.md 14): a session that is gone was closed, which stalls a
+// lead's item as on this hab; one that exited shows exited. A member is asked about once per
+// copy, over the link this hab dialed; a hab offline is not asked, and its members stay as
+// they were (stale on the card).
+func (s *groupsService) checkPeerMembers(id string) {
+	cl := s.cfg.catalog()
+	copies := map[string]api.CatalogEntry{}
+	for _, h := range cl.Hosts {
+		if !h.Own {
+			copies[h.Catalog.DeviceID] = h
+		}
+	}
+	s.mu.Lock()
+	g := s.groups[id]
+	if g == nil || s.closed || !groups.Live(*g) {
+		s.mu.Unlock()
+		return
+	}
+	ask := map[string][]string{} // device: member names
+	seen := map[string]string{}  // member key: the copy's SeenAt asked at
+	for _, m := range g.Members {
+		if m.Device == "" || m.Device == s.cfg.self || m.Session == "" || m.State != groups.MemberRunning {
+			continue
+		}
+		h, ok := copies[m.Device]
+		if !ok || slices.ContainsFunc(h.Catalog.Agents, func(a api.CatalogAgent) bool { return a.ID == m.Session }) {
+			continue
+		}
+		key := id + "\x00" + m.Name
+		if s.peerSeen[key] == h.SeenAt {
+			continue
+		}
+		seen[key] = h.SeenAt
+		ask[m.Device] = append(ask[m.Device], m.Name)
+	}
+	s.mu.Unlock()
+	for dev, names := range ask {
+		sessions, err := s.peerSessions(cl, dev)
+		if err != nil {
+			continue // asked again with the next copy
+		}
+		s.mu.Lock()
+		g = s.groups[id]
+		if g == nil || !groups.Live(*g) {
+			s.mu.Unlock()
+			return
+		}
+		changed := false
+		for _, name := range names {
+			s.peerSeen[id+"\x00"+name] = seen[id+"\x00"+name]
+			i := groups.MemberIndex(*g, name)
+			if i < 0 || g.Members[i].State != groups.MemberRunning {
+				continue
+			}
+			m := &g.Members[i]
+			ss, ok := sessions[m.Session]
+			switch {
+			case !ok:
+				m.State, changed = groups.MemberExited, true
+				s.stallLocked(g, *m)
+			case ss.State == "exited":
+				m.Agent = "exited"
+			}
+		}
+		if changed {
+			s.saveLocked(g)
+			go s.kick(id)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// peerSessions reads a peer hab's sessions by id over the link this hab dialed.
+func (s *groupsService) peerSessions(cl api.CatalogList, dev string) (map[string]api.Session, error) {
+	c, label, err := s.peerCaller(cl, dev)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var st api.StructureResult
+	if err := c.Call(ctx, "structure.get", api.StructureGetParams{}, &st); err != nil {
+		s.cfg.logf("groups: reading the sessions on %s: %v", label, err)
+		return nil, err
+	}
+	out := map[string]api.Session{}
+	for _, ss := range st.Sessions {
+		out[ss.ID] = ss
+	}
+	return out, nil
+}
+
+// peerCaller is the link this hab dialed to the hab with device id dev, while it is online.
+func (s *groupsService) peerCaller(cl api.CatalogList, dev string) (api.Caller, string, error) {
+	label := ""
+	for _, h := range cl.Hosts {
+		if !h.Own && h.Catalog.DeviceID == dev {
+			label = h.Label
+		}
+	}
+	l, ok := s.link(label)
+	if label == "" || !ok || !l.Online || l.Caller == nil {
+		return nil, label, fmt.Errorf("the hab %s is offline", label)
+	}
+	return l.Caller, label, nil
+}
+
+// stallLocked stalls the item of a lead whose session was closed, and tells the coordinator
+// (groups.md 14). The caller holds s.mu and saves the record.
+func (s *groupsService) stallLocked(g *api.Group, m api.GroupMember) {
+	if m.Role != groups.RoleLead {
+		return
+	}
+	if ii := groups.ItemIndex(*g, m.Item); ii >= 0 && !inLane(g.Items[ii].State) {
+		g.Items[ii].State, g.Items[ii].Reason = groups.ItemStalled, "its lead's session was closed"
+		s.tellLocked(g, fmt.Sprintf("Lead %s of item %s was closed. The item is stalled; group_retry starts a new lead.", m.Name, m.Item), "Flightdeck")
 	}
 }
 
@@ -1698,10 +1807,10 @@ func (s *groupsService) UsagePause(id string, on bool, until string) (api.Group,
 	return g, err
 }
 
-// Close ends the group at the user's word (groups.md 5.2, 7.5): no new starts and no more
-// lands; with group.close_members on, its idle members on this hab are closed, and the end
-// lists what is left over. Members on other habs keep running and are listed. The coordinator
-// gets one message with the result, which a Capcom coordinator sums up in its thread (12.1).
+// Close ends the group at the user's word (groups.md 5.2, 5.8, 7.5): no new starts and no
+// more lands; with group.close_members on, its idle members are closed, on this hab and over the
+// links to peers that are online, and the end lists what is left over. The coordinator gets one
+// message with the result, which a Capcom coordinator sums up in its thread (12.1).
 func (s *groupsService) Close(ctx context.Context, id string) (api.Group, error) {
 	return s.closeGroup(ctx, id, false)
 }
@@ -1722,6 +1831,15 @@ func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator
 	case !groups.Live(*g) || g.State == groups.StateConfirming || g.State == groups.StateEnding:
 		err = control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
 	}
+	remote := map[string][]string{} // device: idle members' session ids on that hab
+	if err == nil && s.boolSetting(settings.GroupCloseMembers, true) {
+		for _, m := range g.Members {
+			if m.Device != "" && m.Device != s.cfg.self && m.Session != "" && m.State == groups.MemberRunning &&
+				(m.Agent == "idle" || m.Agent == "") {
+				remote[m.Device] = append(remote[m.Device], m.Session)
+			}
+		}
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return api.Group{}, err
@@ -1733,7 +1851,40 @@ func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator
 	if _, err := s.end(id, head); err != nil {
 		return api.Group{}, control.Errorf(api.ErrorKindConflict, "%v", err)
 	}
+	// Idle members on other habs close over the link this hab dialed; a hab offline keeps
+	// its members, listed as left over.
+	cl := s.cfg.catalog()
+	for dev, ids := range remote {
+		sessions, err := s.peerSessions(cl, dev)
+		if err != nil {
+			continue
+		}
+		for _, sid := range ids {
+			if ss, ok := sessions[sid]; ok && ss.Pane != "" {
+				s.closeMemberPane(ctx, cl, dev, ss.Pane)
+			}
+		}
+	}
 	return s.Get(id)
+}
+
+// closeMemberPane closes a member's pane: on this hab, or over the link to its hab.
+func (s *groupsService) closeMemberPane(ctx context.Context, cl api.CatalogList, dev, pane string) {
+	var err error
+	if dev == s.cfg.self {
+		if s.cfg.closePane == nil {
+			return
+		}
+		err = s.cfg.closePane(ctx, pane)
+	} else {
+		var c api.Caller
+		if c, _, err = s.peerCaller(cl, dev); err == nil {
+			err = c.Call(ctx, "pane.close", api.PaneRef{Pane: pane}, &api.Empty{})
+		}
+	}
+	if err != nil {
+		s.cfg.logf("groups: closing pane %s on %s: %v", pane, dev, err)
+	}
 }
 
 // Retry starts a failed member again, or a new start for an item whose lead was closed: inside
