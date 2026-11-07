@@ -62,7 +62,7 @@ type groupsConfig struct {
 	supervisor *supervisorRef
 	noteName   func(name, text string) error
 	now        func() time.Time
-	logf    func(string, ...any)
+	logf       func(string, ...any)
 }
 
 // groupsService keeps the groups this hab is the home of.

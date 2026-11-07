@@ -163,4 +163,6 @@ func withSeq(res any, seq uint64) any {
 	return res
 }
 
-func isGroupMethod(m string) bool { return strings.HasPrefix(m, "group.") || strings.HasPrefix(m, "member.") }
+func isGroupMethod(m string) bool {
+	return strings.HasPrefix(m, "group.") || strings.HasPrefix(m, "member.")
+}
