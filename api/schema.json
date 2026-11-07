@@ -880,7 +880,7 @@
       "params": [
         {
           "name": "choice",
-          "description": "allow or deny a permission; answer a question with text.",
+          "description": "allow or deny a permission; answer a question with text. allow_site: a Capcom web fetch card only (capcom-service.md 5.3): allow, and keep the URL's site so later fetches on it need no card.",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/ApprovalChoice"
@@ -2518,6 +2518,30 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.site.remove",
+      "summary": "Take a site off the sites the user allowed with Allow this site; the next web fetch on it raises a card again. not_found when the list does not hold it (capcom-service.md 5.3). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "site",
+          "description": "A host, as capcom.status lists it.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomSiteParams"
       }
     },
     {
@@ -4670,7 +4694,7 @@
         "properties": {
           "choice": {
             "$ref": "#/components/schemas/ApprovalChoice",
-            "description": "allow or deny a permission; answer a question with text."
+            "description": "allow or deny a permission; answer a question with text. allow_site: a Capcom web fetch card only (capcom-service.md 5.3): allow, and keep the URL's site so later fetches on it need no card."
           },
           "pane": {
             "type": "string"
@@ -4698,7 +4722,8 @@
         "x-known-values": [
           "allow",
           "deny",
-          "answer"
+          "answer",
+          "allow_site"
         ]
       },
       "AttachmentData": {
@@ -5386,6 +5411,13 @@
             "type": "string",
             "description": "The service session's id."
           },
+          "sites": {
+            "type": "array",
+            "description": "The sites the user allowed with Allow this site (5.3): a web fetch on one needs no card. Hosts, lowercase, sorted.",
+            "items": {
+              "type": "string"
+            }
+          },
           "state": {
             "type": "string",
             "description": "off, running, paused or error."
@@ -5404,6 +5436,18 @@
           "connected",
           "folder",
           "sdk_sessions"
+        ]
+      },
+      "CapcomSiteParams": {
+        "type": "object",
+        "properties": {
+          "site": {
+            "type": "string",
+            "description": "A host, as capcom.status lists it."
+          }
+        },
+        "required": [
+          "site"
         ]
       },
       "CapcomThreadPage": {

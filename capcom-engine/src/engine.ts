@@ -12,7 +12,7 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { ENGINE_TOKEN_VAR, engineToken, parseHabAddr } from './addr.js';
-import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, textOf, toolSummary, UrlSet } from './policy.js';
+import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, siteOf, textOf, toolSummary, UrlSet } from './policy.js';
 import { Route, type Msg } from './route.js';
 import { configDir, findTranscript, handedIds, MARKER_RE } from './transcript.js';
 import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
@@ -115,6 +115,8 @@ export class Engine {
   private ready = false; // start check passed and the probe answered
   private handed = new Set<string>();
   private userUrls = new UrlSet();
+  // Sites the user allowed with "Allow this site" (5.3), from hello and sites.
+  private sites = new Set<string>();
   private uuidToItem = new Map<string, string>();
   private uuidItems = new Map<string, Item>();
   private untaken = new Set<string>(); // uuids handed, not yet taken
@@ -167,6 +169,7 @@ export class Engine {
   // ---- gff-hab messages ----
 
   private onHello(m: Msg): Record<string, unknown> {
+    this.setSites(m.sites);
     const s = (m.settings ?? {}) as Record<string, unknown>;
     if (typeof s.route_backoff_max_ms === 'number') this.route.setBackoffMax(s.route_backoff_max_ms);
     this.settings = parseSettings(s);
@@ -197,6 +200,10 @@ export class Engine {
     return ready;
   }
 
+  private setSites(v: unknown): void {
+    this.sites = new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()) : []);
+  }
+
   // A gff-hab that restarted holds no open card: ask again for each.
   private resendApprovals(): void {
     for (const a of this.approvals.values()) this.send('approval.request', a.body);
@@ -221,6 +228,9 @@ export class Engine {
         break;
       case 'context':
         this.onContext(m);
+        break;
+      case 'sites':
+        this.setSites(m.sites);
         break;
       case 'pace':
         // The governor's answers belong to a later stage.
@@ -822,6 +832,8 @@ export class Engine {
 
   private urlSeen(url: string): boolean {
     const t = this.turn;
+    const site = siteOf(url);
+    if (site && this.sites.has(site)) return true;
     return this.userUrls.has(url) || (!!t && (t.urls.has(url) || t.approved.has(url)));
   }
 

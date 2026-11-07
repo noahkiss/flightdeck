@@ -26,9 +26,10 @@ const (
 )
 
 const (
-	ApprovalChoiceAllow  ApprovalChoice = "allow"
-	ApprovalChoiceDeny   ApprovalChoice = "deny"
-	ApprovalChoiceAnswer ApprovalChoice = "answer"
+	ApprovalChoiceAllow     ApprovalChoice = "allow"
+	ApprovalChoiceDeny      ApprovalChoice = "deny"
+	ApprovalChoiceAnswer    ApprovalChoice = "answer"
+	ApprovalChoiceAllowSite ApprovalChoice = "allow_site"
 )
 
 const (
@@ -1138,6 +1139,13 @@ func (c Client) CapcomStatus(ctx context.Context, params CapcomServiceParams) (C
 func (c Client) CapcomPause(ctx context.Context, params CapcomServiceParams) (CapcomServiceStatus, error) {
 	var result CapcomServiceStatus
 	err := c.Caller.Call(ctx, "capcom.pause", params, &result)
+	return result, err
+}
+
+// CapcomSiteRemove calls capcom.site.remove. Take a site off the sites the user allowed with Allow this site; the next web fetch on it raises a card again. not_found when the list does not hold it (capcom-service.md 5.3). Needs the capcom-thread capability.
+func (c Client) CapcomSiteRemove(ctx context.Context, params CapcomSiteParams) (CapcomServiceStatus, error) {
+	var result CapcomServiceStatus
+	err := c.Caller.Call(ctx, "capcom.site.remove", params, &result)
 	return result, err
 }
 

@@ -328,13 +328,13 @@ func TestLinkApprovals(t *testing.T) {
 	if st.Approval == nil || st.Approval.Request != "r1" || !st.Approval.Expires.Equal(h.clock.Now().Add(2*time.Minute)) {
 		t.Fatalf("approval %+v", st.Approval)
 	}
-	if err := h.link.Answer("r1", true, "dev1"); err != nil {
+	if err := h.link.Answer("r1", ChoiceAllow, "dev1"); err != nil {
 		t.Fatal(err)
 	}
 	if m := e.next(); m.Type != TApprovalAnswer || m.Request != "r1" || m.Allow == nil || !*m.Allow {
 		t.Fatalf("answer %+v", m)
 	}
-	if err := h.link.Answer("r1", false, "dev2"); !errors.Is(err, ErrNotFound) {
+	if err := h.link.Answer("r1", ChoiceDeny, "dev2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second answer: %v", err)
 	}
 	e.send(Message{Type: TApprovalRequest, Request: "r2", Tool: "WebFetch"})
@@ -365,6 +365,77 @@ func TestLinkApprovals(t *testing.T) {
 	e.send(Message{Type: TApprovalRequest, Request: "r1", Tool: "WebFetch"})
 	if m := e.next(); m.Type != TApprovalAnswer || m.Request != "r1" || !*m.Allow {
 		t.Fatalf("re-ask %+v", m)
+	}
+}
+
+// "Allow this site" (5.3): a WebFetch card with a URL offers it; the answer allows the fetch,
+// keeps the site, hands the engine the list before the answer, and the next hello carries it.
+// A card with no URL does not offer it; RemoveSite takes it off and tells the engine.
+func TestLinkAllowSite(t *testing.T) {
+	h := newHarness(t)
+	e, hello := h.connect()
+	if len(hello.Sites) != 0 {
+		t.Fatalf("hello sites %v", hello.Sites)
+	}
+	e.send(readyMsg())
+	e.send(Message{Type: TApprovalRequest, Request: "r1", Tool: "WebFetch", Input: json.RawMessage(`{"url":"https://WWW.Example.com:8443/menu"}`)})
+	e.send(Message{Type: TApprovalRequest, Request: "r2", Tool: "WebFetch", Input: json.RawMessage(`{"prompt":"x"}`)})
+	e.acked(e.seq)
+	choices := map[string][]string{}
+	page, _ := h.thread.Page("", 0)
+	for _, it := range page {
+		if it.Card != nil {
+			choices[it.Card.Ref] = it.Card.Choices
+		}
+	}
+	if got := strings.Join(choices["r1"], ","); got != "allow,allow_site,deny" {
+		t.Fatalf("r1 choices %s", got)
+	}
+	if got := strings.Join(choices["r2"], ","); got != "allow,deny" {
+		t.Fatalf("r2 choices %s", got)
+	}
+	if err := h.link.Answer("r2", ChoiceAllowSite, "dev1"); !errors.Is(err, ErrChoice) {
+		t.Fatalf("allow_site on a card with no URL: %v", err)
+	}
+	if err := h.link.Answer("r1", "maybe", "dev1"); !errors.Is(err, ErrChoice) {
+		t.Fatalf("unknown choice: %v", err)
+	}
+	if err := h.link.Answer("r1", ChoiceAllowSite, "dev1"); err != nil {
+		t.Fatal(err)
+	}
+	if m := e.next(); m.Type != TSites || strings.Join(m.Sites, ",") != "example.com" {
+		t.Fatalf("sites %+v", m)
+	}
+	if m := e.next(); m.Type != TApprovalAnswer || m.Request != "r1" || !*m.Allow {
+		t.Fatalf("answer %+v", m)
+	}
+	if got := h.link.Sites(); strings.Join(got, ",") != "example.com" {
+		t.Fatalf("kept %v", got)
+	}
+	e.c.Close()
+	waitFor(t, "offline", func() bool { return !h.link.Status().Connected })
+	e2, hello2 := h.connect()
+	if strings.Join(hello2.Sites, ",") != "example.com" {
+		t.Fatalf("hello after reconnect %v", hello2.Sites)
+	}
+	e2.send(readyMsg())
+	if err := h.link.RemoveSite("www.EXAMPLE.com"); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		m := e2.next()
+		if m.Type == TSites {
+			if len(m.Sites) != 0 {
+				t.Fatalf("after remove %v", m.Sites)
+			}
+			break
+		}
+	}
+	if err := h.link.RemoveSite("example.com"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second remove: %v", err)
+	}
+	if len(h.rec.Get().Sites) != 0 {
+		t.Fatal("record keeps the site")
 	}
 }
 

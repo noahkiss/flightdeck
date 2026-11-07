@@ -109,7 +109,7 @@ public struct AnswerVia: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct ApprovalAnswerParams: Codable, Sendable, Hashable {
-    /// allow or deny a permission; answer a question with text.
+    /// allow or deny a permission; answer a question with text. allow_site: a Capcom web fetch card only (capcom-service.md 5.3): allow, and keep the URL's site so later fetches on it need no card.
     public var choice: ApprovalChoice
     public var pane: String
     /// The request id from the pane's agent state.
@@ -142,6 +142,7 @@ public struct ApprovalChoice: RawRepresentable, Codable, Sendable, Hashable {
     public static let allow = ApprovalChoice(rawValue: "allow")
     public static let deny = ApprovalChoice(rawValue: "deny")
     public static let answer = ApprovalChoice(rawValue: "answer")
+    public static let allowSite = ApprovalChoice(rawValue: "allow_site")
 }
 
 public struct AttachmentData: Codable, Sendable, Hashable {
@@ -761,6 +762,8 @@ public struct CapcomServiceStatus: Codable, Sendable, Hashable {
     public var seq: UInt64
     /// The service session's id.
     public var session: String?
+    /// The sites the user allowed with Allow this site (5.3): a web fetch on one needs no card. Hosts, lowercase, sorted.
+    public var sites: [String]?
     /// off, running, paused or error.
     public var state: String
     /// The running turn. Absent: idle.
@@ -775,12 +778,13 @@ public struct CapcomServiceStatus: Codable, Sendable, Hashable {
         case sdkSessions = "sdk_sessions"
         case seq = "seq"
         case session = "session"
+        case sites = "sites"
         case state = "state"
         case turn = "turn"
         case version = "version"
     }
 
-    public init(connected: Bool, engine: String? = nil, folder: String, reason: String? = nil, sdkSessions: [CapcomSDKSession], seq: UInt64, session: String? = nil, state: String, turn: String? = nil, version: String? = nil) {
+    public init(connected: Bool, engine: String? = nil, folder: String, reason: String? = nil, sdkSessions: [CapcomSDKSession], seq: UInt64, session: String? = nil, sites: [String]? = nil, state: String, turn: String? = nil, version: String? = nil) {
         self.connected = connected
         self.engine = engine
         self.folder = folder
@@ -788,9 +792,23 @@ public struct CapcomServiceStatus: Codable, Sendable, Hashable {
         self.sdkSessions = sdkSessions
         self.seq = seq
         self.session = session
+        self.sites = sites
         self.state = state
         self.turn = turn
         self.version = version
+    }
+}
+
+public struct CapcomSiteParams: Codable, Sendable, Hashable {
+    /// A host, as capcom.status lists it.
+    public var site: String
+
+    enum CodingKeys: String, CodingKey {
+        case site = "site"
+    }
+
+    public init(site: String) {
+        self.site = site
     }
 }
 
@@ -9357,6 +9375,8 @@ public enum HabMethods {
     public static let capcomStatus = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.status")
     /// Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.
     public static let capcomPause = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.pause")
+    /// Take a site off the sites the user allowed with Allow this site; the next web fetch on it raises a card again. not_found when the list does not hold it (capcom-service.md 5.3). Needs the capcom-thread capability.
+    public static let capcomSiteRemove = HabMethod<CapcomSiteParams, CapcomServiceStatus>(name: "capcom.site.remove")
     /// Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.
     public static let capcomResume = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.resume")
     /// Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.
