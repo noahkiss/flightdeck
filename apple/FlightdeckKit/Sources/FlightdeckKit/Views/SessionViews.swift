@@ -119,8 +119,8 @@ public struct SessionView: View {
         Group {
             if compact {
                 Group {
-                    switch mode {
-                    case .chat: ChatView(model: model, openTerminal: { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                    switch model.context.isCapcomService ? .chat : mode {
+                    case .chat: ChatView(model: model, openTerminal: model.context.isCapcomService ? nil : { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
                     case .terminal: terminal.make(model.target)
                     }
                 }
@@ -128,14 +128,17 @@ public struct SessionView: View {
                 // terminal's own controls never push it off (app.md 11).
                 .navigationTitle(model.context.title)
                 .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        Picker("View", selection: $mode) {
-                            ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                    // The Capcom service has no pane: no Chat and Terminal switch (capcom-service.md 7.6).
+                    if !model.context.isCapcomService {
+                        ToolbarItem(placement: .principal) {
+                            Picker("View", selection: $mode) {
+                                ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .fixedSize()
                         }
-                        .pickerStyle(.segmented)
-                        .fixedSize()
                     }
-                    if model.target.session != nil, !model.context.isConsole {
+                    if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
                         ToolbarItem(placement: .secondaryAction) { consoleButton }
                     }
                     ToolbarItem(placement: .secondaryAction) {
@@ -172,19 +175,21 @@ public struct SessionView: View {
                         ChatHeader(context: model.context)
                         Spacer()
                         if model.context.isCapcom {
-                            Picker("View", selection: $mode) {
-                                ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                            if !model.context.isCapcomService {
+                                Picker("View", selection: $mode) {
+                                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .fixedSize()
                             }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
                             newConversationButton
                                 .labelStyle(.iconOnly)
                                 .buttonStyle(.borderless)
                         }
                         VoiceButton(model: model, shown: $voiceShown)
                             .buttonStyle(.borderless)
-                        if model.target.session != nil, !model.context.isConsole {
+                        if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
                             consoleButton
                                 .buttonStyle(.borderless)
                         }
@@ -208,7 +213,7 @@ public struct SessionView: View {
                         if model.context.isCapcom {
                             // The Capcom view (app.md 4.10): the conversation fills the width;
                             // the terminal is one switch away.
-                            switch mode {
+                            switch model.context.isCapcomService ? .chat : mode {
                             case .chat: ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
                             case .terminal: terminal.make(model.target)
                             }

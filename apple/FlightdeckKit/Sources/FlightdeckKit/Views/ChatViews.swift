@@ -37,7 +37,12 @@ public struct ChatView: View {
         VStack(spacing: 0) {
             ChatBanners(context: model.context, load: model.load, openTerminal: openTerminal)
             SessionConfirmCards(target: model.target)
-            ChatTranscript(model: model)
+            if let thread = model.thread {
+                // The Capcom service (capcom-service.md 7.6): the thread replaces the transcript.
+                CapcomThreadView(thread: thread, model: model)
+            } else {
+                ChatTranscript(model: model)
+            }
             Divider()
             ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
         }
@@ -825,7 +830,7 @@ struct ComposerView: View {
                     #if os(macOS)
                     .onSubmit(send)
                     #endif
-                if model.context.agentStatus == .working && model.context.online {
+                if (model.context.agentStatus == .working || model.thread?.typing == true) && model.context.online {
                     Button {
                         Task { await model.interrupt() }
                     } label: {

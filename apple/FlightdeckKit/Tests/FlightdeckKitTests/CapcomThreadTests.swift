@@ -144,6 +144,24 @@ final class CapcomThreadTests: XCTestCase {
         await f.setActive(false)
     }
 
+    func testAllowedSitesInSettings() async throws {
+        let a = await serviceHab("bench")
+        await a.setCapcomSites(["example.com", "example.org"])
+        let f = await fleet([a])
+        await f.capcom.loadSites()
+        XCTAssertEqual(f.capcom.sites, ["example.com", "example.org"])
+        await f.capcom.removeSite("example.com")
+        XCTAssertEqual(f.capcom.sites, ["example.org"])
+        let kept = await a.capcomSites
+        XCTAssertEqual(kept, ["example.org"])
+        // Already gone on the hab: it goes from the list too.
+        await a.setCapcomSites([])
+        await f.capcom.removeSite("example.org")
+        XCTAssertEqual(f.capcom.sites, [])
+        XCTAssertNil(f.capcom.sitesFailure)
+        await f.setActive(false)
+    }
+
     func testEarlierThreadsFromAnotherHost() async throws {
         let a = await serviceHab("bench")
         let b = await serviceHab("attic")

@@ -28,6 +28,33 @@ extension CapcomCenter {
         earlier = out
     }
 
+    /// Reads the allowed sites from the home's `capcom.status` (5.3).
+    public func loadSites() async {
+        guard case .ready(let id) = entry, let conn = habs.connection(id), await conn.has(capability: CapcomThread.capability) else {
+            sites = nil
+            return
+        }
+        do {
+            sites = try await conn.call(HabMethods.capcomStatus, CapcomServiceParams()).sites ?? []
+            sitesFailure = nil
+        } catch {
+            sitesFailure = ChatModel.refusal(error)
+        }
+    }
+
+    /// Takes a site off the list (`capcom.site.remove`): the next fetch on it asks again.
+    public func removeSite(_ site: String) async {
+        guard case .ready(let id) = entry, let conn = habs.connection(id) else { return }
+        do {
+            sites = try await conn.call(HabMethods.capcomSiteRemove, CapcomSiteParams(site: site)).sites ?? []
+            sitesFailure = nil
+        } catch let e as RPCError where e.kind == .notFound {
+            sites?.removeAll { $0 == site }
+        } catch {
+            sitesFailure = ChatModel.refusal(error)
+        }
+    }
+
     /// Hands a reply that did not reach the hab to the standing conversation's composer.
     func takeUnsent(into m: ChatModel) {
         guard let text = unsent, !text.isEmpty else { return }
