@@ -5,7 +5,8 @@
 // the tests check: its pid, a hash of the credential, whether its environment holds one.
 //
 // Inputs that steer it: "slow" waits for $STUB_DIR/release before its reply; "crash" exits 3;
-// "route" calls channel.status on the pane route with its token and replies with the answer.
+// "route" calls channel.status on the pane route with its token and replies with the answer;
+// "approve" asks approval.request for a WebFetch and replies with the answer it got.
 package main
 
 import (
@@ -35,6 +36,7 @@ var (
 	curW   *bufio.Writer
 	turnN  int
 	inputs = make(chan map[string]any, 100)
+	answer = make(chan map[string]any, 10)
 )
 
 func logf(format string, args ...any) {
@@ -134,6 +136,8 @@ func session(sock, token string) error {
 			}
 		case "input":
 			inputs <- m["item"].(map[string]any)
+		case "approval.answer":
+			answer <- m
 		case "interrupt":
 			logf("interrupt")
 		case "shutdown":
@@ -167,6 +171,12 @@ func turns(sock, token string) {
 			}
 		case "route":
 			reply = "route: " + routeCall(sock, token)
+		case "approve":
+			req := "req-" + turn
+			send(map[string]any{"type": "approval.request", "request": req, "tool": "WebFetch",
+				"input": map[string]any{"url": "https://example.com/x"}, "reason": "Capcom wants to open example.com/x"})
+			a := <-answer
+			reply = fmt.Sprintf("approved: %v", a["allow"])
 		}
 		send(map[string]any{"type": "reply", "turn": turn, "part": 0, "text": reply})
 		send(map[string]any{"type": "turn.ended", "turn": turn, "result": "success"})

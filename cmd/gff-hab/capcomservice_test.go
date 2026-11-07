@@ -158,6 +158,54 @@ func TestCapcomServiceStub(t *testing.T) {
 		t.Fatalf("thread:\n%s", out)
 	}
 
+	// chat.page on the service session reads the thread (7.4), oldest first, with a cursor.
+	page, err := callJSON[api.ChatMessages](t, c, "chat.page", api.ChatPageParams{Session: st.Session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, m := range page.Messages {
+		kinds = append(kinds, string(m.Kind)+":"+m.Text)
+	}
+	if got := strings.Join(kinds, "|"); !strings.Contains(got, "user:hello|agent:echo: hello") || page.Cursor == "" {
+		t.Fatalf("chat.page %q cursor %q", got, page.Cursor)
+	}
+	run(t, "capcom", "say", "-socket", e.sock, "more")
+	waitUntil(t, "the second reply", func() bool { return countReplies(threadText(t, c), "echo: more") == 1 })
+	since, err := callJSON[api.ChatMessages](t, c, "chat.page", api.ChatPageParams{Session: st.Session, After: page.Cursor})
+	if err != nil || len(since.Messages) != 2 || since.Messages[0].Text != "more" || since.Messages[1].Kind != api.ChatKindAgent {
+		t.Fatalf("chat.page after the cursor: %+v %v", since.Messages, err)
+	}
+
+	// The service session's agent state rides on the engine route (5.3, 7.6): idle between
+	// turns, blocked:permission while an approval card is open, and an answer by pane and request.
+	waitUntil(t, "the idle state", func() bool {
+		a, ok := agentOf(t, c, capcomRoute)
+		return ok && a.State == api.AgentStatusIdle && a.Harness == capcomHarness
+	})
+	run(t, "capcom", "say", "-socket", e.sock, "approve")
+	var blocked api.AgentState
+	waitUntil(t, "the approval state", func() bool {
+		a, _ := agentOf(t, c, capcomRoute)
+		blocked = a
+		return a.State == api.AgentStatusBlocked
+	})
+	if blocked.Kind != api.BlockedKindPermission || blocked.Request == nil || blocked.Request.Tool != "WebFetch" ||
+		blocked.Request.Title != "Capcom wants to open example.com/x" || blocked.Request.ExpiresAt == "" || blocked.Turn == "" {
+		t.Fatalf("blocked state %+v %+v", blocked, blocked.Request)
+	}
+	if _, err := callJSON[api.Empty](t, c, "approval.answer", api.ApprovalAnswerParams{Pane: capcomRoute, Request: blocked.Request.ID, Choice: api.ApprovalChoiceAllow}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the approved reply", func() bool { return countReplies(threadText(t, c), "approved: true") == 1 })
+	waitUntil(t, "idle after the turn", func() bool {
+		a, _ := agentOf(t, c, capcomRoute)
+		return a.State == api.AgentStatusIdle && a.Request == nil
+	})
+	if _, err := callJSON[api.Empty](t, c, "approval.answer", api.ApprovalAnswerParams{Pane: capcomRoute, Request: blocked.Request.ID, Choice: api.ApprovalChoiceDeny}); errKind(err) != api.ErrorKindConflict {
+		t.Fatalf("a second answer: %v", err)
+	}
+
 	// A tool call on the engine's token reaches the pane route as the Capcom session.
 	run(t, "capcom", "say", "-socket", e.sock, "route")
 	var route string

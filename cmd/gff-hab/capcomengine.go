@@ -19,6 +19,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/service"
@@ -50,10 +51,18 @@ type capcomEngine struct {
 	attached func(session string, ids []string) ([]string, error) // attachment ids to stored image paths
 	device   string
 	logf     func(string, ...any)
+	// agents carries the service session's agent state on the engine route (7.6, 5.3), so the
+	// approvals area, push and the board see Capcom as they see a pane's agent. Nil in tests
+	// that need no state.
+	agents *harness.Store
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
 	typing  bool
+
+	stateMu sync.Mutex // orders syncState's applies
+	stateT  int64      // the last applied update's clock (ms)
+	shown   bool       // an agent state was applied for the route since the last exit
 }
 
 // capcomEngineSetup is what newCapcomEngine needs from serve.
@@ -66,6 +75,7 @@ type capcomEngineSetup struct {
 	installed  bool
 	job        capcomengine.Job // nil: a plain process (ProcessJob)
 	store      *structure.Store
+	agents     *harness.Store
 	svc        *capcomService
 	approval   func() time.Duration
 	publish    func(structure.Event)
@@ -106,9 +116,10 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		s.logf("capcom: %s was not readable and was set aside: %v", capcomengine.StateFile, err)
 	}
 	e := &capcomEngine{dir: dir, store: s.store, svc: s.svc, thread: th, rec: rec, config: config, publish: s.publish,
-		notify: s.notify, device: s.device, logf: s.logf}
+		notify: s.notify, device: s.device, logf: s.logf, agents: s.agents}
 	th.Watch(func(it capcomthread.Item) {
 		e.publish(structure.Event{Type: api.EventCapcomItem, ID: it.ID, Data: apiItem(it)})
+		e.publishChat(it)
 	})
 	e.link = capcomengine.NewLink(capcomengine.LinkConfig{
 		Thread: th, Record: rec,
@@ -145,7 +156,10 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 			})
 			return out, err
 		},
-		OnStatus: func(capcomengine.SupStatus) { e.svc.poke() },
+		OnStatus: func(capcomengine.SupStatus) {
+			e.syncState()
+			e.svc.poke()
+		},
 		Note: func(text string) {
 			th.Add(capcomthread.Item{Kind: capcomthread.KindNote, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: text})
 		},
@@ -281,7 +295,64 @@ func (e *capcomEngine) linkStatus(st capcomengine.Status) {
 	if changed && session != "" {
 		e.publish(structure.Event{Type: api.EventCapcomTyping, ID: session, Data: api.CapcomTyping{On: st.Typing}})
 	}
+	e.syncState()
 	e.svc.poke()
+}
+
+// capcomHarness is the harness name of the service session's agent state.
+const capcomHarness = "capcom"
+
+// syncState applies the service session's agent state to the engine route from the
+// supervisor and the link (5.3, 7.6): blocked:permission while an approval card is open, working
+// during a turn, idle between turns and while paused, error when the engine cannot run, none
+// (offline) while no engine is connected, exited once this hab lost the mark. The source is
+// server: a hook-like source that may open and close the request.
+func (e *capcomEngine) syncState() {
+	if e.agents == nil {
+		return
+	}
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	u := e.stateUpdate()
+	if u.State == api.AgentStatusExited && !e.shown {
+		return
+	}
+	e.shown = u.State != api.AgentStatusExited
+	t := max(e.stateT+1, time.Now().UnixMilli())
+	e.stateT = t
+	e.agents.Apply(capcomRoute, capcomHarness, api.StateSourceServer, t, u)
+}
+
+func (e *capcomEngine) stateUpdate() harness.Update {
+	if e.Session() == "" {
+		return harness.Update{State: api.AgentStatusExited}
+	}
+	sup, ls := e.sup.Status(), e.link.Status()
+	switch {
+	case sup.State == capcomengine.StateError:
+		return harness.Update{State: api.AgentStatusError, Failure: sup.Reason}
+	case sup.State == capcomengine.StatePaused && ls.Approval == nil && ls.Turn == "":
+		return harness.Update{State: api.AgentStatusIdle}
+	case sup.State != capcomengine.StateRunning && sup.State != capcomengine.StatePaused:
+		return harness.Update{State: api.AgentStatusNone}
+	case !ls.Connected || !ls.Ready:
+		return harness.Update{State: api.AgentStatusNone}
+	case ls.Approval != nil:
+		a := ls.Approval
+		req := &api.PermissionRequest{ID: a.Request, Tool: a.Tool, Title: a.Reason, ExpiresAt: a.Expires.UTC().Format(time.RFC3339)}
+		if req.Title == "" {
+			req.Title = "Capcom wants to use " + a.Tool
+		}
+		if len(a.Input) <= 64<<10 {
+			req.Input = a.Input
+		} else {
+			req.InputTruncated = true
+		}
+		return harness.Update{State: api.AgentStatusBlocked, Kind: api.BlockedKindPermission, Request: req, Turn: ls.Turn}
+	case ls.Turn != "":
+		return harness.Update{State: api.AgentStatusWorking, Turn: ls.Turn}
+	}
+	return harness.Update{State: api.AgentStatusIdle}
 }
 
 // Session returns the service session's id, or "" while this hab does not run the service.
@@ -302,6 +373,7 @@ func (e *capcomEngine) start(ctx context.Context) {
 	e.session = id
 	e.mu.Unlock()
 	e.store.SetRoute(capcomRoute, id)
+	e.syncState()
 	e.sup.Ensure(ctx)
 }
 
@@ -313,6 +385,7 @@ func (e *capcomEngine) lose() {
 	id := e.session
 	e.session = ""
 	e.mu.Unlock()
+	e.syncState() // exited: the approvals area and push drop the route
 	e.store.SetRoute(capcomRoute, "")
 	if id == "" {
 		return
@@ -431,6 +504,12 @@ func (e *capcomEngine) Answer(client string, p api.ApprovalAnswerParams) error {
 	return control.Errorf(api.ErrorKindUnavailable, "Capcom approval %s: %v", p.Request, err)
 }
 
+// openApproval reports whether request is the engine's open approval.
+func (e *capcomEngine) openApproval(request string) bool {
+	a := e.link.Status().Approval
+	return request != "" && a != nil && a.Request == request
+}
+
 // ThreadPage serves capcom.thread.page.
 func (e *capcomEngine) ThreadPage(p api.CapcomThreadPageParams) (api.CapcomThreadPage, error) {
 	items, more := e.thread.Page(p.Before, p.Limit)
@@ -527,7 +606,7 @@ func (a engineAgents) Send(ctx context.Context, client string, p api.SessionSend
 }
 
 func (a engineAgents) Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) error {
-	if p.Pane == capcomRoute || (p.Pane == "" && a.eng.Session() != "") {
+	if p.Pane == capcomRoute || (p.Pane == "" && a.eng.openApproval(p.Request)) {
 		return a.eng.Answer(client, p)
 	}
 	return a.Agents.Answer(ctx, client, p)
