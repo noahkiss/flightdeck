@@ -19,7 +19,7 @@ func (s *Scheduler) AddEvents(roundID string, evs []Event) error {
 	switch {
 	case !ok:
 		err = ErrNotFound
-	case len(evs) == 0, e.Round.Paused, e.State.Completed, e.Round.Trigger.Kind != TriggerEvent:
+	case len(evs) == 0, e.Round.Paused, e.State.Completed, !e.Round.Trigger.Kind.Batches():
 	default:
 		p := s.pend[roundID]
 		if p == nil {
@@ -79,7 +79,7 @@ func (s *Scheduler) Close() {
 // flushPendingLocked saves the batches not saved yet, when force is set or StateSaveEvery has
 // passed since the last save; else it arms a timer for the rest of the time.
 func (s *Scheduler) flushPendingLocked(now time.Time, force bool) {
-	if len(s.pendDirty) == 0 {
+	if len(s.pendDirty) == 0 && len(s.wstDirty) == 0 {
 		return
 	}
 	every := s.cfg.Limits.StateSaveEvery
@@ -98,13 +98,18 @@ func (s *Scheduler) flushPendingLocked(now time.Time, force bool) {
 	for id := range s.pendDirty {
 		m[id] = s.pend[id]
 	}
-	entries, err := s.store.SetPending(m)
+	w := map[string]*WatchState{}
+	for id := range s.wstDirty {
+		w[id] = s.wst[id]
+	}
+	entries, err := s.store.SetPending(m, w)
 	if err != nil {
 		s.logf("rounds: save pending events: %v", err)
 		return
 	}
 	s.pendSaved = now
 	s.pendDirty = map[string]bool{}
+	s.wstDirty = map[string]bool{}
 	for i := range entries {
 		e := entries[i]
 		s.events = append(s.events, event{round: &e})
@@ -135,7 +140,7 @@ func (s *Scheduler) evaluateEvents(e Entry, now time.Time, live *Run) {
 		ID:      NewID("run"),
 		Number:  e.State.LastRun + 1,
 		RoundID: e.Round.ID,
-		Trigger: TriggerEvent,
+		Trigger: e.Round.Trigger.Kind,
 		State:   RunQueued,
 		Created: now,
 	}
@@ -143,9 +148,17 @@ func (s *Scheduler) evaluateEvents(e Entry, now time.Time, live *Run) {
 		s.logf("rounds: round %s: save the run's events: %v", e.Round.Name, err)
 		return
 	}
+	ws, wsDirty := s.wst[e.Round.ID], s.wstDirty[e.Round.ID]
 	ne, err := s.store.QueueRun(run, func(st *RoundState) {
 		st.LastRun = run.Number
 		st.Pending = nil
+		if wsDirty {
+			// The cursor and the keys go in the write that makes the run (rounds.md 4.4).
+			st.Watch = nil
+			if !ws.empty() {
+				st.Watch = cloneWatchState(ws)
+			}
+		}
 	})
 	if err != nil {
 		s.store.RemoveEvents(e.Round.ID, run.ID)
@@ -154,6 +167,7 @@ func (s *Scheduler) evaluateEvents(e Entry, now time.Time, live *Run) {
 	}
 	delete(s.pend, e.Round.ID)
 	delete(s.pendDirty, e.Round.ID)
+	delete(s.wstDirty, e.Round.ID)
 	s.live[run.ID] = &run
 	c := run
 	s.events = append(s.events, event{round: &ne}, event{run: &c})
@@ -164,7 +178,7 @@ func (s *Scheduler) evaluateEvents(e Entry, now time.Time, live *Run) {
 // saved.
 func (s *Scheduler) takeBatchLocked(roundID string, run *Run) (bool, error) {
 	p := s.pend[roundID]
-	if e, ok := s.store.Get(roundID); p == nil || p.Len() == 0 || !ok || e.Round.Trigger.Kind != TriggerEvent {
+	if e, ok := s.store.Get(roundID); p == nil || p.Len() == 0 || !ok || !e.Round.Trigger.Kind.Batches() {
 		return false, nil
 	}
 	if err := s.store.WriteEvents(roundID, run.ID, p.Batch); err != nil {
@@ -178,7 +192,7 @@ func (s *Scheduler) takeBatchLocked(roundID string, run *Run) (bool, error) {
 // destination was not there, and the next run carries them (rounds.md 4.5, 5.2).
 func (s *Scheduler) returnBatchLocked(run *Run, now time.Time) {
 	e, ok := s.store.Get(run.RoundID)
-	if !ok || e.Round.Trigger.Kind != TriggerEvent {
+	if !ok || !e.Round.Trigger.Kind.Batches() {
 		return // a round that went, or whose trigger changed away from events, keeps no batch
 	}
 	b, err := s.store.ReadEvents(run.RoundID, run.ID)
@@ -266,7 +280,7 @@ func (s *Scheduler) SeedPending(roundID string, b Batch) error {
 	switch {
 	case !ok:
 		err = ErrNotFound
-	case b.Len() == 0, e.State.Completed, e.Round.Trigger.Kind != TriggerEvent:
+	case b.Len() == 0, e.State.Completed, !e.Round.Trigger.Kind.Batches():
 	default:
 		p := s.pend[roundID]
 		if p == nil {

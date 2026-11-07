@@ -102,6 +102,7 @@ type harness struct {
 	// settle is the wake settle; 0 takes the default.
 	settle time.Duration
 	limits Limits
+	watch  *WatchLimits
 }
 
 func newHarness(t *testing.T, at string) *harness {
@@ -125,7 +126,7 @@ func (h *harness) reopen() {
 		h.s.stopTimers() // the old scheduler's timers must not tick the new store
 	}
 	h.s, err = NewScheduler(SchedulerConfig{Store: st, Starter: h.start, Sink: h.sink, Clock: h.clock, MaxRunning: h.max,
-		WakeSettle: h.settle, Limits: h.limits})
+		WakeSettle: h.settle, Limits: h.limits, Watch: h.watch})
 	if err != nil {
 		h.t.Fatal(err)
 	}

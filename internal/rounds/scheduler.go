@@ -102,6 +102,11 @@ type Notice struct {
 	Round Entry
 	Run   *Run
 	Text  string
+	// Exit, Session and Exits are a watcher pause's: the watcher's last exit, its session, and
+	// its exits in a row (rounds.md 4.4, 10.2).
+	Exit    string
+	Session string
+	Exits   int
 }
 
 // Sink receives the scheduler's events in order. Its methods are called with no scheduler
@@ -158,6 +163,9 @@ type SchedulerConfig struct {
 	Logf func(format string, a ...any)
 	// Limits bound event batches (rounds.md 4.7); a zero field takes its default.
 	Limits Limits
+	// Watch bounds watcher event lines, keys and cursors (rounds.md 4.7). Nil:
+	// DefaultWatchLimits.
+	Watch *WatchLimits
 }
 
 // WakeSink is a Sink that also hears hab.woke: a wake the scheduler detected, once its settle
@@ -216,6 +224,11 @@ type Scheduler struct {
 	// Limits.StateSaveEvery (pendSaved) and in the write that makes a run.
 	pend      map[string]*Pending
 	pendDirty map[string]bool
+	// wst holds each watch round's cursor and dedup keys, the newest in memory; wstDirty the
+	// rounds whose state is not saved yet, saved with the pending batches (rounds.md 4.4).
+	wst      map[string]*WatchState
+	wstDirty map[string]bool
+	watchLim WatchLimits
 	// pendN is each round's pending count as of the last unlock, under its own leaf lock: the
 	// sink reads it while it handles an event, with s.mu free or held by another caller that
 	// waits for emitMu.
@@ -263,6 +276,12 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 		retried:   map[string]bool{},
 		pend:      map[string]*Pending{},
 		pendDirty: map[string]bool{},
+		wst:       map[string]*WatchState{},
+		wstDirty:  map[string]bool{},
+		watchLim:  DefaultWatchLimits(),
+	}
+	if cfg.Watch != nil {
+		s.watchLim = *cfg.Watch
 	}
 	live, err := s.runs.Live()
 	if err != nil {
@@ -278,6 +297,11 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 		if p := e.State.Pending; p != nil && p.Len() > 0 {
 			c := clonePending(p)
 			s.pend[e.Round.ID] = &c
+		}
+		if w := e.State.Watch; w != nil && e.Round.Trigger.Kind == TriggerWatch {
+			c := cloneWatchState(w)
+			c.trim(s.watchLim)
+			s.wst[e.Round.ID] = c
 		}
 		c := s.compile(e.Round)
 		if c.err != nil || e.State.NextSlot == nil || !e.State.NextSlot.After(now) {
@@ -571,10 +595,14 @@ func (s *Scheduler) Update(r Round) (Entry, error) {
 	}
 	r.Paused = old.Round.Paused
 	e, err := s.store.Update(r, now)
-	if err == nil && e.Round.Trigger.Kind != TriggerEvent {
+	if err == nil && !e.Round.Trigger.Kind.Batches() {
 		// A trigger changed away from events drops the pending batch, as the store does.
 		delete(s.pend, r.ID)
 		delete(s.pendDirty, r.ID)
+	}
+	if err == nil && e.Round.Trigger.Kind != TriggerWatch {
+		delete(s.wst, r.ID)
+		delete(s.wstDirty, r.ID)
 	}
 	if err == nil {
 		c := e
@@ -868,6 +896,12 @@ func (s *Scheduler) evaluateLocked(now, prev time.Time, wake bool) {
 			delete(s.pendDirty, id)
 		}
 	}
+	for id := range s.wst {
+		if !have[id] {
+			delete(s.wst, id)
+			delete(s.wstDirty, id)
+		}
+	}
 	if s.wokePending && !now.Before(s.settleUntil) {
 		s.wokePending = false
 		slept := s.wokeSlept
@@ -912,7 +946,7 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 		}
 		return
 	}
-	if e.Round.Trigger.Kind == TriggerEvent {
+	if e.Round.Trigger.Kind.Batches() {
 		s.evaluateEvents(e, now, live)
 		return
 	}
@@ -1041,7 +1075,7 @@ func (s *Scheduler) startLocked(now time.Time) {
 		t := now
 		r.State, r.StartedAt = RunRunning, &t
 		s.saveRun(r)
-		if r.Trigger == TriggerEvent {
+		if r.Trigger.Batches() {
 			s.setState(r.RoundID, func(st *RoundState) { st.LastEventStart = &t })
 		}
 		s.starts = append(s.starts, *r)
