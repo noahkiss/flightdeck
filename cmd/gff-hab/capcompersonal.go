@@ -441,6 +441,11 @@ func cardEnded(ev *capcomthread.CardEvent, typ string, now time.Time) bool {
 // DeviceContext serves device.context.put (8.1): the latest value of each field, in memory
 // only; the time zone is saved. client is the device's label, which each value carries.
 func (e *capcomEngine) DeviceContext(client string, p api.DeviceContextPutParams) error {
+	if e.Session() == "" {
+		// Device context goes only to the home hab (8.1): a hab with the engine set but not the
+		// mark keeps nothing.
+		return control.Errorf(api.ErrorKindUnavailable, "device.context.put: this hab is not the Capcom home host; send it to the home host")
+	}
 	for _, r := range []string{p.LocationOff, p.CalendarOff} {
 		if r != "" && r != personal.ReasonOff && r != personal.ReasonNoPermission {
 			return control.Errorf(api.ErrorKindInvalid, "device.context.put: %q is not off or no_permission", r)
