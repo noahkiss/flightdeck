@@ -14,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/aliases"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/confirm"
+	"github.com/noahkiss/flightdeck/internal/control"
 )
 
 // TestSpawnAliases: the runner turns an alias into its harness and model once, an alias may
@@ -23,9 +24,10 @@ func TestSpawnAliases(t *testing.T) {
 	table := aliases.Table{"gpt": {Harness: "codex", Model: "gpt-5.5"}, "codex": {Harness: "codex", Model: "gpt-5.5-codex"}, "opus": {Harness: "claude", Model: "opus"}}
 	link := &fakeLinkCaller{}
 	var created []api.SessionCreateParams
+	caps := []string{"confirm"}
 	r := &confirmRunner{host: "mac", aliases: func() aliases.Table { return table },
 		links: func() []confirmLink {
-			return []confirmLink{{Label: "devbox", Online: true, Caps: []string{"confirm"}, Caller: link}}
+			return []confirmLink{{Label: "devbox", Online: true, Caps: caps, Caller: link}}
 		},
 		local: func(_ context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
 			created = append(created, p)
@@ -62,7 +64,19 @@ func TestSpawnAliases(t *testing.T) {
 	if err != nil || res.Address != "codex-abc123" || created[0].ReportTo != "alice" {
 		t.Fatalf("local teammate: %+v %+v %v", res, created, err)
 	}
+	// A peer whose gff-hab cannot report: a teammate start is refused there before a card; a
+	// detached one goes. With the capability, the teammate start goes.
 	s.Host = "devbox"
+	if _, _, err := r.CheckStart(s); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "mode detached") {
+		t.Fatalf("teammate on an old peer: %v", err)
+	}
+	if _, _, err := r.CheckStart(api.ConfirmStart{Host: "devbox", Folder: "/a", Harness: "codex"}); err != nil {
+		t.Fatalf("detached on an old peer: %v", err)
+	}
+	caps = append(caps, teammatesCapability)
+	if _, _, err := r.CheckStart(s); err != nil {
+		t.Fatalf("teammate on a new peer: %v", err)
+	}
 	res, err = r.RunStart(context.Background(), "id-2", "alice", s)
 	if err != nil || res.Address != "devbox/codex-abc123" || link.calls[0].ReportTo != "alice" {
 		t.Fatalf("peer teammate: %+v %+v %v", res, link.calls, err)
@@ -89,6 +103,60 @@ func TestSpawnTeammateNeedsRequester(t *testing.T) {
 	c, err := svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", From: "alice", Start: &api.ConfirmStart{Folder: "/a", Harness: "codex", Teammate: true, Alias: "forged"}})
 	if err != nil || ran != 1 || c.Start.Alias != "" {
 		t.Fatalf("from a session: %+v %v, ran %d", c, err, ran)
+	}
+}
+
+// TestSpawnHarnessEdit: the owner edits an alias start's harness on the card: the old alias's
+// model goes, and the edited word is read as an alias again; a model edit given with it stays.
+func TestSpawnHarnessEdit(t *testing.T) {
+	table := aliases.Table{"opus": {Harness: "claude", Model: "opus"}, "gpt": {Harness: "codex", Model: "gpt-5.5"}}
+	link := &fakeLinkCaller{}
+	r := &confirmRunner{host: "mac", aliases: func() aliases.Table { return table },
+		links: func() []confirmLink {
+			return []confirmLink{{Label: "devbox", Online: true, Caps: []string{"confirm", teammatesCapability}, Caller: link}}
+		}}
+	svc, err := confirm.New(confirm.Config{Runner: r, Enabled: func() bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		edit           api.ConfirmEdits
+		harness, model string
+		alias          string
+	}{
+		{api.ConfirmEdits{Harness: "gpt"}, "codex", "gpt-5.5", "gpt"},
+		{api.ConfirmEdits{Harness: "codex"}, "codex", "", ""},
+		{api.ConfirmEdits{Harness: "codex", Model: "o9"}, "codex", "o9", ""},
+	} {
+		c, err := svc.Request(ctx, api.ConfirmRequestParams{Kind: "start", From: "alice", Start: &api.ConfirmStart{Host: "devbox", Folder: "/a", Harness: "opus"}})
+		if err != nil || c.State != "open" || c.Start.Model != "opus" {
+			t.Fatalf("open: %+v %v", c, err)
+		}
+		e := tc.edit
+		done, err := svc.Answer(ctx, "phone", api.ConfirmAnswerParams{ID: c.ID, Choice: "confirm", Edits: &e})
+		if err != nil || done.Start.Harness != tc.harness || done.Start.Model != tc.model || done.Start.Alias != tc.alias {
+			t.Errorf("edit %+v: %+v %v", tc.edit, done.Start, err)
+		}
+		if got := link.calls[len(link.calls)-1]; got.Model != tc.model || got.Harness != tc.harness {
+			t.Errorf("edit %+v ran %+v", tc.edit, got)
+		}
+	}
+}
+
+// TestReportToUnlistedPeer: a report_to over a link from a hab this hab's peer list does not
+// name is refused before anything starts, since no report could reach it.
+func TestReportToUnlistedPeer(t *testing.T) {
+	a := &actions{mates: &teammates{}, self: api.ChannelEnd{DeviceID: "d-b", Host: "hb"},
+		listedPeer: func(device string) bool { return device == "d-listed" }}
+	ctx := control.WithCallerPeer(context.Background(), api.PeerHello{DeviceID: "d-other", Host: "ha"})
+	_, _, err := a.CreateSession(ctx, api.SessionCreateParams{Harness: "codex", ReportTo: "alice", ProjectDir: "/a"})
+	if errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "does not name ha") {
+		t.Fatalf("unlisted: %v", err)
+	}
+	if _, _, err := a.CreateSession(context.Background(), api.SessionCreateParams{ReportTo: "alice"}); errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("no harness: %v", err)
 	}
 }
 

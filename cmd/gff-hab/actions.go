@@ -76,6 +76,9 @@ type actions struct {
 	// self is this hab's own channel end (device id and host id), for a report_to from a
 	// caller on this hab.
 	self api.ChannelEnd
+	// listedPeer reports whether a device is a labelled peer in this hab's peer list, so a
+	// report to it can go. nil: none is.
+	listedPeer func(device string) bool
 }
 
 var _ control.Resumer = (*actions)(nil)
@@ -143,6 +146,10 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		if peer, ok := control.CallerPeer(ctx); ok {
 			// Over a peer link: the session is on the dialing hab, named by the link's hello.
 			reportTo.DeviceID, reportTo.Host = peer.DeviceID, peer.Host
+			if a.listedPeer == nil || !a.listedPeer(peer.DeviceID) {
+				// A report goes only to a hab in the peer list: refuse now, not lose each one.
+				return "", "", control.Errorf(api.ErrorKindUnavailable, "this hab's peer list does not name %s, so a teammate here cannot report to it: add it as a peer, or spawn with mode detached", peer.Host)
+			}
 		}
 	}
 	if p.Seed != "" {

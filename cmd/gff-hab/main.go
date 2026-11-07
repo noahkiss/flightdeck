@@ -1095,6 +1095,16 @@ func serve(args []string) error {
 	if sessionActs != nil {
 		sessionActs.mates = mates
 		sessionActs.self = api.ChannelEnd{DeviceID: key.Fingerprint(), Host: *hostID}
+		// A report goes to a peer by its label in the peer list (channels' SendTo).
+		sessionActs.listedPeer = func(device string) bool {
+			for _, p := range pm.List().Peers {
+				if p.DeviceID == device && p.Label != "" {
+					return true
+				}
+			}
+			return false
+		}
+		caps = append(caps, teammatesCapability)
 	}
 	if trustSvc != nil {
 		trustSvc.refuse = func(pane, reason string) (int, error) {

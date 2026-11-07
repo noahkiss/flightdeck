@@ -21,7 +21,10 @@ import (
 // only: the report goes from the hab that runs the teammate, so the spawner may be on a peer.
 
 const (
-	teammatesFile = "teammates.json"
+	// teammatesCapability is the welcome word of a hab that takes session.create's report_to.
+	// A spawner's hab refuses a teammate start on a peer without it.
+	teammatesCapability = "teammates"
+	teammatesFile       = "teammates.json"
 	// maxTeammates bounds the file; the oldest entries go first.
 	maxTeammates = 1000
 	// reportRead bounds the read of a turn's final message: the transcript may trail the turn.
