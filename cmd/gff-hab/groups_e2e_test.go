@@ -434,3 +434,52 @@ func (s *trustShows) total() int {
 	}
 	return n
 }
+
+// TestGroupCardEdits (groups.md 5.8): the title and the briefs the user edits on the plan's
+// card reach the Logbook plan record and the item's task; an item not edited keeps its task.
+func TestGroupCardEdits(t *testing.T) {
+	needGit(t)
+	fakes, work := groupFakes(t)
+	e := newHolderEnv(t, 0)
+	e.env = []string{"PATH=" + fakes + ":/usr/bin:/bin", "GFF_HAB_BIN=" + bin, "GFF_HAB_WORKTREES=" + filepath.Join(shortDir(t), "wt"),
+		"CLAUDE_CONFIG_DIR=" + filepath.Join(work, "claude"), noRaceExitSleep}
+	e.serve()
+	repo := gitRepo(t, e.work, "shop")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	createSession(t, e.sock, api.SessionCreateParams{Name: "alice", Argv: []string{"/bin/sh", "-c", "sleep 600"}, ProjectDir: repo, Cols: 80, Rows: 24})
+	waitCatalogProject(t, e, "shop", 1)
+
+	plan := api.GroupPlan{Title: "Fix cart", Brief: "Round once.", Project: "shop",
+		Items: []api.GroupPlanItem{{ID: "a", Title: "Round", Brief: "In the total."}, {ID: "b", Title: "Tests"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "a", Harness: "claude", Name: "lead-a"},
+			{Role: "lead", Item: "b", Harness: "claude", Name: "lead-b"}}}
+	var gc api.GroupCreated
+	call(t, e.control(), "group.create", api.GroupCreateParams{Plan: plan, Coordinator: "alice"}, &gc)
+	if gc.Confirmation == nil || gc.Confirmation.State != "open" {
+		t.Fatalf("want an open card: %+v", gc.Confirmation)
+	}
+	edited := gc.Confirmation.Group.Plan
+	edited.Title, edited.Brief = "Fix the cart total", "Round once, at the end."
+	edited.Items[0].Title, edited.Items[0].Brief = "Round the total", "Only the total."
+	call(t, e.control(), "confirm.answer", api.ConfirmAnswerParams{ID: gc.Confirmation.ID, Choice: "confirm",
+		Edits: &api.ConfirmEdits{Plan: &edited}}, &api.ConfirmationResult{})
+	var g api.Group
+	waitUntil(t, "the group running", func() bool { g = getGroup(t, e, gc.Group.ID); return g.State == "running" })
+	if g.Title != "Fix the cart total" {
+		t.Fatalf("record title %q", g.Title)
+	}
+	get := func(id string) api.LogbookRecord {
+		var r api.LogbookRecordResult
+		call(t, e.control(), "logbook.get", api.LogbookGetParams{ID: id}, &r)
+		return r.Record
+	}
+	if r := get(g.PlanRecord); r.Title != "Fix the cart total" || r.Body != "Round once, at the end." {
+		t.Fatalf("plan record %q %q", r.Title, r.Body)
+	}
+	if r := get(g.Items[0].Task); r.Title != "Round the total" || r.Body != "Only the total." {
+		t.Fatalf("item a's task %q %q", r.Title, r.Body)
+	}
+	if r := get(g.Items[1].Task); r.Title != "Tests" {
+		t.Fatalf("item b's task %q", r.Title)
+	}
+}
