@@ -19,7 +19,10 @@
 // ends its turn with context_used n; "compact" asks context.request for a compaction, sends a
 // summary and compacted. A "reseed" asks context.request for a re-seed, writes the context it
 // got to $STUB_DIR/context-<n>.json, sends a summary (none for new) and session.started. A text
-// that starts with "event:" runs as an event turn.
+// that starts with "event:" runs as an event turn, as does an input of kind event (an event
+// batch, logged as "event batch <id> <n>: <texts>"), whose texts steer it: "stay quiet" sends no
+// reply; "try handoff" and "try start" call channel.send and confirm.request on the pane route,
+// in any turn, and reply with the answer.
 //
 // With GFF_HAB_CAPCOM_KIND=codex it stands in for the Codex engine (A6): ready names engine
 // codex and only images, interrupt, resume_by_id and usage_events; "usage <pct>" sends the
@@ -295,6 +298,21 @@ func turns(sock, token string) {
 		if t, ok := strings.CutPrefix(text, "event:"); ok {
 			origin, text = "event", t
 		}
+		if kind, _ := it["kind"].(string); kind == "event" {
+			// An event batch (capcom-service.md 9.2): its events are the context blocks. The
+			// events steer it as a text does: "stay quiet" writes nothing, "try handoff" and
+			// "try start" call channel.send and confirm.request on the pane route.
+			origin = "event"
+			blocks, _ := it["context"].([]any)
+			var evs []string
+			for _, b := range blocks {
+				m, _ := b.(map[string]any)
+				t, _ := m["text"].(string)
+				evs = append(evs, t)
+			}
+			logf("event batch %s %d: %s", id, len(blocks), strings.Join(evs, " | "))
+			text = strings.Join(evs, " | ")
+		}
 		send(map[string]any{"type": "turn.started", "turn": turn, "origin": origin, "items": []string{id}})
 		send(map[string]any{"type": "input.taken", "item": id})
 		// gff-hab has the turn's origin before any tool call, as the real engine's model call
@@ -385,7 +403,15 @@ func turns(sock, token string) {
 			a := <-answer
 			reply = fmt.Sprintf("approved: %v", a["allow"])
 		}
-		send(map[string]any{"type": "reply", "turn": turn, "part": 0, "text": reply})
+		if strings.Contains(text, "try handoff") {
+			reply = "handoff: " + routeCall(sock, token, `{"method":"channel.send","params":{"to":"nobody","text":"do the thing"}}`)
+		}
+		if strings.Contains(text, "try start") {
+			reply = "start: " + routeCall(sock, token, `{"method":"confirm.request","params":{"kind":"start_session","folder":"/nowhere"}}`)
+		}
+		if !(origin == "event" && strings.Contains(text, "stay quiet")) {
+			send(map[string]any{"type": "reply", "turn": turn, "part": 0, "text": reply})
+		}
 		inTurn.Store(false)
 		send(map[string]any{"type": "turn.ended", "turn": turn, "result": "success", "context_used": used, "input_tokens": 100, "output_tokens": 10, "cost_usd": 0.01})
 	}

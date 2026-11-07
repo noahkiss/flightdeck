@@ -79,6 +79,7 @@ export function itemLines(item: Item): string[] {
   const when = [item.time, item.tz ? `(${item.tz})` : ''].filter(Boolean).join(' ');
   if (item.kind === 'agent') lines.push(`Channel message from ${item.author ?? 'an agent'}${when ? ` at ${when}` : ''}.`);
   else if (item.kind === 'note') lines.push(`Flightdeck note${when ? ` at ${when}` : ''}.`);
+  else if (item.kind === 'event') lines.push(`Flightdeck events${when ? ` at ${when}` : ''}: an event turn. Nobody asked you anything.`);
   else if (when || item.author) lines.push(`Sent${item.author ? ` by ${item.author}` : ''}${when ? ` at ${when}` : ''}.`);
   for (const c of item.context ?? []) {
     lines.push('', `[context: ${c.kind ?? 'item'}${c.title ? `: ${neutralise(c.title).replace(/[\]\n]/g, ' ')}` : ''}]`, neutralise(c.text ?? ''));

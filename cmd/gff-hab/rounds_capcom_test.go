@@ -1,54 +1,75 @@
 package main
 
 // Capcom and group rounds across two habs (rounds.md 5.2, 14.1): two gff-hab processes over the
-// ssh stand-in, b standing in a Capcom service and a group record from files (roundfake.go).
-// A capcom round on a is refused until a's copy of b's catalog shows the service; a run hands
-// one message, with the round fields and the id the run's id gives, and gets accepted, then the
-// outcome; with b stopped the run ends queued for Capcom, and once b is back the message is
-// taken once; a refusal skips the run and keeps its batch. A group round with no coordinator
+// ssh stand-in. b runs the Capcom service with the stub engine (capcom-service.md 9.5), and
+// stands in a group record from a file (roundfake.go). A capcom round on a is refused until a's
+// copy of b's catalog shows the service; a run hands one message, with the round fields and the
+// id the run's id gives, b's thread takes it as one round item, and the outcome comes back; with
+// b stopped the run ends queued for Capcom, and once b is back the message is taken once and its
+// outcome reaches a; with round messages off b declines it. A group round with no coordinator
 // skips and keeps its batch; once its group ended, the round completes.
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/capcomengine"
 )
 
-// startWith is start with more environment for gff-hab.
+// startWith is start with more environment for gff-hab, and more of the hab's config file.
 func (p *peerRoundEnv) startWith(t *testing.T, standIn, hostID string, env ...string) {
+	p.startWithConfig(t, standIn, hostID, "", env...)
+}
+
+func (p *peerRoundEnv) startWithConfig(t *testing.T, standIn, hostID, extra string, env ...string) {
 	t.Helper()
 	cfg := filepath.Join(p.work, "hab.toml")
-	writeFile(t, cfg, "[rounds]\nwake_settle = \"0s\"\n\n[catalog]\nproject_roots = ["+tomlString(p.work)+"]\n")
+	writeFile(t, cfg, "[rounds]\nwake_settle = \"0s\"\n\n[catalog]\nproject_roots = ["+tomlString(p.work)+"]\n"+extra)
 	p.path = "PATH=" + standIn + string(os.PathListSeparator) + os.Getenv("PATH")
 	p.env = append([]string{"GFF_HAB_CONFIG=" + cfg, "GFF_TEST_ROUND_TICK=200ms", p.path, "GFF_HAB_PEERS=" + p.peers,
 		"XDG_RUNTIME_DIR=" + p.rt, "GFF_TEST_ROUND_MIN_BATCH=500ms"}, env...)
 	p.srv = startServeWith(t, p.sock, p.state, p.env, "-holders", p.hdir, "-host-id", hostID)
 }
 
-// taken reads the messages the stand-in Capcom service took.
-func taken(t *testing.T, path string) []api.ChannelMessage {
+// startCapcom starts gff-hab running the Capcom service with the stub engine: no quiet hours,
+// and each event in a batch of its own, so a round message's turn runs at once.
+func (p *peerRoundEnv) startCapcom(t *testing.T, standIn, hostID string, env ...string) (stubDir string) {
 	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	var out []api.ChannelMessage
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	for sc.Scan() {
-		var m api.ChannelMessage
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			t.Fatalf("got file: %v", err)
+	d := shortDir(t)
+	stub := buildCapcomStub(t, d)
+	stubDir = filepath.Join(d, "stub")
+	os.MkdirAll(stubDir, 0o700)
+	t.Cleanup(func() {
+		b, err := os.ReadFile(filepath.Join(p.state, "capcom", capcomengine.PidFile))
+		if err != nil {
+			return
 		}
-		out = append(out, m)
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
+			syscall.Kill(pid, syscall.SIGKILL) // the stub engine this test started
+		}
+	})
+	extra := "\n[capcom]\nengine = \"claude\"\nrestart_delay = \"1s\"\n\n[settings]\n\"capcom.quiet_hours\" = \"00:00-00:00\"\n\"capcom.events.batch_max\" = 1\n"
+	env = append(env, "GFF_HAB_CAPCOM_ENGINE="+stub, "STUB_DIR="+stubDir, "CLAUDE_CODE_OAUTH_TOKEN="+plantedToken)
+	p.startWithConfig(t, standIn, hostID, extra, env...)
+	return stubDir
+}
+
+// roundItems are the round items of a hab's Capcom thread, oldest first.
+func roundItems(t *testing.T, p *peerRoundEnv) []api.CapcomItem {
+	t.Helper()
+	items := threadText(t, p.control())
+	var out []api.CapcomItem
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Kind == "round" {
+			out = append(out, items[i])
+		}
 	}
 	return out
 }
@@ -59,13 +80,11 @@ func TestRoundCapcomPeers(t *testing.T) {
 	}
 	a := newPeerRoundEnv(t, "bee", "hab-b")
 	b := newPeerRoundEnv(t, "ay", "hab-a")
-	answer := filepath.Join(b.work, "capcom-answer")
 	groups := filepath.Join(b.work, "groups.json")
-	writeFile(t, answer, "accepted\noutcome told\n")
 	writeFile(t, groups, `[{"id":"g1","state":"running"}]`)
 	standIn := sshStandIn(t, map[string]string{"hab-a": a.sock, "hab-b": b.sock})
 	a.startWith(t, standIn, "host-a")
-	b.startWith(t, standIn, "host-b", "GFF_TEST_CAPCOM_SERVICE="+answer, "GFF_TEST_GROUPS="+groups)
+	stubB := b.startCapcom(t, standIn, "host-b", "GFF_TEST_GROUPS="+groups)
 	waitPeer(t, a.sock, "bee", "a sees b online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
 	waitPeer(t, b.sock, "ay", "b sees a online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
 	ca := a.control()
@@ -77,27 +96,29 @@ func TestRoundCapcomPeers(t *testing.T) {
 	run(t, "capcom", "assign", "-socket", b.sock, "self")
 	waitUntil(t, "a's copy of b shows the Capcom service", func() bool {
 		e, ok := hostEntry(catalogOf(t, ca), "host-b")
-		return ok && hasWord(e.Catalog, capCapcomService) && e.Catalog.Capcom != nil && e.Catalog.Capcom.Home == e.Catalog.DeviceID
+		return ok && hasWord(e.Catalog, capCapcomService) && e.Catalog.Capcom != nil && e.Catalog.Capcom.Home == e.Catalog.DeviceID &&
+			e.Catalog.Capcom.Service != ""
 	})
 	a.must(t, "", "add", "cc", "-mode", "capcom", "-manual", "check the builds")
 
-	// A run hands one message and is accepted; the outcome follows.
+	// A run hands one message and is accepted; b's thread holds one round item; the outcome
+	// follows the event turn that took it.
 	a.must(t, "", "run", "cc")
 	r := waitRun(t, a.habEnv, ca, "cc", api.RoundRunStateSucceeded)
 	if r.Reason != reasonAccepted || r.Destination != "Capcom on bee" || r.Message != roundMessageID(r.ID) {
 		t.Fatalf("run %+v", r)
 	}
-	got := taken(t, answer+".got")
-	if len(got) != 1 || got[0].ID != r.Message || got[0].Text != "check the builds" || got[0].Round == nil ||
-		got[0].Round.Run != r.ID || got[0].Round.Name != "cc" || got[0].Round.Trigger != "manual" {
-		t.Fatalf("taken %+v", got)
+	got := roundItems(t, b)
+	if len(got) != 1 || got[0].Text != "check the builds" || got[0].Author.Address != "host-a/round:cc" {
+		t.Fatalf("round items %+v", got)
 	}
 	waitUntil(t, "the outcome", func() bool {
 		runs := roundRuns(t, ca, "cc")
 		return len(runs) == 1 && runs[0].Outcome != nil && runs[0].Outcome.Word == "told"
 	})
 
-	// b stopped: the run ends queued for Capcom; b back: the message is taken once.
+	// b stopped: the run ends queued for Capcom; b back: the message is taken once, and its
+	// outcome reaches a.
 	b.stopHab(false)
 	waitPeer(t, a.sock, "bee", "a sees b offline", func(p api.Peer) bool { return p.State != api.PeerStateOnline })
 	a.must(t, "", "run", "cc")
@@ -106,35 +127,57 @@ func TestRoundCapcomPeers(t *testing.T) {
 		return len(runs) == 2 && runs[0].State == api.RoundRunStateSucceeded && runs[0].Reason == reasonQueuedFor+"bee"
 	})
 	b.srv = startServeWith(t, b.sock, b.state, b.env, "-holders", b.hdir, "-host-id", "host-b")
-	waitUntil(t, "b takes the queued message", func() bool { return len(taken(t, answer+".got")) == 2 })
-	second := roundRuns(t, ca, "cc")[0]
-	if g := taken(t, answer+".got"); g[1].ID != second.Message {
-		t.Fatalf("taken %+v, want %s", g[1], second.Message)
-	}
+	waitUntil(t, "b takes the queued message", func() bool { return len(roundItems(t, b)) == 2 })
 	waitUntil(t, "the queued run's outcome", func() bool {
 		runs := roundRuns(t, ca, "cc")
 		return runs[0].Outcome != nil && runs[0].Outcome.Word == "told"
 	})
+	if n := len(roundItems(t, b)); n != 2 {
+		t.Fatalf("round items after the restart: %d", n)
+	}
 
-	// A refusal skips the run and keeps its batch. a's own link to b must be up first: b may
-	// take its mail over the link it dialed while a's is still connecting, and a message queued
-	// for an offline home host ends the run "queued for Capcom".
+	// An event round's batch goes with its message: b's round item lists its events.
 	waitPeer(t, a.sock, "bee", "a sees b online again", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
-	writeFile(t, answer, "refused Capcom moved to elsewhere\n")
 	a.must(t, "", "add", "cc-ev", "-mode", "capcom", "-on", "notice.raised", "-debounce", "1h", "look at these")
 	if out, err := exec.Command(bin, "notify", "-socket", a.sock, "-level", "active", "disk full").CombinedOutput(); err != nil {
 		t.Fatalf("notify: %v %s", err, out)
 	}
 	waitUntil(t, "one pending", func() bool { return getRound(t, ca, "cc-ev").Pending == 1 })
 	a.must(t, "", "run", "cc-ev")
-	r = waitRun(t, a.habEnv, ca, "cc-ev", api.RoundRunStateSkipped)
-	if !strings.Contains(r.Reason, "Capcom moved to elsewhere") || r.Events != 1 {
-		t.Fatalf("refused run %+v", r)
+	r = waitRun(t, a.habEnv, ca, "cc-ev", api.RoundRunStateSucceeded)
+	if r.Events != 1 {
+		t.Fatalf("event run %+v", r)
 	}
-	waitUntil(t, "the batch back", func() bool { return getRound(t, ca, "cc-ev").Pending == 1 })
-	g := taken(t, answer+".got")
-	if last := g[len(g)-1]; last.Round == nil || len(last.Round.Events) != 1 || last.Round.Events[0].Title != "disk full" || last.Round.Level != "active" {
-		t.Fatalf("event message %+v", last.Round)
+	last := roundItems(t, b)
+	if it := last[len(last)-1]; it.Text != "look at these" {
+		t.Fatalf("event round item %+v", it)
+	}
+
+	// The runner sleeps through the turn: the outcome waits in b's outbox and reaches a at its
+	// wake, once.
+	a.must(t, "", "add", "cs", "-mode", "capcom", "-manual", "slow")
+	a.must(t, "", "run", "cs")
+	if r := waitRun(t, a.habEnv, ca, "cs", api.RoundRunStateSucceeded); r.Reason != reasonAccepted {
+		t.Fatalf("slow run %+v", r)
+	}
+	a.stopHab(false)
+	writeFile(t, filepath.Join(stubB, "release"), "")
+	waitUntil(t, "b's turn on the slow message ended", func() bool { _, ok := replyAfter(threadText(t, b.control()), "slow"); return ok })
+	a.srv = startServeWith(t, a.sock, a.state, a.env, "-holders", a.hdir, "-host-id", "host-a")
+	ca = a.control()
+	waitUntil(t, "the outcome at a's wake", func() bool {
+		runs := roundRuns(t, ca, "cs")
+		return len(runs) == 1 && runs[0].Outcome != nil && runs[0].Outcome.Word == "told"
+	})
+
+	// Round messages off on b: declined off.
+	waitPeer(t, a.sock, "bee", "a sees b online after its restart", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
+	if err := setSetting(b.control(), "capcom.events.round_messages", "false"); err != nil {
+		t.Fatal(err)
+	}
+	a.must(t, "", "run", "cc")
+	if r := waitRun(t, a.habEnv, ca, "cc", api.RoundRunStateSkipped); r.Reason != "declined by Capcom: off" {
+		t.Fatalf("declined run %+v", r)
 	}
 
 	// A group with no coordinator: skipped, its batch kept. The group ends: the round completes.
@@ -229,18 +272,17 @@ func TestRoundGroupPeers(t *testing.T) {
 
 // TestRoundCapcomOneWay: a capcom run whose home host can dial this hab, though this hab cannot
 // dial it, is accepted: the home host pulls its mail over its own link, so it is awake, and the
-// run does not end "queued for Capcom" (rounds.md 5.2, the outbox for a sleeping home host).
+// run does not end "queued for Capcom" (rounds.md 5.2, the outbox for a sleeping home host). The
+// outcome travels back the same way.
 func TestRoundCapcomOneWay(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
 	a := newPeerRoundEnv(t, "bee", "hab-b")
 	b := newPeerRoundEnv(t, "ay", "hab-a")
-	answer := filepath.Join(b.work, "capcom-answer")
-	writeFile(t, answer, "accepted\n")
 	// Only b dials: the stand-in knows no hab-b.
 	standIn := sshStandIn(t, map[string]string{"hab-a": a.sock})
-	b.startWith(t, standIn, "host-b", "GFF_TEST_CAPCOM_SERVICE="+answer)
+	b.startCapcom(t, standIn, "host-b")
 	// a lists b at an endpoint it cannot reach, pinned, so b's link in is known as bee.
 	writeFile(t, a.peers, fmt.Sprintf("[[peers]]\nlabel = \"bee\"\nendpoints = [\"hab-b\"]\ndevice_id = %q\n", welcome(t, b.sock).DeviceID))
 	a.startWith(t, standIn, "host-a")
@@ -257,7 +299,11 @@ func TestRoundCapcomOneWay(t *testing.T) {
 	if r.Reason != reasonAccepted {
 		t.Fatalf("run %+v, want %q", r, reasonAccepted)
 	}
-	if got := taken(t, answer+".got"); len(got) != 1 || got[0].ID != r.Message {
-		t.Fatalf("taken %+v", got)
+	if got := roundItems(t, b); len(got) != 1 || got[0].Text != "check the builds" {
+		t.Fatalf("round items %+v", got)
 	}
+	waitUntil(t, "the outcome", func() bool {
+		runs := roundRuns(t, ca, "cc")
+		return len(runs) == 1 && runs[0].Outcome != nil && runs[0].Outcome.Word == "told"
+	})
 }

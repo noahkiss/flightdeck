@@ -150,6 +150,15 @@ func (s *Server) SetPersonal(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetGuard sets a check every non-read call on the route passes first, with the caller's pane
+// and the method: an error refuses the call with its kind. The Capcom service refuses an event
+// turn's acting calls with it (capcom-service.md 9.4).
+func (s *Server) SetGuard(g func(pane, method string) error) {
+	s.mu.Lock()
+	s.guard = g
+	s.mu.Unlock()
+}
+
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
 func (s *Server) SetChannels(h ChannelHandler) {
 	s.mu.Lock()
@@ -252,6 +261,20 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	if !known && !conf && !round && !lb && !ag && !grp && !pers {
 		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods, GroupMethods)
 		return
+	}
+	s.mu.Lock()
+	guard := s.guard
+	s.mu.Unlock()
+	if guard != nil {
+		if err := guard(pane, call.Method); err != nil {
+			var ce *control.Error
+			if errors.As(err, &ce) {
+				fail(ce.Data.Kind, "%s", ce.Message)
+			} else {
+				fail(api.ErrorKindDenied, "%v", err)
+			}
+			return
+		}
 	}
 	s.mu.Lock()
 	h := s.channels
