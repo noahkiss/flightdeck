@@ -68,6 +68,8 @@ type capcomEngine struct {
 
 	// started, a func(session id), runs after each start: the groups' waiting reports.
 	started atomic.Value
+	// personal is the personal tools and the device context (8).
+	personal *capcomPersonal
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
@@ -107,6 +109,11 @@ type capcomEngineSetup struct {
 // pushesMessage reports whether a thread item is a Capcom message, the one kind that pushes
 // (7.6): Capcom's own text, not a card, note, tools line or the user's message.
 func pushesMessage(it capcomthread.Item) bool {
+	if it.Kind == capcomthread.KindCard && it.Card != nil && it.Card.Event != nil {
+		// A calendar or reminder card pushes once, unanswered, with an Add action (8.5); its
+		// answer changes the item again and pushes nothing.
+		return it.Answer == nil
+	}
 	return it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorCapcom && strings.TrimSpace(it.Text) != ""
 }
 
@@ -147,6 +154,10 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 	if s.logbook != nil {
 		e.memory = &capcomMemory{svc: s.logbook, host: s.host}
 	}
+	e.personal, err = newCapcomPersonal(dir, config, func() string { return e.link.Status().Turn }, th)
+	if err != nil {
+		return nil, err
+	}
 	th.Watch(func(it capcomthread.Item) {
 		e.publish(structure.Event{Type: api.EventCapcomItem, ID: it.ID, Data: apiItem(it)})
 		e.publishChat(it)
@@ -176,6 +187,8 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		Limits:      func() capcomengine.ContextLimits { return contextLimits(config().Limits) },
 		Logbook:     e.logbookPart,
 		EngineKind:  func() string { return config().Engine },
+		ToolSummary: e.personal.toolSummary,
+		Attribution: e.personal.attribution,
 	})
 	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, host: s.host, dir: capcomengine.EngineDir(dir),
 		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
@@ -706,6 +719,13 @@ func apiItem(it capcomthread.Item) api.CapcomItem {
 	}
 	if it.Card != nil {
 		out.Card = &api.CapcomCard{Type: it.Card.Type, Ref: it.Card.Ref, Choices: append([]string{}, it.Card.Choices...)}
+		if ev := it.Card.Event; ev != nil {
+			out.Card.Event = &api.CapcomCardEvent{Title: ev.Title, Start: ev.Start, End: ev.End, AllDay: ev.AllDay, Due: ev.Due,
+				Location: ev.Location, Notes: ev.Notes, URL: ev.URL, TZ: ev.TZ}
+		}
+	}
+	for _, a := range it.Attribution {
+		out.Attribution = append(out.Attribution, api.CapcomAttribution{Source: a.Source, Text: a.Text, URL: a.URL})
 	}
 	if it.Answer != nil {
 		out.Answer = &api.CapcomAnswer{Choice: it.Answer.Choice, By: it.Answer.By, Time: it.Answer.Time.UTC().Format(time.RFC3339)}

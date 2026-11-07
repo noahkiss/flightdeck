@@ -1,0 +1,88 @@
+{
+  "data": {
+    "answer": {
+      "by": "by-28",
+      "choice": "choice-27",
+      "time": "time-29",
+      "x_unknown_field": "later"
+    },
+    "attachments": [
+      "attachments-9"
+    ],
+    "attribution": [
+      {
+        "source": "source-32",
+        "text": "text-33",
+        "url": "url-34",
+        "x_unknown_field": "later"
+      }
+    ],
+    "author": {
+      "address": "address-6",
+      "device": "device-5",
+      "kind": "flightdeck",
+      "x_unknown_field": "later"
+    },
+    "card": {
+      "choices": [
+        "choices-18"
+      ],
+      "event": {
+        "all_day": true,
+        "due": "due-22",
+        "end": "end-21",
+        "location": "location-23",
+        "notes": "notes-24",
+        "start": "start-20",
+        "title": "title-19",
+        "tz": "tz-26",
+        "url": "url-25",
+        "x_unknown_field": "later"
+      },
+      "ref": "ref-17",
+      "type": "type-16",
+      "x_unknown_field": "later"
+    },
+    "context": [
+      {
+        "host": "host-11",
+        "kind": "logbook",
+        "ref": "ref-10",
+        "title": "title-12",
+        "x_unknown_field": "later"
+      }
+    ],
+    "event": true,
+    "id": "id-3",
+    "images": [
+      "images-8"
+    ],
+    "kind": "divider",
+    "read": "read-31",
+    "summary": "summary-30",
+    "text": "text-7",
+    "time": "time-4",
+    "tools": [
+      {
+        "name": "name-14",
+        "summary": "summary-15",
+        "x_unknown_field": "later"
+      }
+    ],
+    "turn": "turn-13",
+    "x_unknown_field": "later"
+  },
+  "id": "id-37",
+  "revision": 35,
+  "seq": 36,
+  "type": "capcom.item",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

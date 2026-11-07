@@ -139,6 +139,7 @@ var Methods = []Method{
 	{"capcom.site.remove", "Take a site off the sites the user allowed with Allow this site; the next web fetch on it raises a card again. not_found when the list does not hold it (capcom-service.md 5.3). Needs the capcom-thread capability.", CapcomSiteParams{}, CapcomServiceStatus{}},
 	{"capcom.resume", "Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
 	{"capcom.card.answer", "Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.", CapcomCardAnswerParams{}, CapcomCardAnswered{}},
+	{"device.context.put", "Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link. Needs the device-context capability.", DeviceContextPutParams{}, Empty{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
 	{"transcript.list", "Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.", TranscriptListParams{}, TranscriptSessions{}},
 	{"transcript.search", "Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.", TranscriptSearchParams{}, TranscriptHits{}},
@@ -381,5 +382,7 @@ var Translators = map[int]Translator{}
 // means this hab runs the Capcom service: the capcom.thread.page, capcom.interrupt,
 // capcom.status, capcom.pause and capcom.resume methods and the capcom.item and capcom.typing
 // events work, and session.send to the service session goes to the thread
-// (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups"}
+// (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4). "device-context"
+// means device.context.put works and the hab serves Capcom's personal tools; it is sent with
+// capcom-thread (capcom-service.md 8).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"}
