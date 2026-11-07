@@ -191,3 +191,27 @@ func TestServiceConfigExample(t *testing.T) {
 		t.Fatal(err, problems)
 	}
 }
+
+// The four pace_* keys (19.2): each moves its number; a value outside its range runs its
+// default; a set out of order runs the three step defaults with one problem line.
+func TestServiceConfigPace(t *testing.T) {
+	c, problems, err := LoadServiceConfig(writeConfig(t, "[capcom]\npace_daily_share = 10\npace_event_stop = 50\npace_small_at = \"60%\"\npace_wait_at = 70.5\n"))
+	if err != nil || len(problems) != 0 {
+		t.Fatal(err, problems)
+	}
+	if c.Pace != (Pace{DailyShare: 10, EventStop: 50, SmallAt: 60, WaitAt: 70.5}) {
+		t.Fatalf("pace %+v", c.Pace)
+	}
+	if c, _, _ := LoadServiceConfig(writeConfig(t, "[capcom]\n")); c.Pace != DefaultPace {
+		t.Fatalf("default pace %+v", c.Pace)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\npace_daily_share = 0\npace_event_stop = 501\npace_small_at = \"lots\"\npace_wait_at = 9\n"))
+	if c.Pace != DefaultPace || len(problems) != 4 {
+		t.Fatalf("pace %+v, problems %q", c.Pace, problems)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\npace_daily_share = 20\npace_event_stop = 150\npace_small_at = 100\npace_wait_at = 200\n"))
+	if c.Pace != (Pace{DailyShare: 20, EventStop: 80, SmallAt: 100, WaitAt: 120}) || len(problems) != 1 ||
+		!strings.Contains(problems[0], "in that order") {
+		t.Fatalf("out of order: pace %+v, problems %q", c.Pace, problems)
+	}
+}

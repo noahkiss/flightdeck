@@ -86,6 +86,9 @@ type Config struct {
 	// Heavy returns the own catalog's heavy section (groups.md 8). Nil, or a nil result: no
 	// section.
 	Heavy func() *api.CatalogHeavy
+	// Governor returns the own catalog's governor section (capcom-service.md 10.1). Nil, or a
+	// nil result: no section.
+	Governor func() *api.CatalogGovernor
 	// Words returns capability words this hab's own features add, such as round-lock
 	// (rounds.md 5.2). Nil: none.
 	Words func() []string
@@ -593,6 +596,10 @@ func (s *Service) build(first bool) {
 	if s.cfg.Heavy != nil {
 		heavy = s.cfg.Heavy()
 	}
+	var gov *api.CatalogGovernor
+	if s.cfg.Governor != nil {
+		gov = s.cfg.Governor()
+	}
 	var extra []string
 	if s.cfg.Words != nil {
 		extra = s.cfg.Words()
@@ -626,6 +633,7 @@ func (s *Service) build(first bool) {
 		Rounds:       rounds,
 		Heavy:        heavy,
 		Groups:       groups,
+		Governor:     gov,
 	}
 	c = api.NonNil(c)
 	prev := s.own

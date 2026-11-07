@@ -16,7 +16,7 @@ import { ALLOW_TOOLS, BASE_TOOLS, DENY_TOOLS, onSurface, siteOf, textOf, toolSum
 import { Route, type Msg } from './route.js';
 import { configDir, findTranscript, handedIds, MARKER_RE } from './transcript.js';
 import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
-import { ContextAsks, type ContextMsg, type Credential, defaultSettings, helloReseed, type Item, itemLines, newTurnId, originOf, parseContext, parseCredential, parseSettings, redactor, type Settings } from './contract.js';
+import { admit, ContextAsks, type ContextMsg, type Credential, defaultSettings, helloReseed, type Item, itemLines, mayHand, newTurnId, originOf, type Pace, PACE_OK, parseContext, parseCredential, parsePace, parseSettings, redactor, type Settings } from './contract.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -37,7 +37,12 @@ export const START_CHECK_TEXT = '[flightdeck start check]';
 export interface QueryHandle extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<unknown>;
   close(): void;
+  setModel?(model?: string): Promise<void>;
 }
+
+// The small model when hello names none: the provider's smallest current model, by its alias.
+export const DEFAULT_SMALL_MODEL = 'haiku';
+
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryHandle;
 
 export interface EngineDeps {
@@ -50,7 +55,7 @@ export interface EngineDeps {
   flushTimeoutMs?: number;
 }
 
-export type { Credential, Item } from './contract.js';
+export type { Credential, Item, Pace } from './contract.js';
 
 interface Turn {
   id: string;
@@ -131,6 +136,10 @@ export class Engine {
   private summarizing?: Promise<void>; // the summary call that runs
   private asks = new ContextAsks();
   private exiting = false;
+  private pace: Pace = PACE_OK;
+  private paceGen = 0; // counts pace messages, so a pump that awaited admits again
+  private model?: string; // the model the SDK session runs now; undefined: the SDK's default
+  private nextOrigin?: 'user' | 'event'; // the origin of the turn the next hand begins
 
   constructor(d: EngineDeps) {
     this.d = d;
@@ -233,7 +242,7 @@ export class Engine {
         this.setSites(m.sites);
         break;
       case 'pace':
-        // The governor's answers belong to a later stage.
+        this.onPace(m);
         break;
       default:
         // Unknown types are acked and ignored.
@@ -251,14 +260,45 @@ export class Engine {
     void this.pump();
   }
 
+  private onPace(m: Msg): void {
+    this.pace = parsePace(m);
+    this.paceGen++;
+    void this.pump();
+  }
+
+  // useModel switches the SDK session's model before a turn begins.
+  private async useModel(small: boolean): Promise<void> {
+    const want = small ? (this.settings.small_model ?? DEFAULT_SMALL_MODEL) : this.settings.model;
+    if (want === this.model || !this.q?.setModel) return;
+    try {
+      await this.q.setModel(want);
+      this.model = want;
+    } catch (e) {
+      this.log(`set the model to ${want ?? 'the default'}: ${(e as Error).message}`);
+    }
+  }
+
   private pumping = false;
   private async pump(): Promise<void> {
     if (this.pumping) return;
     this.pumping = true;
     try {
       while (this.ready && !this.reseedPending && !this.shuttingDown && this.pending.length) {
+        if (this.handed.has(this.pending[0]!.id)) {
+          this.pending.shift();
+          continue;
+        }
+        if (!this.turn) {
+          // A new turn: the governor's pace decides (10.1).
+          const a = admit(this.pending, this.pace);
+          if (!a) break;
+          const gen = this.paceGen;
+          await this.useModel(a.small);
+          if (!this.ready || this.turn || gen !== this.paceGen) continue; // admit again
+          this.nextOrigin = a.origin;
+        }
+        if (!mayHand(this.pending, this.pace)) break;
         const item = this.pending.shift()!;
-        if (this.handed.has(item.id)) continue;
         await this.hand(item);
       }
     } finally {
@@ -278,7 +318,8 @@ export class Engine {
     this.uuidItems.set(msg.uuid!, item);
     this.untaken.add(msg.uuid!);
     if (item.kind === 'message' || item.kind === undefined) this.userUrls.addText(item.text ?? '');
-    if (!this.turn) this.beginTurn(originOf(item), [item.id]);
+    if (!this.turn) this.beginTurn(this.nextOrigin ?? originOf(item), [item.id]);
+    this.nextOrigin = undefined;
     this.input.push(msg);
   }
 
@@ -564,6 +605,7 @@ export class Engine {
       return;
     }
     this.q = q;
+    this.model = this.settings.model; // the session starts on the main model (buildOptions)
     // The probe: a message that runs no model call but makes the SDK send
     // its init with the tool list.
     input.push({
@@ -758,8 +800,11 @@ export class Engine {
       return;
     }
     // Items handed but not taken run as the SDK's next turn.
-    const left = [...this.untaken].map((u) => this.uuidToItem.get(u)!).filter(Boolean);
-    if (left.length) this.beginTurn('user', left);
+    // Only items the pace let through were handed (mayHand in contract.ts), so the turn needs no admit.
+    const untaken = [...this.untaken];
+    const left = untaken.map((u) => this.uuidToItem.get(u)!).filter(Boolean);
+    if (left.length) this.beginTurn(this.uuidItems.get(untaken[0]!)?.kind === 'event' ? 'event' : 'user', left);
+    void this.pump(); // items held during the turn meet the pace of now
   }
 
   private endTurn(result: string): void {
