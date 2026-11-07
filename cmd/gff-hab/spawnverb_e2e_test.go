@@ -85,6 +85,15 @@ func gitRepo(t *testing.T, dir, name string) string {
 	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "https://example.com/"+name+".git").CombinedOutput(); err != nil {
 		t.Fatalf("git remote: %v %s", err, out)
 	}
+	// Pushes go to a bare repository beside it, so a group's lead can push its branch (groups.md
+	// 7.1) with no network; the remote's URL, the project's identity, stays.
+	bare := filepath.Join(dir, name+"-origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "url."+bare+".pushInsteadOf", "https://example.com/"+name+".git").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v %s", err, out)
+	}
 	return repo
 }
 

@@ -1492,3 +1492,24 @@ func (c Client) MemberAction(ctx context.Context, params MemberActionRef) (Membe
 	err := c.Caller.Call(ctx, "member.action", params, &result)
 	return result, err
 }
+
+// LaneSubmit calls lane.submit. Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.
+func (c Client) LaneSubmit(ctx context.Context, params LaneSubmitParams) (LaneSubmitted, error) {
+	var result LaneSubmitted
+	err := c.Caller.Call(ctx, "lane.submit", params, &result)
+	return result, err
+}
+
+// ReviewVerdict calls review.verdict. A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.
+func (c Client) ReviewVerdict(ctx context.Context, params ReviewVerdictParams) (ReviewVerdictTaken, error) {
+	var result ReviewVerdictTaken
+	err := c.Caller.Call(ctx, "review.verdict", params, &result)
+	return result, err
+}
+
+// GroupMessage calls group.message. The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.
+func (c Client) GroupMessage(ctx context.Context, params GroupMessageParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "group.message", params, &result)
+	return result, err
+}

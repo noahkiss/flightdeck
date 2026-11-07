@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/confirm"
@@ -13,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // A group member's hab (groups.md 2.2, 3.3, 5.6): it keeps each member's envelope on its
@@ -136,10 +138,55 @@ func memberDefaults(ss api.Session, s api.ConfirmStart) (api.GroupRole, string) 
 	return role, item
 }
 
+// memberGit runs git for a member's hab: the heads a lead submits and a reviewer fixes.
+var memberGit worktree.Git
+
+// memberFolder is the folder a member's session started in: its worktree.
+func memberFolder(ctx context.Context, folderOf func(context.Context, string) string, ss api.Session) string {
+	if folderOf == nil {
+		return ""
+	}
+	return folderOf(ctx, ss.ID)
+}
+
+// memberCommit is the full commit id rev names in a member's repository.
+func memberCommit(ctx context.Context, folderOf func(context.Context, string) string, ss api.Session, rev string) (string, error) {
+	dir := memberFolder(ctx, folderOf, ss)
+	if dir == "" {
+		return "", control.Errorf(api.ErrorKindUnavailable, "this hab does not know session %s's folder", ss.Name)
+	}
+	c, err := memberGit.Resolve(ctx, dir, rev)
+	if err != nil {
+		return "", control.Errorf(api.ErrorKindInvalid, "%s: commit your work on the branch first", errText(err))
+	}
+	return c, nil
+}
+
+// memberPush pushes a member's branch to the project's remote, so the lane and a member on
+// another host find its commits (groups.md 7.1). A project with no remote pushes nothing: the
+// lane then waits and says why.
+func memberPush(ctx context.Context, store *structure.Store, folderOf func(context.Context, string) string, ss api.Session, branch string) error {
+	pr, _ := store.Project(ss.Project)
+	dir := memberFolder(ctx, folderOf, ss)
+	if dir == "" || pr.Remote == "" {
+		return nil
+	}
+	remote := memberGit.RemoteFor(ctx, dir, pr.Remote)
+	if remote == "" {
+		return nil
+	}
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := memberGit.PushBranch(pctx, dir, remote, branch); err != nil {
+		return control.Errorf(api.ErrorKindUnavailable, "push %s to %s: %s", branch, remote, errText(err))
+	}
+	return nil
+}
+
 // groupHook answers the group methods from a pane (groups.md 15.2): the pane's session is the
 // coordinator of a new group, and the sender of a report or a note. Only the coordinator amends,
 // closes or retries.
-func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
+func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx context.Context, session string) string) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		ss, ok := store.SessionByPane(pane)
 		if !ok {
@@ -263,6 +310,79 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			}
 			g, err := svc.Close(ctx, p.Group)
 			return api.GroupResult{Group: g}, nil, err
+		case "lane.submit":
+			var p api.LaneSubmitParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			if ss.Group == nil || ss.Group.ID != p.Group || ss.Group.Role != groups.RoleLead || ss.Group.Item != p.Item {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "only item %s's lead in group %s submits it", p.Item, p.Group)
+			}
+			// This hab reads the head of the lead's branch: a pane's head is never taken.
+			head, err := memberCommit(ctx, folderOf, ss, groups.Branch(p.Group, p.Item))
+			if err != nil {
+				return nil, nil, err
+			}
+			// The push replaces the branch on the remote: never while the lane works on it, or
+			// for a submit the home hab would refuse.
+			g, err := memberGroup(ctx, svc, p.Group)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := groups.MaySubmit(g, p.Item); err != nil {
+				return nil, nil, err
+			}
+			if err := memberPush(ctx, store, folderOf, ss, groups.Branch(p.Group, p.Item)); err != nil {
+				return nil, nil, err
+			}
+			p.From, p.Head = ss.Name, head
+			r, err := svc.submit(ctx, p, svc.cfg.self)
+			return r, nil, err
+		case "review.verdict":
+			var p api.ReviewVerdictParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			if ss.Group == nil || ss.Group.ID != p.Group || ss.Group.Role != groups.RoleReviewer || ss.Group.Item != p.Item {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "only item %s's reviewer in group %s gives its verdict", p.Item, p.Group)
+			}
+			// This hab reads the review branch's head and checks it against the submitted
+			// head (groups.md 6.1, 6.4): the home hab may not see this repository. Every
+			// verdict names the head it reviewed, so one on an earlier submit is refused.
+			p.From, p.Checked, p.Reviewed, p.Descends = ss.Name, "", "", false
+			head, err := memberCommit(ctx, folderOf, ss, groups.ReviewBranch(p.Group, p.Item))
+			if err != nil {
+				return nil, nil, err
+			}
+			if f := p.Fixed; f != nil {
+				if f.Head != "" {
+					if named, err := memberCommit(ctx, folderOf, ss, f.Head); err != nil || named != head {
+						return nil, nil, control.Errorf(api.ErrorKindInvalid, "fixed.head %s is not the head %s of your review branch %s", f.Head, groups.Short7(head), groups.ReviewBranch(p.Group, p.Item))
+					}
+				}
+				fixed := *f
+				fixed.Head = head
+				p.Fixed = &fixed
+			}
+			g, err := memberGroup(ctx, svc, p.Group)
+			if err != nil {
+				return nil, nil, err
+			}
+			inReview := false
+			if ii := groups.ItemIndex(g, p.Item); ii >= 0 && g.Items[ii].Submitted != "" {
+				sub := g.Items[ii].Submitted
+				p.Checked, p.Reviewed = sub, head
+				p.Descends = head != sub && memberGit.IsAncestor(ctx, memberFolder(ctx, folderOf, ss), sub, head)
+				inReview = g.Items[ii].State == groups.ItemReview
+			}
+			if p.Verdict == "pass" && p.Descends && p.Fixed != nil && inReview {
+				// A pass with fixes lands the review head: the lane finds it on the remote.
+				if err := memberPush(ctx, store, folderOf, ss, groups.ReviewBranch(p.Group, p.Item)); err != nil {
+					return nil, nil, err
+				}
+			}
+			r, err := svc.verdict(ctx, p, svc.cfg.self)
+			return r, nil, err
 		default: // group.retry
 			var p api.GroupRetryParams
 			if err := json.Unmarshal(params, &p); err != nil {
@@ -275,4 +395,16 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			return api.GroupResult{Group: g}, nil, err
 		}
 	}
+}
+
+// memberGroup reads a group from this hab, or from its home hab.
+func memberGroup(ctx context.Context, svc *groupsService, id string) (api.Group, error) {
+	if g, err := svc.Get(id); err == nil {
+		return g, nil
+	}
+	var r api.GroupResult
+	if err := svc.forward(ctx, id, "group.get", api.GroupRef{Group: id}, &r); err != nil {
+		return api.Group{}, err
+	}
+	return r.Group, nil
 }

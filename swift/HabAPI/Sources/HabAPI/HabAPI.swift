@@ -3845,49 +3845,126 @@ public struct GroupEnvelope: Codable, Sendable, Hashable {
     }
 }
 
-public struct GroupItem: Codable, Sendable, Hashable {
-    public var after: String?
-    /// group/<group>/<item>.
-    public var branch: String?
-    public var id: String
-    /// Its lead's session name.
-    public var lead: String?
-    /// Why it is stalled or waits.
-    public var reason: String?
-    public var review: String?
-    /// queued, stalled, working, review, fix, ready, landing, landed or dropped.
-    public var state: String
-    /// Its Logbook task id.
-    public var task: String?
+public struct GroupFinding: Codable, Sendable, Hashable {
+    /// File and line, such as api/groups.go:42. At most 200 characters.
+    public var place: String?
+    /// high or medium.
+    public var severity: String
+    /// One paragraph, at most 2000 characters.
+    public var text: String
+    /// One line, at most 200 characters.
     public var title: String
 
     enum CodingKeys: String, CodingKey {
-        case after = "after"
-        case branch = "branch"
-        case id = "id"
-        case lead = "lead"
-        case reason = "reason"
-        case review = "review"
-        case state = "state"
-        case task = "task"
+        case place = "place"
+        case severity = "severity"
+        case text = "text"
         case title = "title"
     }
 
-    public init(after: String? = nil, branch: String? = nil, id: String, lead: String? = nil, reason: String? = nil, review: String? = nil, state: String, task: String? = nil, title: String) {
-        self.after = after
-        self.branch = branch
-        self.id = id
-        self.lead = lead
-        self.reason = reason
-        self.review = review
-        self.state = state
-        self.task = task
+    public init(place: String? = nil, severity: String, text: String, title: String) {
+        self.place = place
+        self.severity = severity
+        self.text = text
         self.title = title
     }
 }
 
+public struct GroupItem: Codable, Sendable, Hashable {
+    public var after: String?
+    /// The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run.
+    public var attempts: [GroupLaneAttempt]?
+    /// group/<group>/<item>.
+    public var branch: String?
+    public var id: String
+    /// RFC 3339 time the reviewer was first seen idle with no verdict on this head.
+    public var idleSince: String?
+    /// The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes.
+    public var land: String?
+    /// The commit on the target once the item landed: the rebased head.
+    public var landed: String?
+    /// Its lead's session name.
+    public var lead: String?
+    /// The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI.
+    public var noCi: Bool?
+    /// Why it is stalled or waits.
+    public var reason: String?
+    public var review: String?
+    /// group/<group>/<item>-review: the reviewer's own branch (groups.md 6.4).
+    public var reviewBranch: String?
+    /// RFC 3339 time the review of the submitted head began.
+    public var reviewSince: String?
+    /// Its reviewer's session name: a member with role reviewer. Absent with review off.
+    public var reviewer: String?
+    /// The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness.
+    public var sameHarness: Bool?
+    /// queued, stalled, working, review, fix, ready, landing, landed or dropped.
+    public var state: String
+    /// Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit.
+    public var stuck: String?
+    /// How many times the lead submitted.
+    public var submits: Int?
+    /// The full commit id of the lead's last lane_submit.
+    public var submitted: String?
+    /// Its Logbook task id.
+    public var task: String?
+    public var title: String
+    /// The reviewer's verdict on the submitted head. Absent while the reviewer reviews.
+    public var verdict: GroupVerdict?
+
+    enum CodingKeys: String, CodingKey {
+        case after = "after"
+        case attempts = "attempts"
+        case branch = "branch"
+        case id = "id"
+        case idleSince = "idle_since"
+        case land = "land"
+        case landed = "landed"
+        case lead = "lead"
+        case noCi = "no_ci"
+        case reason = "reason"
+        case review = "review"
+        case reviewBranch = "review_branch"
+        case reviewSince = "review_since"
+        case reviewer = "reviewer"
+        case sameHarness = "same_harness"
+        case state = "state"
+        case stuck = "stuck"
+        case submits = "submits"
+        case submitted = "submitted"
+        case task = "task"
+        case title = "title"
+        case verdict = "verdict"
+    }
+
+    public init(after: String? = nil, attempts: [GroupLaneAttempt]? = nil, branch: String? = nil, id: String, idleSince: String? = nil, land: String? = nil, landed: String? = nil, lead: String? = nil, noCi: Bool? = nil, reason: String? = nil, review: String? = nil, reviewBranch: String? = nil, reviewSince: String? = nil, reviewer: String? = nil, sameHarness: Bool? = nil, state: String, stuck: String? = nil, submits: Int? = nil, submitted: String? = nil, task: String? = nil, title: String, verdict: GroupVerdict? = nil) {
+        self.after = after
+        self.attempts = attempts
+        self.branch = branch
+        self.id = id
+        self.idleSince = idleSince
+        self.land = land
+        self.landed = landed
+        self.lead = lead
+        self.noCi = noCi
+        self.reason = reason
+        self.review = review
+        self.reviewBranch = reviewBranch
+        self.reviewSince = reviewSince
+        self.reviewer = reviewer
+        self.sameHarness = sameHarness
+        self.state = state
+        self.stuck = stuck
+        self.submits = submits
+        self.submitted = submitted
+        self.task = task
+        self.title = title
+        self.verdict = verdict
+    }
+}
+
 public struct GroupLane: Codable, Sendable, Hashable {
-    /// A reviewer may fix in place on its review branch (groups.md 6.4).
+    /// A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true.
     public var fixInPlace: Bool?
     /// The target branch. Absent: the project's default branch.
     public var target: String?
@@ -3903,18 +3980,59 @@ public struct GroupLane: Codable, Sendable, Hashable {
     }
 }
 
+public struct GroupLaneAttempt: Codable, Sendable, Hashable {
+    /// RFC 3339 time the try ended or saved its push.
+    public var at: String
+    /// pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later).
+    public var outcome: String
+    /// The rebased head pushed to the item's branch.
+    public var rebased: String?
+    /// Where it stopped: fetch, rebase, checks, push, ci, land or moving.
+    public var step: String?
+    /// The target commit the item was rebased on.
+    public var target: String?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case outcome = "outcome"
+        case rebased = "rebased"
+        case step = "step"
+        case target = "target"
+    }
+
+    public init(at: String, outcome: String, rebased: String? = nil, step: String? = nil, target: String? = nil) {
+        self.at = at
+        self.outcome = outcome
+        self.rebased = rebased
+        self.step = step
+        self.target = target
+    }
+}
+
 public struct GroupLaneState: Codable, Sendable, Hashable {
     public var landing: String?
+    /// The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI.
+    public var noCi: Bool?
     public var queue: [String]
+    /// Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again.
+    public var stopped: String?
+    /// Why the lane waits: no remote, a fetch that failed. It tries again each minute.
+    public var waits: String?
 
     enum CodingKeys: String, CodingKey {
         case landing = "landing"
+        case noCi = "no_ci"
         case queue = "queue"
+        case stopped = "stopped"
+        case waits = "waits"
     }
 
-    public init(landing: String? = nil, queue: [String]) {
+    public init(landing: String? = nil, noCi: Bool? = nil, queue: [String], stopped: String? = nil, waits: String? = nil) {
         self.landing = landing
+        self.noCi = noCi
         self.queue = queue
+        self.stopped = stopped
+        self.waits = waits
     }
 }
 
@@ -3975,6 +4093,8 @@ public struct GroupMember: Codable, Sendable, Hashable {
     public var session: String?
     /// planned, starting, running, exited or failed.
     public var state: String
+    /// The hab removed its worktree: its session ended and the worktree had no uncommitted changes.
+    public var worktreeRemoved: Bool?
 
     enum CodingKeys: String, CodingKey {
         case agent = "agent"
@@ -3994,9 +4114,10 @@ public struct GroupMember: Codable, Sendable, Hashable {
         case role = "role"
         case session = "session"
         case state = "state"
+        case worktreeRemoved = "worktree_removed"
     }
 
-    public init(agent: AgentStatus? = nil, agentAge: String? = nil, attempts: Int? = nil, compacts: Int? = nil, contextPct: Int? = nil, device: String? = nil, folder: String? = nil, harness: String, host: String, item: String, model: String? = nil, name: String, reason: String? = nil, replaced: String? = nil, role: GroupRole, session: String? = nil, state: String) {
+    public init(agent: AgentStatus? = nil, agentAge: String? = nil, attempts: Int? = nil, compacts: Int? = nil, contextPct: Int? = nil, device: String? = nil, folder: String? = nil, harness: String, host: String, item: String, model: String? = nil, name: String, reason: String? = nil, replaced: String? = nil, role: GroupRole, session: String? = nil, state: String, worktreeRemoved: Bool? = nil) {
         self.agent = agent
         self.agentAge = agentAge
         self.attempts = attempts
@@ -4014,6 +4135,27 @@ public struct GroupMember: Codable, Sendable, Hashable {
         self.role = role
         self.session = session
         self.state = state
+        self.worktreeRemoved = worktreeRemoved
+    }
+}
+
+public struct GroupMessageParams: Codable, Sendable, Hashable {
+    public var group: String
+    /// The member's session name on the receiving hab.
+    public var member: String
+    /// At most 8000 characters.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case group = "group"
+        case member = "member"
+        case text = "text"
+    }
+
+    public init(group: String, member: String, text: String) {
+        self.group = group
+        self.member = member
+        self.text = text
     }
 }
 
@@ -4242,16 +4384,20 @@ public struct GroupResult: Codable, Sendable, Hashable {
 
 public struct GroupRetryParams: Codable, Sendable, Hashable {
     public var group: String
-    /// A failed member's name.
+    /// Start the group's stopped lane again (groups.md 7.4), instead of a member.
+    public var lane: Bool?
+    /// A failed member's name. Empty with lane.
     public var member: String
 
     enum CodingKeys: String, CodingKey {
         case group = "group"
+        case lane = "lane"
         case member = "member"
     }
 
-    public init(group: String, member: String) {
+    public init(group: String, lane: Bool? = nil, member: String) {
         self.group = group
+        self.lane = lane
         self.member = member
     }
 }
@@ -4263,6 +4409,43 @@ public struct GroupRole: RawRepresentable, Codable, Sendable, Hashable {
     public static let lead = GroupRole(rawValue: "lead")
     public static let worker = GroupRole(rawValue: "worker")
     public static let reviewer = GroupRole(rawValue: "reviewer")
+}
+
+public struct GroupVerdict: Codable, Sendable, Hashable {
+    /// RFC 3339 time the home hab took it.
+    public var at: String
+    /// At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings.
+    public var findings: [GroupFinding]
+    /// The fix commits the reviewer named.
+    public var fixed: [String]?
+    /// The review branch head the lane takes: it descends from the submitted head.
+    public var fixedHead: String?
+    /// Why the reviewer's fixes were ignored, in one line. The card shows it.
+    public var fixesIgnored: String?
+    /// The submitted head the verdict is on.
+    public var head: String
+    /// pass or fix_needed.
+    public var verdict: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case findings = "findings"
+        case fixed = "fixed"
+        case fixedHead = "fixed_head"
+        case fixesIgnored = "fixes_ignored"
+        case head = "head"
+        case verdict = "verdict"
+    }
+
+    public init(at: String, findings: [GroupFinding], fixed: [String]? = nil, fixedHead: String? = nil, fixesIgnored: String? = nil, head: String, verdict: String) {
+        self.at = at
+        self.findings = findings
+        self.fixed = fixed
+        self.fixedHead = fixedHead
+        self.fixesIgnored = fixesIgnored
+        self.head = head
+        self.verdict = verdict
+    }
 }
 
 public struct HabStatsParams: Codable, Sendable, Hashable {
@@ -4604,6 +4787,56 @@ public struct InputParams: Codable, Sendable, Hashable {
         self.data = data
         self.pane = pane
         self.text = text
+    }
+}
+
+public struct LaneSubmitParams: Codable, Sendable, Hashable {
+    /// The lead's session name. From a pane the pane's session.
+    public var from: String?
+    public var group: String
+    /// Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced.
+    public var head: String?
+    public var item: String
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case group = "group"
+        case head = "head"
+        case item = "item"
+    }
+
+    public init(from: String? = nil, group: String, head: String? = nil, item: String) {
+        self.from = from
+        self.group = group
+        self.head = head
+        self.item = item
+    }
+}
+
+public struct LaneSubmitted: Codable, Sendable, Hashable {
+    public var head: String
+    /// A review of an earlier head ran: it restarts on this head, and the reviewer is told.
+    public var restart: Bool?
+    public var reviewer: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case head = "head"
+        case restart = "restart"
+        case reviewer = "reviewer"
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(head: String, restart: Bool? = nil, reviewer: String? = nil, seq: UInt64, state: String) {
+        self.head = head
+        self.restart = restart
+        self.reviewer = reviewer
+        self.seq = seq
+        self.state = state
     }
 }
 
@@ -6833,6 +7066,91 @@ public struct ResizeFrame: Codable, Sendable, Hashable {
         self.owner = owner
         self.reason = reason
         self.rows = rows
+    }
+}
+
+public struct ReviewFixed: Codable, Sendable, Hashable {
+    /// The fix commits on the review branch.
+    public var commits: [String]?
+    /// The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch.
+    public var head: String?
+
+    enum CodingKeys: String, CodingKey {
+        case commits = "commits"
+        case head = "head"
+    }
+
+    public init(commits: [String]? = nil, head: String? = nil) {
+        self.commits = commits
+        self.head = head
+    }
+}
+
+public struct ReviewVerdictParams: Codable, Sendable, Hashable {
+    /// Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced.
+    public var checked: String?
+    /// Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced.
+    public var descends: Bool?
+    /// High and medium findings only, at most [groups] max_findings. More are refused.
+    public var findings: [GroupFinding]?
+    /// Fix commits the reviewer pushed to its review branch, if any.
+    public var fixed: ReviewFixed?
+    /// The reviewer's session name. From a pane the pane's session.
+    public var from: String?
+    public var group: String
+    public var item: String
+    /// Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced.
+    public var reviewed: String?
+    /// pass or fix_needed.
+    public var verdict: String
+
+    enum CodingKeys: String, CodingKey {
+        case checked = "checked"
+        case descends = "descends"
+        case findings = "findings"
+        case fixed = "fixed"
+        case from = "from"
+        case group = "group"
+        case item = "item"
+        case reviewed = "reviewed"
+        case verdict = "verdict"
+    }
+
+    public init(checked: String? = nil, descends: Bool? = nil, findings: [GroupFinding]? = nil, fixed: ReviewFixed? = nil, from: String? = nil, group: String, item: String, reviewed: String? = nil, verdict: String) {
+        self.checked = checked
+        self.descends = descends
+        self.findings = findings
+        self.fixed = fixed
+        self.from = from
+        self.group = group
+        self.item = item
+        self.reviewed = reviewed
+        self.verdict = verdict
+    }
+}
+
+public struct ReviewVerdictTaken: Codable, Sendable, Hashable {
+    /// Why the fixes were ignored, in one line.
+    public var fixesIgnored: String?
+    /// After a pass: the commit the lane lands.
+    public var land: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// ready after a pass, fix after fix_needed.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case fixesIgnored = "fixes_ignored"
+        case land = "land"
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(fixesIgnored: String? = nil, land: String? = nil, seq: UInt64, state: String) {
+        self.fixesIgnored = fixesIgnored
+        self.land = land
+        self.seq = seq
+        self.state = state
     }
 }
 
@@ -9124,10 +9442,12 @@ public struct Worktree: Codable, Sendable, Hashable {
 }
 
 public struct WorktreeCreateParams: Codable, Sendable, Hashable {
-    /// Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.
+    /// Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch.
     public var base: String?
     /// Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/<word>-<word>-<hex>.
     public var branch: String?
+    /// When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes.
+    public var fetch: Bool?
     /// Absolute folder for the worktree; it must not exist. Default: <worktree root>/<repository folder>/<branch slug>.
     public var path: String?
     /// Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.
@@ -9140,15 +9460,17 @@ public struct WorktreeCreateParams: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case base = "base"
         case branch = "branch"
+        case fetch = "fetch"
         case path = "path"
         case project = "project"
         case projectDir = "project_dir"
         case setup = "setup"
     }
 
-    public init(base: String? = nil, branch: String? = nil, path: String? = nil, project: String? = nil, projectDir: String? = nil, setup: SetupMode? = nil) {
+    public init(base: String? = nil, branch: String? = nil, fetch: Bool? = nil, path: String? = nil, project: String? = nil, projectDir: String? = nil, setup: SetupMode? = nil) {
         self.base = base
         self.branch = branch
+        self.fetch = fetch
         self.path = path
         self.project = project
         self.projectDir = projectDir
@@ -9596,6 +9918,12 @@ public enum HabMethods {
     public static let memberHandoff = HabMethod<MemberActionParams, MemberActionResult>(name: "member.handoff")
     /// One supervision action by its id, as the member's hab keeps it. Needs the groups capability.
     public static let memberAction = HabMethod<MemberActionRef, MemberActionResult>(name: "member.action")
+    /// Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.
+    public static let laneSubmit = HabMethod<LaneSubmitParams, LaneSubmitted>(name: "lane.submit")
+    /// A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.
+    public static let reviewVerdict = HabMethod<ReviewVerdictParams, ReviewVerdictTaken>(name: "review.verdict")
+    /// The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.
+    public static let groupMessage = HabMethod<GroupMessageParams, Empty>(name: "group.message")
 }
 
 public enum HabNotification {

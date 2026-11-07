@@ -1,0 +1,181 @@
+{
+  "data": {
+    "confirmation": {
+      "id": "id-17",
+      "outcome": "unknown",
+      "x_unknown_field": "later"
+    },
+    "coordinator": {
+      "address": "address-12",
+      "name": "name-11",
+      "session": "session-10",
+      "x_unknown_field": "later"
+    },
+    "created": "created-89",
+    "ended": "ended-91",
+    "envelope": {
+      "confirmation": "confirmation-84",
+      "group": "group-82",
+      "harnesses": [
+        "harnesses-87"
+      ],
+      "home": "home-83",
+      "hosts": [
+        "hosts-86"
+      ],
+      "max_workers": 88,
+      "project": "project-85",
+      "x_unknown_field": "later"
+    },
+    "generation": 9,
+    "home": "home-8",
+    "id": "id-3",
+    "inbox": [
+      {
+        "at": "at-13",
+        "from": "from-14",
+        "text": "text-15",
+        "x_unknown_field": "later"
+      }
+    ],
+    "items": [
+      {
+        "after": "after-23",
+        "branch": "branch-22",
+        "id": "id-18",
+        "idle_since": "idle_since-32",
+        "land": "land-44",
+        "lead": "lead-21",
+        "reason": "reason-26",
+        "review": "review-24",
+        "review_branch": "review_branch-30",
+        "review_since": "review_since-31",
+        "reviewer": "reviewer-27",
+        "same_harness": true,
+        "state": "state-25",
+        "stuck": "stuck-33",
+        "submits": 29,
+        "submitted": "submitted-28",
+        "task": "task-20",
+        "title": "title-19",
+        "verdict": {
+          "at": "at-43",
+          "findings": [
+            {
+              "place": "place-37",
+              "severity": "severity-35",
+              "text": "text-38",
+              "title": "title-36",
+              "x_unknown_field": "later"
+            }
+          ],
+          "fixed": [
+            "fixed-40"
+          ],
+          "fixed_head": "fixed_head-41",
+          "fixes_ignored": "fixes_ignored-42",
+          "head": "head-39",
+          "verdict": "verdict-34",
+          "x_unknown_field": "later"
+        },
+        "x_unknown_field": "later"
+      }
+    ],
+    "lane": {
+      "landing": "landing-61",
+      "queue": [
+        "queue-60"
+      ],
+      "x_unknown_field": "later"
+    },
+    "leftovers": [
+      "leftovers-66"
+    ],
+    "members": [
+      {
+        "agent": "exited",
+        "agent_age": "agent_age-55",
+        "attempts": 59,
+        "compacts": 57,
+        "context_pct": 56,
+        "device": "device-48",
+        "folder": "folder-52",
+        "harness": "harness-49",
+        "host": "host-47",
+        "item": "item-51",
+        "model": "model-50",
+        "name": "name-46",
+        "reason": "reason-54",
+        "replaced": "replaced-58",
+        "role": "reviewer",
+        "session": "session-45",
+        "state": "state-53",
+        "x_unknown_field": "later"
+      }
+    ],
+    "pause": {
+      "until": "until-64",
+      "usage": "usage-63",
+      "user": "user-62",
+      "x_unknown_field": "later"
+    },
+    "plan": {
+      "brief": "brief-68",
+      "items": [
+        {
+          "after": "after-74",
+          "brief": "brief-72",
+          "id": "id-70",
+          "review": "review-75",
+          "title": "title-71",
+          "touches": [
+            "touches-73"
+          ],
+          "x_unknown_field": "later"
+        }
+      ],
+      "lane": {
+        "fix_in_place": true,
+        "target": "target-81",
+        "x_unknown_field": "later"
+      },
+      "members": [
+        {
+          "harness": "harness-78",
+          "host": "host-77",
+          "item": "item-76",
+          "model": "model-79",
+          "name": "name-80",
+          "role": "reviewer",
+          "x_unknown_field": "later"
+        }
+      ],
+      "project": "project-69",
+      "title": "title-67",
+      "x_unknown_field": "later"
+    },
+    "plan_record": "plan_record-7",
+    "project": "project-6",
+    "revision": 4,
+    "state": "state-16",
+    "title": "title-5",
+    "updated": "updated-90",
+    "waits": [
+      "waits-65"
+    ],
+    "x_unknown_field": "later"
+  },
+  "id": "id-94",
+  "revision": 92,
+  "seq": 93,
+  "type": "group.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

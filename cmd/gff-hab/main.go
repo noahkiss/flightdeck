@@ -1380,11 +1380,24 @@ func serve(args []string) error {
 			worktree: func(ctx context.Context, p api.WorktreeCreateParams) (api.WorktreeCreated, error) {
 				return wts.CreateWorktree(ctx, "", p)
 			},
-			listWorktrees: wts.ListWorktrees,
+			listWorktrees:  wts.ListWorktrees,
+			removeWorktree: wts.RemoveWorktree,
+			laneDir:        filepath.Join(dir, "lane"),
+			heavy: func(ctx context.Context, command string) (func(), error) {
+				return heavyHold(ctx, heavyLock, command)
+			},
 			closePane: func(ctx context.Context, pane string) error {
 				return sessionActs.ClosePane(ctx, pane)
 			},
 			logbook: lbVerbs,
+			listedPeer: func(device string) bool {
+				for _, p := range pm.List().Peers {
+					if p.DeviceID == device && p.Label != "" {
+						return true
+					}
+				}
+				return false
+			},
 			note: func(id, text string) error {
 				ss, ok := store.Session(id)
 				if !ok {
@@ -1796,7 +1809,7 @@ func serve(args []string) error {
 	}
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	if groupsSvc != nil {
-		hooks.SetGroups(groupHook(store, groupsSvc))
+		hooks.SetGroups(groupHook(store, groupsSvc, folders.folderOf))
 	}
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote, capcomEng))
 	// One context handler: the Logbook habit and the context nudge, joined when both are due
