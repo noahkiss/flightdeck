@@ -1,0 +1,54 @@
+{
+  "confirmation": {
+    "answered_by": "answered_by-22",
+    "closed": "closed-21",
+    "created": "created-19",
+    "edited": true,
+    "expires_at": "expires_at-20",
+    "from": "from-5",
+    "id": "id-4",
+    "kind": "setup",
+    "reason": "reason-28",
+    "record": true,
+    "result": {
+      "address": "address-27",
+      "host": "host-23",
+      "name": "name-25",
+      "pane": "pane-26",
+      "session": "session-24",
+      "x_unknown_field": "later"
+    },
+    "setup": {
+      "bootstrap": "bootstrap-18",
+      "branch": "branch-17",
+      "host": "host-15",
+      "repository": "repository-16",
+      "x_unknown_field": "later"
+    },
+    "start": {
+      "alias": "alias-14",
+      "branch": "branch-9",
+      "folder": "folder-7",
+      "harness": "harness-10",
+      "host": "host-6",
+      "model": "model-11",
+      "name": "name-12",
+      "project": "project-8",
+      "seed": "seed-13",
+      "teammate": true,
+      "x_unknown_field": "later"
+    },
+    "state": "unknown",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
