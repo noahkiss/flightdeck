@@ -131,7 +131,10 @@ type harnessT struct {
 	errs   chan string
 }
 
-func newHarness(t *testing.T) *harnessT {
+func newHarness(t *testing.T) *harnessT { return newHarnessWith(t, nil) }
+
+// newHarnessWith lets a test change the link's config before the link starts.
+func newHarnessWith(t *testing.T, edit func(*LinkConfig)) *harnessT {
 	t.Helper()
 	dir := t.TempDir()
 	clock := newClock()
@@ -144,13 +147,17 @@ func newHarness(t *testing.T) *harnessT {
 		t.Fatal(err)
 	}
 	h := &harnessT{t: t, clock: clock, thread: th, rec: rec, errs: make(chan string, 10)}
-	h.link = NewLink(LinkConfig{Thread: th, Record: rec, Now: clock.Now, After: clock.After,
+	cfg := LinkConfig{Thread: th, Record: rec, Now: clock.Now, After: clock.After,
 		Hello: func() (Message, bool) {
 			return Message{Credential: &Credential{Kind: "oauth_token", Value: "planted-token"}, Device: "dev-hab", Settings: &Settings{MaxTurns: 50}}, true
 		},
 		ApprovalMaxAge: func() time.Duration { return 2 * time.Minute },
 		OnError:        func(kind, text string, exiting bool) { h.errs <- kind + ":" + text },
-	})
+	}
+	if edit != nil {
+		edit(&cfg)
+	}
+	h.link = NewLink(cfg)
 	return h
 }
 

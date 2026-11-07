@@ -66,6 +66,10 @@ type LinkConfig struct {
 	OnReady     func()
 	OnTurnEnded func(result string)
 	Logf        func(string, ...any)
+	// Limits are the context manager's limits (6, 19.2); nil: the defaults.
+	Limits func() ContextLimits
+	// Logbook builds the seed's Logbook part (6.4) in at most max bytes; nil: none.
+	Logbook func(max int) string
 }
 
 // Link is gff-hab's side of one engine: one connection at a time, the delivery of thread items,
@@ -79,6 +83,7 @@ type Link struct {
 	approval map[string]*openApproval
 	typingT  func() bool
 	kick     chan struct{}
+	cx       ctxState
 }
 
 type openApproval struct {
@@ -173,6 +178,7 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 	old := l.cur
 	l.cur = c
 	l.st.Connected, l.st.Ready, l.st.Draining = true, false, false
+	l.cx.asked = false // a new engine connection asks again when a re-seed is still due
 	l.mu.Unlock()
 	if old != nil {
 		old.rw.Close()
@@ -312,17 +318,21 @@ func (l *Link) handle(c *conn, m Message) {
 				divider = "New conversation"
 			}
 		})
+		l.sessionStarted()
+		if m.Why == ReseedNew {
+			// A clean start: the summary is empty from here (7.5).
+			last := th.Last()
+			l.cfg.Record.Update(func(r *Record) { r.Summary, r.SummaryThrough = "", last })
+		}
 		if divider != "" {
 			summary := l.cfg.Record.Get().Summary
-			if m.Why == "new" {
-				summary = ""
-			}
 			th.Add(capcomthread.Item{Kind: capcomthread.KindDivider, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: divider, Summary: summary})
 		}
 	case TTurnStarted:
 		l.mu.Lock()
 		l.st.Turn, l.st.Origin = m.TurnID(), m.Origin
 		l.typingLocked(m.Origin == "user")
+		l.stopQuietLocked()
 		l.mu.Unlock()
 		l.changed()
 	case TInputTaken:
@@ -371,11 +381,22 @@ func (l *Link) handle(c *conn, m Message) {
 				Text: "Capcom could not finish that turn; send the message again"})
 		}
 		l.changed()
+		l.turnEnded(m)
 		if l.cfg.OnTurnEnded != nil {
 			l.cfg.OnTurnEnded(m.Result)
 		}
 	case TSummary:
-		l.cfg.Record.Update(func(r *Record) { r.Summary = m.Text })
+		l.storeSummary(m.Text, m.Through)
+	case TContextRequest:
+		purpose := m.For
+		if purpose != ForCompact {
+			purpose = ForReseed
+		}
+		out := l.contextFor(purpose)
+		out.Request = m.Request
+		if err := l.send(c, out); err != nil {
+			l.cfg.Logf("capcom: answer context.request: %v", err)
+		}
 	case TCompacted:
 		th.Add(capcomthread.Item{Kind: capcomthread.KindDivider, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
 			Text: "Earlier messages summarised", Summary: l.cfg.Record.Get().Summary})

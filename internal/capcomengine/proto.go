@@ -28,6 +28,7 @@ const (
 	TPace           = "pace"
 	TApprovalAnswer = "approval.answer"
 	TShutdown       = "shutdown"
+	TContext        = "context"
 	TAck            = "ack"
 )
 
@@ -45,6 +46,23 @@ const (
 	TCompacted       = "compacted"
 	TUsage           = "usage"
 	TError           = "error"
+	TContextRequest  = "context.request"
+)
+
+// What a context message is for (6): the material of a summary update, with the seed's parts
+// for a re-seed.
+const (
+	ForReseed  = "reseed"
+	ForCompact = "compact"
+	ForQuiet   = "quiet"
+)
+
+// Re-seed reasons (4.2).
+const (
+	ReseedNew           = "new"
+	ReseedLimit         = "limit"
+	ReseedQuiet         = "quiet"
+	ReseedRestartFailed = "restart_failed"
 )
 
 // Capabilities an engine declares (4.1).
@@ -90,6 +108,27 @@ type Settings struct {
 	MaxTurnUSD        float64 `json:"max_turn_usd"`
 	WakeRetryMS       int64   `json:"wake_retry_ms"`
 	RouteBackoffMaxMS int64   `json:"route_backoff_max_ms"`
+	// SummaryMaxChars bounds the summary the engine writes (6.1); PrecompactTimeoutMS bounds the
+	// summary update before a compaction, and before a re-seed (6.3).
+	SummaryMaxChars     int   `json:"summary_max_chars,omitempty"`
+	PrecompactTimeoutMS int64 `json:"precompact_timeout_ms,omitempty"`
+}
+
+// Recent is one thread item a summary update covers (6.1): a message, a report, a note.
+type Recent struct {
+	ID     string    `json:"id"`
+	Kind   string    `json:"kind"`
+	Author string    `json:"author"`
+	Time   time.Time `json:"time"`
+	Text   string    `json:"text"`
+}
+
+// Seed is the hab's part of a re-seed (6.2): the Logbook part (6.4), the last messages and what
+// is still open. The engine puts the header and the summary before them.
+type Seed struct {
+	Logbook  string   `json:"logbook,omitempty"`
+	Messages []Recent `json:"messages,omitempty"`
+	Open     []string `json:"open,omitempty"`
 }
 
 // ContextBlock is one attached-context block of an input.
@@ -134,13 +173,16 @@ type Message struct {
 	// input, input.taken
 	Item json.RawMessage `json:"item,omitempty"`
 
-	// reseed, pace, approval.answer
-	Reason  string `json:"reason,omitempty"`
-	Pace    string `json:"pace,omitempty"`
-	Until   string `json:"until,omitempty"`
-	Request string `json:"request,omitempty"`
-	Allow   *bool  `json:"allow,omitempty"`
-	Message string `json:"message,omitempty"`
+	// reseed, pace, approval.answer, context, context.request
+	For     string   `json:"for,omitempty"`
+	Recent  []Recent `json:"recent,omitempty"`
+	Seed    *Seed    `json:"seed,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
+	Pace    string   `json:"pace,omitempty"`
+	Until   string   `json:"until,omitempty"`
+	Request string   `json:"request,omitempty"`
+	Allow   *bool    `json:"allow,omitempty"`
+	Message string   `json:"message,omitempty"`
 
 	// ready
 	Engine       string   `json:"engine,omitempty"`

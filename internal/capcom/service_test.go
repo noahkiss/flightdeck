@@ -49,13 +49,24 @@ command_timeout = "3s"
 token_retry = "45s"
 wake_retry = "1s"
 summary_max_chars = 2000
+summary_input_chars = 9000
+summary_quiet = "3m"
+reseed_at = 40
+reseed_quiet = "15m"
+reseed_quiet_at = "10%"
+seed_messages = 2
+seed_messages_chars = 500
+seed_logbook_bytes = 1024
+precompact_timeout = "6s"
 `)
 	c, problems, err := LoadServiceConfig(p)
 	if err != nil || len(problems) != 0 {
 		t.Fatal(err, problems)
 	}
 	want := Limits{MaxTurns: 7, MaxTurnUSD: 1, DailyUSD: 3.5, RestartDelay: 2 * time.Second, CrashLimit: 2, CrashWindow: time.Minute,
-		RouteBackoffMax: 4 * time.Second, TypingTimeout: 2 * time.Minute, CommandTimeout: 3 * time.Second, TokenRetry: 45 * time.Second, WakeRetry: time.Second}
+		RouteBackoffMax: 4 * time.Second, TypingTimeout: 2 * time.Minute, CommandTimeout: 3 * time.Second, TokenRetry: 45 * time.Second, WakeRetry: time.Second,
+		SummaryMaxChars: 2000, SummaryInputChars: 9000, SummaryQuiet: 3 * time.Minute, ReseedAt: 0.4, ReseedQuiet: 15 * time.Minute,
+		ReseedQuietAt: 0.1, SeedMessages: 2, SeedMessagesChars: 500, SeedLogbookBytes: 1024, PrecompactTimeout: 6 * time.Second}
 	if c.Limits != want {
 		t.Fatalf("limits %+v, want %+v", c.Limits, want)
 	}
@@ -81,6 +92,16 @@ typing_timeout = 5
 command_timeout = "6m"
 token_retry = "10s"
 wake_retry = "6m"
+summary_max_chars = 999
+summary_input_chars = 400001
+summary_quiet = "30s"
+reseed_at = 95
+reseed_quiet = "5m"
+reseed_quiet_at = "70%"
+seed_messages = 51
+seed_messages_chars = -1
+seed_logbook_bytes = 65537
+precompact_timeout = "4s"
 oauth_token = "planted-value"
 colour = "blue"
 `)
@@ -93,7 +114,9 @@ colour = "blue"
 	}
 	all := strings.Join(problems, "\n")
 	for _, k := range []string{"engine", "auth", "oauth_token_command", "max_turns", "max_turn_usd", "daily_usd", "restart_delay", "crash_limit",
-		"crash_window", "route_backoff_max", "typing_timeout", "command_timeout", "token_retry", "wake_retry", "unknown key \"colour\""} {
+		"crash_window", "route_backoff_max", "typing_timeout", "command_timeout", "token_retry", "wake_retry", "unknown key \"colour\"",
+		"summary_max_chars", "summary_input_chars", "summary_quiet", "reseed_at", "reseed_quiet ", "reseed_quiet_at", "seed_messages ",
+		"seed_messages_chars", "seed_logbook_bytes", "precompact_timeout"} {
 		if !strings.Contains(all, k) {
 			t.Errorf("no problem names %s:\n%s", k, all)
 		}
@@ -103,6 +126,19 @@ colour = "blue"
 	}
 	if strings.Contains(all, "planted-value") {
 		t.Fatal("a problem line holds the credential value")
+	}
+}
+
+// reseed_quiet_at passes no reseed_at: a default above a lower reseed_at follows it down, and a
+// value above it is refused.
+func TestServiceConfigQuietShare(t *testing.T) {
+	c, problems, err := LoadServiceConfig(writeConfig(t, "[capcom]\nreseed_at = 20\n"))
+	if err != nil || len(problems) != 0 || c.Limits.ReseedAt != 0.2 || c.Limits.ReseedQuietAt != 0.2 {
+		t.Fatal(err, problems, c.Limits.ReseedAt, c.Limits.ReseedQuietAt)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\nreseed_at = 30\nreseed_quiet_at = 31\n"))
+	if len(problems) != 1 || !strings.Contains(problems[0], "reseed_quiet_at") || c.Limits.ReseedQuietAt != 0.25 {
+		t.Fatal(problems, c.Limits.ReseedQuietAt)
 	}
 }
 
