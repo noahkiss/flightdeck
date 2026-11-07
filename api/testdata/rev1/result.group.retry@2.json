@@ -1,0 +1,175 @@
+{
+  "group": {
+    "confirmation": {
+      "id": "id-19",
+      "outcome": "unknown",
+      "x_unknown_field": "later"
+    },
+    "coordinator": {
+      "address": "address-13",
+      "device": "device-14",
+      "name": "name-12",
+      "session": "session-11",
+      "x_unknown_field": "later"
+    },
+    "created": "created-73",
+    "ended": "ended-75",
+    "envelope": {
+      "confirmation": "confirmation-68",
+      "group": "group-66",
+      "harnesses": [
+        "harnesses-71"
+      ],
+      "home": "home-67",
+      "hosts": [
+        "hosts-70"
+      ],
+      "max_workers": 72,
+      "project": "project-69",
+      "x_unknown_field": "later"
+    },
+    "from": {
+      "catalog": 87,
+      "device": "device-86",
+      "label": "label-88",
+      "x_unknown_field": "later"
+    },
+    "generation": 10,
+    "home": "home-9",
+    "id": "id-4",
+    "inbox": [
+      {
+        "at": "at-15",
+        "from": "from-16",
+        "text": "text-17",
+        "x_unknown_field": "later"
+      }
+    ],
+    "items": [
+      {
+        "after": "after-25",
+        "branch": "branch-24",
+        "id": "id-20",
+        "lead": "lead-23",
+        "reason": "reason-28",
+        "review": "review-26",
+        "state": "state-27",
+        "task": "task-22",
+        "title": "title-21",
+        "x_unknown_field": "later"
+      }
+    ],
+    "lane": {
+      "landing": "landing-45",
+      "queue": [
+        "queue-44"
+      ],
+      "x_unknown_field": "later"
+    },
+    "leftovers": [
+      "leftovers-50"
+    ],
+    "members": [
+      {
+        "agent": "exited",
+        "agent_age": "agent_age-39",
+        "attempts": 43,
+        "compacts": 41,
+        "context_pct": 40,
+        "device": "device-32",
+        "folder": "folder-36",
+        "harness": "harness-33",
+        "host": "host-31",
+        "item": "item-35",
+        "model": "model-34",
+        "name": "name-30",
+        "reason": "reason-38",
+        "replaced": "replaced-42",
+        "role": "reviewer",
+        "session": "session-29",
+        "state": "state-37",
+        "x_unknown_field": "later"
+      }
+    ],
+    "move_failed": "move_failed-85",
+    "moved": {
+      "acked": true,
+      "generation": 82,
+      "label": "label-81",
+      "since": "since-83",
+      "to": "to-80",
+      "x_unknown_field": "later"
+    },
+    "moving": {
+      "acked": true,
+      "generation": 78,
+      "label": "label-77",
+      "since": "since-79",
+      "to": "to-76",
+      "x_unknown_field": "later"
+    },
+    "pause": {
+      "until": "until-48",
+      "usage": "usage-47",
+      "user": "user-46",
+      "x_unknown_field": "later"
+    },
+    "pending": true,
+    "plan": {
+      "brief": "brief-52",
+      "items": [
+        {
+          "after": "after-58",
+          "brief": "brief-56",
+          "id": "id-54",
+          "review": "review-59",
+          "title": "title-55",
+          "touches": [
+            "touches-57"
+          ],
+          "x_unknown_field": "later"
+        }
+      ],
+      "lane": {
+        "fix_in_place": true,
+        "target": "target-65",
+        "x_unknown_field": "later"
+      },
+      "members": [
+        {
+          "harness": "harness-62",
+          "host": "host-61",
+          "item": "item-60",
+          "model": "model-63",
+          "name": "name-64",
+          "role": "reviewer",
+          "x_unknown_field": "later"
+        }
+      ],
+      "project": "project-53",
+      "title": "title-51",
+      "x_unknown_field": "later"
+    },
+    "plan_record": "plan_record-8",
+    "project": "project-7",
+    "revision": 5,
+    "state": "state-18",
+    "title": "title-6",
+    "tried": 84,
+    "updated": "updated-74",
+    "waits": [
+      "waits-49"
+    ],
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

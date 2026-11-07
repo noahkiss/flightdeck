@@ -1409,6 +1409,11 @@ func serve(args []string) error {
 				_, err := chSvc.Note(name, text)
 				return err
 			},
+			notice: func(title, body string) {
+				if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+					logger.Printf("groups: notice: %v", err)
+				}
+			},
 			logf: logger.Printf,
 		})
 		if err != nil {

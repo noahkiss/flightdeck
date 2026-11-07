@@ -1,0 +1,55 @@
+{
+  "groups": [
+    {
+      "coordinator": {
+        "capcom": true,
+        "device": "device-7",
+        "name": "name-9",
+        "session": "session-8",
+        "x_unknown_field": "later"
+      },
+      "generation": 10,
+      "home": "home-11",
+      "id": "id-4",
+      "items": 12,
+      "landed": 13,
+      "members": 14,
+      "moved": {
+        "acked": true,
+        "generation": 24,
+        "label": "label-23",
+        "since": "since-25",
+        "to": "to-22",
+        "x_unknown_field": "later"
+      },
+      "moving": {
+        "acked": true,
+        "generation": 20,
+        "label": "label-19",
+        "since": "since-21",
+        "to": "to-18",
+        "x_unknown_field": "later"
+      },
+      "pause": {
+        "until": "until-17",
+        "usage": "usage-16",
+        "user": "user-15",
+        "x_unknown_field": "later"
+      },
+      "state": "state-6",
+      "title": "title-5",
+      "tried": 26,
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

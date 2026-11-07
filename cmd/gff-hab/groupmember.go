@@ -146,15 +146,32 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			return nil, nil, control.Errorf(api.ErrorKindInvalid, "this pane is not a session; a group's calls come from a session")
 		}
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
-		coordinator := func(id string) error {
+		// record reads the group: on this hab, else from its home (a moved group, groups.md 5.7).
+		record := func(id string) (api.Group, bool, error) {
 			g, err := svc.Get(id)
+			if err == nil {
+				return g, true, nil
+			}
+			var r api.GroupResult
+			if ferr := svc.forward(ctx, id, "group.get", api.GroupRef{Group: id}, &r); ferr != nil {
+				return api.Group{}, false, err
+			}
+			return r.Group, false, nil
+		}
+		isCoordinator := func(g api.Group) bool {
+			return g.Coordinator.Session == ss.ID && groups.CoordinatorDevice(g) == svc.cfg.self
+		}
+		// coordinator checks the caller is the group's coordinator, and reports whether this
+		// hab is the group's home.
+		coordinator := func(id string) (bool, error) {
+			g, local, err := record(id)
 			if err != nil {
-				return err
+				return false, err
 			}
-			if g.Coordinator.Session != ss.ID {
-				return control.Errorf(api.ErrorKindDenied, "only group %s's coordinator %s calls %s", id, g.Coordinator.Name, method)
+			if !isCoordinator(g) {
+				return false, control.Errorf(api.ErrorKindDenied, "only group %s's coordinator %s calls %s", id, g.Coordinator.Name, method)
 			}
-			return nil
+			return local, nil
 		}
 		// inGroup: the caller is a member of the group (its session record says so), or its
 		// coordinator on the home hab (groups.md 15.2: reports and notes come from members).
@@ -162,7 +179,7 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			if ss.Group != nil && ss.Group.ID == id {
 				return nil
 			}
-			if g, err := svc.Get(id); err == nil && g.Coordinator.Session == ss.ID {
+			if g, _, err := record(id); err == nil && isCoordinator(g) {
 				return nil
 			}
 			return control.Errorf(api.ErrorKindDenied, "session %s is not a member of group %s", ss.Name, id)
@@ -181,8 +198,14 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := coordinator(p.Group); err != nil {
+			local, err := coordinator(p.Group)
+			if err != nil {
 				return nil, nil, err
+			}
+			if !local {
+				var r api.GroupCreated
+				err := svc.forward(ctx, p.Group, method, p, &r)
+				return r, nil, err
 			}
 			r, err := svc.Amend(ctx, p)
 			return r, nil, err
@@ -192,11 +215,13 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 				return nil, nil, bad(err)
 			}
 			g, err := svc.Get(p.Group)
-			if err != nil && ss.Group != nil && ss.Group.ID == p.Group {
-				// A member on another hab reads its group's record from the home.
-				var r api.GroupResult
-				err = svc.forward(ctx, p.Group, "group.get", p, &r)
-				return r, nil, err
+			if err != nil {
+				// A member on another hab, or the coordinator of a moved group, reads the record
+				// from the home.
+				r, _, rerr := record(p.Group)
+				if rerr == nil && ((ss.Group != nil && ss.Group.ID == p.Group) || isCoordinator(r)) {
+					return api.GroupResult{Group: r}, nil, nil
+				}
 			}
 			return api.GroupResult{Group: g}, nil, err
 		case "group.list":
@@ -258,18 +283,32 @@ func groupHook(store *structure.Store, svc *groupsService) hook.ChannelHandler {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := coordinator(p.Group); err != nil {
+			local, err := coordinator(p.Group)
+			if err != nil {
 				return nil, nil, err
+			}
+			if !local {
+				var r api.GroupResult
+				err := svc.forward(ctx, p.Group, method, p, &r)
+				return r, nil, err
 			}
 			g, err := svc.Close(ctx, p.Group)
 			return api.GroupResult{Group: g}, nil, err
+		case "group.move":
+			return nil, nil, control.Errorf(api.ErrorKindDenied, "an agent cannot move a group's home; the user moves it (groups.md 5.7)")
 		default: // group.retry
 			var p api.GroupRetryParams
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := coordinator(p.Group); err != nil {
+			local, err := coordinator(p.Group)
+			if err != nil {
 				return nil, nil, err
+			}
+			if !local {
+				var r api.GroupResult
+				err := svc.forward(ctx, p.Group, method, p, &r)
+				return r, nil, err
 			}
 			g, err := svc.Retry(ctx, p)
 			return api.GroupResult{Group: g}, nil, err
