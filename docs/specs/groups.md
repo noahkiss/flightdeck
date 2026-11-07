@@ -539,31 +539,49 @@ it on the home hab.
 - **Automatic names** count the whole plan: an amend's members are named with the group's
   items and members in view, and a second member of one role on one item gets `-2`, `-3`.
 - **Card edits.** An item the user adds on the card gets its Logbook task when the plan runs.
+  The hab writes an edited title and brief to the plan record, and an item's edited title and
+  brief to its task.
 - **Worktrees.** A start tried again finds the branch's worktree. When the list marks its setup
   as waiting for the user's yes (`setup_pending`), the item waits again; when the worktree was
   removed, a new one goes on the existing branch.
 - **A start that ends after the group ended** leaves the member listed as left over, and closes
-  it when it is local and `group.close_members` is on.
+  it when `group.close_members` is on.
+- **`group.close`** closes the idle members, with `group.close_members` on: on this hab, and on
+  a peer with `pane.close` over the link this hab dialed. A peer offline keeps its members,
+  listed as left over.
 - **The envelope** lives on each member's session record, so a member's hab decides a later
   start while the home hab sleeps.
 - **Members.** The home hab sees members through the catalog copies (an agent's `group` field)
-  every 5 s, also workers a lead started. A local lead that closes stalls its item, and the
-  coordinator hears it.
+  every 5 s, also workers a lead started. An agent the record does not list counts only as a
+  worker or reviewer on a plan item, on a plan host and in a plan harness; a start from a
+  session that is not a member carries no `group` field. A lead whose session is closed stalls
+  its item, and the coordinator hears it. On this hab the session record shows it; for a member
+  on a peer, the home hab asks the peer (`structure.get` over the link it dialed) once per
+  catalog copy that no longer lists the member's agent: a session gone is closed, one exited
+  shows exited, and is asked about again every 2 minutes at most. Each call waits 5 s at most.
+  A peer offline is not asked; its members stay as they were.
 - **Reports.** From a pane, only a member of the group or its coordinator reports or notes; a
   member notes its own item only. A report goes to a running coordinator as a Flightdeck note, else to the inbox
   (`[groups] inbox_max`, `inbox_days`). Another hab forwards a report over the link to the home
   hab once, never twice. The inbox goes in as one message once the resumed coordinator's pane
   reports an agent state.
-- **A pause** holds channel messages into members and new member starts; members read it from
-  the catalog copy, so it can reach them up to one catalog pull late.
+- **A pause** holds channel messages into members and new member starts.
+- **The push to members.** When the envelope or the pause changes, the home hab sends
+  `group.sync` (the record's revision, the envelope, the pause) over the link it dialed to
+  each hab with a running member; members on the home hab get the envelope in their session
+  records. A member's hab replaces the envelope of that group's members whose envelope names
+  the sender as home, and takes the pause. It accepts a push only from the hab the catalog
+  lists as the group's home, or the home a member's envelope names. The pause holds by the
+  newer revision: the last push, or the catalog copy's group entry, which carries the revision
+  too. A hab the push misses (offline, or linked only the other way) gets it at a later pass,
+  every 5 s, and once more after a home restart; until then it reads the pause from the
+  catalog copy. A hab that answers but refuses the push (an older build) is not asked again
+  for that change, and reads the pause from the catalog copy.
 - **The CLI** is `gff-hab group ls|show|pause|resume|close`. The agent kit has `group_create`,
   `group_status`, `group_amend`, `group_close`, `group_retry`, `group_report` and `group_note`.
-- **Not built in B3.** The envelope is not pushed to running members after an amend, so a host
-  an amend adds is not in older members' envelopes. A pause reaches members through the catalog
-  only, not at once over member links (5.6). The usage pause has its call but no governor
+- **Not built in B3.** The usage pause has its call but no governor
   (Part 14 G). Reviewers and plan workers stay planned (B7). The scheduler does not wait for a
-  started worktree setup or fetch first (B4). Stall detection covers local leads only, and
-  `group.close` closes local members only. The app's group card and gff's board section come
+  started worktree setup or fetch first (B4). The app's group card and gff's board section come
   later.
 
 ---
@@ -1126,6 +1144,7 @@ to 3.6.
 | `group.report {group, text}`, `group.note {group, item, text}` | A report to the coordinator (5.5); a note the hab writes on the item's task (9) | B3 |
 | `group.pause`, `group.resume`, `group.close {group}` | → the record | B3 |
 | `group.retry {group, member}` | Start a failed member again | B3 |
+| `group.sync {group, revision, envelope?, pause?}` | Peer link only, from the home hab: the envelope after an amend and the pause, at once (3.3, 5.6) | B3 follow-up |
 | `group.move {group, host}` | The user's move of the home hab (5.7); from a pane route `denied` | B9 |
 | `group.adopt {record, generation}`, `group.adopt_commit {group, generation}` | Peer link only: the hand-over of 5.7 | B9 |
 | event `group.updated` | `id`, `revision`, `data` the record; host scope | B3 |

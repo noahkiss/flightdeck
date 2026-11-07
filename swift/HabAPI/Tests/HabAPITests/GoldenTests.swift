@@ -179,6 +179,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.memberCompact)
         result(HabMethods.memberHandoff)
         result(HabMethods.memberAction)
+        result(HabMethods.groupSync)
         add("notification." + HabNotification.heartbeat, Heartbeat.self)
         add("notification." + HabNotification.closing, Closing.self)
         add("frame.hello", DataHello.self)

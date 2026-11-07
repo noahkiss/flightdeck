@@ -409,3 +409,200 @@ func (s *trustShows) total() int {
 	}
 	return n
 }
+
+// TestGroupCardEdits (groups.md 5.8): the title and the briefs the user edits on the plan's
+// card reach the Logbook plan record and the item's task; an item not edited keeps its task.
+func TestGroupCardEdits(t *testing.T) {
+	needGit(t)
+	fakes, work := groupFakes(t)
+	e := newHolderEnv(t, 0)
+	e.env = []string{"PATH=" + fakes + ":/usr/bin:/bin", "GFF_HAB_BIN=" + bin, "GFF_HAB_WORKTREES=" + filepath.Join(shortDir(t), "wt"),
+		"CLAUDE_CONFIG_DIR=" + filepath.Join(work, "claude"), noRaceExitSleep}
+	e.serve()
+	repo := gitRepo(t, e.work, "shop")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	createSession(t, e.sock, api.SessionCreateParams{Name: "alice", Argv: []string{"/bin/sh", "-c", "sleep 600"}, ProjectDir: repo, Cols: 80, Rows: 24})
+	waitCatalogProject(t, e, "shop", 1)
+
+	plan := api.GroupPlan{Title: "Fix cart", Brief: "Round once.", Project: "shop",
+		Items: []api.GroupPlanItem{{ID: "a", Title: "Round", Brief: "In the total."}, {ID: "b", Title: "Tests"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "a", Harness: "claude", Name: "lead-a"},
+			{Role: "lead", Item: "b", Harness: "claude", Name: "lead-b"}}}
+	var gc api.GroupCreated
+	call(t, e.control(), "group.create", api.GroupCreateParams{Plan: plan, Coordinator: "alice"}, &gc)
+	if gc.Confirmation == nil || gc.Confirmation.State != "open" {
+		t.Fatalf("want an open card: %+v", gc.Confirmation)
+	}
+	edited := gc.Confirmation.Group.Plan
+	edited.Title, edited.Brief = "Fix the cart total", "Round once, at the end."
+	edited.Items[0].Title, edited.Items[0].Brief = "Round the total", "Only the total."
+	call(t, e.control(), "confirm.answer", api.ConfirmAnswerParams{ID: gc.Confirmation.ID, Choice: "confirm",
+		Edits: &api.ConfirmEdits{Plan: &edited}}, &api.ConfirmationResult{})
+	var g api.Group
+	waitUntil(t, "the group running", func() bool { g = getGroup(t, e, gc.Group.ID); return g.State == "running" })
+	if g.Title != "Fix the cart total" {
+		t.Fatalf("record title %q", g.Title)
+	}
+	get := func(id string) api.LogbookRecord {
+		var r api.LogbookRecordResult
+		call(t, e.control(), "logbook.get", api.LogbookGetParams{ID: id}, &r)
+		return r.Record
+	}
+	if r := get(g.PlanRecord); r.Title != "Fix the cart total" || r.Body != "Round once, at the end." {
+		t.Fatalf("plan record %q %q", r.Title, r.Body)
+	}
+	if r := get(g.Items[0].Task); r.Title != "Round the total" || r.Body != "Only the total." {
+		t.Fatalf("item a's task %q %q", r.Title, r.Body)
+	}
+	if r := get(g.Items[1].Task); r.Title != "Tests" {
+		t.Fatalf("item b's task %q", r.Title)
+	}
+}
+
+// groupInCopy reports whether e's catalog lists the group as paused.
+func groupInCopy(t *testing.T, e *habEnv, gid string) (paused, ok bool) {
+	t.Helper()
+	var l api.CatalogList
+	call(t, e.control(), "catalog.list", api.CatalogListParams{}, &l)
+	g, ok := groupOf(l, gid)
+	return ok && g.Pause != nil, ok
+}
+
+// TestGroupSyncOnPeer (groups.md 3.3, 5.6, 5.8): the home hab pushes the pause and the
+// amended envelope over the member link. A pause holds a message into the peer's member before
+// the peer's catalog copy shows it, and the resume lets it through. Before an amend that adds
+// the home hab as a plan host, the peer's lead may not start a worker there; after it, the
+// lead's envelope names the new host and the start asks nothing.
+func TestGroupSyncOnPeer(t *testing.T) {
+	needGit(t)
+	fakes, work := groupFakes(t)
+	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
+		"CLAUDE_CONFIG_DIR="+filepath.Join(work, "claude"), noRaceExitSleep)
+	repo := gitRepo(t, m.a.work, "shop")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	fileProject(t, m.b, repo)
+	addr := startSpawner(t, m.a, work, repo)
+	waitCatalogProject(t, m.a, "shop", 2)
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(150*time.Second))
+	defer cancel()
+	var cur api.SettingsResult
+	call(t, m.a.control(), "settings.get", api.SettingsGetParams{IDs: []string{"confirm.group_plan"}}, &cur)
+	call(t, m.a.control(), "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{
+		{ID: "confirm.group_plan", Value: json.RawMessage("false"), Revision: cur.Settings[0].Revision}}}, nil)
+
+	plan := api.GroupPlan{Title: "Add export", Project: "shop", Items: []api.GroupPlanItem{{ID: "ui", Title: "Export button"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "ui", Harness: "claude", Host: "bee", Name: "lead-ui"}}}
+	var gc api.GroupCreated
+	call(t, m.a.control(), "group.create", api.GroupCreateParams{Plan: plan, Coordinator: "alice"}, &gc)
+	gid := gc.Group.ID
+	uiPid := memberIn(t, work, "-ui")
+	waitUntil(t, "the lead's seed", func() bool { return strings.Contains(readIn(work, "in."+uiPid), "agent group "+gid) })
+	uiAddr := readIn(work, "addr."+uiPid)
+	waitUntil(t, "b's copy lists the group", func() bool { _, ok := groupInCopy(t, m.b, gid); return ok })
+
+	// The pause reaches b over the link, before b's catalog copy shows it.
+	call(t, m.a.control(), "group.pause", api.GroupRef{Group: gid}, &api.GroupResult{})
+	early, _ := groupInCopy(t, m.b, gid)
+	if err := (hookCaller{addr}).Call(ctx, "channel.send", api.ChannelSendParams{To: "bee/lead-ui", Text: "status?"}, &api.ChannelSent{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	if strings.Contains(readIn(work, "in."+uiPid), "status?") {
+		t.Fatal("a message went into a member of a paused group")
+	}
+	if late, _ := groupInCopy(t, m.b, gid); early || late {
+		t.Logf("b's catalog copy showed the pause within the hold (early %v, late %v): the hold proves less", early, late)
+	}
+	call(t, m.a.control(), "group.resume", api.GroupRef{Group: gid}, &api.GroupResult{})
+	waitUntil(t, "the held message after the resume", func() bool { return strings.Contains(readIn(work, "in."+uiPid), "status?") })
+
+	// Before the amend the home hab is no plan host: the lead's worker there is refused.
+	st, _ := findIn(actionTools, "spawn")
+	worker := toolArgs{"harness": "claude", "seed": "help with the button", "group": gid, "host": "ay",
+		"folder": repo, "name": "worker-ui", "mode": "detached"}
+	if _, text, err := st.run(ctx, hookCaller{uiAddr}, worker); err == nil && !strings.Contains(text, "not a host") {
+		t.Fatalf("a worker on a host outside the envelope: %s", text)
+	}
+	var change api.GroupCreated
+	call(t, m.a.control(), "group.amend", api.GroupAmendParams{Group: gid, Change: api.GroupPlan{
+		Items:   []api.GroupPlanItem{{ID: "api", Title: "Export API"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "api", Harness: "claude", Name: "lead-api"}}}}, &change)
+	apiPid := memberIn(t, work, "-api")
+	waitUntil(t, "the new lead's seed", func() bool { return strings.Contains(readIn(work, "in."+apiPid), "item api") })
+	var res any
+	var text string
+	waitUntil(t, "the worker on the new host", func() bool {
+		var err error
+		res, text, err = st.run(ctx, hookCaller{uiAddr}, worker)
+		return err == nil && !strings.Contains(text, "not a host")
+	})
+	if cf := res.(spawnResult).Confirmation; cf.State != "done" || !cf.Record {
+		t.Fatalf("the worker asked: %+v\n%s", cf, text)
+	}
+	if n := len(openConfirmations(t, m.b)); n != 0 {
+		t.Fatalf("b opened %d confirmations", n)
+	}
+}
+
+// TestGroupPeerStallAndClose (groups.md 14, 5.8): a lead on the peer whose session the user
+// closes stalls its item, and the coordinator hears it; group.close on the home hab closes the
+// peer's idle lead over the link.
+func TestGroupPeerStallAndClose(t *testing.T) {
+	needGit(t)
+	fakes, work := groupFakes(t)
+	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
+		"CLAUDE_CONFIG_DIR="+filepath.Join(work, "claude"), noRaceExitSleep)
+	repo := gitRepo(t, m.a.work, "shop")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	fileProject(t, m.b, repo)
+	startSpawner(t, m.a, work, repo)
+	waitCatalogProject(t, m.a, "shop", 2)
+	var cur api.SettingsResult
+	call(t, m.a.control(), "settings.get", api.SettingsGetParams{IDs: []string{"confirm.group_plan"}}, &cur)
+	call(t, m.a.control(), "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{
+		{ID: "confirm.group_plan", Value: json.RawMessage("false"), Revision: cur.Settings[0].Revision}}}, nil)
+
+	plan := api.GroupPlan{Title: "Add export", Project: "shop",
+		Items: []api.GroupPlanItem{{ID: "ui", Title: "Export button"}, {ID: "api", Title: "Export API"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "ui", Harness: "claude", Host: "bee", Name: "lead-ui"},
+			{Role: "lead", Item: "api", Harness: "claude", Host: "bee", Name: "lead-api"}}}
+	var gc api.GroupCreated
+	call(t, m.a.control(), "group.create", api.GroupCreateParams{Plan: plan, Coordinator: "alice"}, &gc)
+	gid := gc.Group.ID
+	for _, suffix := range []string{"-ui", "-api"} {
+		pid := memberIn(t, work, suffix)
+		waitUntil(t, "the seed in "+suffix, func() bool { return strings.Contains(readIn(work, "in."+pid), "agent group "+gid) })
+	}
+	var g api.Group
+	waitUntil(t, "both leads running and idle", func() bool {
+		g = getGroup(t, m.a, gid)
+		return g.Members[0].Session != "" && g.Members[1].Session != "" && g.Members[0].Agent == "idle" && g.Members[1].Agent == "idle"
+	})
+	ui, apiLead := g.Members[0], g.Members[1]
+
+	// The user closes the ui lead's session on b: the item stalls and the coordinator hears it.
+	call(t, m.b.control(), "session.close", api.SessionRef{Session: ui.Session}, &api.Empty{})
+	waitUntil(t, "the ui item stalled", func() bool {
+		g = getGroup(t, m.a, gid)
+		return g.Items[0].State == "stalled" && g.Members[0].State == "exited"
+	})
+	if g.Items[1].State != "working" {
+		t.Fatalf("the api item %s", g.Items[1].State)
+	}
+	waitUntil(t, "the coordinator told", func() bool {
+		return strings.Contains(readIn(work, "alice-in"), "Lead lead-ui of item ui was closed")
+	})
+
+	// group.close on the home hab closes the idle lead on b.
+	call(t, m.a.control(), "group.close", api.GroupRef{Group: gid}, &api.GroupResult{})
+	waitUntil(t, "the api lead closed on b", func() bool {
+		var ss api.StructureResult
+		call(t, m.b.control(), "structure.get", api.StructureGetParams{}, &ss)
+		for _, s := range ss.Sessions {
+			if s.ID == apiLead.Session {
+				return s.State == "exited"
+			}
+		}
+		return true
+	})
+}

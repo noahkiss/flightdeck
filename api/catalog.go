@@ -43,6 +43,9 @@ type CatalogGroup struct {
 	Landed  int         `json:"landed,omitempty" doc:"Items landed."`
 	Members int         `json:"members,omitempty" doc:"Members started."`
 	Pause   *GroupPause `json:"pause,omitempty" doc:"The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."`
+	// Revision came with the pause push (groups.md 5.6): a member's hab compares it with the
+	// revision of the last group.sync it took. Optional, so an older copy reads 0.
+	Revision uint64 `json:"revision,omitempty" doc:"The group record's revision when this copy was made."`
 }
 
 // CatalogMember names a session on a hab of the mesh.
