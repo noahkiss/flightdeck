@@ -24,17 +24,22 @@ type Keys struct {
 	MaxFindings   int           // max_findings
 	BriefFindings int           // brief_findings
 	ReviewerIdle  time.Duration // reviewer_idle
+	// LaneTries is how often the lane starts again on a target that moved before an item goes
+	// back (groups.md 7.3 step 6); FixOutputLines is how many lines of a failed step's output
+	// the lead gets (7.4).
+	LaneTries      int // lane_tries
+	FixOutputLines int // fix_output_lines
 }
 
 // Defaults of the [groups] keys.
 var DefaultKeys = Keys{KeepEnded: 30 * 24 * time.Hour, InboxMax: 200, InboxDays: 7,
 	HandoffNoteWait: 10 * time.Minute, SiblingWait: 10 * time.Minute,
-	MaxFindings: 5, BriefFindings: 3, ReviewerIdle: 30 * time.Minute}
+	MaxFindings: 5, BriefFindings: 3, ReviewerIdle: 30 * time.Minute, LaneTries: 3, FixOutputLines: 40}
 
 // LoadKeys reads [groups] keep_ended (whole days, 1 to 365), inbox_max (10 to 5000),
-// inbox_days (1 to 90), max_findings (1 to 20) and brief_findings (1 to max_findings), and
-// the durations handoff_note_wait ("1m" to "2h"), sibling_wait ("1m" to "24h") and
-// reviewer_idle ("5m" to "24h"). A value outside its range, or of the wrong type, is logged once and the
+// inbox_days (1 to 90), max_findings (1 to 20), brief_findings (1 to max_findings), lane_tries
+// (1 to 20) and fix_output_lines (0 to 500), and the durations handoff_note_wait ("1m" to "2h"),
+// sibling_wait ("1m" to "24h") and reviewer_idle ("5m" to "24h"). A value outside its range, or of the wrong type, is logged once and the
 // default runs; a file that does not parse runs every default. A missing file is no problem.
 // Other [groups] keys belong to other stages and are left alone.
 func LoadKeys(path string, logf func(string, ...any)) Keys {
@@ -89,6 +94,8 @@ func LoadKeys(path string, logf func(string, ...any)) Keys {
 	k.SiblingWait = span("sibling_wait", time.Minute, 24*time.Hour, DefaultKeys.SiblingWait)
 	k.MaxFindings = whole("max_findings", 1, 20, DefaultKeys.MaxFindings)
 	k.BriefFindings = whole("brief_findings", 1, int64(k.MaxFindings), min(DefaultKeys.BriefFindings, k.MaxFindings))
+	k.LaneTries = whole("lane_tries", 1, 20, DefaultKeys.LaneTries)
+	k.FixOutputLines = whole("fix_output_lines", 0, 500, DefaultKeys.FixOutputLines)
 	if v, ok := fc.Groups["reviewer_idle"]; ok {
 		str, _ := v.(string)
 		d, err := time.ParseDuration(str)

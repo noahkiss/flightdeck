@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/confirm"
@@ -161,6 +162,27 @@ func memberCommit(ctx context.Context, folderOf func(context.Context, string) st
 	return c, nil
 }
 
+// memberPush pushes a member's branch to the project's remote, so the lane and a member on
+// another host find its commits (groups.md 7.1). A project with no remote pushes nothing: the
+// lane then waits and says why.
+func memberPush(ctx context.Context, store *structure.Store, folderOf func(context.Context, string) string, ss api.Session, branch string) error {
+	pr, _ := store.Project(ss.Project)
+	dir := memberFolder(ctx, folderOf, ss)
+	if dir == "" || pr.Remote == "" {
+		return nil
+	}
+	remote := memberGit.RemoteFor(ctx, dir, pr.Remote)
+	if remote == "" {
+		return nil
+	}
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := memberGit.PushBranch(pctx, dir, remote, branch); err != nil {
+		return control.Errorf(api.ErrorKindUnavailable, "push %s to %s: %s", branch, remote, errText(err))
+	}
+	return nil
+}
+
 // groupHook answers the group methods from a pane (groups.md 15.2): the pane's session is the
 // coordinator of a new group, and the sender of a report or a note. Only the coordinator amends,
 // closes or retries. eventTurn reports whether a route is the Capcom engine's in an event turn,
@@ -305,6 +327,9 @@ func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx con
 			if err != nil {
 				return nil, nil, err
 			}
+			if err := memberPush(ctx, store, folderOf, ss, groups.Branch(p.Group, p.Item)); err != nil {
+				return nil, nil, err
+			}
 			p.From, p.Head = ss.Name, head
 			r, err := svc.submit(ctx, p, svc.cfg.self)
 			return r, nil, err
@@ -346,6 +371,12 @@ func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx con
 				sub := g.Items[ii].Submitted
 				p.Checked, p.Reviewed = sub, head
 				p.Descends = head != sub && memberGit.IsAncestor(ctx, memberFolder(ctx, folderOf, ss), sub, head)
+			}
+			if p.Verdict == "pass" && p.Descends && p.Fixed != nil {
+				// A pass with fixes lands the review head: the lane finds it on the remote.
+				if err := memberPush(ctx, store, folderOf, ss, groups.ReviewBranch(p.Group, p.Item)); err != nil {
+					return nil, nil, err
+				}
 			}
 			r, err := svc.verdict(ctx, p, svc.cfg.self)
 			return r, nil, err

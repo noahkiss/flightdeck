@@ -168,6 +168,7 @@ func Submit(g *api.Group, item, head string, now time.Time) (Submitted, error) {
 	restart := it.State == ItemReview
 	it.Submitted, it.Submits = head, it.Submits+1
 	it.Verdict, it.Land, it.Stuck, it.IdleSince, it.Reason = nil, "", "", "", ""
+	it.Attempts, it.NoCI = nil, false
 	g.Lane.Queue = slices.DeleteFunc(g.Lane.Queue, func(id string) bool { return id == it.ID })
 	if it.Review == "off" || it.Reviewer == "" {
 		it.State, it.Land = ItemReady, head
