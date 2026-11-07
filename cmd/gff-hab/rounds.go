@@ -1502,7 +1502,10 @@ func (s *roundsService) entry(ref api.RoundRef) (rounds.Entry, error) {
 	case ref.ID != "":
 		e, ok = s.store.Get(ref.ID)
 	case ref.Name != "":
-		e, ok = s.store.ByName(ref.Name)
+		// A name that no round has may be an id: `gff round rm "$GFF_ROUND"` (rounds.md 11).
+		if e, ok = s.store.ByName(ref.Name); !ok {
+			e, ok = s.store.Get(ref.Name)
+		}
 	default:
 		return e, control.Errorf(api.ErrorKindInvalid, "name a round by id or name")
 	}

@@ -238,7 +238,8 @@ func TestMCPProtocol(t *testing.T) {
 		for i, tl := range r.Tools {
 			ann, _ := tl["annotations"].(map[string]any)
 			schema, _ := tl["inputSchema"].(map[string]any)
-			read := i < len(readTools) // the read tools come first, and only they say read-only
+			// The read tools come first; only they and the round reads say read-only.
+			read := i < len(readTools) || (!allTools()[i].Action && strings.HasPrefix(allTools()[i].Name, "round_"))
 			if ann["readOnlyHint"] != read || schema["additionalProperties"] != false {
 				t.Errorf("tool %v: %v %v", tl["name"], ann, schema)
 			}

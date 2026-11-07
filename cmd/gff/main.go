@@ -7,6 +7,7 @@
 //	gff lb [--json] [--socket path] [--state dir] <verb> [args]
 //	gff agent compact [-json] [follow-up... | -]
 //	gff heavy [--socket path] [--] <command> [args...]
+//	gff round <verb> [args]
 //
 // `gff agent compact` runs in an agent's pane: it asks gff-hab to compact the agent's own
 // conversation once its turn ends, then send the follow-up (internal/agentcli,
@@ -16,6 +17,7 @@
 // internal/lbcli). `gff-hab lb` is the same command, for panes that have only gff-hab.
 // `gff heavy` runs a build or test command under the host's heavy-run lock
 // (docs/specs/groups.md 8.1, internal/heavy); `gff-hab heavy` is the same command.
+// `gff round` runs `gff-hab round` with the same arguments (docs/specs/rounds.md 13, round.go).
 //
 // With no pane and no -new, gff opens the workspace: every host at once, with tabs, a sidebar of
 // every session on every host and a status board. Hosts come from gff's config file (-config,
@@ -121,6 +123,9 @@ func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "lb" || os.Args[1] == "logbook") {
 		os.Exit(lbcli.Main(lbcli.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv,
 			Client: api.ClientInfo{Name: "gff", Version: version, Kind: api.ClientKindCli}, Name: "gff lb"}))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "round" {
+		os.Exit(roundMain(os.Args[2:], os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "heavy" {
 		os.Exit(heavy.Main(heavy.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv,

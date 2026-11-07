@@ -121,6 +121,7 @@ const (
 	ConfirmKindStart ConfirmKind = "start"
 	ConfirmKindSetup ConfirmKind = "setup"
 	ConfirmKindGroup ConfirmKind = "group"
+	ConfirmKindRound ConfirmKind = "round"
 )
 
 const (
@@ -1273,7 +1274,7 @@ func (c Client) LogbookStatus(ctx context.Context, params LogbookStatusParams) (
 	return result, err
 }
 
-// ConfirmRequest calls confirm.request. Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
+// ConfirmRequest calls confirm.request. Ask for a start, a set-up, or a round on another host: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
 func (c Client) ConfirmRequest(ctx context.Context, params ConfirmRequestParams) (ConfirmRequested, error) {
 	var result ConfirmRequested
 	err := c.Caller.Call(ctx, "confirm.request", params, &result)

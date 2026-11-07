@@ -1273,21 +1273,24 @@ func serve(args []string) error {
 	}
 	// Confirmations (capcom.md 6.1): starts an agent asks for, confirmed by the user while
 	// confirm.start_elsewhere is on, run by this hab with the confirmation id as the key.
+	// A round on another host goes through the same confirmations (rounds.md 12 Q1).
+	cfRunner := &confirmRunner{host: *hostID, catalog: cs.List, links: confirmLinks(pm),
+		local: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+			if s := srv.Load(); s != nil {
+				return s.CreateSession(ctx, p)
+			}
+			return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
+		},
+		name: func(id string) string {
+			if ss, ok := store.Session(id); ok {
+				return ss.Name
+			}
+			return ""
+		},
+		aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get, store: store}
 	cfSvc, err := confirm.New(confirm.Config{
-		Runner: &confirmRunner{host: *hostID, catalog: cs.List, links: confirmLinks(pm),
-			local: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
-				if s := srv.Load(); s != nil {
-					return s.CreateSession(ctx, p)
-				}
-				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
-			},
-			name: func(id string) string {
-				if ss, ok := store.Session(id); ok {
-					return ss.Name
-				}
-				return ""
-			},
-			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get, store: store},
+		Runner:   cfRunner,
+		Rounds:   cfRunner,
 		Envelope: memberEnvelope(store, *hostID, key.Fingerprint(), cs.List),
 		Groups:   &groupsRef,
 		GroupTTL: func() time.Duration {

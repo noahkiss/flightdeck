@@ -27,9 +27,10 @@ import (
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
-// `gff-hab round` (rounds.md 13): the round commands, through the same doors as send and show:
-// -socket or -via for the control connection, else the pane's hook endpoint from $GFF_HAB,
-// which makes the pane's session the creator and the meaning of --target self.
+// `gff-hab round` (rounds.md 13), also `gff round`: the round commands, through the same doors as
+// send and show: -socket or -via for the control connection, else the pane's hook endpoint from
+// $GFF_HAB, which makes the pane's session the creator and the meaning of --target self. From a
+// pane, `add -host` asks for the round through confirm.request (roundkit.go).
 
 const roundUsage = `usage:
   gff-hab round ls      [door] [-host label | -all] [-json]
@@ -51,7 +52,9 @@ const roundUsage = `usage:
   gff-hab round export  [door]
   gff-hab round apply   [door] [-yes] <file>
 door: -socket path | -via command; from a pane, $GFF_HAB
--host label: act on that peer's rounds instead, through its endpoint from this hab's peer list
+-host label: act on that peer's rounds instead, through its endpoint from this hab's peer list;
+  from a pane, add only, through the owner's confirmation (confirm.start_elsewhere)
+<name>: a round's name, or its id ($GFF_ROUND in a run)
 `
 
 // roundDef holds the definition flags of add and edit.
@@ -439,6 +442,7 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	def.via = *via != "" || *host != ""
+	fromPane := *sock == "" && *via == "" && os.Getenv(hook.Env) != ""
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	needName := func() error {
@@ -483,10 +487,10 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		return errors.New("round ls: give -host or -all, not both")
 	case verb == "move" && *host == "":
 		return errors.New("round move needs -host: the peer that becomes the round's runner")
-	case *host != "" && *sock == "" && *via == "" && os.Getenv(hook.Env) != "":
-		// A round on another host from an agent goes through confirm.start_elsewhere once the
-		// agent kit has it (rounds.md 12 Q1); until then a pane cannot reach a peer's rounds.
-		return fmt.Errorf("round %s -host is not available from a pane: a round on another host needs the owner's confirmation", verb)
+	case *host != "" && fromPane && verb != "add":
+		// From a pane only a new round reaches another host, through the owner's confirmation
+		// (rounds.md 12 Q1); a direct dial would skip it and the pane route's narrowing.
+		return fmt.Errorf("round %s -host is not available from a pane: an agent only adds rounds on another host, through the owner's confirmation; round ls -all reads every host's rounds", verb)
 	case *host != "" && *via != "":
 		return errors.New("-host dials the peer's endpoint from this machine: use it with this machine's hab, not with -via")
 	}
@@ -495,6 +499,16 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		return err
 	}
 	defer done()
+	if *host != "" && fromPane {
+		spec := api.RoundSpec{Name: name, Mode: api.RoundModeFresh}
+		if err := def.apply(&spec, set, words); err != nil {
+			return err
+		}
+		// The owner may take a while: the call waits up to startWait for the answer.
+		actx, acancel := context.WithTimeout(context.Background(), actionCallTime)
+		defer acancel()
+		return addElsewhere(actx, c, spec, *host, *runNow, *asJSON, out)
+	}
 	local := c
 	if *host != "" {
 		pc, pdone, err := peerCaller(ctx, c, *host)

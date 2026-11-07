@@ -25,7 +25,7 @@ import (
 // toolArg is one argument of a read tool.
 type toolArg struct {
 	Name     string
-	Type     string // "string" or "integer"
+	Type     string // "string", "integer", "boolean", or "array" (of strings)
 	Doc      string
 	Required bool
 }
@@ -103,6 +103,20 @@ func (t kitTool) check(a toolArgs) error {
 			continue
 		}
 		switch x.Type {
+		case "boolean":
+			if _, ok := v.(bool); !ok {
+				return fmt.Errorf("%s: %s must be true or false", t.Name, x.Name)
+			}
+		case "array":
+			l, ok := v.([]any)
+			if !ok {
+				return fmt.Errorf("%s: %s must be an array of strings", t.Name, x.Name)
+			}
+			for _, e := range l {
+				if _, ok := e.(string); !ok {
+					return fmt.Errorf("%s: %s must be an array of strings", t.Name, x.Name)
+				}
+			}
 		case "integer":
 			switch n := v.(type) {
 			case float64:
@@ -237,7 +251,7 @@ var actionTools = []kitTool{
 
 // allTools is every tool, read tools first.
 func allTools() []kitTool {
-	return append(append(slices.Clip(readTools), actionTools...), channelTools...)
+	return append(append(append(slices.Clip(readTools), actionTools...), channelTools...), roundTools...)
 }
 
 func findIn(tools []kitTool, name string) (kitTool, bool) {

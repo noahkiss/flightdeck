@@ -2254,7 +2254,7 @@ public struct Compaction: Codable, Sendable, Hashable {
 
 public struct ConfirmAnswerParams: Codable, Sendable, Hashable {
     public var choice: ConfirmChoice
-    /// With choice confirm: the user's changes.
+    /// With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made.
     public var edits: ConfirmEdits?
     public var id: String
 
@@ -2356,6 +2356,7 @@ public struct ConfirmKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let start = ConfirmKind(rawValue: "start")
     public static let setup = ConfirmKind(rawValue: "setup")
     public static let group = ConfirmKind(rawValue: "group")
+    public static let round = ConfirmKind(rawValue: "round")
 }
 
 public struct ConfirmList: Codable, Sendable, Hashable {
@@ -2397,6 +2398,8 @@ public struct ConfirmRequestParams: Codable, Sendable, Hashable {
     /// Kind group: only gff-hab's group.create and group.amend ask for it, never a pane.
     public var group: ConfirmGroup?
     public var kind: ConfirmKind
+    /// Kind round.
+    public var round: ConfirmRound?
     /// Kind setup.
     public var setup: ConfirmSetup?
     /// Kind start.
@@ -2408,15 +2411,17 @@ public struct ConfirmRequestParams: Codable, Sendable, Hashable {
         case from = "from"
         case group = "group"
         case kind = "kind"
+        case round = "round"
         case setup = "setup"
         case start = "start"
         case waitMs = "wait_ms"
     }
 
-    public init(from: String? = nil, group: ConfirmGroup? = nil, kind: ConfirmKind, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, waitMs: Int? = nil) {
+    public init(from: String? = nil, group: ConfirmGroup? = nil, kind: ConfirmKind, round: ConfirmRound? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, waitMs: Int? = nil) {
         self.from = from
         self.group = group
         self.kind = kind
+        self.round = round
         self.setup = setup
         self.start = start
         self.waitMs = waitMs
@@ -2444,11 +2449,13 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
     public var address: String?
     /// The target hab, as this hab labels it.
     public var host: String
-    /// The new session's name.
+    /// The new session's name, or the round's.
     public var name: String?
-    /// The new session's pane id.
+    /// The new session's pane id. Empty for a round.
     public var pane: String
-    /// The new session's id on the target hab.
+    /// Kind round: the new round's id on the runner.
+    public var round: String?
+    /// The new session's id on the target hab. Empty for a round.
     public var session: String
 
     enum CodingKeys: String, CodingKey {
@@ -2456,15 +2463,46 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
         case host = "host"
         case name = "name"
         case pane = "pane"
+        case round = "round"
         case session = "session"
     }
 
-    public init(address: String? = nil, host: String, name: String? = nil, pane: String, session: String) {
+    public init(address: String? = nil, host: String, name: String? = nil, pane: String, round: String? = nil, session: String) {
         self.address = address
         self.host = host
         self.name = name
         self.pane = pane
+        self.round = round
         self.session = session
+    }
+}
+
+public struct ConfirmRound: Codable, Sendable, Hashable {
+    /// The runner: a peer label from the peer list. This hab is refused: a round here is made with round.create.
+    public var host: String
+    /// The project's name, from the catalog, when the hab knows it. Filled by the hab.
+    public var project: String?
+    /// The round as the runner's round.create will get it. A fresh round only: a resume or fork target is a session on this hab.
+    public var round: RoundSpec
+    /// Also start one run once the round is made.
+    public var runNow: Bool?
+    /// The trigger in plain words, such as every 1h or cron 0 9 * * 1-5 in UTC. Filled by the hab.
+    public var trigger: String?
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case project = "project"
+        case round = "round"
+        case runNow = "run_now"
+        case trigger = "trigger"
+    }
+
+    public init(host: String, project: String? = nil, round: RoundSpec, runNow: Bool? = nil, trigger: String? = nil) {
+        self.host = host
+        self.project = project
+        self.round = round
+        self.runNow = runNow
+        self.trigger = trigger
     }
 }
 
@@ -2610,8 +2648,10 @@ public struct Confirmation: Codable, Sendable, Hashable {
     public var reason: String?
     /// The action ran at once, with no question: confirm.start_elsewhere is off, or the start is on the agent's own host. The card is a record with no buttons.
     public var record: Bool?
-    /// State done: what the start made.
+    /// State done: what the start or round made.
     public var result: ConfirmResult?
+    /// Kind round: the round as it will be made, or was.
+    public var round: ConfirmRound?
     /// Kind setup: the set-up as it will run.
     public var setup: ConfirmSetup?
     /// Kind start: the start as it will run, or ran.
@@ -2632,12 +2672,13 @@ public struct Confirmation: Codable, Sendable, Hashable {
         case reason = "reason"
         case record = "record"
         case result = "result"
+        case round = "round"
         case setup = "setup"
         case start = "start"
         case state = "state"
     }
 
-    public init(answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, group: ConfirmGroup? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
+    public init(answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, group: ConfirmGroup? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, round: ConfirmRound? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
         self.answeredBy = answeredBy
         self.closed = closed
         self.created = created
@@ -2650,6 +2691,7 @@ public struct Confirmation: Codable, Sendable, Hashable {
         self.reason = reason
         self.record = record
         self.result = result
+        self.round = round
         self.setup = setup
         self.start = start
         self.state = state
@@ -9353,7 +9395,7 @@ public enum HabMethods {
     public static let logbookProjects = HabMethod<LogbookProjectsParams, LogbookProjects>(name: "logbook.projects")
     /// This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.
     public static let logbookStatus = HabMethod<LogbookStatusParams, LogbookStatus>(name: "logbook.status")
-    /// Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
+    /// Ask for a start, a set-up, or a round on another host: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
     public static let confirmRequest = HabMethod<ConfirmRequestParams, ConfirmRequested>(name: "confirm.request")
     /// Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.
     public static let confirmAnswer = HabMethod<ConfirmAnswerParams, ConfirmationResult>(name: "confirm.answer")
