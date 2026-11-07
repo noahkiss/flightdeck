@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 )
 
 // gitHead returns the full commit id rev names in dir.
@@ -161,6 +162,15 @@ func TestGroupReview(t *testing.T) {
 		t.Fatalf("a second reviewer started: %+v", g.Members)
 	}
 
+	// A pass while the review branch is still on the earlier head is refused: c2 would land
+	// unreviewed.
+	if _, _, err := vt.run(ctx, reviewer, toolArgs{"group": gid, "item": "a", "verdict": "pass"}); err == nil || !strings.Contains(err.Error(), "does not descend") {
+		t.Fatalf("a pass on the earlier head: %v", err)
+	}
+	if it := getGroup(t, e, gid).Items[0]; it.State != "review" {
+		t.Fatalf("after the stale pass %+v", it)
+	}
+
 	// A pass with fixes on the review branch lands its head; the lead is told to fast-forward.
 	gitRun(t, revDir, "reset", "-q", "--hard", c2)
 	f1 := commitIn(t, revDir, "fix.go", "package cart\n")
@@ -176,7 +186,8 @@ func TestGroupReview(t *testing.T) {
 		return strings.Contains(readIn(work, "alice-in"), "item a: pass, 0 findings, with the reviewer's fixes")
 	})
 
-	// A review branch head that does not descend from the submitted head: the fixes are ignored.
+	// A review branch head that does not descend from the submitted head: the fixes are
+	// refused and nothing lands; a fixed.head other than the review branch's is refused too.
 	gitRun(t, leadDir, "merge", "-q", "--ff-only", f1)
 	c3 := commitIn(t, leadDir, "more.go", "package cart\n")
 	if _, _, err := st.run(ctx, lead, toolArgs{"group": gid, "item": "a"}); err != nil {
@@ -184,10 +195,55 @@ func TestGroupReview(t *testing.T) {
 	}
 	gitRun(t, revDir, "reset", "-q", "--hard", first)
 	f2 := commitIn(t, revDir, "other.go", "package cart\n")
-	if _, text, err := vt.run(ctx, reviewer, toolArgs{"group": gid, "item": "a", "verdict": "pass", "fixed": f2}); err != nil || !strings.Contains(text, "ignored") {
-		t.Fatalf("pass with fixes that do not descend: %v %s", err, text)
+	if _, _, err := vt.run(ctx, reviewer, toolArgs{"group": gid, "item": "a", "verdict": "pass", "fixed": f2}); err == nil || !strings.Contains(err.Error(), "does not descend") {
+		t.Fatalf("pass with fixes that do not descend: %v", err)
 	}
-	if it := getGroup(t, e, gid).Items[0]; it.Land != c3 || !strings.Contains(it.Verdict.FixesIgnored, "does not descend") {
-		t.Fatalf("fixes that do not descend %+v %+v", it, it.Verdict)
+	if it := getGroup(t, e, gid).Items[0]; it.State != "review" || it.Land != "" {
+		t.Fatalf("fixes that do not descend %+v", it)
+	}
+	if err := reviewer.Call(ctx, "review.verdict", api.ReviewVerdictParams{Group: gid, Item: "a", Verdict: "pass",
+		Fixed: &api.ReviewFixed{Commits: []string{c3}, Head: c3}}, &api.ReviewVerdictTaken{}); err == nil || !strings.Contains(err.Error(), "not the head") {
+		t.Fatalf("a fixed.head off the review branch: %v", err)
+	}
+	// Reset to the submitted head, the reviewer passes it with no fixes: c3 lands.
+	gitRun(t, revDir, "reset", "-q", "--hard", c3)
+	if _, _, err := vt.run(ctx, reviewer, toolArgs{"group": gid, "item": "a", "verdict": "pass"}); err != nil {
+		t.Fatal(err)
+	}
+	if it := getGroup(t, e, gid).Items[0]; it.State != "ready" || it.Land != c3 {
+		t.Fatalf("a pass on the submitted head %+v", it)
+	}
+}
+
+// TestGroupPeerCalls (groups.md 6.5): lane.submit, review.verdict and group.message are taken
+// over a link only from a peer the peer list pins, never one claiming this hab's own device
+// id; group.message only from the hab whose own catalog lists itself as the group's home.
+func TestGroupPeerCalls(t *testing.T) {
+	cl := api.CatalogList{Hosts: []api.CatalogEntry{
+		{Label: "bee", Catalog: api.Catalog{DeviceID: "dev-bee", Groups: []api.CatalogGroup{{ID: "g1", Home: "dev-bee"}}}},
+		{Label: "wasp", Catalog: api.Catalog{DeviceID: "dev-wasp", Groups: []api.CatalogGroup{{ID: "g1", Home: "dev-wasp"}, {ID: "g2", Home: "dev-bee"}}}},
+	}}
+	s := &groupsService{cfg: groupsConfig{self: "dev-me", catalog: func() api.CatalogList { return cl },
+		listedPeer: func(d string) bool { return d == "dev-bee" || d == "dev-wasp" || d == "dev-me" }}, groups: map[string]*api.Group{}}
+	peer := func(d string) context.Context {
+		return control.WithCallerPeer(context.Background(), api.PeerHello{DeviceID: d, Host: d})
+	}
+	for _, ctx := range []context.Context{context.Background(), peer("dev-me"), peer("dev-stranger")} {
+		if _, err := s.Submit(ctx, api.LaneSubmitParams{Group: "g9", Item: "a", Head: "c1"}); errKind(err) != api.ErrorKindDenied {
+			t.Fatalf("submit: %v", err)
+		}
+		if _, err := s.Verdict(ctx, api.ReviewVerdictParams{Group: "g9", Item: "a", Verdict: "pass"}); errKind(err) != api.ErrorKindDenied {
+			t.Fatalf("verdict: %v", err)
+		}
+		if err := s.Message(ctx, api.GroupMessageParams{Group: "g1", Member: "m", Text: "hi"}); errKind(err) != api.ErrorKindDenied {
+			t.Fatalf("message: %v", err)
+		}
+	}
+	// wasp lists g2 with bee as its home: only bee's own copy makes bee the home.
+	if !homeOf(cl, "g1", "dev-bee") || homeOf(cl, "g2", "dev-bee") || !homeOf(cl, "g1", "dev-wasp") {
+		t.Fatal("homeOf")
+	}
+	if err := s.Message(peer("dev-wasp"), api.GroupMessageParams{Group: "g2", Member: "m", Text: "hi"}); errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("a message from a hab that is not the home: %v", err)
 	}
 }

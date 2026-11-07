@@ -1509,6 +1509,14 @@ func serve(args []string) error {
 				return sessionActs.ClosePane(ctx, pane)
 			},
 			logbook: lbVerbs,
+			listedPeer: func(device string) bool {
+				for _, p := range pm.List().Peers {
+					if p.DeviceID == device && p.Label != "" {
+						return true
+					}
+				}
+				return false
+			},
 			note: func(id, text string) error {
 				ss, ok := store.Session(id)
 				if !ok {

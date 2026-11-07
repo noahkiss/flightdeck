@@ -7274,7 +7274,7 @@ public struct ResizeFrame: Codable, Sendable, Hashable {
 public struct ReviewFixed: Codable, Sendable, Hashable {
     /// The fix commits on the review branch.
     public var commits: [String]?
-    /// The review branch head. Absent: the review branch's head in the reviewer's repository. The reviewer's hab sets the full commit id.
+    /// The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch.
     public var head: String?
 
     enum CodingKeys: String, CodingKey {
@@ -7289,9 +7289,9 @@ public struct ReviewFixed: Codable, Sendable, Hashable {
 }
 
 public struct ReviewVerdictParams: Codable, Sendable, Hashable {
-    /// Set by the reviewer's hab: the submitted head it checked fixed.head against. A pane's value is replaced.
+    /// Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced.
     public var checked: String?
-    /// Set by the reviewer's hab: fixed.head descends from checked and is not checked itself. A pane's value is replaced.
+    /// Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced.
     public var descends: Bool?
     /// High and medium findings only, at most [groups] max_findings. More are refused.
     public var findings: [GroupFinding]?
@@ -7301,6 +7301,8 @@ public struct ReviewVerdictParams: Codable, Sendable, Hashable {
     public var from: String?
     public var group: String
     public var item: String
+    /// Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced.
+    public var reviewed: String?
     /// pass or fix_needed.
     public var verdict: String
 
@@ -7312,10 +7314,11 @@ public struct ReviewVerdictParams: Codable, Sendable, Hashable {
         case from = "from"
         case group = "group"
         case item = "item"
+        case reviewed = "reviewed"
         case verdict = "verdict"
     }
 
-    public init(checked: String? = nil, descends: Bool? = nil, findings: [GroupFinding]? = nil, fixed: ReviewFixed? = nil, from: String? = nil, group: String, item: String, verdict: String) {
+    public init(checked: String? = nil, descends: Bool? = nil, findings: [GroupFinding]? = nil, fixed: ReviewFixed? = nil, from: String? = nil, group: String, item: String, reviewed: String? = nil, verdict: String) {
         self.checked = checked
         self.descends = descends
         self.findings = findings
@@ -7323,6 +7326,7 @@ public struct ReviewVerdictParams: Codable, Sendable, Hashable {
         self.from = from
         self.group = group
         self.item = item
+        self.reviewed = reviewed
         self.verdict = verdict
     }
 }

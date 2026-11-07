@@ -147,7 +147,7 @@ type LaneSubmitted struct {
 // ReviewFixed names a reviewer's fixes in place (groups.md 6.4).
 type ReviewFixed struct {
 	Commits []string `json:"commits,omitempty" doc:"The fix commits on the review branch."`
-	Head    string   `json:"head,omitempty" doc:"The review branch head. Absent: the review branch's head in the reviewer's repository. The reviewer's hab sets the full commit id."`
+	Head    string   `json:"head,omitempty" doc:"The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch."`
 }
 
 // ReviewVerdictParams is a reviewer's verdict (groups.md 6.3, 15.1).
@@ -158,8 +158,9 @@ type ReviewVerdictParams struct {
 	Findings []GroupFinding `json:"findings,omitempty" doc:"High and medium findings only, at most [groups] max_findings. More are refused."`
 	Fixed    *ReviewFixed   `json:"fixed,omitempty" doc:"Fix commits the reviewer pushed to its review branch, if any."`
 	From     string         `json:"from,omitempty" doc:"The reviewer's session name. From a pane the pane's session."`
-	Checked  string         `json:"checked,omitempty" doc:"Set by the reviewer's hab: the submitted head it checked fixed.head against. A pane's value is replaced."`
-	Descends bool           `json:"descends,omitempty" doc:"Set by the reviewer's hab: fixed.head descends from checked and is not checked itself. A pane's value is replaced."`
+	Checked  string         `json:"checked,omitempty" doc:"Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced."`
+	Reviewed string         `json:"reviewed,omitempty" doc:"Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced."`
+	Descends bool           `json:"descends,omitempty" doc:"Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced."`
 }
 
 // ReviewVerdictTaken answers review.verdict.
