@@ -1322,6 +1322,9 @@ func (s *groupsService) refresh(id string) {
 				continue
 			}
 			i := slices.IndexFunc(g.Members, func(m api.GroupMember) bool { return m.Name == a.Session && (m.Device == "" || m.Device == dev) })
+			if i < 0 && !admitMember(*g, a, dev) {
+				continue
+			}
 			if i < 0 {
 				g.Members = append(g.Members, api.GroupMember{Session: a.ID, Name: a.Session, Host: label, Device: dev, Harness: a.Harness,
 					Role: a.Group.Role, Item: a.Group.Item, State: groups.MemberRunning})
@@ -1368,6 +1371,23 @@ func (s *groupsService) refresh(id string) {
 		s.saveLocked(g)
 		go s.kick(g.ID)
 	}
+}
+
+// admitMember reports whether an agent the record does not list is a member a member's hab
+// started inside the envelope (groups.md 3.3): a worker or reviewer on a plan item, on a plan
+// host, in a plan harness. A session that carries the group but started outside the envelope
+// is not a member, so it never counts as a worker.
+func admitMember(g api.Group, a api.CatalogAgent, dev string) bool {
+	e := g.Envelope
+	switch {
+	case e == nil || a.Group == nil:
+		return false
+	case a.Group.Role != groups.RoleWorker && a.Group.Role != groups.RoleReviewer:
+		return false
+	case groups.ItemIndex(g, a.Group.Item) < 0:
+		return false
+	}
+	return slices.Contains(e.Hosts, dev) && slices.Contains(e.Harnesses, a.Harness)
 }
 
 // --- reports, notes, pause, close, retry ---
