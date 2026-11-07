@@ -129,17 +129,69 @@ type Host struct {
 	mods      map[uint64]*Remote
 	nextMod   uint64
 	procs     sync.WaitGroup
+	out       chan func() // log callbacks, run by logLoop
+	quit      chan struct{}
+	quitOnce  sync.Once
+	logsDone  chan struct{} // closed when logLoop has drained after quit
 }
 
 // NewHost returns a Host. It starts the child at the first New, not before.
 func NewHost(o HostOptions) *Host {
 	o = o.withDefaults()
-	return &Host{o: o, mods: map[uint64]*Remote{}, backoff: o.BackoffMin}
+	h := &Host{o: o, mods: map[uint64]*Remote{}, backoff: o.BackoffMin, out: make(chan func(), 1024), quit: make(chan struct{}), logsDone: make(chan struct{})}
+	go h.logLoop()
+	return h
 }
 
 func (h *Host) logf(format string, args ...any) {
 	if h.o.Log != nil {
-		h.o.Log(fmt.Sprintf(format, args...))
+		line := fmt.Sprintf(format, args...)
+		h.deliver(func() { h.o.Log(line) })
+	}
+}
+
+// deliver runs a log callback on the Host's own goroutine, in order, so a slow Log never holds
+// a lock, the pipe's read loop or a ping. When the queue is full the line is dropped.
+func (h *Host) deliver(f func()) {
+	select {
+	case h.out <- f:
+	default:
+	}
+}
+
+// flushLogs waits, a second at most, until the callbacks queued so far have run: a call's
+// fd.log lines reach Log before the call returns, as in process.
+func (h *Host) flushLogs() {
+	done := make(chan struct{})
+	t := time.NewTimer(time.Second)
+	defer t.Stop()
+	select {
+	case h.out <- func() { close(done) }:
+	case <-t.C:
+		return
+	}
+	select {
+	case <-done:
+	case <-t.C:
+	}
+}
+
+func (h *Host) logLoop() {
+	defer close(h.logsDone)
+	for {
+		select {
+		case f := <-h.out:
+			f()
+		case <-h.quit:
+			for {
+				select {
+				case f := <-h.out:
+					f()
+				default:
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -164,7 +216,7 @@ func (h *Host) New(b *Bundle, opts Options) (*Remote, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, err := r.ready(context.Background()); err != nil {
+	if _, err := r.ready(context.Background(), "load"); err != nil {
 		h.drop(r)
 		return nil, err
 	}
@@ -272,6 +324,11 @@ func (h *Host) Close() error {
 	p := h.cur
 	h.mu.Unlock()
 	if p != nil {
+		p.mu.Lock()
+		if p.reason == "" {
+			p.reason, p.culprit = "closed", noCulprit
+		}
+		p.mu.Unlock()
 		_ = p.stdin.Close()
 		select {
 		case <-p.done:
@@ -280,6 +337,8 @@ func (h *Host) Close() error {
 		}
 	}
 	h.procs.Wait()
+	h.quitOnce.Do(func() { close(h.quit) })
+	<-h.logsDone // no Log call after Close returns
 	return nil
 }
 
@@ -371,7 +430,8 @@ func (p *proc) read(stdout io.Reader) {
 		case f.Op == opLog:
 			var line string
 			if r := p.h.remote(f.Mod); r != nil && r.opts.Log != nil && json.Unmarshal(f.Body, &line) == nil {
-				r.opts.Log(line)
+				log := r.opts.Log
+				p.h.deliver(func() { log(line) })
 			}
 		case f.Op == opCancel:
 			p.mu.Lock()
@@ -514,28 +574,42 @@ func (p *proc) serve(ctx context.Context, f frame) {
 		return
 	}
 	body, err := r.backend(ctx, f)
-	_ = p.c.reply(f.ID, body, err)
+	if rerr := p.c.reply(f.ID, body, err); rerr != nil && errors.Is(rerr, errFrameTooBig) {
+		// The child's call waits for this answer: give it one it can take.
+		_ = p.c.reply(f.ID, nil, fmt.Errorf("the %s result is too large to pass to the module", f.Op))
+	}
 }
 
 // request sends one call to the child and waits for its answer. When ctx ends it tells the
 // child; when no answer comes by limit plus the runtime's stuck grace plus WedgeGrace (counted
 // again from a cancel), it kills the child. A child that ends returns a HostError.
 func (p *proc) request(ctx context.Context, fn, op string, mod uint64, body any, limit time.Duration) (frame, error) {
+	f := frame{Op: op, Mod: mod}
+	if body != nil {
+		data, err := marshalBody(body)
+		if err != nil {
+			return frame{}, err
+		}
+		f.Body = data
+	}
 	id, ch, ok := p.c.start()
 	if !ok {
-		return frame{}, p.failed(fn, mod)
+		return frame{}, p.failed(fn, mod, false)
 	}
-	f := frame{ID: id, Op: op, Mod: mod}
-	if body != nil {
-		f.Body = marshalBody(body)
-	}
+	f.ID = id
 	if err := p.c.send(f); err != nil {
 		p.c.forget(id)
-		if p.c.closedNow() {
-			return frame{}, p.failed(fn, mod)
+		if errors.Is(err, errFrameTooBig) {
+			return frame{}, err
 		}
-		return frame{}, err
+		// A write error is the pipe to a child that crashed or is closing.
+		p.kill("the pipe failed: "+err.Error(), 0)
+		return frame{}, p.failed(fn, mod, false)
 	}
+	// Only a call the child held before it ended can be blamed for the end.
+	p.mu.Lock()
+	inflight := p.reason == ""
+	p.mu.Unlock()
 	wedge := limit + stuckGrace + p.h.o.WedgeGrace
 	timer := time.NewTimer(wedge)
 	defer timer.Stop()
@@ -544,7 +618,7 @@ func (p *proc) request(ctx context.Context, fn, op string, mod uint64, body any,
 		select {
 		case ans, ok := <-ch:
 			if !ok {
-				return frame{}, p.failed(fn, mod)
+				return frame{}, p.failed(fn, mod, inflight)
 			}
 			return ans, nil
 		case <-cancelled:
@@ -557,19 +631,17 @@ func (p *proc) request(ctx context.Context, fn, op string, mod uint64, body any,
 	}
 }
 
-// failed waits for the child's end and returns the HostError for a call on it.
-func (p *proc) failed(fn string, mod uint64) error {
+// failed waits for the child's end and returns the HostError for a call on it. inflight is a
+// call the child held before anything ended it: the only kind that can be a culprit.
+func (p *proc) failed(fn string, mod uint64, inflight bool) error {
 	<-p.done
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return &HostError{Func: fn, Reason: p.reason, Culprit: p.culprit == 0 || p.culprit == mod}
+	return &HostError{Func: fn, Reason: p.reason, Culprit: inflight && (p.culprit == 0 || p.culprit == mod)}
 }
 
-func (c *conn) closedNow() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.closed
-}
+// noCulprit is the culprit of an end nobody's call caused: Close.
+const noCulprit = ^uint64(0)
 
 // headBuffer keeps the first bytes the child writes on stderr: a crash's message comes first,
 // its goroutine dump after.
@@ -623,8 +695,8 @@ type Remote struct {
 	limits Limits
 
 	mu       sync.Mutex
-	gen      uint64 // the child it is loaded in; 0 for none
-	exported map[string]bool
+	gen      uint64                          // the child it is loaded in; 0 for none
+	exported atomic.Pointer[map[string]bool] // never behind mu: Has must not wait for a call
 	err      error
 	closed   bool
 	growth   atomic.Int64
@@ -635,23 +707,22 @@ func (r *Remote) Manifest() *modules.Manifest { return r.b.Manifest }
 
 // Has reports whether the module exports the function: refresh, render or act.
 func (r *Remote) Has(name string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.exported[name]
+	m := r.exported.Load()
+	return m != nil && (*m)[name]
 }
 
 // HeapGrowth is Module.HeapGrowth of the module's last call in the child.
 func (r *Remote) HeapGrowth() int64 { return r.growth.Load() }
 
 // ready makes sure the module is loaded in the running child, and returns it. r.mu is held.
-func (r *Remote) ready(ctx context.Context) (*proc, error) {
+func (r *Remote) ready(ctx context.Context, fn string) (*proc, error) {
 	if r.closed {
 		return nil, ErrHostClosed
 	}
 	if r.err != nil {
 		return nil, ErrStopped
 	}
-	p, err := r.h.running("load")
+	p, err := r.h.running(fn)
 	if err != nil {
 		return nil, err
 	}
@@ -672,10 +743,11 @@ func (r *Remote) ready(ctx context.Context) (*proc, error) {
 	if err := json.Unmarshal(ans.Body, &out); err != nil {
 		return nil, err
 	}
-	r.exported = map[string]bool{}
+	exported := map[string]bool{}
 	for _, n := range out.Exported {
-		r.exported[n] = true
+		exported[n] = true
 	}
+	r.exported.Store(&exported)
 	r.gen = p.gen
 	return p, nil
 }
@@ -683,13 +755,16 @@ func (r *Remote) ready(ctx context.Context) (*proc, error) {
 func (r *Remote) call(ctx context.Context, fn, op string, limit time.Duration, body wireCall) ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	p, err := r.ready(ctx)
+	p, err := r.ready(ctx, fn)
 	if err != nil {
 		return nil, r.cause(ctx, err)
 	}
 	ans, err := p.request(ctx, fn, op, r.id, body, limit)
 	if err != nil {
 		return nil, err
+	}
+	if r.opts.Log != nil {
+		r.h.flushLogs()
 	}
 	var done wireDone
 	if len(ans.Body) > 0 {
@@ -743,6 +818,17 @@ func (r *Remote) Act(ctx context.Context, name string, args json.RawMessage, c C
 	if strings.HasPrefix(name, modules.ClientPrefix) {
 		return ErrClientAction
 	}
+	// Module.Act's checks, here so a bad args value never reaches the pipe.
+	if !r.Has("act") {
+		return ErrNoAct
+	}
+	if len(args) == 0 {
+		args = json.RawMessage("{}")
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(args, &probe); err != nil {
+		return fmt.Errorf("action args are not a JSON object: %w", err)
+	}
 	_, err := r.call(ctx, "act", opAct, r.limits.Act, wireCall{Call: c, Name: name, Args: args})
 	return err
 }
@@ -764,6 +850,15 @@ func (r *Remote) Close() {
 		defer cancel()
 		_, _ = p.request(ctx, "unload", opUnload, r.id, nil, 0)
 	}
+}
+
+// cutOutput trims a stream before it crosses the pipe. It keeps a few bytes over the limit, so
+// the runtime still sees that it must cut, and where the last character ends.
+func (r *Remote) cutOutput(b []byte) []byte {
+	if n := r.limits.Output + 4; len(b) > n {
+		return b[:n]
+	}
+	return b
 }
 
 // backend serves one of the child's backend calls with the module's own backends.
@@ -800,7 +895,9 @@ func (r *Remote) backend(ctx context.Context, f frame) (any, error) {
 		}
 		cctx, cancel := withDeadline(w.Deadline)
 		defer cancel()
-		return o.Exec.Run(cctx, w.Req)
+		res, err := o.Exec.Run(cctx, w.Req)
+		res.Stdout, res.Stderr = r.cutOutput(res.Stdout), r.cutOutput(res.Stderr)
+		return res, err
 	case opFetch:
 		var w wireFetch
 		if err := json.Unmarshal(f.Body, &w); err != nil {
@@ -811,7 +908,9 @@ func (r *Remote) backend(ctx context.Context, f frame) (any, error) {
 		}
 		cctx, cancel := withDeadline(w.Deadline)
 		defer cancel()
-		return o.Fetch.Do(cctx, w.Req)
+		res, err := o.Fetch.Do(cctx, w.Req)
+		res.Body = r.cutOutput(res.Body)
+		return res, err
 	case opStateLoad:
 		if o.State == nil {
 			return map[string]json.RawMessage{}, nil
