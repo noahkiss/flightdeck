@@ -353,7 +353,7 @@ func Find(cl api.CatalogList, id string) (Where, bool) {
 				continue
 			}
 			gen, dev, isLive := g.Generation, h.Catalog.DeviceID, g.Moved == nil
-			if isLive && g.Home != dev {
+			if isLive && g.Home != "" && g.Home != dev {
 				continue // a live copy counts only from the home's own catalog: another host's claim is not taken
 			}
 			if !isLive {
