@@ -126,7 +126,6 @@ func scrubCoords(s string) string {
 	}))
 }
 
-
 // personalResult is a personal route call's answer: its text for the model, and the data for
 // -json.
 type personalResult struct {
