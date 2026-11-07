@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,6 +57,18 @@ type roundsSettings struct {
 	BlockMaxBytes  int
 	BlockDataMax   int
 	OutcomeWait    time.Duration
+	// Watch holds the stage 11 limits of rounds.md 4.7; the zero value takes the defaults.
+	Watch rounds.WatchLimits
+	// Secrets are the secret sets, [rounds.secrets.<name>] (rounds.md 4.4). Their values are
+	// never logged.
+	Secrets map[string]secretSet
+}
+
+// secretSet is one [rounds.secrets.<name>] table: plain variables, and a command whose output
+// lines NAME=value set more at each watcher start.
+type secretSet struct {
+	Vars    map[string]string
+	Command []string
 }
 
 // Defaults of the stage 9 limits of rounds.md 4.7 that gff-hab applies itself.
@@ -82,6 +95,98 @@ var roundLimitKeys = []struct {
 	{"block_data_max", 0, 16 << 10, false},
 	{"state_save_every", int64(time.Second), int64(5 * time.Minute), true},
 	{"outcome_wait", int64(24 * time.Hour), int64(30 * 24 * time.Hour), true},
+	// Stage 11: the watcher keys (rounds.md 4.4, 4.7).
+	{"max_watchers", 0, 256, false},
+	{"watch_backoff_max", int64(10 * time.Second), int64(time.Hour), true},
+	{"watch_backoff_reset", int64(time.Minute), int64(24 * time.Hour), true},
+	{"watch_pause_after", 1, 100, false},
+	{"watch_quick_exit", int64(5 * time.Second), int64(time.Hour), true},
+	{"watch_buffer_lines", 0, 100000, false},
+	{"watch_buffer_bytes", 0, 64 << 20, false},
+	{"watch_rate", 1, 6000, false},
+	{"watch_burst", 1, 6000, false},
+	{"event_title_max", 20, 2000, false},
+	{"event_key_window", int64(time.Minute), int64(30 * 24 * time.Hour), true},
+	{"event_keys_max", 0, 100000, false},
+	{"event_data_max", 0, 32 << 10, false},
+	{"cursor_max", 64, 16 << 10, false},
+	{"secrets_timeout", int64(time.Second), int64(5 * time.Minute), true},
+}
+
+// envNameRE is a variable name a secret set may set.
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// secretNameRE is a secret set's name, as a round names it.
+var secretNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// loadSecretSets reads [rounds.secrets.<name>] tables. A set with a bad name, a variable name
+// that is not one, or a command that is not an argv is left out and logged once, by its name
+// only: no value of a set reaches the log.
+func loadSecretSets(path string, raw any, logf func(string, ...any)) map[string]secretSet {
+	tables, ok := raw.(map[string]any)
+	if raw != nil && !ok {
+		logf("%s: rounds: secrets is not a table of secret sets; none is set", path)
+		return nil
+	}
+	out := map[string]secretSet{}
+	for name, v := range tables {
+		t, ok := v.(map[string]any)
+		bad := ""
+		set := secretSet{Vars: map[string]string{}}
+		switch {
+		case !ok:
+			bad = "not a table"
+		case !secretNameRE.MatchString(name):
+			bad = "its name is not up to 64 letters, digits, - and _"
+		}
+		for k, val := range t {
+			if bad != "" {
+				break
+			}
+			switch k {
+			case "vars":
+				vars, ok := val.(map[string]any)
+				if !ok {
+					bad = "vars is not a table"
+					break
+				}
+				for vn, vv := range vars {
+					s, ok := vv.(string)
+					switch {
+					case !envNameRE.MatchString(vn):
+						bad = fmt.Sprintf("vars: %q is not a variable name", vn)
+					case !ok:
+						bad = fmt.Sprintf("vars: %s is not a string", vn)
+					case strings.ContainsRune(s, 0):
+						bad = fmt.Sprintf("vars: %s holds a NUL", vn)
+					}
+					set.Vars[vn] = s
+				}
+			case "command":
+				list, ok := val.([]any)
+				if !ok || len(list) == 0 {
+					bad = "command is not an argv: a list of strings, the program first"
+					break
+				}
+				for _, a := range list {
+					s, ok := a.(string)
+					if !ok || (len(set.Command) == 0 && s == "") {
+						bad = "command is not an argv: a list of strings, the program first"
+						break
+					}
+					set.Command = append(set.Command, s)
+				}
+			default:
+				bad = fmt.Sprintf("%s is not a key of a secret set: it takes vars and command", k)
+			}
+		}
+		if bad != "" {
+			logf("%s: rounds: secret set %s: %s; it is left out", path, name, bad)
+			continue
+		}
+		out[name] = set
+	}
+	return out
 }
 
 // parseLongDuration reads a Go duration, or a whole number of days such as "7d".
@@ -104,7 +209,8 @@ func loadRoundsSettings(path string, logf func(string, ...any)) (roundsSettings,
 	out := roundsSettings{BlockMaxEvents: defaultBlockMaxEvents, BlockMaxBytes: defaultBlockMaxBytes,
 		BlockDataMax: defaultBlockDataMax, OutcomeWait: defaultOutcomeWait,
 		Limits: rounds.Limits{BatchMaxEvents: rounds.DefaultBatchMaxEvents, BatchMaxBytes: rounds.DefaultBatchMaxBytes,
-			EventFilesKeep: rounds.DefaultEventFilesKeep, StateSaveEvery: rounds.DefaultStateSaveEvery}}
+			EventFilesKeep: rounds.DefaultEventFilesKeep, StateSaveEvery: rounds.DefaultStateSaveEvery},
+		Watch: rounds.DefaultWatchLimits()}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
@@ -131,6 +237,7 @@ func loadRoundsSettings(path string, logf func(string, ...any)) (roundsSettings,
 		Rounds map[string]any `toml:"rounds"`
 	}
 	toml.Decode(string(b), &raw) // it parsed above
+	out.Secrets = loadSecretSets(path, raw.Rounds["secrets"], logf)
 	for _, k := range roundLimitKeys {
 		v, ok := raw.Rounds[k.key]
 		if !ok {
@@ -183,6 +290,36 @@ func loadRoundsSettings(path string, logf func(string, ...any)) (roundsSettings,
 			out.Limits.StateSaveEvery = time.Duration(n)
 		case "outcome_wait":
 			out.OutcomeWait = time.Duration(n)
+		case "max_watchers":
+			out.Watch.MaxWatchers = int(n)
+		case "watch_backoff_max":
+			out.Watch.BackoffMax = time.Duration(n)
+		case "watch_backoff_reset":
+			out.Watch.BackoffReset = time.Duration(n)
+		case "watch_pause_after":
+			out.Watch.PauseAfter = int(n)
+		case "watch_quick_exit":
+			out.Watch.QuickExit = time.Duration(n)
+		case "watch_buffer_lines":
+			out.Watch.BufferLines = int(n)
+		case "watch_buffer_bytes":
+			out.Watch.BufferBytes = int(n)
+		case "watch_rate":
+			out.Watch.Rate = int(n)
+		case "watch_burst":
+			out.Watch.Burst = int(n)
+		case "event_title_max":
+			out.Watch.TitleMax = int(n)
+		case "event_key_window":
+			out.Watch.KeyWindow = time.Duration(n)
+		case "event_keys_max":
+			out.Watch.KeysMax = int(n)
+		case "event_data_max":
+			out.Watch.DataMax = int(n)
+		case "cursor_max":
+			out.Watch.CursorMax = int(n)
+		case "secrets_timeout":
+			out.Watch.SecretsTimeout = time.Duration(n)
 		}
 	}
 	if v := fc.Rounds.MaxRunning; v != nil {
@@ -312,6 +449,13 @@ type roundsConfig struct {
 	channels   roundChannels
 	peerOnline func(label string) bool
 	logbook    roundLogbook
+
+	// Watchers (roundwatch.go). exe is gff-hab's own program, which runs `gff-hab watch-pane`;
+	// clock is the scheduler's clock (nil: the system clock); watchAfter, when set, replaces
+	// time.AfterFunc for the watchers' backoff (tests).
+	exe        string
+	clock      rounds.Clock
+	watchAfter func(d time.Duration, f func()) (stop func() bool)
 }
 
 // roundsService runs the rounds of one gff-hab.
@@ -339,6 +483,9 @@ type roundsService struct {
 	// msgRuns holds the live capcom and group runs, by channel message id (roundmsg.go).
 	msgRuns map[string]*msgWatch
 	matcher *roundMatcher
+	// watch supervises the watchers of watch rounds (roundwatch.go).
+	watchers     *watchSup
+	watchStarted bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -407,8 +554,10 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	for _, e := range st.List() {
 		s.revs[e.Round.ID] = 1
 	}
+	lim := s.watchLimits()
+	s.watchers = newWatchSup(s)
 	sc := rounds.SchedulerConfig{Store: st, Starter: s, Sink: s, MaxRunning: cfg.settings.MaxRunning,
-		WakeSettle: cfg.settings.WakeSettle, Logf: cfg.logf, Limits: cfg.settings.Limits}
+		WakeSettle: cfg.settings.WakeSettle, Logf: cfg.logf, Limits: cfg.settings.Limits, Clock: cfg.clock, Watch: &lim}
 	if cfg.tick > 0 {
 		sc.NewTicker = func() (<-chan time.Time, func()) {
 			t := time.NewTicker(cfg.tick)
@@ -480,14 +629,22 @@ func (s *roundsService) start() {
 		defer close(s.done)
 		s.sched.Run(ctx)
 	}()
+	// The watchers start once the link reached every holder (rounds.md 4.4).
+	s.watchStarted = true
+	go s.watchers.run()
+	s.watchers.look("")
 }
 
 // Close stops the tick and the timers, and waits for the work in flight. Runs stay as they are
-// on disk; the next gff-hab adopts them.
+// on disk; the next gff-hab adopts them. Watchers keep running in their panes.
 func (s *roundsService) Close() {
 	if s.cancel != nil {
 		s.cancel()
 		<-s.done
+	}
+	s.watchers.close()
+	if s.watchStarted {
+		<-s.watchers.done
 	}
 	if s.matcher != nil {
 		s.matcher.stop()
@@ -720,6 +877,19 @@ func (s *roundsService) timedOut(runID string) {
 // back that a run adopted at start waits for.
 func (s *roundsService) notice(n link.Notice) {
 	pane := n.Pane.UUID.String()
+	if _, ok := s.watchers.roundOfPane(pane); ok {
+		// A watcher's pane (roundwatch.go). A lost holder connection is no exit: the pane comes
+		// back, or the loop finds it gone once the link reached every holder.
+		switch {
+		case n.Kind == link.PaneExited:
+			s.watchers.exited(pane, watchExitText(link.APIExit(n.Pane.Exit)))
+		case n.Kind == link.PaneGone && n.Pane.Exited:
+			s.watchers.exited(pane, watchExitText(link.APIExit(n.Pane.Exit)))
+		case n.Kind == link.PaneGone && (!n.Pane.Lost || n.Pane.Gone):
+			s.watchers.exited(pane, "pane gone")
+		}
+		return
+	}
 	switch n.Kind {
 	case link.PaneExited:
 		s.exited(pane, n.Pane.Exit)
@@ -742,6 +912,7 @@ func (s *roundsService) notice(n link.Notice) {
 		}
 	case link.PaneAdded:
 		s.checkPending()
+		s.watchers.look("")
 	}
 }
 
@@ -915,6 +1086,12 @@ func (s *roundsService) checkPending() bool {
 // --- The scheduler's sink: events, and the end of a run ---
 
 func (s *roundsService) RoundChanged(e rounds.Entry) {
+	s.publishChanged(e)
+	s.watchers.look(e.Round.ID) // a watch round's watcher follows its round (roundwatch.go)
+}
+
+// publishChanged sends round.updated for a round at its next revision.
+func (s *roundsService) publishChanged(e rounds.Entry) {
 	s.mu.Lock()
 	s.revs[e.Round.ID]++
 	r := s.apiRoundLocked(e)
@@ -939,6 +1116,7 @@ func (s *roundsService) RoundDeleted(e rounds.Entry) {
 	r.Deleted, r.LastRun = true, nil
 	s.cfg.publish(structure.Event{Type: control.EventRoundUpdated, ID: r.ID, Revision: r.Revision, Data: api.NonNil(r)})
 	s.poke()
+	s.watchers.look(e.Round.ID)
 }
 
 // RunChanged sends round.run_updated. A run that ended is no longer watched; a succeeded run
@@ -1116,6 +1294,9 @@ func (s *roundsService) Notice(n rounds.Notice) {
 	if ev.Kind == push.RoundSkips {
 		detail = fmt.Sprintf("Not run since %s; the last skip: %s", ev.Since, ev.Reason)
 	}
+	if ev.Exit != "" {
+		detail = fmt.Sprintf("Its watcher exited %d times in a row soon after its start; the last: %s", ev.Exits, ev.Exit)
+	}
 	// The run's result goes into the kept notice, for "Ask an agent", only when the read
 	// scope allows the run's folder; an unknown folder keeps it out.
 	full, folder := "", ""
@@ -1142,6 +1323,10 @@ func roundEvent(n rounds.Notice) (push.RoundEvent, bool) {
 		ev.Kind = push.RoundRunSucceeded
 	case rounds.NoticePaused:
 		ev.Kind, ev.Failures = push.RoundPaused, max(st.Failures, rounds.PauseAfterFailures)
+		if n.Exit != "" {
+			// A watcher pause: Open goes to the watcher session.
+			ev.Exit, ev.Exits, ev.Session = n.Exit, n.Exits, n.Session
+		}
 	case rounds.NoticeSkips:
 		ev.Kind = push.RoundSkips
 		// Open goes to the target, the session the runs wait for; a fork run's own session
@@ -1200,6 +1385,9 @@ func (s *roundsService) apiRoundLocked(e rounds.Entry) api.Round {
 	if s.sched != nil {
 		r.Pending = s.sched.Pending(e.Round.ID)
 	}
+	if e.Round.Trigger.Kind == rounds.TriggerWatch && s.watchers != nil {
+		r.Watcher = s.watchers.state(e.Round.ID)
+	}
 	return r
 }
 
@@ -1224,13 +1412,14 @@ func apiRound(e rounds.Entry) api.Round {
 		RoundSpec: api.RoundSpec{
 			Name: r.Name, Mode: api.RoundMode(r.Mode),
 			Trigger: api.RoundTrigger{Kind: api.RoundTriggerKind(r.Trigger.Kind), Cron: r.Trigger.Cron, Zone: r.Trigger.Zone, At: rfc(r.Trigger.At),
-				Event: r.Trigger.Event, Filter: apiFilter(r.Trigger.Filter)},
+				Event: r.Trigger.Event, Filter: apiFilter(r.Trigger.Filter), Watch: apiWatch(r.Trigger.Watch)},
 			Prompt: r.Prompt, Harness: r.Harness, Model: r.Model, HarnessArgs: r.HarnessArgs, Command: r.Command,
 			Project: r.Project, Cwd: r.Cwd, Target: r.Target, MaxRuns: r.MaxRuns, ExpiresAt: rfc(r.ExpiresAt),
 			TimeoutMS: time.Duration(r.Timeout).Milliseconds(), WaitMS: time.Duration(r.Wait).Milliseconds(),
 			CatchUp: api.RoundCatchUp(r.CatchUp), OnFinish: api.RoundOnFinish(r.OnFinish), Notify: api.RoundNotify(r.Notify),
 			Paused: r.Paused, Group: r.Group,
 			DebounceMS: time.Duration(r.Debounce).Milliseconds(), CooldownMS: time.Duration(r.Cooldown).Milliseconds(),
+			Secrets: r.Secrets,
 		},
 		CreatedBy: r.CreatedBy, CreatedAt: rfc(&r.CreatedAt), UpdatedAt: rfc(&r.UpdatedAt),
 		NextSlot: rfc(st.NextSlot), LastSlot: rfc(st.LastSlot), LastOK: rfc(st.LastOK),
@@ -1246,6 +1435,13 @@ func apiRun(r rounds.Run) api.RoundRun {
 		Created: rfc(&r.Created), StartedAt: rfc(r.StartedAt), EndedAt: rfc(r.EndedAt), Result: r.Result,
 		Events: r.Events, Destination: r.Destination, Message: r.Message,
 	}
+}
+
+func apiWatch(w *rounds.Watch) *api.RoundWatch {
+	if w == nil {
+		return nil
+	}
+	return &api.RoundWatch{Argv: w.Argv, Cwd: w.Cwd, Kinds: w.Kinds}
 }
 
 func apiFilter(f *rounds.EventFilter) *api.RoundEventFilter {
@@ -1348,8 +1544,18 @@ func (s *roundsService) Batch(ref api.RoundRef) (*api.RoundBatch, error) {
 	return &api.RoundBatch{Events: apiEvents(b.Events), Dropped: b.Dropped}, nil
 }
 
+// Cursor returns a watch round's watcher cursor, as a move carries it (rounds.md 9); "" for
+// another round.
+func (s *roundsService) Cursor(ref api.RoundRef) (string, error) {
+	e, err := s.entry(ref)
+	if err != nil || e.Round.Trigger.Kind != rounds.TriggerWatch {
+		return "", err
+	}
+	return s.sched.WatchCursor(e.Round.ID), nil
+}
+
 // roundsBatch turns a carried batch back into the scheduler's, checking each event.
-func roundsBatch(b api.RoundBatch) (rounds.Batch, error) {
+func roundsBatch(b api.RoundBatch, watch bool) (rounds.Batch, error) {
 	out := rounds.Batch{Dropped: b.Dropped}
 	if b.Dropped < 0 {
 		return out, control.Errorf(api.ErrorKindInvalid, "batch: dropped must not be negative")
@@ -1359,7 +1565,10 @@ func roundsBatch(b api.RoundBatch) (rounds.Batch, error) {
 		if err != nil {
 			return out, control.Errorf(api.ErrorKindInvalid, "batch: event %d: at %q is not an RFC 3339 time", i, ev.At)
 		}
-		if !slices.Contains(rounds.Events, ev.Kind) {
+		if watch && ev.Kind != "" && !rounds.ValidKind(ev.Kind) {
+			return out, control.Errorf(api.ErrorKindInvalid, "batch: event %d: kind %q is not a watcher event kind", i, ev.Kind)
+		}
+		if !watch && !slices.Contains(rounds.Events, ev.Kind) {
 			return out, control.Errorf(api.ErrorKindInvalid, "batch: event %d: %q is not an event a round takes", i, ev.Kind)
 		}
 		if len(ev.Data) > 0 && !json.Valid(ev.Data) {
@@ -1409,6 +1618,10 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		Trigger: rounds.Trigger{Kind: rounds.TriggerKind(p.Trigger.Kind), Cron: p.Trigger.Cron, Zone: p.Trigger.Zone, Event: p.Trigger.Event},
 		Group:   p.Group, Debounce: rounds.Duration(time.Duration(p.DebounceMS) * time.Millisecond),
 		Cooldown: rounds.Duration(time.Duration(p.CooldownMS) * time.Millisecond),
+		Secrets:  p.Secrets,
+	}
+	if w := p.Trigger.Watch; w != nil {
+		r.Trigger.Watch = &rounds.Watch{Argv: w.Argv, Cwd: w.Cwd, Kinds: w.Kinds}
 	}
 	if f := p.Trigger.Filter; f != nil {
 		rf := rounds.EventFilter{Project: f.Project, Session: f.Session, Field: f.Field, State: f.State, Level: f.Level,
@@ -1558,16 +1771,22 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	}
 	var seed rounds.Batch
 	if b := p.Batch; b != nil {
-		if r.Trigger.Kind != rounds.TriggerEvent {
-			return api.RoundCreated{}, control.Errorf(api.ErrorKindInvalid, "batch: only an event round has a pending batch")
+		if !r.Trigger.Kind.Batches() {
+			return api.RoundCreated{}, control.Errorf(api.ErrorKindInvalid, "batch: only an event or watch round has a pending batch")
 		}
 		var err error
-		if seed, err = roundsBatch(*b); err != nil {
+		if seed, err = roundsBatch(*b, r.Trigger.Kind == rounds.TriggerWatch); err != nil {
 			return api.RoundCreated{}, err
 		}
 	}
+	if p.Cursor != "" && r.Trigger.Kind != rounds.TriggerWatch {
+		return api.RoundCreated{}, control.Errorf(api.ErrorKindInvalid, "cursor: only a watch round has a watcher cursor")
+	}
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
+	if err := s.checkWatchRound(r, ""); err != nil {
+		return api.RoundCreated{}, err
+	}
 	e, run, err := s.sched.Create(r, createdBy, p.RunNow)
 	if err != nil && e.Round.ID == "" {
 		return api.RoundCreated{}, roundErr(err)
@@ -1575,6 +1794,11 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	if err == nil && seed.Len() > 0 {
 		if serr := s.sched.SeedPending(e.Round.ID, seed); serr != nil {
 			return api.RoundCreated{}, control.Errorf(api.ErrorKindUnavailable, "round %s was created, but its pending batch was not kept: %v", r.Name, serr)
+		}
+	}
+	if err == nil && p.Cursor != "" {
+		if serr := s.sched.SeedCursor(e.Round.ID, p.Cursor); serr != nil {
+			return api.RoundCreated{}, control.Errorf(api.ErrorKindUnavailable, "round %s was created, but its watcher cursor was not kept: %v", r.Name, serr)
 		}
 	}
 	if err != nil {
@@ -1620,6 +1844,16 @@ func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (ap
 	}
 	if old.Round.Mode != r.Mode || old.Round.Group != r.Group {
 		if err := s.checkMessageRound(r); err != nil {
+			return api.Round{}, err
+		}
+	}
+	if r.Trigger.Kind == rounds.TriggerWatch && (old.Round.Trigger.Kind != rounds.TriggerWatch || old.Round.Secrets != r.Secrets) {
+		c := r
+		c.Paused = old.Round.Paused
+		if old.Round.Trigger.Kind == rounds.TriggerWatch {
+			c.Paused = true // only the secret set changed: the cap does not apply
+		}
+		if err := s.checkWatchRound(c, r.ID); err != nil {
 			return api.Round{}, err
 		}
 	}
@@ -1669,6 +1903,13 @@ func (s *roundsService) Unpause(ref api.RoundRef) (api.Round, error) {
 	}
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
+	if ne, ok := s.store.Get(e.Round.ID); ok && ne.Round.Paused && !ne.State.Completed {
+		c := ne.Round
+		c.Paused, c.Secrets = false, ""
+		if err := s.checkWatchRound(c, e.Round.ID); err != nil {
+			return api.Round{}, err
+		}
+	}
 	if err := s.sched.Unpause(e.Round.ID); err != nil {
 		return api.Round{}, roundErr(err)
 	}
@@ -1829,8 +2070,27 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			}
 			return nil
 		}
+		// noSecrets keeps a secret set out of a pane's reach: an agent that could name one could
+		// write a watcher that prints the owner's credentials.
+		noSecrets := func(spec *api.RoundSpec) error {
+			if spec.Secrets != "" {
+				return control.Errorf(api.ErrorKindDenied, "from a pane, a round names no secret set; a person adds one through the control socket")
+			}
+			return nil
+		}
 		var ref api.RoundRef
 		switch method {
+		case "round.watch_event":
+			var p api.RoundWatchEventParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, nil, bad(err)
+			}
+			// Only the round's own watcher pane posts its lines (rounds.md 4.4, 13).
+			if id, ok := svc.watchers.roundOfPane(pane); !ok || id != p.Round || !filed || ss.Round == nil || !ss.Round.Watcher || ss.Round.Round != p.Round {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "round.watch_event: this pane is not the watcher pane of round %s", p.Round)
+			}
+			r, err := svc.WatchEvent(p)
+			return r, nil, err
 		case "round.list":
 			return api.RoundList{Rounds: svc.List()}, nil, nil
 		case "round.create":
@@ -1840,6 +2100,12 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			}
 			if err := target(&p.Round); err != nil {
 				return nil, nil, err
+			}
+			if err := noSecrets(&p.Round); err != nil {
+				return nil, nil, err
+			}
+			if p.Cursor != "" {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "from a pane, a round is created with no watcher cursor: only a move carries one")
 			}
 			if p.Batch != nil {
 				return nil, nil, control.Errorf(api.ErrorKindDenied, "from a pane, a round is created with no pending batch: only a move carries one")
@@ -1859,6 +2125,9 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 				return nil, nil, err
 			}
 			if err := target(&p.Round); err != nil {
+				return nil, nil, err
+			}
+			if err := noSecrets(&p.Round); err != nil {
 				return nil, nil, err
 			}
 			r, err := svc.Update(ctx, p)

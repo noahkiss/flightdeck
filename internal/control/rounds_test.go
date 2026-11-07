@@ -47,6 +47,8 @@ func (f *fakeRounds) Batch(r api.RoundRef) (*api.RoundBatch, error) {
 	err := f.note("batch " + r.Name)
 	return nil, err
 }
+
+func (f *fakeRounds) Cursor(api.RoundRef) (string, error) { return "", nil }
 func (f *fakeRounds) Create(_ context.Context, p api.RoundCreateParams, by string) (api.RoundCreated, error) {
 	err := f.note("create " + p.Round.Name + " by " + by)
 	return api.RoundCreated{Round: api.Round{ID: "round-1"}}, err

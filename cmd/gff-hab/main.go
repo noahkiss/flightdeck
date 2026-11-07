@@ -208,6 +208,9 @@ func main() {
 	if os.Args[1] == "opencode-pane" {
 		os.Exit(opencodePaneCmd(os.Args[2:]))
 	}
+	if os.Args[1] == "watch-pane" {
+		os.Exit(watchPaneCmd(os.Args[2:]))
+	}
 	var err error
 	switch os.Args[1] {
 	case "serve":
@@ -1400,6 +1403,7 @@ func serve(args []string) error {
 		sa := acts.(*actions)
 		roundsSvc, err = newRounds(roundsConfig{
 			state: dir, settings: rset, store: store,
+			exe: sa.exe,
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
 				if s := srv.Load(); s != nil {
 					return s.CreateSession(ctx, p)

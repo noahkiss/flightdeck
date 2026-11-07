@@ -588,6 +588,7 @@ func (s *roundsService) eventBlockOf(run rounds.Run) string {
 
 // Woke raises hab.woke (rounds.WakeSink): a wake the scheduler detected, after its settle.
 func (s *roundsService) Woke(slept time.Duration) {
+	s.watchers.woke() // a watcher's connections died in the sleep (rounds.md 4.4)
 	s.cfg.publish(structure.Event{Type: api.EventType(rounds.EventHabWoke),
 		Data: api.HabWoke{SleptS: int64(slept / time.Second), At: time.Now().UTC().Format(time.RFC3339)}})
 }

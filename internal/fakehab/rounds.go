@@ -131,6 +131,8 @@ func (a roundsAPI) Get(ref api.RoundRef) (api.Round, error) {
 
 func (a roundsAPI) Batch(api.RoundRef) (*api.RoundBatch, error) { return nil, nil }
 
+func (a roundsAPI) Cursor(api.RoundRef) (string, error) { return "", nil }
+
 func (a roundsAPI) Create(context.Context, api.RoundCreateParams, string) (api.RoundCreated, error) {
 	return api.RoundCreated{}, control.Errorf(api.ErrorKindUnavailable, "the fake hab does not create rounds")
 }

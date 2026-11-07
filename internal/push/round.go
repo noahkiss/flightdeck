@@ -32,6 +32,10 @@ type RoundEvent struct {
 	Since     string // RoundSkips: when the round last ran well, in plain words
 	Session   string // the run session, for Open; empty when there is none to open
 	Failures  int    // RoundPaused: the failures in a row
+	// Exit and Exits are a watcher pause's: the watcher's last exit and its exits in a row
+	// (rounds.md 4.4, 10.2). Empty for a pause after failed runs.
+	Exit  string
+	Exits int
 }
 
 // RoundAllowed says whether a round's notify setting (failures, always or never; empty is
@@ -94,6 +98,9 @@ func RoundNotice(e RoundEvent) Notice {
 	case RoundPaused:
 		no.Title, no.Level = "Round paused: "+e.Name, LevelActive
 		no.Body = fmt.Sprintf("%d failed runs in a row. Unpause it to run again.", max(e.Failures, 1))
+		if e.Exit != "" {
+			no.Body = fmt.Sprintf("Its watcher exited %d times in a row soon after its start; the last: %s. Unpause it to start the watcher again.", max(e.Exits, 1), e.Exit)
+		}
 	case RoundSkips:
 		no.Title, no.Level = "Round not running: "+e.Name, LevelPassive
 		no.Body = "Not run since " + e.Since

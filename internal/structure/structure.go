@@ -666,6 +666,19 @@ func (s *Store) SessionOfRun(run string) (api.Session, bool) {
 	return api.Session{}, false
 }
 
+// SessionOfWatcher returns a watch round's watcher session (Session.round.watcher), exited or
+// not (rounds.md 4.4).
+func (s *Store) SessionOfWatcher(round string) (api.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ss := range s.sessions {
+		if ss.Round != nil && ss.Round.Watcher && ss.Round.Round == round {
+			return sessionAPI(ss), true
+		}
+	}
+	return api.Session{}, false
+}
+
 // Session returns the session record with id, exited ones included.
 func (s *Store) Session(id string) (api.Session, bool) {
 	s.mu.Lock()

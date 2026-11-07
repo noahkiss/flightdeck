@@ -69,15 +69,15 @@ func checkWatch(w *Watch) error {
 		return fmt.Errorf("watch: %d kinds; the limit is %d", len(w.Kinds), maxWatchKinds)
 	}
 	for _, k := range w.Kinds {
-		if !validKind(k) {
+		if !ValidKind(k) {
 			return fmt.Errorf("watch: kind %q: use up to %d letters, digits, ., - and _", k, maxKindLen)
 		}
 	}
 	return nil
 }
 
-// validKind reports whether k is an event kind word.
-func validKind(k string) bool {
+// ValidKind reports whether k is an event kind word.
+func ValidKind(k string) bool {
 	if k == "" || len(k) > maxKindLen {
 		return false
 	}
@@ -192,7 +192,7 @@ func ParseWatchLine(b []byte, now time.Time, lim WatchLimits) WatchLine {
 	if err != nil {
 		return drop("%v", err)
 	}
-	if kind != "" && !validKind(kind) {
+	if kind != "" && !ValidKind(kind) {
 		return drop("kind %q: use up to %d letters, digits, ., - and _", kind, maxKindLen)
 	}
 	ev.Kind = kind

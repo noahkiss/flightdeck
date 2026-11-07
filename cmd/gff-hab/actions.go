@@ -95,6 +95,9 @@ var _ control.Resumer = (*actions)(nil)
 // ResumeSession serves session.resume: Capcom's sessions through Capcom (capcom.md 7.4), the
 // rest through the resume book (gff-client.md 6.2).
 func (a *actions) ResumeSession(ctx context.Context, session string) (string, error) {
+	if ss, ok := a.store.Session(session); ok && ss.Round != nil && ss.Round.Watcher {
+		return "", control.Errorf(api.ErrorKindConflict, "session %s is a watcher session: gff-hab starts its watcher; pause or unpause the round instead (rounds.md 4.4)", ss.Name)
+	}
 	pane, err := a.resumeOnce(ctx, session)
 	if err == nil && a.resumed != nil {
 		a.resumed(session) // a group coordinator's inbox goes in (groups.md 5.5)
@@ -264,7 +267,9 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		return "", "", err
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
-	if a.created != nil && kind == "" {
+	// A watcher session is never in the resume book: gff-hab starts it, and its environment
+	// holds a secret set's values (rounds.md 4.4).
+	if a.created != nil && kind == "" && !(isRun && rs.ref.Watcher) {
 		if asked.Harness == "" {
 			asked.Argv = argv // the shell when none was asked for
 		}
