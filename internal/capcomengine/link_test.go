@@ -201,8 +201,11 @@ func (h *harnessT) user(text string) capcomthread.Item {
 	return it
 }
 
+// claudeCaps are the Claude engine's capabilities (4.1).
+var claudeCaps = []string{CapImages, CapInterrupt, CapMidTurnInput, CapApprovalCallback, CapCompactionEvents, CapUsageEvents, CapResumeByID}
+
 func readyMsg() Message {
-	return Message{Type: TReady, Engine: "claude", Version: "test", Capabilities: []string{CapInterrupt, CapMidTurnInput, CapApprovalCallback}}
+	return Message{Type: TReady, Engine: "claude", Version: "test", Capabilities: claudeCaps}
 }
 
 func waitFor(t *testing.T, what string, ok func() bool) {
@@ -305,7 +308,7 @@ func TestLinkReconnectResendsUntaken(t *testing.T) {
 	if hello.LastItem != b.ID {
 		t.Fatalf("hello last item %s", hello.LastItem)
 	}
-	e2.send(Message{Type: TReady, Engine: "claude", Turn: json.RawMessage(`{"turn":"t9","origin":"user"}`)})
+	e2.send(Message{Type: TReady, Engine: "claude", Capabilities: claudeCaps, Turn: json.RawMessage(`{"turn":"t9","origin":"user"}`)})
 	if m := e2.next(); inputID(m) != b.ID {
 		t.Fatalf("resend got %s, want %s", inputID(m), b.ID)
 	}

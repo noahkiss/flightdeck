@@ -20,6 +20,17 @@ type SDKSession struct {
 	Start time.Time `json:"start"`
 	Why   string    `json:"why"`
 	End   time.Time `json:"end,omitzero"`
+	// Engine is the engine kind that ran it (ready's engine); "" for a session before A6, which
+	// was the Claude engine's.
+	Engine string `json:"engine,omitempty"`
+}
+
+// EngineOf is the engine kind of a session record: "" reads as claude.
+func (s SDKSession) EngineOf() string {
+	if s.Engine == "" {
+		return "claude"
+	}
+	return s.Engine
 }
 
 // Record is engine.json.
@@ -37,6 +48,11 @@ type Record struct {
 	// thread item it covers: the next update covers the items after it.
 	Summary        string `json:"summary,omitempty"`
 	SummaryThrough string `json:"summary_through,omitempty"`
+	// Opening is the why (reseed or new) of a fresh session the engine announced with no id: a
+	// Codex thread gets its id at its first turn (4.4). The old session ended then; the id's
+	// session.started adds no second divider. An engine that starts before the id came opens
+	// with a re-seed again.
+	Opening string `json:"opening,omitempty"`
 }
 
 // Current is the SDK session to resume, or "".

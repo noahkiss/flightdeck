@@ -16,6 +16,7 @@ type ContextLimits struct {
 	SummaryInputChars int
 	SummaryQuiet      time.Duration
 	ReseedAt          float64 // a share of the model's window
+	ReseedEarlyAt     float64 // the size trigger instead, for an engine with no compaction events (4.1)
 	ReseedQuiet       time.Duration
 	ReseedQuietAt     float64
 	SeedMessages      int
@@ -25,7 +26,7 @@ type ContextLimits struct {
 
 // DefaultContextLimits are 19.2's defaults.
 var DefaultContextLimits = ContextLimits{SummaryMaxChars: 6000, SummaryInputChars: 64000, SummaryQuiet: 10 * time.Minute,
-	ReseedAt: 0.6, ReseedQuiet: time.Hour, ReseedQuietAt: 0.25, SeedMessages: 6, SeedMessagesChars: 8000, SeedLogbookBytes: 8 << 10}
+	ReseedAt: 0.6, ReseedEarlyAt: 0.45, ReseedQuiet: time.Hour, ReseedQuietAt: 0.25, SeedMessages: 6, SeedMessagesChars: 8000, SeedLogbookBytes: 8 << 10}
 
 // The context manager (6) is the part of the link that keeps the model's context fit: it asks
 // the engine for a re-seed at a turn's end above reseed_at, or after a quiet hour above
@@ -68,7 +69,12 @@ func (l *Link) turnEnded(m Message) {
 	l.mu.Lock()
 	l.stopQuietLocked()
 	l.cx.lastContext = m.ContextUsed
-	limit := !l.cx.asked && m.ContextUsed > lim.ReseedAt
+	at := lim.ReseedAt
+	if !l.st.Has(CapCompactionEvents) && lim.ReseedEarlyAt > 0 {
+		// No compaction to fall back on: re-seed earlier (4.1).
+		at = min(at, lim.ReseedEarlyAt)
+	}
+	limit := !l.cx.asked && m.ContextUsed > at
 	if limit {
 		l.cx.asked = true
 	} else {

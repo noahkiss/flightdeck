@@ -70,6 +70,9 @@ type LinkConfig struct {
 	Limits func() ContextLimits
 	// Logbook builds the seed's Logbook part (6.4) in at most max bytes; nil: none.
 	Logbook func(max int) string
+	// EngineKind is the engine the config names (claude or codex). A thread whose current
+	// session is another engine's opens the new one with a re-seed (18 A6). Nil: no check.
+	EngineKind func() string
 }
 
 // Link is gff-hab's side of one engine: one connection at a time, the delivery of thread items,
@@ -92,13 +95,14 @@ type openApproval struct {
 }
 
 type conn struct {
-	rw    io.ReadWriteCloser
-	wmu   sync.Mutex
-	w     *bufio.Writer
-	seq   uint64
-	sent  string // the newest item id sent on this connection
-	ready bool
-	done  chan struct{}
+	rw     io.ReadWriteCloser
+	wmu    sync.Mutex
+	w      *bufio.Writer
+	seq    uint64
+	sent   string // the newest item id sent on this connection
+	resume string // the SDK session hello named, "" for none
+	ready  bool
+	done   chan struct{}
 }
 
 // NewLink returns a link.
@@ -187,7 +191,8 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 	rec := l.cfg.Record.Get()
 	hello.Type = THello
 	hello.LastItem = l.cfg.Thread.Last()
-	hello.SDKSession = rec.Current()
+	hello.SDKSession, hello.Reseed = l.opening(rec)
+	c.resume = hello.SDKSession
 	err := l.send(c, hello)
 	if err == nil {
 		err = l.read(c)
@@ -209,6 +214,27 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 		err = nil
 	}
 	return err
+}
+
+// opening is what hello names for the engine to open: the session to resume, or a re-seed. The
+// thread's current session goes on with the engine that ran it; another engine opens with a
+// re-seed, so the switch keeps the thread and its memory and leaves the old session to its own
+// CLI (18 A6). A fresh session announced with no id, whose engine stopped before the id came,
+// is re-seeded again.
+func (l *Link) opening(rec Record) (session, reseed string) {
+	cur := rec.Current()
+	if cur != "" && l.cfg.EngineKind != nil {
+		if kind := l.cfg.EngineKind(); kind != "" && rec.Sessions[len(rec.Sessions)-1].EngineOf() != kind {
+			return "", ReseedSwitch
+		}
+	}
+	if cur == "" && rec.Opening != "" {
+		if rec.Opening == ReseedNew {
+			return "", ReseedNew
+		}
+		return "", ReseedRestartFailed
+	}
+	return cur, ""
 }
 
 func (l *Link) send(c *conn, m Message) error {
@@ -291,26 +317,47 @@ func (l *Link) handle(c *conn, m Message) {
 			l.st.Turn, l.st.Origin = t.Turn, t.Origin
 		}
 		c.ready = true
+		noResume := c.resume != "" && !l.st.Has(CapResumeByID)
 		l.mu.Unlock()
 		l.changed()
 		l.wake()
+		if noResume {
+			// An engine that cannot resume by id restarts with a re-seed (4.1).
+			if err := l.send(c, Message{Type: TReseed, Reason: ReseedRestartFailed}); err != nil {
+				l.cfg.Logf("capcom: ask the engine to re-seed: %v", err)
+			}
+		}
 		if l.cfg.OnReady != nil {
 			l.cfg.OnReady()
 		}
 	case TSessionStarted:
-		if m.Session == "" {
+		if m.Session == "" && m.Why != "reseed" && m.Why != ReseedNew {
 			return
 		}
 		now := l.cfg.Now().UTC()
+		l.mu.Lock()
+		engine := l.st.Engine
+		l.mu.Unlock()
 		var divider string
 		l.cfg.Record.Update(func(r *Record) {
-			if r.Current() == m.Session {
+			if m.Session != "" && r.Current() == m.Session {
 				return
 			}
 			if n := len(r.Sessions); n > 0 && r.Sessions[n-1].End.IsZero() {
 				r.Sessions[n-1].End = now
 			}
-			r.Sessions = append(r.Sessions, SDKSession{ID: m.Session, Start: now, Why: m.Why})
+			opened := r.Opening != "" && r.Opening == m.Why
+			if m.Session == "" {
+				// A fresh session with no id yet (a Codex thread before its first turn): the old
+				// session ends now, and the divider shows now (4.4).
+				r.Opening = m.Why
+			} else {
+				r.Sessions = append(r.Sessions, SDKSession{ID: m.Session, Start: now, Why: m.Why, Engine: engine})
+				r.Opening = ""
+			}
+			if opened {
+				return // the id of a session whose divider is in
+			}
 			switch m.Why {
 			case "reseed":
 				divider = "Earlier messages summarised"
@@ -319,7 +366,7 @@ func (l *Link) handle(c *conn, m Message) {
 			}
 		})
 		l.sessionStarted()
-		if m.Why == ReseedNew {
+		if m.Why == ReseedNew && divider != "" {
 			// A clean start: the summary is empty from here (7.5).
 			last := th.Last()
 			l.cfg.Record.Update(func(r *Record) { r.Summary, r.SummaryThrough = "", last })
@@ -376,6 +423,7 @@ func (l *Link) handle(c *conn, m Message) {
 		}
 		l.typingLocked(false)
 		l.mu.Unlock()
+		l.wake() // items held for an engine with no mid-turn input (4.1)
 		if m.Result == ResultError {
 			th.Add(capcomthread.Item{Kind: capcomthread.KindNote, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
 				Text: "Capcom could not finish that turn; send the message again"})
@@ -445,8 +493,12 @@ func (l *Link) pump() {
 		l.mu.Lock()
 		c := l.cur
 		ready := c != nil && c.ready
+		// An engine with no mid-turn input gets nothing while its turn runs: the items wait for
+		// the turn's end (4.1), which wakes the pump.
+		hold := l.st.Turn != "" && !l.st.Has(CapMidTurnInput)
+		images := l.st.Has(CapImages)
 		l.mu.Unlock()
-		if !ready {
+		if !ready || hold {
 			continue
 		}
 		after := c.sent
@@ -454,7 +506,7 @@ func (l *Link) pump() {
 			after = l.cfg.Record.Get().Taken
 		}
 		for _, it := range l.cfg.Thread.After(after, capcomthread.Item.ForModel) {
-			if err := l.send(c, Message{Type: TInput, Item: inputJSON(it)}); err != nil {
+			if err := l.send(c, Message{Type: TInput, Item: inputJSON(it, images)}); err != nil {
 				break
 			}
 			c.sent = it.ID
@@ -462,8 +514,16 @@ func (l *Link) pump() {
 	}
 }
 
-func inputJSON(it capcomthread.Item) json.RawMessage {
+// inputJSON is one item for the model. For an engine with no images capability each image goes
+// in as its path with a note (4.1).
+func inputJSON(it capcomthread.Item, images bool) json.RawMessage {
 	in := InputItem{ID: it.ID, Kind: it.Kind, Time: it.Time, TZ: it.TZ, Text: it.Text, Images: it.Images}
+	if !images && len(it.Images) > 0 {
+		in.Images = nil
+		for _, p := range it.Images {
+			in.Text += "\n\n[image " + p + ": attached; this engine takes no images, so read it with file_read if you can]"
+		}
+	}
 	switch it.Author.Kind {
 	case capcomthread.AuthorAgent:
 		in.Author = it.Author.Address

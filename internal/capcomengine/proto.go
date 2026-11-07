@@ -63,6 +63,9 @@ const (
 	ReseedLimit         = "limit"
 	ReseedQuiet         = "quiet"
 	ReseedRestartFailed = "restart_failed"
+	// ReseedSwitch opens a session of another engine than the thread's last one: the switch is a
+	// re-seed (18 A6).
+	ReseedSwitch = "switch"
 )
 
 // Capabilities an engine declares (4.1).
@@ -93,7 +96,7 @@ const (
 // Credential is the model credential handed in hello (10.2). Its String and GoString never
 // show the value, so a log line that formats it by mistake leaks nothing.
 type Credential struct {
-	Kind  string `json:"kind"` // oauth_token or api_key
+	Kind  string `json:"kind"` // oauth_token, api_key, or login (no value: the CLI's own login)
 	Value string `json:"value"`
 }
 
@@ -169,6 +172,10 @@ type Message struct {
 	LastItem   string      `json:"last_item,omitempty"`
 	SDKSession string      `json:"sdk_session,omitempty"`
 	Settings   *Settings   `json:"settings,omitempty"`
+	// Reseed asks the engine to open with a re-seed, for this reason, instead of an empty
+	// session: the thread's last session was another engine's, or a re-seed's fresh session never
+	// got its id. Set only with no SDKSession.
+	Reseed string `json:"reseed,omitempty"`
 
 	// input, input.taken
 	Item json.RawMessage `json:"item,omitempty"`

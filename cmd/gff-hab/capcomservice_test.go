@@ -36,25 +36,49 @@ type serviceEnv struct {
 	*habEnv
 	stubDir string
 	config  string
+	kind    string // the engine the config names: claude or codex
 }
 
 const plantedToken = "planted-oauth-value-6e1f"
 
+// engineKinds are the engines the A2 and A4 tests run against (18 A6): the stub stands in for
+// each, with its capabilities.
+var engineKinds = []string{"claude", "codex"}
+
 func newServiceEnv(t *testing.T, extraConfig string) *serviceEnv {
+	return newServiceEnvFor(t, "claude", extraConfig)
+}
+
+// newServiceEnvFor runs the stub as the engine kind names. The Codex engine gets an API key,
+// so the tests see the credential in hello as for Claude; CODEX_HOME is a throwaway folder.
+func newServiceEnvFor(t *testing.T, kind, extraConfig string) *serviceEnv {
 	t.Helper()
 	e := newHolderEnv(t, 0)
 	d := shortDir(t)
 	stub := buildCapcomStub(t, d)
 	cfg := filepath.Join(d, "hab.toml")
-	if err := os.WriteFile(cfg, []byte("[capcom]\nengine = \"claude\"\nrestart_delay = \"1s\"\n"+extraConfig), 0o600); err != nil {
+	head := "[capcom]\nengine = \"" + kind + "\"\nrestart_delay = \"1s\"\n"
+	if kind == "codex" {
+		head += "auth = \"api_key\"\n"
+	}
+	if err := os.WriteFile(cfg, []byte(head+extraConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stubDir := filepath.Join(d, "stub")
 	os.MkdirAll(stubDir, 0o700)
-	e.env = []string{"GFF_HAB_CONFIG=" + cfg, "GFF_HAB_CAPCOM_ENGINE=" + stub, "STUB_DIR=" + stubDir, "CLAUDE_CODE_OAUTH_TOKEN=" + plantedToken}
-	se := &serviceEnv{habEnv: e, stubDir: stubDir, config: cfg}
+	e.env = []string{"GFF_HAB_CONFIG=" + cfg, "GFF_HAB_CAPCOM_ENGINE=" + stub, "STUB_DIR=" + stubDir, "CLAUDE_CODE_OAUTH_TOKEN=" + plantedToken,
+		"OPENAI_API_KEY=" + plantedToken, "CODEX_HOME=" + filepath.Join(d, "codex-home")}
+	se := &serviceEnv{habEnv: e, stubDir: stubDir, config: cfg, kind: kind}
 	t.Cleanup(se.killEngine)
 	return se
+}
+
+// helloKind is the credential kind the stub logs from hello.
+func (e *serviceEnv) helloKind() string {
+	if e.kind == "codex" {
+		return "api_key"
+	}
+	return "oauth_token"
 }
 
 // killEngine ends a stub engine left running: it outlives gff-hab by design.
@@ -113,7 +137,13 @@ func countReplies(items []api.CapcomItem, text string) int {
 // adopts the engine and loses no reply, a crash that restarts with a new token and refuses the
 // old one, and interrupt.
 func TestCapcomServiceStub(t *testing.T) {
-	e := newServiceEnv(t, "")
+	for _, kind := range engineKinds {
+		t.Run(kind, func(t *testing.T) { testCapcomServiceStub(t, kind) })
+	}
+}
+
+func testCapcomServiceStub(t *testing.T, kind string) {
+	e := newServiceEnvFor(t, kind, "")
 	e.serve()
 	c := e.control()
 	if w := welcome(t, e.sock); !strings.Contains(strings.Join(w.Capabilities, " "), "capcom-thread") {
@@ -135,7 +165,12 @@ func TestCapcomServiceStub(t *testing.T) {
 	}
 	// The credential reaches the engine in hello, never in its environment.
 	sum := sha256.Sum256([]byte(plantedToken))
-	waitUntil(t, "hello", func() bool { return strings.Contains(e.stubLog(), "hello oauth_token "+hex.EncodeToString(sum[:8])) })
+	waitUntil(t, "hello", func() bool {
+		return strings.Contains(e.stubLog(), "hello "+e.helloKind()+" "+hex.EncodeToString(sum[:8]))
+	})
+	if env, _ := os.ReadFile(filepath.Join(e.state, "capcom", capcomengine.EnvFile)); !strings.Contains(string(env), capcomengine.KindVar+"="+kind) {
+		t.Fatalf("the job's environment names no engine kind: %q", env)
+	}
 	if strings.Contains(e.stubLog(), "env holds a credential") {
 		t.Fatal("the engine's environment holds the credential")
 	}
@@ -183,6 +218,19 @@ func TestCapcomServiceStub(t *testing.T) {
 		a, ok := agentOf(t, c, capcomRoute)
 		return ok && a.State == api.AgentStatusIdle && a.Harness == capcomHarness
 	})
+	if kind == "codex" {
+		// No approval callback: the engine offers no tool that needs a card (4.1).
+		if r := e.sayWait(t, c, "approve"); r != "no approvals here" {
+			t.Fatalf("approve on codex: %q", r)
+		}
+	} else {
+		testServiceApproval(t, e, c)
+	}
+	testServiceRest(t, e, c, st, kind)
+}
+
+// testServiceApproval: an approval card on the engine route (5.3).
+func testServiceApproval(t *testing.T, e *serviceEnv, c *control.Client) {
 	run(t, "capcom", "say", "-socket", e.sock, "approve")
 	var blocked api.AgentState
 	waitUntil(t, "the approval state", func() bool {
@@ -205,6 +253,9 @@ func TestCapcomServiceStub(t *testing.T) {
 	if _, err := callJSON[api.Empty](t, c, "approval.answer", api.ApprovalAnswerParams{Pane: capcomRoute, Request: blocked.Request.ID, Choice: api.ApprovalChoiceDeny}); errKind(err) != api.ErrorKindConflict {
 		t.Fatalf("a second answer: %v", err)
 	}
+}
+
+func testServiceRest(t *testing.T, e *serviceEnv, c *control.Client, st api.CapcomServiceStatus, kind string) {
 
 	// A tool call on the engine's token reaches the pane route as the Capcom session.
 	run(t, "capcom", "say", "-socket", e.sock, "route")
@@ -257,22 +308,30 @@ func TestCapcomServiceStub(t *testing.T) {
 	if !strings.HasPrefix(lb, "lb: 200 ") || !strings.Contains(lb, `"proposed"`) {
 		t.Fatalf("the engine route's Logbook write: %s", lb)
 	}
-	out = run(t, "lb", "--socket", e.sock, "--json", "proposals")
+	out := run(t, "lb", "--socket", e.sock, "--json", "proposals")
 	prop := out[strings.Index(out, `"id":"`)+6:]
 	prop = prop[:strings.Index(prop, `"`)]
 	if out := run(t, "lb", "--socket", e.sock, "--json", "show", prop); !strings.Contains(out, "from capcom") || !strings.Contains(out, st.Session) {
 		t.Fatalf("proposal %s (want the Capcom session %s as the author):\n%s", prop, st.Session, out)
 	}
 
-	// gff-hab restarts mid-turn: the engine keeps running, its reply arrives once.
+	// gff-hab restarts mid-turn: the engine keeps running, its reply arrives once. A message
+	// sent during the turn reaches an engine with mid-turn input at once; for one without
+	// (Codex) gff-hab holds it until the turn ends (4.1).
 	pid := e.enginePid()
 	run(t, "capcom", "say", "-socket", e.sock, "slow")
 	waitUntil(t, "the slow turn", func() bool { return strings.Contains(e.stubLog(), " slow") })
+	run(t, "capcom", "say", "-socket", e.sock, "during the slow turn")
+	time.Sleep(300 * time.Millisecond)
+	if during := strings.Contains(e.stubLog(), "input during a turn during the slow turn"); during != (kind == "claude") {
+		t.Fatalf("%s: input during the turn reached the engine: %v", kind, during)
+	}
 	e.srv.stop(t)
 	os.WriteFile(filepath.Join(e.stubDir, "release"), nil, 0o600)
 	e.serve()
 	c = e.control()
 	waitUntil(t, "the slow reply after the restart", func() bool { return countReplies(threadText(t, c), "echo: slow") == 1 })
+	waitUntil(t, "the held message's reply", func() bool { return countReplies(threadText(t, c), "echo: during the slow turn") == 1 })
 	if e.enginePid() != pid {
 		t.Fatalf("the engine was not adopted: pid %d, then %d", pid, e.enginePid())
 	}

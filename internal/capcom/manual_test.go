@@ -20,8 +20,14 @@ func TestServiceManual(t *testing.T) {
 	if err := WriteServiceFolder(dir, "/usr/local/bin/gff-hab", ReadScope{}); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md")); string(b) != ServiceManual {
-		t.Fatalf("CLAUDE.md %q", b)
+	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} { // the Claude engine's, the Codex engine's
+		if b, _ := os.ReadFile(filepath.Join(dir, f)); string(b) != ServiceManual {
+			t.Fatalf("%s %q", f, b)
+		}
+	}
+	// Codex reads at most 32 KiB of AGENTS.md (its project_doc_max_bytes).
+	if len(ServiceManual) > 32<<10 {
+		t.Fatalf("the service manual is %d bytes", len(ServiceManual))
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".mcp.json")); err != nil {
 		t.Fatal(err)
