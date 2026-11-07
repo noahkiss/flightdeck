@@ -6,7 +6,7 @@ Status: draft for review. Part 14, study stage A1. The owner's answers of 2026-1
 Part 14 turns Capcom from a harness in a holder pane into an always-on service. `gff-hab-capcom`
 runs an agent loop on the Claude Agent SDK as its own job on the home host. The user talks to it
 in one native chat thread in the app, and never manages a conversation: the engine keeps its own
-context, and keeps memory in Logbook. A Codex SDK engine comes later behind the same contract.
+context, and keeps memory in Logbook. A Codex SDK engine (A6, 4.5) runs behind the same contract.
 
 This spec extends `capcom.md`. Capcom's jobs (`capcom.md` 3), what it reads (4), the read scope
 (5), confirmations and proposals (6), the home host (7.3) and attached context (8) stay as they
@@ -104,7 +104,7 @@ anyone else's credentials.
 Read 2026-11-06 (`codex-sdk`). TypeScript and Python. Threads start, continue, resume and fork by
 thread id. Sandbox presets per turn. The page documents no approval callback, no turn events and
 no interrupt. So the engine contract (4) must work for an engine that lacks them: it declares what
-it has, and the hab adapts.
+it has, and the hab adapts. What A6 found in the pinned SDK and CLI is in 4.5.
 
 ### 1.4 What we take
 
@@ -272,13 +272,13 @@ below choose the engine and its login; every limit key, with its range, is in 19
 
 | Key | Default | Applies | Meaning |
 |---|---|---|---|
-| `engine` | none until A8 (12.4); `claude` after | At the next engine start | `claude` runs the service; `codex` from A6. Any other word: logged, the default runs |
-| `model` | The SDK's default | At the next turn | The main model |
+| `engine` | none until A8 (12.4); `claude` after | At the next engine start | `claude` runs the service on the Claude Agent SDK; `codex` on the Codex SDK (4.5). Any other word: logged, the default runs. A change of engine is a re-seed (4.5) |
+| `model` | The SDK's default; `gpt-5.5` under `codex` (4.5) | At the next turn | The main model |
 | `small_model` | The provider's smallest current model | At the next turn | Event turns' first look, the summary, pacing (10.1) |
 | `max_turns`, `max_turn_usd`, `daily_usd` | 50, 2, none | At the next turn; `daily_usd` at once | The SDK's turn limit and `maxBudgetUsd` per loop, and a daily dollar cap under an API key (10.1). Ranges in 19.2 |
-| `auth` | `oauth_token` | At the next engine start | `oauth_token` (the user's subscription, through the token `claude setup-token` makes) or `api_key` (10.2, decision E19) |
+| `auth` | `oauth_token`; `login` under `codex` | At the next engine start | Claude: `oauth_token` (the user's subscription, through the token `claude setup-token` makes) or `api_key` (10.2, decision E19). Codex: `login` (the user's own `codex login`) or `api_key` (10.2) |
 | `oauth_token_command` | none | At the next engine start | An argv that prints the OAuth token. The source an installed hab uses (10.2) |
-| `api_key_command` | none | At the next engine start | An argv that prints an API key |
+| `api_key_command` | none | At the next engine start | An argv that prints an API key: Anthropic's under `claude`, OpenAI's under `codex` |
 
 The config file holds commands, never a token or a key: an `oauth_token` or `api_key` key is
 refused with a line that names the command key. Where the credential comes from, and how it
@@ -297,15 +297,15 @@ declares what it lacks, and gff-hab adapts.
 
 ### 4.1 Capabilities an engine declares
 
-| Capability | Claude engine | If absent |
-|---|---|---|
-| `images` | Yes | Images go in as a path with a note; the model reads them with `file_read` when it can |
-| `interrupt` | Yes | The Stop button is hidden. A turn runs to its end or to the turn limit |
-| `mid_turn_input` | Yes | Messages that arrive during a turn wait for the next turn |
-| `approval_callback` | Yes (`canUseTool`) | The engine must not expose any tool that 5.3 would send to a card. Web fetch is off |
-| `compaction_events` | Yes | The context manager re-seeds earlier (6.2), and no compaction divider shows |
-| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | The governor paces by the engine's own token counts (10.1) |
-| `resume_by_id` | Yes | A restart is a re-seed |
+| Capability | Claude engine | Codex engine (A6) | If absent |
+|---|---|---|---|
+| `images` | Yes | Yes (a `local_image` input) | Images go in as a path with a note; the model reads them with `file_read` when it can |
+| `interrupt` | Yes | Yes (the SDK's abort signal ends the CLI) | The Stop button is hidden. A turn runs to its end or to the turn limit |
+| `mid_turn_input` | Yes | No | gff-hab holds a message that arrives during a turn and sends it when the turn ends |
+| `approval_callback` | Yes (`canUseTool`) | No | The engine must not expose any tool that 5.3 would send to a card. Web fetch is off |
+| `compaction_events` | Yes | No | The context manager re-seeds earlier, at `reseed_early_at` (45%; 6.2, 19.2), and no compaction divider shows |
+| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | No | The governor paces by the engine's own token counts (10.1) |
+| `resume_by_id` | Yes | Yes (`resumeThread`) | A restart is a re-seed |
 
 ### 4.2 Messages
 
@@ -362,8 +362,9 @@ From the engine to gff-hab:
 
 **Start.** gff-hab starts the engine as `node <engine file>` in `<state>/capcom/engine/`, with
 `GFF_HAB` (`http+unix://<hook socket>/hooks/<pane token>`, 3.3), `GFF_HAB_CAPCOM_TOKEN` (the
-engine route token) and, when set, `CLAUDE_CONFIG_DIR` in its environment. Nothing else in the
-environment names a credential.
+engine route token), `GFF_HAB_CAPCOM_KIND` (`claude` or `codex`: the one bundle picks its
+engine by it) and, when set, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` in its environment. Nothing
+else in the environment names a credential.
 
 **Connect.** The engine sends `POST /capcom/<GFF_HAB_CAPCOM_TOKEN>` on the hook socket with `Connection:
 Upgrade` and `Upgrade: gff-capcom/1`. gff-hab answers `101 Switching Protocols`, and the
@@ -377,7 +378,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 
 | Type (hab to engine) | Fields |
 |---|---|
-| `hello` | `credential {kind: "oauth_token"\|"api_key", value}`, `device`, `last_item`, `sdk_session` (the session to resume, or empty), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms, route_backoff_max_ms, summary_max_chars, precompact_timeout_ms}` |
+| `hello` | `credential {kind: "oauth_token"\|"api_key"\|"login", value}` (`login`, Codex only, has no value: the CLI reads the user's own login), `device`, `last_item`, `sdk_session` (the session to resume, or empty), `reseed` (a re-seed to open with instead: `switch`, `new` or `restart_failed`; 4.5), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms, route_backoff_max_ms, summary_max_chars, precompact_timeout_ms}` |
 | `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}]}` |
 | `interrupt` | none |
 | `reseed` | `reason` |
@@ -389,7 +390,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | Type (engine to hab) | Fields |
 |---|---|
 | `ready` | `engine`, `version`, `sdk_version`, `capabilities: [..]` (4.1 names), `turn {turn, origin}` when a turn runs |
-| `session.started` | `session`, `why` (`first`, `restart`, `reseed`, `new`) |
+| `session.started` | `session`, `why` (`first`, `restart`, `reseed`, `new`). An empty `session` (Codex: a fresh thread has no id before its first turn) ends the old session and shows the divider now; the id follows at the first turn (4.5) |
 | `turn.started` | `turn`, `origin` (`user`, `event`), `items: [id]` |
 | `input.taken` | `item` |
 | `reply` | `turn`, `part` (0, 1, ... within the turn), `text` |
@@ -434,6 +435,47 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
   bundled binary through the SDK's `env` option, as `CLAUDE_CODE_OAUTH_TOKEN` or
   `ANTHROPIC_API_KEY`. It never logs it.
 
+### 4.5 The Codex engine (built in A6)
+
+`[capcom] engine = "codex"` runs `src/codex.ts` of the same bundle. It speaks 4.4's wire format
+and declares `images`, `interrupt` and `resume_by_id` (4.1). Facts it builds on (Codex SDK and
+CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
+
+- **One CLI run per turn.** The SDK spawns `codex exec --experimental-json` for each turn, on a
+  thread it resumes by id. It takes only `--config` overrides, so the engine runs the CLI
+  through a wrapper, `<engine folder>/.codex-exec`, that adds `--ignore-user-config` and
+  `--ignore-rules`. The user's `config.toml`, MCP servers and rules never load.
+- **Threads land in the user's `CODEX_HOME`,** under `sessions/<yyyy>/<mm>/<dd>/rollout-*-<id>.jsonl`,
+  and a resume appends to the same file. So `codex resume <id>` finds them (11).
+- **The folder.** The engine folder holds `AGENTS.md` with the manual; Codex reads it. The
+  `flightdeck` MCP server is passed as `--config`, with `env_vars = ["GFF_HAB"]`, since Codex
+  hands an MCP server only a short list of variables.
+- **No id before the first turn.** A fresh thread gets its id at its first turn. The engine sends
+  `session.started` with an empty `session` at the re-seed, and the id at `thread.started`.
+  gff-hab keeps the gap in the record (`opening`), and an engine that stops in the gap is
+  re-seeded again at its next start.
+- **Markers and context use** come from the rollout: user `input_text` lines keep the
+  `[flightdeck item <id>]` marker, and the `token_count` event's last usage and model window
+  give `context_used`.
+- **Switching engines is a re-seed.** When the thread's current session belongs to another
+  engine, `hello` names no session and asks for `reseed: switch`. The new engine opens with the
+  summary and the Logbook part (6.2), and the old session stays with its own CLI.
+- **A refused login** ends the turn `error` with `error {kind: auth}`, as 10.2 says for Claude.
+- **`max_turns` and `max_turn_usd`** have no Codex equivalent and are ignored.
+- **Tools (5.1 on Codex).** The CLI sends no tool list before a model call. The start check runs
+  the CLI once against a loopback endpoint in the engine, with `--ephemeral`, and reads the tool
+  list of the request it makes. Feature switches take the shell, code mode, sub-agents, plugins,
+  apps, hooks, skills and memories off. Allowed names: the `flightdeck` MCP tools,
+  `web_search`, the MCP resource tools, `tool_search` (MCP tools are deferred behind it),
+  `request_user_input` and `apply_patch`. A tool outside the list stops the engine with an error
+  naming it.
+- **Deviation from 5.1, for the owner.** Two built-ins cannot be switched off.
+  `request_user_input` answers "not supported" under `codex exec`. `apply_patch` runs under the
+  read-only sandbox, which refuses every write, and a file change ends the turn. The newer
+  bundled models (`gpt-6*`, `gpt-5.6*`) are code-mode only: their requests carry a JavaScript
+  `exec` tool and sub-agent tools that no switch removes, so the start check refuses them. The
+  default model is `gpt-5.5`, the newest whose request fits.
+
 ---
 
 ## 5. Tools and approvals
@@ -467,6 +509,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
   approval in this turn is denied, and the model is told to ask.
 - Permission mode `default`, with `canUseTool` set. Nothing reaches the callback but a
   `WebFetch` call (5.3).
+- **On Codex** the surface and its start check differ: 4.5.
 
 ### 5.2 What each kind of action needs
 
@@ -543,10 +586,11 @@ The engine ends the SDK session and starts a fresh one.
 
 | Trigger | Rule |
 |---|---|
-| Size | Context use at a turn's end above `reseed_at` (60%) of the model's window |
+| Size | Context use at a turn's end above `reseed_at` (60%) of the model's window; `reseed_early_at` (45%) for an engine with no compaction events (4.1) |
 | Quiet hour | No turn for `reseed_quiet` (60 minutes), and context use above `reseed_quiet_at` (25%) |
 | New conversation | The user's "New conversation" (7.5) |
-| Restart failure | The last SDK session will not resume (3.4) |
+| Restart failure | The last SDK session will not resume (3.4), or the engine cannot resume by id (4.1) |
+| Engine switch | `[capcom] engine` names another engine than the current session's (4.5) |
 
 - **Never mid-turn.** A re-seed waits for the turn to end. An open approval card means the turn
   is still on, so it waits too. A confirmation or calendar card does not hold it: their answers
@@ -1120,6 +1164,13 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   option). Nothing writes it to a file: not the session record, the thread, a notice, the
   catalog, a log line, `install.json` or a unit file. `docs/examples/hab.toml` shows the
   command keys only. A command's stderr is logged by its first line only, as for the push key.
+- **The Codex engine.** `auth = "login"`, its default, uses the user's own `codex login` in
+  `CODEX_HOME`. gff-hab never reads that folder's login: `hello` names the kind `login` with no
+  value, and the CLI reads it. `auth = "api_key"` takes the key from `api_key_command`, then
+  `OPENAI_API_KEY` in gff-hab's environment, and the engine hands it to the CLI as
+  `CODEX_API_KEY`. gff-hab's own `OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_HOME` never
+  reach the engine job's environment file; `CODEX_HOME` goes in as a path only. A refused login
+  stops the engine with "run codex login".
 - **No credential.** With no token (or no key under `api_key`), gff-hab does not start the
   engine; the session row shows error "no Claude token: run claude setup-token and set
   [capcom] oauth_token_command". The thread still takes messages (4.3).
@@ -1157,6 +1208,9 @@ AGENTS.md: "Resuming a session from a plain terminal must always work."
   `gff-hab capcom resume` (or the app's Resume) starts the engine on the same id again, and
   reads what the terminal added.
 - Older SDK sessions (before a re-seed) are never touched again and resume freely.
+- **Codex.** The engine's threads land in the user's `CODEX_HOME` (4.5), so `codex resume <id>`
+  opens one after `gff-hab capcom pause`. The wrapper's `--ignore-user-config` applies only to
+  the engine's runs. The live check needs a real login and is left for the coordinator.
 - **If the verification fails,** section 17 asks the owner for an exception.
 
 ---
@@ -1399,6 +1453,7 @@ One app preference (`app.md` 20.4), since the app decides what it sends:
 | `summary_quiet` | 10 minutes | 1 minute to 24 hours | 6.1 |
 | `reseed_at` | 60% | 20% to 90%, written `60` or `"60%"` | 6.2 |
 | `reseed_quiet`, `reseed_quiet_at` | 60 minutes, 25% | 10 minutes to 24 hours; 0% to `reseed_at` (the default follows a lower `reseed_at` down) | 6.2 |
+| `reseed_early_at` | 45% | 10% to `reseed_at` (the default follows a lower `reseed_at` down); the size trigger for an engine with no compaction events | 4.1, 6.2 |
 | `seed_messages`, `seed_messages_chars` | 6 messages, 8,000 characters | 0 to 50; 0 to 64,000 | 6.2 |
 | `seed_logbook_bytes` | 8 KB | 0 to 64 KB | 6.4 |
 | `precompact_timeout` | 30 s | 5 s to 5 minutes | 6.3 |

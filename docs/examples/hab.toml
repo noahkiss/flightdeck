@@ -79,16 +79,19 @@ thinking = "off"
 # A conversation keeps its harness when it resumes.
 harness = "claude"
 # The Capcom service (docs/specs/capcom-service.md 3.5, 19.2). Leave engine out to keep the
-# pane Capcom above; "claude" runs the service on the Claude Agent SDK instead.
+# pane Capcom above; "claude" runs the service on the Claude Agent SDK instead, "codex" on the
+# Codex SDK. A change of engine keeps the thread and its memory (a re-seed).
 # engine = "claude"
-# The login: "oauth_token" (the default: your own subscription, through the long-lived token
-# `claude setup-token` makes) or "api_key". This file never holds a token or a key: name a
-# command that prints it, as an argv with no shell. A hand-run gff-hab serve may take
-# CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) from its own environment instead.
+# The login. Claude: "oauth_token" (the default: your own subscription, through the long-lived
+# token `claude setup-token` makes) or "api_key". Codex: "login" (the default: your own
+# `codex login`, which gff-hab never reads) or "api_key". This file never holds a token or a
+# key: name a command that prints it, as an argv with no shell. A hand-run gff-hab serve may
+# take CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY or, for Codex, OPENAI_API_KEY from its own
+# environment instead.
 # auth = "oauth_token"
 # oauth_token_command = ["your-credential-tool", "read", "claude-token"]
 # api_key_command = ["your-credential-tool", "read", "anthropic-key"]
-# model = ""        # the main model; empty for the SDK's default
+# model = ""        # the main model; empty for the SDK's default (gpt-5.5 under codex)
 # small_model = ""  # event turns' first look and the summary
 # Limits, each with its default; a value outside its range is logged once and the default runs.
 # max_turns = 50              # 1 to 500 model calls a turn
@@ -109,6 +112,7 @@ harness = "claude"
 # reseed_at = 60              # 20 to 90 percent of the window at a turn's end starts a re-seed
 # reseed_quiet = "60m"        # 10m to 24h quiet before a re-seed above reseed_quiet_at
 # reseed_quiet_at = 25        # 0 to reseed_at percent
+# reseed_early_at = 45        # 10 to reseed_at percent; the size trigger for an engine with no compaction events (codex)
 # seed_messages = 6           # 0 to 50 messages in a seed
 # seed_messages_chars = 8000  # 0 to 64,000 characters for those messages; the oldest go first
 # seed_logbook_bytes = 8192   # 0 to 65,536 bytes of Logbook in a seed
