@@ -5206,6 +5206,13 @@
           "answer": {
             "$ref": "#/components/schemas/CapcomAnswer"
           },
+          "attachments": {
+            "type": "array",
+            "description": "The attachment ids of images, in order: attachment.get reads their thumbnails.",
+            "items": {
+              "type": "string"
+            }
+          },
           "author": {
             "$ref": "#/components/schemas/CapcomAuthor"
           },

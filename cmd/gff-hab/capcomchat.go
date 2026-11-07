@@ -87,7 +87,7 @@ func (e *capcomEngine) chatPage(p api.ChatPageParams) (api.ChatMessages, error) 
 // user lines (an agent's with its address as sender), Capcom's replies as agent lines, and
 // every other item as an event line.
 func chatMessage(session string, it capcomthread.Item) api.ChatMessage {
-	m := api.ChatMessage{ID: it.ID, Session: session, At: it.Time.UTC().Format(time.RFC3339Nano), Text: it.Text}
+	m := api.ChatMessage{ID: it.ID, Session: session, At: it.Time.UTC().Format(time.RFC3339Nano), Text: it.Text, Attachments: it.Attachments}
 	switch it.Kind {
 	case capcomthread.KindMessage:
 		m.Kind = api.ChatKindUser
