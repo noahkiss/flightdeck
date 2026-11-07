@@ -37,6 +37,7 @@ public struct ChatView: View {
         VStack(spacing: 0) {
             ChatBanners(context: model.context, load: model.load, openTerminal: openTerminal)
             SessionConfirmCards(target: model.target)
+            SessionGroupCards(target: model.target)
             if let thread = model.thread {
                 // The Capcom service (capcom-service.md 7.6): the thread replaces the transcript.
                 CapcomThreadView(thread: thread, model: model)

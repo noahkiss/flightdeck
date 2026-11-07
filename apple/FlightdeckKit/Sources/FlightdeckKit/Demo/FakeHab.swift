@@ -497,11 +497,20 @@ public actor FakeHab {
             apply(&st.seed, e.seed)
             start = st
         }
+        var group = c.group
+        if let plan = p.edits?.plan, var g = group, plan != g.plan {
+            guard !plan.items.isEmpty else { throw FakeFailure(kind: .invalid, hint: "the plan needs at least one item") }
+            g.plan = plan
+            group = g
+            edited = true
+        }
         if let i = confirms.firstIndex(where: { $0.id == p.id }) {
             confirms[i].start = start
+            confirms[i].group = group
             confirms[i].edited = edited
         }
         var out = c
+        out.group = group
         out.start = start
         out.edited = edited
         out.answeredBy = client
@@ -517,6 +526,76 @@ public actor FakeHab {
         out.state = .done
         out.result = res
         return out
+    }
+
+    // MARK: - Groups
+
+    private var groupBook: [String: Group] = [:]
+    /// Every `group.*` method called with its group id (and member, for a retry), oldest first.
+    public private(set) var groupCalls: [String] = []
+    public func group(_ id: String) -> Group? { groupBook[id] }
+
+    /// Stores a group record at its next revision and sends `group.updated`.
+    public func putGroup(_ g: Group) async {
+        var g = g
+        g.revision = max(g.revision, (groupBook[g.id]?.revision ?? 0) + 1)
+        groupBook[g.id] = g
+        await emit(type: "group.updated", id: g.id, revision: g.revision, data: g)
+    }
+
+    /// Stores a group as a record read at start would, with no event.
+    public func loadGroup(_ g: Group) { groupBook[g.id] = g }
+
+    /// The hab's rules for the user's calls (groups.md 5.6, 15.1), on the record alone.
+    private func groupCall(_ method: String, _ params: JSONValue, _ c: Conn, id: Int) async {
+        do {
+            if method == HabMethods.groupRetry.name {
+                let p = try decode(GroupRetryParams.self, params, method)
+                groupCalls.append("\(method) \(p.group) \(p.member)")
+                guard var g = groupBook[p.group] else { throw FakeFailure(kind: .notFound, hint: "no group \(p.group)") }
+                guard let i = g.members.firstIndex(where: { $0.name == p.member }) else {
+                    throw FakeFailure(kind: .notFound, hint: "group \(g.id) has no member \(p.member)")
+                }
+                guard g.members[i].state == "failed" || g.members[i].state == "exited" else {
+                    throw FakeFailure(kind: .conflict, hint: "member \(p.member) is \(g.members[i].state)")
+                }
+                g.members[i].state = "planned"
+                g.members[i].reason = nil
+                await putGroup(g)
+                await reply(c, id: id, result: GroupResult(group: groupBook[g.id]!, seq: c.seq))
+                return
+            }
+            let p = try decode(GroupRef.self, params, method)
+            groupCalls.append("\(method) \(p.group)")
+            guard var g = groupBook[p.group] else { throw FakeFailure(kind: .notFound, hint: "no group \(p.group)") }
+            let live = g.state == "running" || g.state == "paused"
+            switch method {
+            case HabMethods.groupGet.name:
+                break
+            case HabMethods.groupPause.name:
+                guard live else { throw FakeFailure(kind: .conflict, hint: "group \(g.id) is \(g.state)") }
+                g.pause.user = Fixture.stamp(Date())
+                g.state = "paused"
+            case HabMethods.groupResume.name:
+                guard g.state == "paused" else { throw FakeFailure(kind: .conflict, hint: "group \(g.id) is \(g.state), not paused") }
+                g.pause.user = nil
+                if g.pause.usage == nil { g.state = "running" }
+            case HabMethods.groupClose.name:
+                guard live else { throw FakeFailure(kind: .conflict, hint: "group \(g.id) is \(g.state)") }
+                g.state = "ended"
+                g.ended = Fixture.stamp(Date())
+            default:
+                throw FakeFailure(kind: .unavailable, hint: "the fake hab does not serve \(method)")
+            }
+            if method != HabMethods.groupGet.name { await putGroup(g) }
+            await reply(c, id: id, result: GroupResult(group: groupBook[g.id]!, seq: c.seq))
+        } catch let f as FakeFailure {
+            await fail(c, id: id, kind: f.kind, hint: f.hint)
+        } catch let f as Failure {
+            await fail(c, id: id, kind: f.kind, hint: f.hint)
+        } catch {
+            await fail(c, id: id, kind: .invalid, hint: String(describing: error))
+        }
     }
 
     // MARK: - Rounds
@@ -1226,6 +1305,8 @@ public actor FakeHab {
             await reply(c, id: id, result: ConfirmList(confirmations: all ? confirms + closedConfirms : confirms, seq: c.seq, targets: confirmTargets))
         case let m where m.hasPrefix("round.") && capabilities.contains(RoundCenter.capability):
             await roundCall(m, params, c, id: id)
+        case let m where m.hasPrefix("group.") && capabilities.contains(GroupCenter.capability):
+            await groupCall(m, params, c, id: id)
         case HabMethods.approvalAnswer.name:
             guard let p = try? params.decode(ApprovalAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad approval.answer params")
@@ -1690,6 +1771,7 @@ public actor FakeHab {
         StructureResult(
             agents: agents.values.sorted { $0.pane < $1.pane },
             confirmations: capabilities.contains(ConfirmBook.capability) && confirms.contains(where: \.asks) ? confirms.filter(\.asks) : nil,
+            groups: capabilities.contains(GroupCenter.capability) && !groupBook.isEmpty ? groupBook.values.sorted { $0.id < $1.id } : nil,
             host: HostInfo(id: hostID),
             panes: panes.values.sorted { $0.id < $1.id },
             projects: projects.values.sorted { $0.id < $1.id },

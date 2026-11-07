@@ -23,6 +23,7 @@ public struct FlightdeckRoot: View {
             .environment(\.confirmations, fleet.confirms)
             .environment(\.capcom, fleet.capcom)
             .environment(\.rounds, fleet.rounds)
+            .environment(\.groups, fleet.groups)
             .environment(\.approvals, fleet.approvals)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
@@ -38,6 +39,7 @@ public struct FlightdeckRoot: View {
             .environment(\.confirmations, fleet.confirms)
             .environment(\.capcom, fleet.capcom)
             .environment(\.rounds, fleet.rounds)
+            .environment(\.groups, fleet.groups)
             .environment(\.approvals, fleet.approvals)
             .sshSheets(fleet.ssh)
         #endif
@@ -227,6 +229,15 @@ public struct BoardScreen: View {
                 opened = row
             }
         }
+        // A group member's session, from its card (groups.md 5.4).
+        .onChange(of: fleet?.groups.openRequest) { _, t in
+            guard let t else { return }
+            fleet?.groups.openRequest = nil
+            if let row = board.rows.first(where: { $0.target.habID == t.habID && $0.target.session == t.session }) {
+                board.open(row)
+                opened = row
+            }
+        }
         // A file sent to a session from the send sheet opens that session (app.md 4.4).
         .onChange(of: fleet?.files.openRequest) { _, t in
             guard let t else { return }
@@ -307,6 +318,7 @@ struct BoardList: View {
     @Environment(\.confirmations) private var confirms
     @Environment(\.capcom) private var capcom
     @Environment(\.rounds) private var rounds
+    @Environment(\.groups) private var groups
 
     /// The board's sections with run sessions left out when the filter hides them. A run
     /// session that needs the owner always shows (app.md 21.2).
@@ -369,6 +381,10 @@ struct BoardList: View {
                         }
                     }
                 }
+                // The group cards (groups.md 5.4), below the sessions.
+                if let groups {
+                    BoardGroupsSection(center: groups, now: ctx.date)
+                }
                 // The Rounds list per hab (rounds.md 10.3), below the sessions.
                 if let rounds, rounds.any {
                     BoardRoundsSections(center: rounds, now: ctx.date)
@@ -378,7 +394,8 @@ struct BoardList: View {
                 if let rounds { RoundPage(center: rounds, habID: row.habID, roundID: row.round.id) }
             }
             .overlay {
-                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom, !(rounds?.any ?? false) {
+                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom, !(rounds?.any ?? false),
+                   groups?.boardCards.isEmpty ?? true {
                     ContentUnavailableView("No sessions", systemImage: "rectangle.stack",
                                            description: Text(board.habs.isEmpty ? "No habs configured." : "Sessions on your habs show here."))
                 }
@@ -416,6 +433,7 @@ struct BoardRowView: View {
                 }
                 HStack(spacing: 5) {
                     if let r = row.round { RoundBadge(name: r) }
+                    if let g = row.group { GroupBadge(title: g) }
                     Image(systemName: row.harnessSymbol)
                         .accessibilityLabel(row.harness ?? "shell")
                     Text(row.detailLine)
