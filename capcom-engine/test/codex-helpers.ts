@@ -59,6 +59,7 @@ export class FakeCodex {
   summaryText: string | undefined = 'fake summary';
   summaryDelayMs = 0;
   startTurn = true; // false: the CLI exits before turn.started
+  resumeFails = false; // true: a resumed thread's run fails before any event (a rollout that will not load)
   constructor(readonly home: string) {}
 
   factory = (o: CodexOptions): CodexLike => {
@@ -108,6 +109,7 @@ class AbortErr extends Error {
 
 export class FakeThread implements CodexThreadLike {
   private _id: string | null;
+  readonly resumed: boolean;
   constructor(
     private fake: FakeCodex,
     readonly codexOptions: CodexOptions,
@@ -115,6 +117,7 @@ export class FakeThread implements CodexThreadLike {
     id: string | null,
   ) {
     this._id = id;
+    this.resumed = id !== null;
   }
   get id(): string | null {
     return this._id;
@@ -156,6 +159,7 @@ export class FakeThread implements CodexThreadLike {
       return;
     }
     const fresh = this._id === null;
+    if (!fresh && this.resumed && this.fake.resumeFails) throw new Error('Codex Exec exited with code 1: thread/resume failed: failed to read thread');
     if (fresh) this._id = randomUUID();
     const id = this._id!;
     this.fake.turns.push({ thread: this, input, text });

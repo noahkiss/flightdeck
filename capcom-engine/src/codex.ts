@@ -110,6 +110,7 @@ export class CodexEngine {
   private sessionId = '';
   private sessionWhy = 'first';
   private rollout?: string;
+  private resumeUnproven = false; // a resumed thread whose CLI has not yet started a turn
   private seed = ''; // a fresh session's seed: it joins the first message (6.2)
   private ready = false;
   private checked = false;
@@ -447,6 +448,7 @@ export class CodexEngine {
       }
       this.handed = await rolloutHandedIds(file);
       this.rollout = file;
+      this.resumeUnproven = true;
       this.thread = codex.resumeThread(resume, this.threadOptions());
       this.sessionId = resume;
       this.sessionWhy = 'restart';
@@ -457,6 +459,7 @@ export class CodexEngine {
       // once with no id: gff-hab ends the old session and adds the divider; the id follows at the
       // first turn (4.4).
       this.thread = codex.startThread(this.threadOptions());
+      this.resumeUnproven = false;
       this.sessionId = '';
       this.sessionWhy = why;
       this.seed = seed;
@@ -516,9 +519,11 @@ export class CodexEngine {
         if (this.exiting) break;
         switch (ev.type) {
           case 'thread.started':
+            this.resumeUnproven = false;
             this.onThreadStarted(ev.thread_id);
             break;
           case 'turn.started':
+            this.resumeUnproven = false;
             this.take(t);
             break;
           case 'item.started':
@@ -577,6 +582,18 @@ export class CodexEngine {
     }
     if (this.shuttingDown) {
       await this.exit(0);
+      return;
+    }
+    if (!t.taken && !t.interrupted && this.resumeUnproven) {
+      // The resumed thread's rollout is there but will not load (empty, cut short, another
+      // format): the CLI fails before any event. A re-seed replaces it (3.4) instead of a crash
+      // loop, and the untaken items go into the fresh session.
+      this.resumeUnproven = false;
+      for (const it of items) this.handed.delete(it.id);
+      this.pending = [...items, ...this.pending];
+      this.sendError(`resume of ${this.sessionId} failed: the Codex CLI did not start the turn`, '', false);
+      this.reseedPending = 'restart_failed';
+      this.maybeReseed();
       return;
     }
     if (!t.taken && !t.interrupted) {
