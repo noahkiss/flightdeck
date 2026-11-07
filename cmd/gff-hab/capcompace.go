@@ -28,7 +28,6 @@ type capcomPacer struct {
 	// host and dir name Capcom's own usage account (app.md 14.1), one per engine kind: the key
 	// usage.Key(host, <engine>, dir), so a Codex engine's plan windows are a Codex account.
 	host, dir string
-	engine    func() string // the running engine's kind; "": none ready
 	config    func() capcom.ServiceConfig
 	// configPath is the hab's config file: a pace_* edit rechecks once it held for one poll.
 	// "": no watch.
@@ -213,16 +212,12 @@ func (p *capcomPacer) key(engine string) string {
 	return habusage.Key(p.host, engine, p.dir)
 }
 
-// reading stores one usage event of the engine under Capcom's account for the engine that sent
-// it, then rechecks: the Claude SDK's rate_limit_info, or the Codex rollout's token_count
-// records.
-func (p *capcomPacer) reading(raw json.RawMessage) {
+// reading stores one usage event of the engine under Capcom's account for kind, the engine its
+// connection's ready named, then rechecks: the Claude SDK's rate_limit_info, or the Codex
+// rollout's token_count records.
+func (p *capcomPacer) reading(kind string, raw json.RawMessage) {
 	if p.usage == nil {
 		return
-	}
-	kind := ""
-	if p.engine != nil {
-		kind = p.engine()
 	}
 	var r habusage.Reading
 	if kind == capcom.EngineCodex {
