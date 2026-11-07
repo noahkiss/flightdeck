@@ -31,6 +31,7 @@ type habEnv struct {
 	hdir, state, sock string
 	work              string
 	env               []string // extra environment for each gff-hab started
+	stderr            io.Writer // gff-hab's log; nil: the test's stderr
 	srv               *served
 	holder            *exec.Cmd
 	holderDone        chan struct{}
@@ -83,7 +84,7 @@ func newHolderEnv(t *testing.T, ring int) *habEnv {
 }
 
 func (e *habEnv) serve() {
-	e.srv = startServeWith(e.t, e.sock, e.state, e.env, "-holders", e.hdir)
+	e.srv = startServeOut(e.t, e.sock, e.state, e.env, e.stderr, "-holders", e.hdir)
 }
 
 // stopHab stops gff-hab by plan (SIGTERM) or by SIGKILL.

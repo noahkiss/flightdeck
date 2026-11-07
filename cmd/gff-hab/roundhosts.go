@@ -215,6 +215,9 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 	if r.Cwd != "" {
 		return fmt.Errorf("round %s starts in %s, a folder on this host: clear -cwd with round edit first", name, r.Cwd)
 	}
+	if w := r.Trigger.Watch; w != nil && w.Cwd != "" {
+		return fmt.Errorf("round %s's watcher starts in %s, a folder on this host: clear -watch-cwd with round edit first", name, w.Cwd)
+	}
 	spec := r.RoundSpec
 	if r.Project != "" {
 		if r.ProjectRemote == "" {
@@ -248,8 +251,9 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 		}
 	}
 	create := api.RoundCreateParams{Round: spec}
-	if r.Trigger.Kind == api.RoundTriggerKindEvent {
-		// Read after the pause: a paused round takes no more events here.
+	if r.Trigger.Kind == api.RoundTriggerKindEvent || r.Trigger.Kind == api.RoundTriggerKindWatch {
+		// Read after the pause: a paused round takes no more events here. A watch round's cursor
+		// goes with its batch; its dedup keys stay behind (rounds.md 9).
 		var b api.RoundResult
 		if err := from.Call(ctx, "round.get", api.RoundGetParams{RoundRef: api.RoundRef{ID: r.ID}, Batch: true}, &b); err != nil {
 			if !r.Paused {
@@ -258,6 +262,7 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 			return fmt.Errorf("read round %s's pending events here: %w", name, err)
 		}
 		create.Batch = b.Batch
+		create.Cursor = b.Cursor
 	}
 	var made api.RoundCreated
 	if err := to.Call(ctx, "round.create", create, &made); err != nil {

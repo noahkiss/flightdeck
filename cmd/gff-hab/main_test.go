@@ -92,10 +92,19 @@ func startServe(t *testing.T, sock, state string) *served {
 // startServeWith is startServe with extra environment and arguments.
 func startServeWith(t *testing.T, sock, state string, env []string, args ...string) *served {
 	t.Helper()
+	return startServeOut(t, sock, state, env, nil, args...)
+}
+
+// startServeOut is startServeWith with gff-hab's log written to stderr (nil: the test's).
+func startServeOut(t *testing.T, sock, state string, env []string, stderr io.Writer, args ...string) *served {
+	t.Helper()
+	if stderr == nil {
+		stderr = os.Stderr
+	}
 	cmd := exec.Command(bin, append([]string{"serve", "-socket", sock, "-state", state, "-host-id", "test-host"}, args...)...)
 	// The user's own hab config (project roots, the always-on mark) stays out of the test.
 	cmd.Env = append(append(os.Environ(), "GFF_HAB_CONFIG="+filepath.Join(state, "no-hab.toml")), env...)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

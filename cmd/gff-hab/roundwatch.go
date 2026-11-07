@@ -672,7 +672,7 @@ func secretValues(set secretSet, timeout time.Duration) ([]string, error) {
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for n := 1; sc.Scan(); n++ {
 		line := strings.TrimRight(sc.Text(), "\r")
-		if strings.TrimSpace(line) == "" {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
 		k, v, ok := strings.Cut(line, "=")
