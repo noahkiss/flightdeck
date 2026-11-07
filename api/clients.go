@@ -120,6 +120,8 @@ type SessionSendParams struct {
 	Origin      SendOrigin `json:"origin"`
 	// IdempotencyKey makes a retried send deliver the message once (spec 3.9, Idempotency keys).
 	IdempotencyKey string `json:"idempotency_key,omitempty" doc:"A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing."`
+	// SendNow was added within revision 1 by the usage governor (capcom-service.md 10.1).
+	SendNow bool `json:"send_now,omitempty" doc:"The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it."`
 }
 
 // --- Approvals ---
