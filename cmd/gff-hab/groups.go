@@ -567,6 +567,7 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 	}
 	var newItems []api.GroupPlanItem
 	var newPos []int
+	var edits []api.LogbookChange
 	tag := ""
 	if cg.Amend {
 		for _, it := range cg.Plan.Items {
@@ -585,6 +586,8 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 		for _, it := range g.Items {
 			keep[it.ID] = it.Task
 		}
+		edits = cardEdits(*g, cg.Plan)
+		g.Title = cg.Plan.Title
 		g.Plan = cg.Plan
 		g.Items, g.Members = nil, nil
 		groups.AddPlan(g, cg.Plan)
@@ -612,6 +615,14 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 	planRec, lbProj := g.PlanRecord, ""
 	s.saveLocked(g)
 	s.mu.Unlock()
+	if len(edits) > 0 && s.cfg.logbook != nil {
+		// The card's edits of the title and the briefs reach the plan record and the tasks
+		// they were filed as.
+		if _, err := s.cfg.logbook.Write(ctx, s.habActor(""), api.LogbookWriteParams{Changes: edits,
+			IdempotencyKey: "group-card-" + cg.Group}); err != nil {
+			s.cfg.logf("groups: %s: writing the card's edits to Logbook: %v", cg.Group, err)
+		}
+	}
 	if len(newItems) > 0 {
 		cl := s.cfg.catalog()
 		if proj, ok := project(cl, g.Plan.Project); ok {
@@ -631,6 +642,34 @@ func (s *groupsService) RunGroup(ctx context.Context, id string, cg api.ConfirmG
 	}
 	s.kick(cg.Group)
 	return api.ConfirmResult{Host: s.cfg.host}, nil
+}
+
+// cardEdits are the Logbook changes of the card's edits (groups.md 5.8): the plan record's title
+// and body, and the title and body of each item's task that the edit changed.
+func cardEdits(g api.Group, plan api.GroupPlan) []api.LogbookChange {
+	var out []api.LogbookChange
+	set := func(id, field, old, new string) {
+		if id == "" || old == new || (field == "title" && strings.TrimSpace(new) == "") {
+			return
+		}
+		v, _ := json.Marshal(new)
+		out = append(out, api.LogbookChange{Op: api.LogbookChangeOpSet, ID: id, Field: field, Value: v})
+	}
+	set(g.PlanRecord, "title", g.Plan.Title, plan.Title)
+	set(g.PlanRecord, "body", g.Plan.Brief, plan.Brief)
+	for _, it := range plan.Items {
+		i := groups.ItemIndex(g, it.ID)
+		if i < 0 {
+			continue
+		}
+		for _, old := range g.Plan.Items {
+			if old.ID == it.ID {
+				set(g.Items[i].Task, "title", old.Title, it.Title)
+				set(g.Items[i].Task, "body", old.Brief, it.Brief)
+			}
+		}
+	}
+	return out
 }
 
 // envelope is what the confirmed plan allows (groups.md 3.3).
