@@ -149,12 +149,29 @@ func TestWorktrees(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.Worktree.Path, "setup.ran")); err == nil {
 		t.Fatal("setup ran without a yes")
 	}
+	pendingIn := func() bool {
+		var l api.WorktreeList
+		call("worktree.list", api.WorktreeListParams{WorktreeProject: api.WorktreeProject{ProjectDir: repo}}, &l)
+		for _, w := range l.Worktrees {
+			if w.Path == f.Worktree.Path {
+				return w.SetupPending
+			}
+		}
+		t.Fatalf("list %+v has no %s", l, f.Worktree.Path)
+		return false
+	}
+	if !pendingIn() {
+		t.Fatal("the list does not mark the waiting setup")
+	}
 	var s api.WorktreeSetupResult
 	call("worktree.setup", api.WorktreeSetupParams{WorktreeProject: api.WorktreeProject{ProjectDir: repo}, Path: f.Worktree.Path}, &s)
 	if s.Setup.State != "started" {
 		t.Fatalf("setup after the yes %+v", s)
 	}
 	waitSetup(s.Setup)
+	if pendingIn() {
+		t.Fatal("the list marks a setup the user said yes to")
+	}
 
 	// List through the CLI, from the repository folder.
 	var l api.WorktreeList

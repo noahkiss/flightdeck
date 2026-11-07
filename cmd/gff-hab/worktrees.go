@@ -126,7 +126,12 @@ func (w *worktrees) ListWorktrees(ctx context.Context, p api.WorktreeListParams)
 func (w *worktrees) toAPI(ctx context.Context, wt worktree.Worktree) api.Worktree {
 	out := api.Worktree{Path: wt.Path, Branch: wt.Branch, Head: wt.Head, Main: wt.Main, Locked: wt.Locked, Prunable: wt.Prunable}
 	if !wt.Main && !wt.Prunable {
-		_, out.Managed, _ = w.git.ReadMark(ctx, wt.Path)
+		var mark worktree.Mark
+		mark, out.Managed, _ = w.git.ReadMark(ctx, wt.Path)
+		if out.Managed && !mark.Approved && mark.Foreign != "" {
+			cfg, err := worktree.ReadConfig(wt.Path)
+			out.SetupPending = err == nil && cfg.Setup != ""
+		}
 	}
 	return out
 }

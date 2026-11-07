@@ -1,0 +1,26 @@
+{
+  "project": "project-4",
+  "seq": 3,
+  "worktrees": [
+    {
+      "branch": "branch-6",
+      "head": "head-7",
+      "locked": true,
+      "main": true,
+      "managed": true,
+      "path": "path-5",
+      "prunable": true,
+      "setup_pending": true,
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

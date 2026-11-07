@@ -1,0 +1,36 @@
+{
+  "copied": [
+    "copied-8"
+  ],
+  "project": "project-4",
+  "seq": 3,
+  "setup": {
+    "pane": "pane-13",
+    "reason": "reason-9",
+    "script": "script-10",
+    "session": "session-12",
+    "state": "error",
+    "teardown_script": "teardown_script-11",
+    "x_unknown_field": "later"
+  },
+  "worktree": {
+    "branch": "branch-6",
+    "head": "head-7",
+    "locked": true,
+    "main": true,
+    "managed": true,
+    "path": "path-5",
+    "prunable": true,
+    "setup_pending": true,
+    "x_unknown_field": "later"
+  },
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

@@ -536,12 +536,21 @@ it on the home hab.
   to planned.
 - **Logbook.** The home hab files the plan and one task per item as the actor kind `hab`, so
   they land under `logbook.approval = agents` (13 Q5). It claims an item's task for its lead.
+- **Automatic names** count the whole plan: an amend's members are named with the group's
+  items and members in view, and a second member of one role on one item gets `-2`, `-3`.
+- **Card edits.** An item the user adds on the card gets its Logbook task when the plan runs.
+- **Worktrees.** A start tried again finds the branch's worktree. When the list marks its setup
+  as waiting for the user's yes (`setup_pending`), the item waits again; when the worktree was
+  removed, a new one goes on the existing branch.
+- **A start that ends after the group ended** leaves the member listed as left over, and closes
+  it when it is local and `group.close_members` is on.
 - **The envelope** lives on each member's session record, so a member's hab decides a later
   start while the home hab sleeps.
 - **Members.** The home hab sees members through the catalog copies (an agent's `group` field)
   every 5 s, also workers a lead started. A local lead that closes stalls its item, and the
   coordinator hears it.
-- **Reports.** A report goes to a running coordinator as a Flightdeck note, else to the inbox
+- **Reports.** From a pane, only a member of the group or its coordinator reports or notes; a
+  member notes its own item only. A report goes to a running coordinator as a Flightdeck note, else to the inbox
   (`[groups] inbox_max`, `inbox_days`). Another hab forwards a report over the link to the home
   hab once, never twice. The inbox goes in as one message once the resumed coordinator's pane
   reports an agent state.
