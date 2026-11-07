@@ -13,11 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
+	"github.com/noahkiss/flightdeck/internal/capcomevents"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/governor"
@@ -64,6 +66,14 @@ type capcomEngine struct {
 	memory *capcomMemory
 	// pace is Capcom as a consumer of the usage governor (10.1).
 	pace *capcomPacer
+	// events is the event queue (9.2, 9.3): batches, quiet hours, the daily turn budget.
+	events *capcomevents.Queue
+	// setting reads a hab-side setting; nil (or an empty value): its default.
+	setting func(id string) json.RawMessage
+	// moved is the peer label of the hab that holds the Capcom mark, "" when none or unknown.
+	moved func() string
+	// outcome sends a round message's second answer (9.5); set once channels run.
+	outcome atomic.Pointer[func(round, word string, at time.Time)]
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
@@ -98,6 +108,12 @@ type capcomEngineSetup struct {
 	// The usage governor (10.1): nil runs Capcom unpaced, with no pace message.
 	governor *governor.Governor
 	usage    *habusage.Store
+	// setting reads a hab-side setting (9.2, 9.3); nil: the defaults. moved names the hab that
+	// holds the mark now, for a refused round message.
+	setting func(id string) json.RawMessage
+	moved   func() string
+	// now is the event queue's clock; nil: time.Now.
+	now func() time.Time
 }
 
 // pushesMessage reports whether a thread item is a Capcom message, the one kind that pushes
@@ -143,7 +159,39 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 	if s.logbook != nil {
 		e.memory = &capcomMemory{svc: s.logbook, host: s.host}
 	}
+	e.setting, e.moved = s.setting, s.moved
+	if e.moved == nil {
+		e.moved = func() string { return "" }
+	}
+	q, qerr := capcomevents.Open(capcomevents.Config{Path: filepath.Join(dir, capcomevents.File), Now: s.now, Limits: e.eventLimits,
+		Released: func() {
+			if e.link != nil {
+				e.link.Kick()
+			}
+		},
+		Note: func(text string) {
+			th.Add(capcomthread.Item{Kind: capcomthread.KindNote, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: text})
+		},
+		Outcome: func(round, word string, at time.Time) {
+			if f := e.outcome.Load(); f != nil {
+				// Off the caller's goroutine: the channels service may hold its lock.
+				go (*f)(round, word, at)
+			}
+		},
+		Logf: s.logf,
+	})
+	if q == nil {
+		return nil, qerr
+	}
+	if qerr != nil {
+		s.logf("%v", qerr)
+	}
+	e.events = q
 	th.Watch(func(it capcomthread.Item) {
+		// The time zone a device shares with a message counts the day and quiet hours (9.2).
+		if it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorUser && it.TZ != "" {
+			q.SetTZ(it.TZ)
+		}
 		e.publish(structure.Event{Type: api.EventCapcomItem, ID: it.ID, Data: apiItem(it)})
 		e.publishChat(it)
 		// A Capcom message is a communication push (7.6). The thread notifies a capcom
@@ -172,6 +220,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		Limits:      func() capcomengine.ContextLimits { return contextLimits(config().Limits) },
 		Logbook:     e.logbookPart,
 		EngineKind:  func() string { return config().Engine },
+		Events:      q,
 	})
 	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, key: habusage.Key(s.host, "claude", capcomengine.EngineDir(dir)),
 		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
@@ -436,7 +485,9 @@ func (e *capcomEngine) start(ctx context.Context) {
 	e.store.SetRoute(capcomRoute, id)
 	e.syncState()
 	e.pace.start() // the pace waits in the link for the engine's ready
+	e.events.Start()
 	e.sup.Ensure(ctx)
+	e.svc.poke() // the catalog: capcom-service and the service's actor id
 }
 
 // lose stops the engine after its turn and renames the record capcom-earlier-<n>: this hab lost
@@ -449,6 +500,10 @@ func (e *capcomEngine) lose() {
 	}
 	e.sup.Lose()
 	e.pace.stop()
+	// Events no turn took will not be seen here: each round message among them is unseen (9.5).
+	e.events.Stop()
+	e.events.Drop()
+	defer e.svc.poke()
 	e.mu.Lock()
 	id := e.session
 	e.session = ""

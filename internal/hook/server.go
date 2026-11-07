@@ -57,6 +57,7 @@ type Server struct {
 	context  ContextHandler
 	reads    ReadHandler
 	agent    ChannelHandler
+	guard    func(pane, method string) error
 	engine   EngineHandler
 	http     *http.Server
 }
