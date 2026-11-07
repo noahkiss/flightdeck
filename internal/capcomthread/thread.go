@@ -96,6 +96,9 @@ type Item struct {
 	Model bool `json:"model,omitempty"`
 	// Read is when the engine took the message (input.taken, 7.3). Zero: not read yet.
 	Read time.Time `json:"read,omitzero"`
+	// SendNow marks a user message sent with "Send now": it runs on the small model while the
+	// usage governor makes user turns wait (capcom-service.md 10.1).
+	SendNow bool `json:"send_now,omitempty"`
 }
 
 // Card is a card item's content: what kind of card, and the choices it offers.

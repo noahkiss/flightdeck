@@ -68,7 +68,11 @@ type LinkConfig struct {
 	// OnReady hears each ready; OnTurnEnded each turn's result.
 	OnReady     func()
 	OnTurnEnded func(result string)
-	Logf        func(string, ...any)
+	// OnTurnUsage hears each turn's origin, tokens and cost (10.1). Nil: none.
+	OnTurnUsage func(origin string, input, output int64, costUSD float64)
+	// OnUsage hears each usage reading the engine sends (10.1). Nil: none.
+	OnUsage func(reading json.RawMessage)
+	Logf    func(string, ...any)
 	// Limits are the context manager's limits (6, 19.2); nil: the defaults.
 	Limits func() ContextLimits
 	// Logbook builds the seed's Logbook part (6.4) in at most max bytes; nil: none.
@@ -96,6 +100,8 @@ type Link struct {
 	// opened are the items the running turn started with: a user message among them does not
 	// join the turn, it is the turn.
 	opened []string
+	paceMu sync.Mutex // orders pace sends; held before mu, never under it
+	pace   *Message   // the governor's answer, sent on each ready and on each change (10.1)
 }
 
 type openApproval struct {
@@ -318,9 +324,19 @@ func (l *Link) handle(c *conn, m Message) {
 	th := l.cfg.Thread
 	switch m.Type {
 	case TReady:
+		// The pace goes before any input on this connection, so the engine has it before the
+		// first turn (10.1): the pump sends inputs only once c.ready is set, and SetPace waits
+		// for paceMu, so a change made meanwhile follows this one.
+		l.paceMu.Lock()
+		if l.pace != nil {
+			if err := l.send(c, *l.pace); err != nil {
+				l.cfg.Logf("capcom: send the pace: %v", err)
+			}
+		}
 		l.mu.Lock()
 		if l.cur != c {
 			l.mu.Unlock()
+			l.paceMu.Unlock()
 			return
 		}
 		l.st.Ready = true
@@ -331,6 +347,7 @@ func (l *Link) handle(c *conn, m Message) {
 		c.ready = true
 		noResume := c.resume != "" && !l.st.Has(CapResumeByID)
 		l.mu.Unlock()
+		l.paceMu.Unlock()
 		l.changed()
 		l.wake()
 		if noResume {
@@ -442,11 +459,15 @@ func (l *Link) handle(c *conn, m Message) {
 		l.openApproval(m)
 	case TTurnEnded:
 		l.mu.Lock()
+		origin := l.st.Origin
 		if l.st.Turn == m.TurnID() || m.TurnID() == "" {
 			l.st.Turn, l.st.Origin = "", ""
 		}
 		l.typingLocked(false)
 		l.mu.Unlock()
+		if l.cfg.OnTurnUsage != nil {
+			l.cfg.OnTurnUsage(origin, m.InputTokens, m.OutputTokens, m.CostUSD)
+		}
 		l.wake() // items held for an engine with no mid-turn input (4.1)
 		if m.Result == ResultError {
 			th.Add(capcomthread.Item{Kind: capcomthread.KindNote, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
@@ -456,6 +477,10 @@ func (l *Link) handle(c *conn, m Message) {
 		l.turnEnded(m)
 		if l.cfg.OnTurnEnded != nil {
 			l.cfg.OnTurnEnded(m.Result)
+		}
+	case TUsage:
+		if l.cfg.OnUsage != nil && len(m.Reading) > 0 {
+			l.cfg.OnUsage(m.Reading)
 		}
 	case TSummary:
 		l.storeSummary(m.Text, m.Through)
@@ -541,7 +566,7 @@ func (l *Link) pump() {
 // inputJSON is one item for the model. For an engine with no images capability each image goes
 // in as its path with a note (4.1).
 func inputJSON(it capcomthread.Item, images bool) json.RawMessage {
-	in := InputItem{ID: it.ID, Kind: it.Kind, Time: it.Time, TZ: it.TZ, Text: it.Text, Images: it.Images}
+	in := InputItem{ID: it.ID, Kind: it.Kind, Time: it.Time, TZ: it.TZ, Text: it.Text, Images: it.Images, SendNow: it.SendNow}
 	if !images && len(it.Images) > 0 {
 		in.Images = nil
 		for _, p := range it.Images {
@@ -562,6 +587,27 @@ func inputJSON(it capcomthread.Item, images bool) json.RawMessage {
 	}
 	b, _ := json.Marshal(in)
 	return b
+}
+
+// SetPace keeps the governor's answer and sends it to a ready engine; each later ready gets it
+// too, before any input (10.1). An unchanged answer is not sent again.
+func (l *Link) SetPace(pace, until, eventPace, eventUntil string) {
+	m := Message{Type: TPace, Pace: pace, Until: until, EventPace: eventPace, EventUntil: eventUntil}
+	l.paceMu.Lock()
+	defer l.paceMu.Unlock()
+	if l.pace != nil && l.pace.Pace == pace && l.pace.Until == until && l.pace.EventPace == eventPace && l.pace.EventUntil == eventUntil {
+		return
+	}
+	l.pace = &m
+	l.mu.Lock()
+	c := l.cur
+	ready := c != nil && c.ready
+	l.mu.Unlock()
+	if ready {
+		if err := l.send(c, m); err != nil {
+			l.cfg.Logf("capcom: send the pace: %v", err)
+		}
+	}
 }
 
 // openApproval keeps one card per request id, and expires it after capcom.approval_max_age
