@@ -36,6 +36,60 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(levels?[.bypass], .bool(false))
     }
 
+    /// confirm.group_plan: on at Safe and Balanced, off at Bypass, kept on every hab (groups.md 3.2).
+    func testGroupPlanLevels() throws {
+        let d = try XCTUnwrap(R.def(R.groupPlan))
+        XCTAssertEqual(d.levels?[.safe], .bool(true))
+        XCTAssertEqual(d.levels?[.balanced], .bool(true))
+        XCTAssertEqual(d.levels?[.bypass], .bool(false))
+        XCTAssertEqual(d.store, .everyHab)
+        XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.groupPlan })
+    }
+
+    /// The four group caps are preferences kept on every hab, with the hab's ranges (groups.md 15.3).
+    func testGroupPreferenceRows() throws {
+        let want: [(String, SettingKind)] = [
+            (R.groupConfirmMaxAge, .integer(1...1440, unit: "min")),
+            (R.groupMaxLeads, .integer(1...10, unit: "")),
+            (R.groupMaxWorkers, .integer(0...5, unit: "")),
+            (R.groupCloseMembers, .bool),
+        ]
+        for (id, kind) in want {
+            let d = try XCTUnwrap(R.def(id), id)
+            XCTAssertFalse(d.isLevelled, id)
+            XCTAssertEqual(d.store, .everyHab, id)
+            XCTAssertEqual(d.kind, kind, id)
+            XCTAssertEqual(d.area, .agents, id)
+            XCTAssertTrue(d.built, id)
+        }
+    }
+
+    /// The minutes picker offers only values inside the row's range, and keeps a value set elsewhere.
+    func testMinuteChoices() {
+        XCTAssertEqual(ValueControl.minuteChoices(1...1440, current: 60), [15, 30, 60, 120, 240, 480, 1440])
+        XCTAssertEqual(ValueControl.minuteChoices(1...1440, current: 5), [5, 15, 30, 60, 120, 240, 480, 1440])
+        XCTAssertEqual(ValueControl.minuteChoices(0...1440, current: -1), ValueControl.minutes)
+    }
+
+    /// Picking a level never touches a group cap: they are preferences.
+    @MainActor
+    func testPickLeavesGroupCaps() async throws {
+        var sent: [SettingWrite] = []
+        let (c, _) = try center("SettingsTests.groupcaps") { _, p in
+            sent += p.values
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
+        }
+        var h = balancedHab()
+        h.settings[R.groupMaxLeads] = setting(R.groupMaxLeads, .int(3))
+        c.update(habID: h.habID, label: h.label, state: state(h))
+        await c.pick(.bypass)
+        XCTAssertTrue(sent.contains(SettingWrite(id: R.groupPlan, revision: 1, value: .bool(false))))
+        XCTAssertFalse(sent.contains { $0.id == R.groupMaxLeads })
+        sent = []
+        await c.setEveryHab(R.groupMaxLeads, .int(5))
+        XCTAssertEqual(sent, [SettingWrite(id: R.groupMaxLeads, revision: 1, value: .int(5))])
+    }
+
     func testEachColumnMatchesItsLevel() {
         XCTAssertEqual(LevelMatcher.match(app: app(.balanced), habs: [balancedHab()]).level, .balanced)
         var h = balancedHab()
@@ -301,7 +355,7 @@ final class SettingsTests: XCTestCase {
         let h = balancedHab()
         c2.update(habID: h.habID, label: h.label, state: state(h))
         await c2.connectionOnline(habID: h.habID)
-        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge])
+        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan], "Bypass turns the plan card off too")
     }
 
     /// A refused queued write on connect is dropped and named in the notice.
