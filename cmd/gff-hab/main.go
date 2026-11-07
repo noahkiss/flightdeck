@@ -103,6 +103,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
+	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/habkey"
@@ -611,6 +612,21 @@ func serve(args []string) error {
 	}, nil)
 	usages := newUsageService(&usageService{store: usageStore, host: *hostID, logf: logger.Printf})
 	defer usages.Close()
+	// The usage governor (capcom-service.md 10.1): paces Capcom, and later each group
+	// (groups.md 10), from the usage readings. Its section is in the catalog.
+	var govCatalog atomic.Pointer[catalog.Service]
+	gov := governor.New(governor.Config{Account: usageStore.Get, StatePath: filepath.Join(dir, "governor.json"), Logf: logger.Printf,
+		OnChange: func(string, governor.Answer) {
+			if c := govCatalog.Load(); c != nil {
+				c.Poke()
+			}
+		},
+		OnSpent: func(string) {
+			if c := govCatalog.Load(); c != nil {
+				c.Poke() // today's tokens and cost
+			}
+		}})
+	defer gov.Close()
 	caps := []string{"usage", "host-stats"}
 	var acts control.Actions
 	var wts control.Worktrees
@@ -995,7 +1011,8 @@ func serve(args []string) error {
 						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event))
 					}
 				},
-				logf: logger.Printf,
+				logf:     logger.Printf,
+				governor: gov, usage: usageStore,
 			})
 			if err != nil {
 				return fmt.Errorf("capcom service: %w", err)
@@ -1101,6 +1118,7 @@ func serve(args []string) error {
 			}
 			return nil
 		},
+		Governor: gov.Section,
 		Heavy: func() *api.CatalogHeavy {
 			if h := heavyRef.Load(); h != nil {
 				return h.Section()
@@ -1128,6 +1146,7 @@ func serve(args []string) error {
 	}
 	defer cs.Close()
 	cat.Store(cs)
+	govCatalog.Store(cs)
 	if capcomSvc != nil {
 		capcomSvc.copies = cs.Copies
 		// The copies saved by the last run may carry a later assignment than this hab's own.

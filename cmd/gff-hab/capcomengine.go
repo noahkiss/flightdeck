@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,12 +20,14 @@ import (
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	habusage "github.com/noahkiss/flightdeck/internal/usage"
 )
 
 // capcomRoute is the route id the engine's token resolves to on the hook socket. It is no pane:
@@ -59,6 +62,8 @@ type capcomEngine struct {
 	agents *harness.Store
 	// memory is Capcom's memory in Logbook (6.4); nil on a hab without Logbook.
 	memory *capcomMemory
+	// pace is Capcom as a consumer of the usage governor (10.1).
+	pace *capcomPacer
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
@@ -84,12 +89,15 @@ type capcomEngineSetup struct {
 	agents     *harness.Store
 	svc        *capcomService
 	logbook    *lbsvc.Service // nil: no Logbook
-	host       string
+	host       string         // the hab's host id; also Capcom's usage account key
 	approval   func() time.Duration
 	publish    func(structure.Event)
 	notify     func(title, body string)
 	message    func(item capcomthread.Item, session string)
 	logf       func(string, ...any)
+	// The usage governor (10.1): nil runs Capcom unpaced, with no pace message.
+	governor *governor.Governor
+	usage    *habusage.Store
 }
 
 // pushesMessage reports whether a thread item is a Capcom message, the one kind that pushes
@@ -145,6 +153,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 				e.message(it, session)
 			}
 		}
+		e.pace.waiting(it)
 	})
 	e.link = capcomengine.NewLink(capcomengine.LinkConfig{
 		Thread: th, Record: rec,
@@ -157,11 +166,15 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		},
 		OnReady:     func() { e.sup.Ready() },
 		OnTurnEnded: func(result string) { e.sup.TurnEnded(result) },
+		OnTurnUsage: func(origin string, in, out int64, usd float64) { e.pace.turn(origin, in, out, usd) },
+		OnUsage:     func(engine string, r json.RawMessage) { e.pace.reading(engine, r) },
 		Logf:        s.logf,
 		Limits:      func() capcomengine.ContextLimits { return contextLimits(config().Limits) },
 		Logbook:     e.logbookPart,
 		EngineKind:  func() string { return config().Engine },
 	})
+	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, host: s.host, dir: capcomengine.EngineDir(dir),
+		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
 	job := s.job
 	if job == nil {
 		job = capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile), Match: engineCommand}
@@ -422,6 +435,7 @@ func (e *capcomEngine) start(ctx context.Context) {
 	e.mu.Unlock()
 	e.store.SetRoute(capcomRoute, id)
 	e.syncState()
+	e.pace.start() // the pace waits in the link for the engine's ready
 	e.sup.Ensure(ctx)
 }
 
@@ -434,6 +448,7 @@ func (e *capcomEngine) lose() {
 		return
 	}
 	e.sup.Lose()
+	e.pace.stop()
 	e.mu.Lock()
 	id := e.session
 	e.session = ""
@@ -535,7 +550,7 @@ func (e *capcomEngine) Send(client string, p api.SessionSendParams) error {
 		device = client
 	}
 	_, _, err := e.thread.Add(capcomthread.Item{Kind: capcomthread.KindMessage, Author: capcomthread.Author{Kind: capcomthread.AuthorUser, Device: device},
-		Text: p.Text, Images: images, Attachments: p.Attachments, Key: key})
+		Text: p.Text, Images: images, Attachments: p.Attachments, Key: key, SendNow: p.SendNow})
 	if err != nil {
 		return control.Errorf(api.ErrorKindUnavailable, "capcom thread: %v", err)
 	}

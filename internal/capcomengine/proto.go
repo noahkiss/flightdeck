@@ -152,6 +152,9 @@ type InputItem struct {
 	Text    string         `json:"text"`
 	Images  []string       `json:"images,omitempty"`
 	Context []ContextBlock `json:"context,omitempty"`
+	// SendNow runs the item now on the small model, with the items waiting before it, while
+	// the pace makes user turns wait (10.1, "Send now").
+	SendNow bool `json:"send_now,omitempty"`
 }
 
 // TurnRef names a running turn.
@@ -188,15 +191,18 @@ type Message struct {
 	Item json.RawMessage `json:"item,omitempty"`
 
 	// reseed, pace, approval.answer, context, context.request
-	For     string   `json:"for,omitempty"`
-	Recent  []Recent `json:"recent,omitempty"`
-	Seed    *Seed    `json:"seed,omitempty"`
-	Reason  string   `json:"reason,omitempty"`
-	Pace    string   `json:"pace,omitempty"`
-	Until   string   `json:"until,omitempty"`
-	Request string   `json:"request,omitempty"`
-	Allow   *bool    `json:"allow,omitempty"`
-	Message string   `json:"message,omitempty"`
+	For    string   `json:"for,omitempty"`
+	Recent []Recent `json:"recent,omitempty"`
+	Seed   *Seed    `json:"seed,omitempty"`
+	Reason string   `json:"reason,omitempty"`
+	Pace   string   `json:"pace,omitempty"`
+	Until  string   `json:"until,omitempty"`
+	// EventPace is the pace of an event turn, ok or wait; EventUntil when its wait ends (10.1).
+	EventPace  string `json:"event_pace,omitempty"`
+	EventUntil string `json:"event_until,omitempty"`
+	Request    string `json:"request,omitempty"`
+	Allow      *bool  `json:"allow,omitempty"`
+	Message    string `json:"message,omitempty"`
 
 	// ready
 	Engine       string   `json:"engine,omitempty"`

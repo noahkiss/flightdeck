@@ -304,7 +304,7 @@ declares what it lacks, and gff-hab adapts.
 | `mid_turn_input` | Yes | No | gff-hab holds a message that arrives during a turn and sends it when the turn ends |
 | `approval_callback` | Yes (`canUseTool`) | No | The engine must not expose any tool that 5.3 would send to a card. Web fetch is off |
 | `compaction_events` | Yes | No | The context manager re-seeds earlier, at `reseed_early_at` (45%; 6.2, 19.2), and no compaction divider shows |
-| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | No | The governor paces by the engine's own token counts (10.1) |
+| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | Yes: the rollout's `token_count` rate limits, sent at each turn's end when they changed (10.1) | The governor paces by the engine's own token counts (10.1) |
 | `resume_by_id` | Yes | Yes (`resumeThread`) | A restart is a re-seed |
 
 ### 4.2 Messages
@@ -379,10 +379,10 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | Type (hab to engine) | Fields |
 |---|---|
 | `hello` | `credential {kind: "oauth_token"\|"api_key"\|"login", value}` (`login`, Codex only, has no value: the CLI reads the user's own login), `device`, `last_item`, `sdk_session` (the session to resume, or empty), `reseed` (a re-seed to open with instead: `switch`, `new` or `restart_failed`; 4.5), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms, route_backoff_max_ms, summary_max_chars, precompact_timeout_ms}` |
-| `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}]}` |
+| `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}], send_now}` (`send_now` true for a message sent with "Send now", 10.1) |
 | `interrupt` | none |
 | `reseed` | `reason` |
-| `pace` | `pace: "ok"\|"small"\|"wait"`, `until` |
+| `pace` | `pace: "ok"\|"small"\|"wait"` and `until` for a user turn, `event_pace: "ok"\|"wait"` and `event_until` for an event turn (10.1). gff-hab sends it after each `ready`, before any `input`, and on each change |
 | `approval.answer` | `request`, `allow` (bool), `message` |
 | `shutdown` | none |
 | `context` | `request` (the `context.request` it answers; absent for a quiet update), `for` (`reseed`, `compact`, `quiet`), `summary`, `through` (the newest item `recent` holds, else the summary's), `recent: [{id, kind, author, time, text}]`, and for `reseed` `seed {logbook, messages: [{id, kind, author, time, text}], open: [line]}` |
@@ -457,7 +457,7 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
   re-seeded again at its next start.
 - **Markers and context use** come from the rollout: user `input_text` lines keep the
   `[flightdeck item <id>]` marker, and the `token_count` event's last usage and model window
-  give `context_used`.
+  give `context_used`. Its `rate_limits` give the usage reading (10.1).
 - **Switching engines is a re-seed.** When the thread's current session belongs to another
   engine, `hello` names no session and asks for `reseed: switch`. The new engine opens with the
   summary and the Logbook part (6.2), and the old session stays with its own CLI.
@@ -1185,12 +1185,80 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   call is made for it. "Send now" in the send button's long-press menu runs that one message
   on the small model anyway.
 - Readings: under the OAuth token (10.2), the SDK's rate-limit events as the engine's usage reading, with
-  the harness `claude` and its own account key (`app.md` 14.1). Under an API key, the result
+  the harness `claude` and its own account key (`app.md` 14.1). On the Codex engine under the
+  login, the rollout's rate limits, with the harness `codex`. Under an API key, the result
   cost, against a daily dollar cap `[capcom] daily_usd` (default none). If the SDK gives no
   reading, the governor counts Capcom's tokens and lists it unpaced (task-k0ydtgae).
 - Settings: `[capcom] model` (default the SDK's default), `small_model` (default the provider's
   smallest current model), `max_turn_usd` (passed as `maxBudgetUsd` per turn, default 2).
   Ranges in 19.2.
+
+**Built (stage G, task-k0ydtgae).** The governor is `internal/governor` in gff-hab; Capcom is its
+first consumer.
+
+- **The share.** The plan basis reads the consumer's account's weekly window (`7d`, with a
+  start). On day d of the window (0 the first day) the share is `pace_daily_share` × (d + 1), at
+  most 100%. The use is the window's used percentage: the whole account's, since a reading names
+  no consumer. The level is the use as a percentage of the share. User turns go to the small
+  model at `pace_small_at` and wait at `pace_wait_at`; event turns wait at `pace_event_stop`.
+- **Until.** A wait lasts until the start of the first later window day whose share takes the
+  level under the step, else until the window resets. A window whose reset passed with no reading
+  since counts as 0% used. The governor rechecks at each reading, each turn's end, each user
+  message, a `pace_*` edit (once the config file held for one 2 s check), the next window day and
+  local midnight. Its timer runs at most 5 minutes and each fire compares wall time, so a sleep
+  ends no wait late. The pace settings are read once per recheck, with no lock held.
+- **Readings.** The engine's `usage` messages are the SDK's `rate_limit_info`: `unifiedWindows`
+  (a window per key, `utilization` a fraction, `resetsAt` Unix seconds) and the top-level window
+  `rateLimitType` names. gff-hab stores them as a usage account with the harness `claude` and the
+  key `usage.Key(host, "claude", <state>/capcom/engine)`, so `usage.list` shows Capcom's own
+  account. The governor keeps each account's last weekly window in `<state>/governor.json`, so
+  after a restart it paces from that window until a new reading comes.
+- **Codex readings.** `codex exec --json` carries no rate limits; the rollout does (probed with
+  CLI 0.167 against a loopback endpoint that sends `x-codex-primary-*` and `x-codex-secondary-*`
+  headers). Each `token_count` record holds `rate_limits`: `limit_id`, `primary` and
+  `secondary` (`used_percent`, `window_minutes`, `resets_at` Unix seconds) and `plan_type`, or
+  null when a response carries none, as under an API key. At each turn's end the Codex engine
+  sends `usage` with `reading: {rollout: [...]}`, the newest such record of each limit id, as
+  the CLI wrote it, and only when the set changed since its last `usage`. gff-hab reads them as
+  the end of a rollout (`internal/usage`, as for Codex panes: each window read at its record's
+  timestamp, `10080` minutes named `7d`) and stores them under `usage.Key(host, "codex",
+  <state>/capcom/engine)` with the harness `codex`. The account follows the engine: the
+  governor paces by the account of the engine the config names, and a reading goes to the
+  account of the engine whose connection sent it (the kind its `ready` named). After a switch
+  Capcom is unpaced until the new engine's first reading. A model family with its own limit id adds windows named
+  after it (`<limit> 7d`), which the governor does not read.
+- **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
+  reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
+  until local midnight. With the default steps user turns wait at 120% of `daily_usd`, and the
+  turn that crosses it can add up to `max_turn_usd`: set `pace_wait_at = 100` for a hard cap.
+  Today's tokens and cost are kept in `<state>/governor.json`, so a
+  restart keeps them.
+- **Unpaced.** With no weekly window (no reading yet, or an API key with no `daily_usd`) Capcom
+  is listed with basis `none` and every pace is `ok`; its tokens are counted.
+- **The engine.** Both engines apply the same rules (`contract.ts`: `admit`, `mayHand`). The
+  engine keeps the newest `pace`; with none, every turn runs. Before a new turn: at `ok` the main
+  model, at `small` the small model. Claude takes `small_model`, else the alias `haiku`, through
+  the SDK's `setModel`. Codex takes `small_model`, else the main model, by resuming the same
+  thread on it. At `wait` the items stay with the engine, untaken, until a new
+  `pace`. Event batches, agent reports and round messages (sent as `agent`) wait at the event
+  step, since no user typed them; the item's kind still gives the turn's origin. An item that
+  waits at the event step does not hold a user message after it: the user turn takes both. Input
+  that arrives during a running turn joins it, except while user turns wait: then only an item
+  with a send-now item at or after it, or an event-step item while event turns run, joins.
+- **The note.** The first user message during a wait gets the note "Pacing usage until
+  <time>" in the thread, once per wait. The note is not model input.
+- **Send now.** `session.send` with `send_now: true` (the long-press menu; the app's half is
+  task-7vm076x0) marks the item. While user turns wait, a marked item runs at once on the small
+  model, with the items waiting before it. Items queued after the last marked item wait for the
+  next pace.
+- **The catalog.** The `governor` section lists each consumer: basis, the two paces with their
+  ends, the use and the share (`plan`), the spend and the cap in cents (`usd`), and today's
+  tokens. gff's status board shows each consumer that is not at `ok`, or is unpaced, under
+  "Usage pacing".
+- **Groups.** A group registers as its own consumer, `group:<id>`, with its policy, its account
+  and an `OnChange` that hears each change of its answer (`groups.md` 10). Stage G builds and
+  tests only the Capcom consumer and a governor test of a group consumer; the group wiring is
+  Part 15 B3's follow-up.
 
 ### 10.2 Terms
 
@@ -1518,10 +1586,11 @@ One app preference (`app.md` 20.4), since the app decides what it sends:
 | `token_retry` | 5 minutes | 30 s to 24 hours | 10.2 |
 | `wake_retry` | 10 s | 1 s to 5 minutes; one retry | 14 |
 | `pace_daily_share` | 15% of the weekly window a day | 1% to 100% | 10.1 |
-| `pace_event_stop`, `pace_small_at`, `pace_wait_at` | 80%, 100%, 120% of the share | 10% to 500% each, in that order; a set out of order is logged and all three defaults run | 10.1 |
+| `pace_event_stop`, `pace_small_at`, `pace_wait_at` | 80%, 100%, 120% of the share | 10% to 500% each, in that order (equal allowed); a set out of order is logged and all three defaults run | 10.1 |
 
 The four `pace_*` keys are Capcom's inputs to the usage governor (task-k0ydtgae, stage G), which
-reads them; the governor's own rules stay in its task.
+reads them at each recheck; its rules are in 10.1. Each takes a number (`15`) or a string
+(`"15%"`).
 
 ### 19.3 Fixed values kept
 
