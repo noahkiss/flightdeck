@@ -1520,3 +1520,10 @@ func (c Client) GroupMessage(ctx context.Context, params GroupMessageParams) (Em
 	err := c.Caller.Call(ctx, "group.message", params, &result)
 	return result, err
 }
+
+// GroupSync calls group.sync. A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.
+func (c Client) GroupSync(ctx context.Context, params GroupSyncParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "group.sync", params, &result)
+	return result, err
+}

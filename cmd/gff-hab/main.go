@@ -533,6 +533,7 @@ func serve(args []string) error {
 	var heavyRef atomic.Pointer[heavy.Lock] // set once the lock runs; the catalog reads its section
 	var groupsRef groupRunnerRef            // set once the group service runs (groups.md 5)
 	supRef := &supervisorRef{}              // set once context supervision runs (groups.md 9)
+	groupSync := newGroupSyncs()            // what group homes pushed to this hab (groups.md 5.6)
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
@@ -1233,7 +1234,7 @@ func serve(args []string) error {
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
 	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, capcom: capcomEng, paused: func(group string) bool {
-		return groupPaused(cs.List(), group)
+		return groupSync.paused(cs.List(), group)
 	}, lock: func(ss api.Session) string {
 		if r := roundsRef.Load(); r != nil {
 			return r.roundLock(ss)
@@ -1449,7 +1450,7 @@ func serve(args []string) error {
 	cfSvc, err := confirm.New(confirm.Config{
 		Runner:   cfRunner,
 		Rounds:   cfRunner,
-		Envelope: memberEnvelope(store, *hostID, key.Fingerprint(), cs.List),
+		Envelope: memberEnvelope(store, *hostID, key.Fingerprint(), cs.List, groupSync),
 		Groups:   &groupsRef,
 		GroupTTL: func() time.Duration {
 			if n, err := strconv.Atoi(string(setSvc.Value(settings.GroupConfirmMaxAge))); err == nil {
@@ -1492,7 +1493,7 @@ func serve(args []string) error {
 	var groupsCtl control.Groups
 	if sessionActs != nil {
 		groupsSvc, err = newGroups(groupsConfig{host: *hostID, self: key.Fingerprint(), dir: filepath.Join(dir, "groups"),
-			keys: groups.LoadKeys(cpath, logger.Printf), store: store, catalog: cs.List, links: confirmLinks(pm),
+			keys: groups.LoadKeys(cpath, logger.Printf), store: store, catalog: cs.List, links: confirmLinks(pm), syncs: groupSync,
 			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get,
 			confirm: cfSvc.Request,
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {

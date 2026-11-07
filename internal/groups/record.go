@@ -301,7 +301,7 @@ func ByCapcom(g api.Group) bool { return g.Coordinator.Address == CapcomAddress 
 
 // Short is a group's short form for the catalog and group.list (groups.md 5.1).
 func Short(g api.Group) api.CatalogGroup {
-	c := api.CatalogGroup{ID: g.ID, Title: g.Title, State: string(g.State), Generation: g.Generation, Home: g.Home,
+	c := api.CatalogGroup{ID: g.ID, Title: g.Title, State: string(g.State), Generation: g.Generation, Home: g.Home, Revision: g.Revision,
 		Items: len(g.Items), Coordinator: &api.CatalogMember{Device: g.Home, Session: g.Coordinator.Session, Name: g.Coordinator.Name, Capcom: ByCapcom(g)}}
 	for _, it := range g.Items {
 		if it.State == ItemLanded {

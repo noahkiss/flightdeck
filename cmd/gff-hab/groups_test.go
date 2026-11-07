@@ -69,3 +69,86 @@ func TestGroupNonMemberStart(t *testing.T) {
 		t.Error("admitted with no envelope")
 	}
 }
+
+// TestGroupSync (groups.md 3.3, 5.6): a push from the group's home replaces the envelope of
+// its members here and holds the pause until the catalog copy carries a later revision; an
+// older push changes nothing; a push from another hab, or with another hab's envelope, is
+// refused.
+func TestGroupSync(t *testing.T) {
+	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"),
+		Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p1"}, structure.HolderPane{ID: "p2"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	env := api.GroupEnvelope{Group: "g1", Home: "d-home", Confirmation: "none", Hosts: []string{"d-bee"}, Harnesses: []string{"claude"}, MaxWorkers: 2}
+	lead, err := st.CreateSession(structure.SessionSpec{Name: "lead-ui", Pane: "p1", Index: -1,
+		Group: &api.SessionGroup{ID: "g1", Role: "lead", Item: "ui"}, Envelope: &env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateSession(structure.SessionSpec{Name: "lead-x", Pane: "p2", Index: -1,
+		Group: &api.SessionGroup{ID: "g2", Role: "lead", Item: "x"}, Envelope: &api.GroupEnvelope{Group: "g2", Home: "d-home", Hosts: []string{"d-bee"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := api.CatalogList{Hosts: []api.CatalogEntry{{Label: "ay", Catalog: api.Catalog{DeviceID: "d-home",
+		Groups: []api.CatalogGroup{{ID: "g1", Home: "d-home", Revision: 4}}}}}}
+	syncs := newGroupSyncs()
+	s := &groupsService{cfg: groupsConfig{store: st, syncs: syncs, catalog: func() api.CatalogList { return cat }}}
+	home := api.PeerHello{DeviceID: "d-home", Host: "ay"}
+
+	amended := env
+	amended.Hosts = []string{"d-bee", "d-home"}
+	if err := s.Sync(home, api.GroupSyncParams{Group: "g1", Revision: 6, Envelope: &amended, Pause: &api.GroupPause{User: "2026-11-07T00:00:00Z"}}); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := st.Envelope(lead.ID); len(e.Hosts) != 2 {
+		t.Fatalf("the member's envelope after the push: %+v", e)
+	}
+	if e, _ := st.Envelope(other.ID); len(e.Hosts) != 1 {
+		t.Fatalf("another group's member changed: %+v", e)
+	}
+	if !syncs.paused(cat, "g1") {
+		t.Fatal("the pushed pause does not hold while the copy is older")
+	}
+	// An older push changes nothing.
+	if err := s.Sync(home, api.GroupSyncParams{Group: "g1", Revision: 5, Envelope: &env}); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := st.Envelope(lead.ID); len(e.Hosts) != 2 || !syncs.paused(cat, "g1") {
+		t.Fatalf("an older push changed the envelope %+v or the pause", e)
+	}
+	// The copy catches up with a later revision: it holds from then on.
+	cat.Hosts[0].Catalog.Groups[0].Revision = 7
+	if syncs.paused(cat, "g1") {
+		t.Fatal("the copy's later revision (not paused) does not win")
+	}
+	// A resume pushed before the copy shows it lets messages through.
+	cat.Hosts[0].Catalog.Groups[0].Pause = &api.GroupPause{User: "2026-11-07T00:00:00Z"}
+	if err := s.Sync(home, api.GroupSyncParams{Group: "g1", Revision: 8, Envelope: &amended}); err != nil {
+		t.Fatal(err)
+	}
+	if syncs.paused(cat, "g1") {
+		t.Fatal("the pushed resume does not hold over the older copy")
+	}
+	// Refusals: another hab, an envelope from another home, a bad id.
+	stranger := api.PeerHello{DeviceID: "d-other", Host: "zed"}
+	if err := s.Sync(stranger, api.GroupSyncParams{Group: "g1", Revision: 9}); errKind(err) != api.ErrorKindDenied {
+		t.Errorf("a push from another hab: %v", err)
+	}
+	if err := s.Sync(home, api.GroupSyncParams{Group: "g1", Revision: 9, Envelope: &api.GroupEnvelope{Group: "g1", Home: "d-other"}}); errKind(err) != api.ErrorKindInvalid {
+		t.Errorf("another home's envelope: %v", err)
+	}
+	if err := s.Sync(home, api.GroupSyncParams{Group: "G 1", Revision: 9}); errKind(err) != api.ErrorKindInvalid {
+		t.Errorf("a bad group id: %v", err)
+	}
+	// A group the catalog does not list yet: a member here with that home's envelope is enough.
+	cat = api.CatalogList{}
+	if err := s.Sync(home, api.GroupSyncParams{Group: "g2", Revision: 1, Pause: &api.GroupPause{User: "2026-11-07T00:00:00Z"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !syncs.paused(cat, "g2") {
+		t.Fatal("a pause for a group the catalog does not list yet")
+	}
+}

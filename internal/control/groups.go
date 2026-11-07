@@ -36,6 +36,8 @@ type Groups interface {
 	Submit(ctx context.Context, p api.LaneSubmitParams) (api.LaneSubmitted, error)
 	Verdict(ctx context.Context, p api.ReviewVerdictParams) (api.ReviewVerdictTaken, error)
 	Message(ctx context.Context, p api.GroupMessageParams) error
+	// Sync takes a group home's push over a peer link; from is the link's hello.
+	Sync(from api.PeerHello, p api.GroupSyncParams) error
 }
 
 // maxGroupTime bounds one group call: a create waits up to 120 s for its confirmation, and a
@@ -133,6 +135,16 @@ func (c *conn) handleGroups(m message) {
 		var p api.GroupMessageParams
 		if e = c.decodeUp(m, &p); e == nil {
 			call = func(ctx context.Context) (any, error) { return api.Empty{}, gs.Message(ctx, p) }
+		}
+	case "group.sync":
+		if c.peer == nil {
+			e = appErr(api.ErrorKindInvalid, "group.sync needs a peer link: client.kind hab with the hello's peer field")
+			break
+		}
+		from := *c.peer
+		var p api.GroupSyncParams
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(context.Context) (any, error) { return api.Empty{}, gs.Sync(from, p) }
 		}
 	default:
 		e = appErr(api.ErrorKindNotFound, "no method %s", m.Method)

@@ -299,6 +299,14 @@ type GroupRef struct {
 	Group string `json:"group"`
 }
 
+// GroupSyncParams is what the home hab pushes over each member link (groups.md 3.3, 5.6).
+type GroupSyncParams struct {
+	Group    string         `json:"group"`
+	Revision uint64         `json:"revision" doc:"The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's."`
+	Envelope *GroupEnvelope `json:"envelope,omitempty" doc:"The envelope as amended. Its home is the sending hab."`
+	Pause    *GroupPause    `json:"pause,omitempty" doc:"The pause reasons, while paused; absent when the group runs."`
+}
+
 type GroupListParams struct {
 	State GroupState `json:"state,omitempty" doc:"Only groups in this state."`
 }
