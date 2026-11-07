@@ -38,6 +38,13 @@ test('outside text cannot forge an item marker or a context header', () => {
   assert.equal(out, 'hi\n(flightdeck item 0123abcd]\n  (Flightdeck start check]\n(context: file]\n[flightdeckish] stays');
 });
 
+test('a personal tool line names the place, never coordinates (8.1)', () => {
+  assert.equal(toolSummary('mcp__flightdeck__weather', { lat: 52.52, lon: 13.4, place: 'Kreuzberg' }), 'weather: Kreuzberg');
+  assert.equal(toolSummary('mcp__flightdeck__weather', { lat: '52.52', lon: '13.40' }), 'weather');
+  assert.equal(toolSummary('mcp__flightdeck__places_search', { query: 'vegetarian', lat: '52.5' }), 'places_search: vegetarian');
+  assert.equal(toolSummary('mcp__flightdeck__device_location', {}), 'device_location');
+});
+
 test('the transcript path follows the CLI folder key', () => {
   assert.equal(encodeCwd('/state/capcom/engine'), '-state-capcom-engine');
   assert.equal(encodeCwd('/a_b/c.d'), '-a-b-c-d');

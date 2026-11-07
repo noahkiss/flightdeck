@@ -1018,8 +1018,17 @@ func serve(args []string) error {
 					}
 				},
 				message: func(it capcomthread.Item, session string) {
-					if n := pushes.live(); n != nil {
-						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event))
+					n := pushes.live()
+					switch {
+					case n == nil:
+					case it.Kind == capcomthread.KindCard && it.Card != nil && it.Card.Event != nil:
+						n.Raise(push.CapcomCard(it.ID, session, it.Text, it.Event))
+					default:
+						var marks []string
+						for _, a := range it.Attribution {
+							marks = append(marks, a.Text)
+						}
+						n.Raise(push.CapcomMessage(it.ID, session, it.Text, it.Event, marks...))
 					}
 				},
 				logf:     logger.Printf,
@@ -1052,7 +1061,7 @@ func serve(args []string) error {
 			}
 			capcomThreadCtl = eng
 			chat = engineChat{next: chat, eng: eng} // chat.page of the service session reads the thread (7.4)
-			caps = append(caps, capcom.ServiceCapability)
+			caps = append(caps, capcom.ServiceCapability, capcom.DeviceContextCapability)
 		}
 		if agentCalls != nil {
 			// The owner's next message carries the context attached to it (capcom.md 8.1).
@@ -1819,6 +1828,7 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	if capcomEng != nil {
 		hooks.SetEngine(capcomEng)
+		hooks.SetPersonal(capcomEng.personal.hook)
 	}
 	if compacts != nil {
 		hooks.SetAgent(compactHook(compacts))
