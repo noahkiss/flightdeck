@@ -534,7 +534,7 @@ func TestRendererCodex(t *testing.T) {
 	// A user entry written as dotted keys is refused for that server only.
 	f2 := newFixture(t)
 	writeFile(t, filepath.Join(f2.env.CodexHome, "config.toml"), "[mcp_servers]\ndocs.command = \"docs-mcp\"\n")
-	writeFile(t, f2.env.RecordPath(instructions.Codex), `{"servers":{"docs":"0"}}`)
+	writeRecordFile(t, f2.env, instructions.Codex, filepath.Join(f2.env.CodexHome, "config.toml"), map[string]string{"docs": "0"})
 	p = f2.renderer(registry, "").Plan(instructions.Codex)
 	if got := actions(p); got["docs"] != Blocked || got["web"] != Add {
 		t.Fatalf("dotted: %v %s", got, p.Reason)
@@ -572,7 +572,7 @@ func TestRendererOpencode(t *testing.T) {
 	f := newFixture(t)
 	target := filepath.Join(f.env.OpencodeDir, "opencode.jsonc")
 	writeFile(t, target, opencodeBefore)
-	writeFile(t, f.env.RecordPath(instructions.Opencode), "{\"servers\":{\"ours\":\""+entryDigest(map[string]any{"type": "local", "command": []any{"old"}})+"\"}}")
+	writeRecordFile(t, f.env, instructions.Opencode, target, map[string]string{"ours": entryDigest(map[string]any{"type": "local", "command": []any{"old"}})})
 	r := f.renderer(registry, "")
 	p := r.Plan(instructions.Opencode)
 	want := map[string]Action{"docs": Add, "web": Add, "later": NotRendered, "ours": Remove}

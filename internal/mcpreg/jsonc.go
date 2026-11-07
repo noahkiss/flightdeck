@@ -41,6 +41,9 @@ type jparser struct {
 // parseJSONC parses a JSONC text. Empty text (only blanks and comments) gives a nil node.
 func parseJSONC(text string) (*jnode, error) {
 	p := &jparser{s: text}
+	if strings.HasPrefix(text, "\uFEFF") {
+		p.pos = len("\uFEFF") // a byte order mark; offsets stay those of the text
+	}
 	if err := p.ws(); err != nil {
 		return nil, err
 	}
@@ -294,7 +297,7 @@ func deleteMember(text string, obj *jnode, i int) string {
 	m := obj.members[i]
 	start, end := m.keyStart, m.val.end
 	p := &jparser{s: text, pos: end}
-	if p.ws() == nil && p.pos < len(text) && text[p.pos] == ',' && onlyBlanks(text[end:p.pos]) {
+	if p.ws() == nil && p.pos < len(text) && text[p.pos] == ',' {
 		end = p.pos + 1
 	} else if i > 0 {
 		// The last member: the comma after the previous value goes instead.
@@ -326,8 +329,6 @@ func deleteMember(text string, obj *jnode, i int) string {
 	return text[:start] + text[end:]
 }
 
-func onlyBlanks(s string) bool { return strings.Trim(s, " \t") == "" }
-
 var errNotObject = errors.New("not an object")
 
 // setServer sets or removes (v nil) mcp.servers.<name> in a JSONC text.
@@ -339,6 +340,9 @@ func setServer(text, name string, v map[string]any) (string, error) {
 	if root == nil {
 		if v == nil {
 			return text, nil
+		}
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n" // a last line comment must not swallow the object
 		}
 		return text + jsonText(map[string]any{"mcp": map[string]any{"servers": map[string]any{name: v}}}, "") + "\n", nil
 	}

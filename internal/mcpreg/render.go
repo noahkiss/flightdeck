@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -159,24 +160,36 @@ type record struct {
 	Target  string            `json:"target"`
 	Written time.Time         `json:"written"`
 	Servers map[string]string `json:"servers"` // name -> entry digest
+	// Pending holds the digests a write is about to put in the file. It is saved before the
+	// rename (or before Claude's CLI runs) and cleared after, so a write cut short in between
+	// still knows its entries.
+	Pending map[string]string `json:"pending,omitempty"`
 }
 
-func (r *Renderer) loadRecord(h Harness) (map[string]string, error) {
+// loadRecord reads what Flightdeck owns in the file at path. A record written for another
+// file (a changed $CODEX_HOME or $CLAUDE_CONFIG_DIR) owns nothing here; the plan warns.
+func (r *Renderer) loadRecord(h Harness, path string, p *Plan) (map[string]string, map[string]string, error) {
 	data, err := os.ReadFile(r.Env.RecordPath(h))
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]string{}, nil
+		return map[string]string{}, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var rec record
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, fmt.Errorf("record %s: %w", r.Env.RecordPath(h), err)
+		return nil, nil, fmt.Errorf("record %s: %w", r.Env.RecordPath(h), err)
+	}
+	if rec.Target != path {
+		if len(rec.Servers)+len(rec.Pending) > 0 {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("the last render wrote %s, not this file; nothing here counts as Flightdeck's, and the servers there are left alone (a write here forgets them)", rec.Target))
+		}
+		return map[string]string{}, nil, nil
 	}
 	if rec.Servers == nil {
 		rec.Servers = map[string]string{}
 	}
-	return rec.Servers, nil
+	return rec.Servers, rec.Pending, nil
 }
 
 // current reads a harness's config file: the servers it holds, by name.
@@ -285,12 +298,17 @@ func (r *Renderer) Plan(h Harness) Plan {
 		p.Status, p.Reason = Refused, "cannot read the file: "+err.Error()
 		return p
 	}
-	owned, err := r.loadRecord(h)
+	owned, pending, err := r.loadRecord(h, path, &p)
 	if err != nil {
 		p.Status, p.Reason = Refused, err.Error()
 		return p
 	}
-	p.owned = owned
+	p.owned = map[string]string{}
+	for n := range pending {
+		if _, ok := owned[n]; !ok {
+			owned[n] = ""
+		}
+	}
 
 	desired := map[string]ServerPlan{}
 	for _, s := range r.Config.Servers {
@@ -312,7 +330,7 @@ func (r *Renderer) Plan(h Harness) Plan {
 		names[n] = true
 	}
 	changes := map[string]map[string]any{} // name -> new entry; nil removes
-	recordChanged := false
+	recordChanged := len(pending) > 0      // a write cut short: the record still needs its end
 	for _, name := range sortedKeys(names) {
 		sp, wanted := desired[name]
 		if !wanted || sp.Action == NotRendered {
@@ -320,6 +338,16 @@ func (r *Renderer) Plan(h Harness) Plan {
 		}
 		dig, isOwned := owned[name]
 		have, inFile := cur.servers[name]
+		if pd, ok := pending[name]; ok {
+			// A write that stopped between its record and its rename: either entry is ours.
+			if !isOwned || inFile && entryDigest(have) == pd {
+				dig = pd
+			}
+			isOwned = true
+		}
+		if isOwned {
+			p.owned[name] = dig
+		}
 		sp.inFile = inFile
 		edited := inFile && isOwned && entryDigest(have) != dig
 		force := slices.Contains(r.Force, name)
@@ -527,6 +555,10 @@ func (r *Renderer) Write(ctx context.Context, h Harness) (Plan, error) {
 	default:
 		return p, fmt.Errorf("%s: %s: %s", h, p.Status, p.Reason)
 	}
+	// The record comes first: a write cut short after it still knows its own entries.
+	if err := r.writePending(p); err != nil {
+		return p, fmt.Errorf("%s: the state record failed, nothing written: %w", h, err)
+	}
 	if h == instructions.Claude {
 		got, err := r.writeClaude(ctx, p)
 		if got != nil {
@@ -562,6 +594,10 @@ func (r *Renderer) Write(ctx context.Context, h Harness) (Plan, error) {
 			}
 			return nil
 		}); err != nil {
+			// Nothing was renamed: the record goes back to what Flightdeck owned.
+			if rerr := r.saveRecord(record{Harness: p.Harness, Target: p.Path, Servers: nonEmpty(p.owned)}); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
 			return p, fmt.Errorf("%s: %w", h, err)
 		}
 	}
@@ -628,7 +664,7 @@ func (r *Renderer) writeClaude(ctx context.Context, p Plan) (map[string]string, 
 					out[sp.Name] = entryDigest(have)
 				case sp.Action == Update || sp.Action == Remove:
 					// Not reached: the entry is still the one Flightdeck owned.
-					if d, ok := p.owned[sp.Name]; ok {
+					if d := p.owned[sp.Name]; d != "" {
 						out[sp.Name] = d
 					}
 				}
@@ -648,20 +684,48 @@ func (r *Renderer) writeRecord(p Plan, digests map[string]string) error {
 		}
 		switch sp.Action {
 		case Blocked, NotRendered:
-			if d, ok := p.owned[sp.Name]; ok {
+			if d := p.owned[sp.Name]; d != "" {
 				servers[sp.Name] = d
 			}
 		}
 	}
+	return r.saveRecord(record{Harness: p.Harness, Target: p.Path, Servers: servers})
+}
+
+// writePending saves, before a write, what Flightdeck owns now and the entries it is about to
+// write.
+func (r *Renderer) writePending(p Plan) error {
+	servers := nonEmpty(p.owned)
+	pending := map[string]string{}
+	for _, sp := range p.Servers {
+		if sp.Action == Add || sp.Action == Update {
+			pending[sp.Name] = entryDigest(sp.value)
+		}
+	}
+	return r.saveRecord(record{Harness: p.Harness, Target: p.Path, Servers: servers, Pending: pending})
+}
+
+func nonEmpty(m map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range m {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func (r *Renderer) saveRecord(rec record) error {
 	now := time.Now
 	if r.Now != nil {
 		now = r.Now
 	}
-	data, err := json.MarshalIndent(record{Harness: p.Harness, Target: p.Path, Written: now().UTC(), Servers: servers}, "", "  ")
+	rec.Written = now().UTC()
+	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeKeepMode(r.Env.RecordPath(p.Harness), append(data, '\n'), 0o600, false, nil)
+	return writeKeepMode(r.Env.RecordPath(rec.Harness), append(data, '\n'), 0o600, false, nil)
 }
 
 // writeKeepMode writes data to a temporary file beside path with the given mode (0600 for a
@@ -751,7 +815,24 @@ func (p Plan) Report(w io.Writer) {
 		fmt.Fprintf(w, "the files differ; too large for a line diff (%d and %d lines)\n", lines(p.Old), lines(p.New))
 		return
 	}
-	fmt.Fprint(w, detect.UnifiedDiff(oldName, newName, p.Old, p.New))
+	fmt.Fprint(w, detect.UnifiedDiff(oldName, newName, redactSecrets(p.Old), redactSecrets(p.New)))
+}
+
+// secretValue finds a quoted value under a key named like a secret, in TOML or JSON text.
+var secretValue = regexp.MustCompile(`(?i)("?([A-Za-z0-9_.-]*(?:token|key|secret|password|authorization)[A-Za-z0-9_.-]*)"?\s*[:=]\s*)("(?:[^"\\\n]|\\.)*"|'[^'\n]*')`)
+
+// redactSecrets hides, for the dry run's diff only, values the user's own entries may hold
+// under secret-looking keys. References (${NAME}, {env:NAME}, a variable named by an
+// *_env_var key) stay visible.
+func redactSecrets(text string) string {
+	return secretValue.ReplaceAllStringFunc(text, func(m string) string {
+		sm := secretValue.FindStringSubmatch(m)
+		val := sm[3]
+		if strings.Contains(strings.ToLower(sm[2]), "env_var") || strings.Contains(val, "${") || strings.Contains(val, "{env:") || len(val) <= 2 {
+			return m
+		}
+		return sm[1] + `"<hidden>"`
+	})
 }
 
 func lines(s string) int { return bytes.Count([]byte(s), []byte("\n")) + 1 }
