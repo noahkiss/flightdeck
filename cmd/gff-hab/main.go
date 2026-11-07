@@ -1796,7 +1796,7 @@ func serve(args []string) error {
 	}
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	if groupsSvc != nil {
-		hooks.SetGroups(groupHook(store, groupsSvc))
+		hooks.SetGroups(groupHook(store, groupsSvc, folders.folderOf))
 	}
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote, capcomEng))
 	// One context handler: the Logbook habit and the context nudge, joined when both are due
