@@ -86,6 +86,18 @@ type sessionRecord struct {
 	ContextPct *int   `json:"context_pct,omitempty"`
 	Compacts   int    `json:"compacts,omitempty"`
 	Replaced   string `json:"replaced,omitempty"`
+	// Swap marks the old session of a fresh-session swap in progress (groups.md 9.5): a
+	// gff-hab that stops mid-swap finishes or undoes it at its next start. Not in the API.
+	Swap *SwapMark `json:"swap,omitempty"`
+}
+
+// SwapMark is what the start repair of a swap needs: the member's name and group, the name the
+// old session was given, and its envelope.
+type SwapMark struct {
+	Name     string             `json:"name"`
+	Aside    string             `json:"aside"`
+	Group    api.SessionGroup   `json:"group"`
+	Envelope *api.GroupEnvelope `json:"envelope,omitempty"`
 }
 
 // paneRecord keeps what gff-hab owns about a pane: its revision, plus the last size and build it

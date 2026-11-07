@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 type memberSwap struct {
 	store *structure.Store
 	// hold and move are the channels' (channels.Service.Hold, Move).
-	hold      func(ctx context.Context, session string) (func(), error)
+	hold      func(ctx context.Context, session, name string) (func(), error)
 	move      func(from, to string) (int, error)
 	rename    func(session, name string) error
 	closePane func(ctx context.Context, pane string) error
@@ -77,18 +78,25 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 			conf = env.Confirmation
 		}
 	}
-	release, err := w.hold(ctx, ss.ID)
+	release, err := w.hold(ctx, ss.ID, ss.Name)
 	if err != nil {
 		return "", fmt.Errorf("holding its messages: %w", err)
 	}
 	defer release()
 	name, group := ss.Name, *ss.Group
 	aside := w.asideName(name)
+	// The mark goes on disk first: a gff-hab that stops mid-swap finishes or undoes it at its
+	// next start (repairSwaps).
+	if err := w.store.SetSwap(ss.ID, &structure.SwapMark{Name: name, Aside: aside, Group: group, Envelope: envp}); err != nil {
+		return "", err
+	}
 	if err := w.rename(ss.ID, aside); err != nil {
+		w.store.SetSwap(ss.ID, nil)
 		return "", fmt.Errorf("renaming the old session: %s", errText(err))
 	}
 	if err := w.store.SetGroup(ss.ID, nil, nil); err != nil {
 		w.rename(ss.ID, name)
+		w.store.SetSwap(ss.ID, nil)
 		return "", err
 	}
 	undo := func() {
@@ -96,6 +104,7 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 		if err := w.rename(ss.ID, name); err != nil {
 			w.logf("supervise: putting back the name of %s: %v", aside, err)
 		}
+		w.store.SetSwap(ss.ID, nil)
 	}
 	key := sha256.Sum256([]byte(group.ID + "\x00" + name + "\x00fresh\x00" + ss.ID))
 	p := api.SessionCreateParams{Name: name, ProjectDir: folder, Harness: st.Harness, Model: model, Seed: seed,
@@ -107,8 +116,15 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 	}
 	made, err := w.create(withOwnCover(ctx), p)
 	if err != nil {
-		undo()
-		return "", err
+		// A create that timed out may have made the session all the same: then the swap goes on
+		// with it, so the group never has two sessions named for the member (review M6).
+		id, ok := swapSuccessor(w.store, ss.ID, name, group.ID)
+		if !ok {
+			undo()
+			return "", err
+		}
+		w.logf("supervise: %s: the create answered %v, but the fresh session %s runs; the swap goes on", name, err, id)
+		made = api.SessionCreated{Session: id}
 	}
 	if err := w.store.SetReplaced(made.Session, ss.ID); err != nil {
 		w.logf("supervise: %s: replaced: %v", name, err)
@@ -125,7 +141,108 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 		}
 		cancel()
 	}
+	if err := w.store.SetSwap(ss.ID, nil); err != nil {
+		w.logf("supervise: %s: clearing the swap mark: %v", name, err)
+	}
 	return made.Session, nil
+}
+
+// swapSuccessor is the session that took a member's name in its group: the fresh session of a
+// swap, when it was made.
+func swapSuccessor(store *structure.Store, old, name, group string) (string, bool) {
+	s2, ok := store.SessionByName(name)
+	if !ok || s2.ID == old || s2.Group == nil || s2.Group.ID != group {
+		return "", false
+	}
+	return s2.ID, true
+}
+
+// undoSwaps is the first half of the start repair (groups.md 9.5), run before the channels
+// start: a swap a stopped gff-hab left with no fresh session is undone (the old session's
+// group, envelope and name back, the mark gone). It returns the swaps to finish, by old
+// session id: their fresh session runs, and their old session's deliveries stay held until
+// finishSwaps moved them.
+func undoSwaps(store *structure.Store, logf func(string, ...any)) map[string]string {
+	finish := map[string]string{}
+	for old, m := range store.Swaps() {
+		ss, ok := store.Session(old)
+		if !ok {
+			continue
+		}
+		if id, ok := swapSuccessor(store, old, m.Name, m.Group.ID); ok {
+			finish[old] = id
+			continue
+		}
+		g := m.Group
+		if err := store.SetGroup(old, &g, m.Envelope); err != nil {
+			logf("supervise: undoing the swap of %s: %v", m.Name, err)
+			continue
+		}
+		if ss.Name != m.Name {
+			if _, err := store.RenameSession(old, m.Name); err != nil {
+				logf("supervise: undoing the swap of %s: the name: %v", m.Name, err)
+			}
+		}
+		store.SetSwap(old, nil)
+		logf("supervise: %s: a swap cut short by a stop is undone", m.Name)
+	}
+	return finish
+}
+
+// finishSwaps is the second half of the start repair: the old session leaves the group, the
+// fresh one records it, the held messages move to it, the old pane closes (tried until the
+// holder answers, at most 2 minutes), then the hold and the mark go.
+func finishSwaps(ctx context.Context, store *structure.Store, finish map[string]string, move func(from, to string) (int, error),
+	unhold func(string), closePane func(ctx context.Context, pane string) error, logf func(string, ...any)) {
+	for old, id := range finish {
+		ss, ok := store.Session(old)
+		if !ok {
+			unhold(old)
+			continue
+		}
+		if ss.Group != nil {
+			store.SetGroup(old, nil, nil)
+		}
+		store.SetReplaced(id, old)
+		if n, err := move(old, id); err != nil {
+			logf("supervise: %s: moving its held messages: %v", ss.Name, err)
+		} else if n > 0 {
+			logf("supervise: %s: %d held messages moved to the fresh session", ss.Name, n)
+		}
+		go func(old string, ss api.Session) {
+			done := false
+			defer func() {
+				if !done {
+					unhold(old)
+				}
+			}()
+			if ss.Pane != "" && ss.State == api.SessionStateRunning && closePane != nil {
+				deadline := time.Now().Add(2 * time.Minute)
+				for {
+					cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					err := closePane(cctx, ss.Pane)
+					cancel()
+					var ce *control.Error
+					if err == nil || (errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindNotFound) {
+						break
+					}
+					if time.Now().After(deadline) || ctx.Err() != nil {
+						logf("supervise: closing the old pane of %s: %v", ss.Name, err)
+						return // the mark stays: the next start tries again
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(2 * time.Second):
+					}
+				}
+			}
+			done = true
+			unhold(old)
+			store.SetSwap(old, nil)
+			logf("supervise: %s: a swap cut short by a stop is finished", ss.Name)
+		}(old, ss)
+	}
 }
 
 // --- sibling actions on the group service ---

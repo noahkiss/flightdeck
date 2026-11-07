@@ -35,6 +35,11 @@ type supFake struct {
 	stuck    bool     // the member's turn never ends
 	sup      *superviseService
 	settings map[string]string
+	// holds counts the channel holds on the member; heldAtAsk and heldAtFresh say whether one
+	// was on when the hand-off ask went in and when the swap ran (review M2).
+	holds       int
+	heldAtAsk   bool
+	heldAtFresh bool
 }
 
 func pctOf(n int) *int { return &n }
@@ -74,10 +79,20 @@ func newSupFake(t *testing.T, harnessKind string) *supFake {
 			return f.ss.Compacts, nil
 		},
 		inUse: func(api.Session) string { f.mu.Lock(); defer f.mu.Unlock(); return f.inUse },
+		hold: func(_ context.Context, session, name string) (func(), error) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.holds++
+			var once sync.Once
+			return func() { once.Do(func() { f.mu.Lock(); f.holds--; f.mu.Unlock() }) }, nil
+		},
 		guard: func(string, string) error { return nil },
 		send: func(_ context.Context, session, text string, _ func(string) error) error {
 			f.mu.Lock()
 			f.sent = append(f.sent, text)
+			if strings.Contains(text, "hand-off") {
+				f.heldAtAsk = f.holds > 0
+			}
 			answer := f.note && strings.Contains(text, "hand-off")
 			stuck := f.stuck
 			f.mu.Unlock()
@@ -96,6 +111,7 @@ func newSupFake(t *testing.T, harnessKind string) *supFake {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.fresh = append(f.fresh, seed)
+			f.heldAtFresh = f.holds > 0
 			f.ss = api.Session{ID: "s2", Name: ss.Name, Pane: "p2", State: api.SessionStateRunning, Group: ss.Group, Replaced: ss.ID}
 			f.pct = pctOf(1)
 			return "s2", nil
@@ -242,6 +258,14 @@ func TestSuperviseFreshAfterCompacts(t *testing.T) {
 	if done.Fresh != "s2" || done.Reason != "" || done.Kind != actHandoff {
 		t.Fatalf("action %+v", done)
 	}
+	// Review M2: the member's deliveries were held from the ask through the swap, then let go.
+	f.mu.Lock()
+	atAsk, atFresh := f.heldAtAsk, f.heldAtFresh
+	f.mu.Unlock()
+	if !atAsk || !atFresh {
+		t.Fatalf("held at the ask %v, at the swap %v", atAsk, atFresh)
+	}
+	waitSup(t, "the hold released", func() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.holds == 0 })
 }
 
 // TestSuperviseHandoffNoNote: with no note within [groups] handoff_note_wait, the fresh session
@@ -416,6 +440,14 @@ func TestSuperviseHandoffNeverMidTurn(t *testing.T) {
 	if _, _, fresh, _, _, _ := f.snapshot(); len(fresh) != 0 {
 		t.Fatal("a fresh session started mid-turn")
 	}
+	// Review M2: held from the ask, released with the failure.
+	f.mu.Lock()
+	atAsk := f.heldAtAsk
+	f.mu.Unlock()
+	if !atAsk {
+		t.Fatal("no hold when the hand-off ask went in")
+	}
+	waitSup(t, "the hold released", func() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.holds == 0 })
 	f.sup.mu.Lock()
 	wait := time.Until(f.sup.retryAt["s1"])
 	f.sup.mu.Unlock()

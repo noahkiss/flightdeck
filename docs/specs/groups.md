@@ -916,11 +916,22 @@ that hab's own members.
   counts as ended once the agent worked and came back to its prompt, at most
   `[groups] handoff_note_wait`. The compaction is self-compact's, started by the hab, with the
   same `agent.compact` events.
-- **The swap.** The hab holds channel deliveries to the old session, renames it `<name>-<n>`
-  (the first free n) and takes it out of the group (no group, no envelope), starts the new
-  session under the old name in the old one's folder with its harness, model, group, envelope
-  and a trust cover, records `Session.replaced` on it, moves the held messages, then closes the
-  old pane. A failed start puts the old name and group back. The seed is the lead seed of the
+- **The swap.** The hab holds channel deliveries to the member from the moment the hand-off ask
+  goes in: a message that arrives during or after the hand-off turn waits, so none starts a turn
+  in a pane the swap closes. It refuses to swap when another turn started meanwhile. The hold
+  keeps the member's name resolving to the held session while no session holds it, so a
+  message sent to the name between the rename and the new session's start waits instead of
+  being refused. The hab then writes a swap mark on the old session's record, renames it
+  `<name>-<n>` (the first free n) and takes it out of the group (no group, no envelope), starts
+  the new session under the old name in the old one's folder with its harness, model, group,
+  envelope and a trust cover, records `Session.replaced` on it, moves the held messages, closes
+  the old pane and clears the mark. A failed start puts the old name and group back and lets
+  the held messages go to the old session. A start that fails after it made the session (a
+  timeout) finds the new session by name in the group and goes on with it, so the group never
+  has two sessions with the member's name. A gff-hab stopped mid-swap repairs it at its next
+  start from the mark: with no new session it puts the old name and group back; with one, it
+  holds the old session's deliveries from the channels' start, moves its messages, closes the
+  old pane and clears the mark. The seed is the lead seed of the
   item from the group record (read from the home hab), then "read the notes on task <id> and
   continue". A hand-off with no note within `[groups] handoff_note_wait` still swaps, and the
   action's reason says "no hand-off note". The home hab's record follows the name to the new

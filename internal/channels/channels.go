@@ -152,10 +152,14 @@ type Config struct {
 	// Flightdeck are not heard. A teammate's report watches the turn it begins
 	// (harness-adapters.md, Spawn). Nil: none. It is called with no lock held.
 	Delivering func(sessionID string, from api.ChannelEnd, seed bool) func(delivered bool)
-	Poll       time.Duration // the mail round; default 15 s
-	Retry      time.Duration // the delivery round; default 1 s
-	Now        func() time.Time
-	Logf       func(string, ...any)
+	// Held are sessions, by id, whose deliveries are held from the start until Unhold: the old
+	// sessions of the swaps a stopped gff-hab left, until the start repair moved their messages
+	// (groups.md 9.5).
+	Held  []string
+	Poll  time.Duration // the mail round; default 15 s
+	Retry time.Duration // the delivery round; default 1 s
+	Now   func() time.Time
+	Logf  func(string, ...any)
 	// write saves the state file; tests replace it to fail. Default writeSynced.
 	write func(path string, b []byte) error
 }
@@ -181,6 +185,9 @@ type Service struct {
 	// held counts the holds on deliveries to a session, by session id: a group member's
 	// fresh-session swap (Hold, groups.md 9.3).
 	held map[string]int
+	// alias keeps a held member's name resolving to it while no session holds the name, by
+	// name (Hold).
+	alias map[string]string
 
 	// The mesh.changed wake-up (mesh.md 6.5). Sender side, by target device id: fresh holds
 	// outboxes that gained an item not saved yet; woken holds devices told since their last
@@ -294,6 +301,12 @@ func New(cfg Config) (*Service, error) {
 		fresh: map[string]bool{}, woken: map[string]bool{}, toWake: map[string]bool{},
 		wanted: map[string]bool{}, running: map[string]bool{}, again: map[string]bool{},
 		wake: make(chan struct{}, 1), pulls: make(chan struct{}, 1),
+	}
+	for _, id := range cfg.Held {
+		if s.held == nil {
+			s.held = map[string]int{}
+		}
+		s.held[id]++
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -555,7 +568,7 @@ func (s *Service) resolve(to string) (target, error) {
 		return target{}, control.Errorf(api.ErrorKindNotFound, "no peer labelled %q in the peer list", label)
 	}
 	var found []target
-	if _, ok := s.cfg.Local.Session(to); ok {
+	if _, ok := s.localSession(to); ok {
 		found = append(found, target{device: s.cfg.Self, session: to, address: to})
 	}
 	var unlisted []string
@@ -758,7 +771,7 @@ func (s *Service) acceptLocked(from string, m api.ChannelMessage, now time.Time)
 			n++
 		}
 	}
-	sessionID, ok := s.cfg.Local.Session(m.To.Session)
+	sessionID, ok := s.localSessionLocked(m.To.Session)
 	fromOK := ValidName(m.From.Session) || (m.Round != nil && roundSender(m.From.Session))
 	switch {
 	case m.From.DeviceID != from:

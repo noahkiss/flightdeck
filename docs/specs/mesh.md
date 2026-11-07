@@ -873,10 +873,11 @@ the rest of client kind `hab`.
 - **Same session only.** A message goes to the session it arrived for. When that session was
   closed and its name taken by a new one, or the session was renamed, the message is `refused`
   "session <name> was replaced or renamed since the message arrived". One exception: a group
-  member's fresh-session swap (`groups.md` 9.3, 12.8). The hab holds deliveries to the old
-  session during the swap, then moves the messages that wait for it to the new session under
-  the same name, in their order, after the new session's seed. The sender sees them delivered
-  to the same address.
+  member's fresh-session swap (`groups.md` 9.3, 9.5, 12.8). The hab holds deliveries to the
+  old session from the hand-off ask through the swap. While no session holds the name, a
+  message sent to it waits for the held session. The hab then moves the messages that wait for
+  it to the new session under the same name, in their order, after the new session's seed. The
+  sender sees them delivered to the same address.
 - It delivers through `session.send`'s own path (`harness-adapters.md`, Input delivery):
   bracketed paste, then Enter, or for opencode one prompt through the pane's server; only while
   `idle`, `done` or `error`; never with a permission
