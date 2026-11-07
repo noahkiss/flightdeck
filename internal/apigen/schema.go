@@ -116,6 +116,7 @@ func Build() (doc *Document, err error) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			// A panic in the walk is the error; doc is nil, so no caller reads a half-built one.
 			doc, err = nil, fmt.Errorf("apigen: %v", r)
 		}
 	}()
@@ -213,6 +214,8 @@ func (b *builder) schemaFor(t reflect.Type) *Schema {
 		return &Schema{Type: "integer", Format: "int64"}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return &Schema{Type: "integer", Format: "uint64"}
+	case reflect.Float64:
+		return &Schema{Type: "number", Format: "double"}
 	case reflect.Slice:
 		if t.Elem().Kind() == reflect.Uint8 {
 			return &Schema{Type: "string", ContentEncoding: "base64"}

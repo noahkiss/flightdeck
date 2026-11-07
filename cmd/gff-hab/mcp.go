@@ -62,12 +62,13 @@ func mcpCmd(args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
 	sock := socketFlag(fs)
 	skill := fs.Bool("skill", false, "print the manual for the read tools and exit")
+	capcomTools := fs.Bool("capcom", false, "also list the Capcom service's personal tools (capcom-service.md 8); the hab serves them only to the Capcom engine")
 	fs.Parse(args)
 	if *skill {
 		_, err := io.WriteString(out, skillText())
 		return err
 	}
-	m := &mcpServer{dial: func(ctx context.Context) (caller, func(), error) { return toolCaller(ctx, *sock, os.Getenv) }}
+	m := &mcpServer{dial: func(ctx context.Context) (caller, func(), error) { return toolCaller(ctx, *sock, os.Getenv) }, capcom: *capcomTools}
 	return m.serve(in, out)
 }
 
@@ -83,7 +84,8 @@ func clearCredentials() {
 
 // mcpServer answers MCP messages. dial reaches the hab for one tool call.
 type mcpServer struct {
-	dial func(ctx context.Context) (caller, func(), error)
+	dial   func(ctx context.Context) (caller, func(), error)
+	capcom bool // list the personal tools (gff-hab mcp -capcom)
 
 	mu  sync.Mutex // one message written at a time
 	out io.Writer
@@ -204,7 +206,7 @@ func (m *mcpServer) handle(line []byte) {
 	case "ping":
 		m.reply(msg.ID, map[string]any{})
 	case "tools/list":
-		m.reply(msg.ID, map[string]any{"tools": mcpTools()})
+		m.reply(msg.ID, map[string]any{"tools": mcpToolsOf(m.tools())})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -214,7 +216,7 @@ func (m *mcpServer) handle(line []byte) {
 			m.fail(msg.ID, rpcInvalidParams, "tools/call params: %v", err)
 			return
 		}
-		t, ok := findIn(allTools(), p.Name)
+		t, ok := findIn(m.tools(), p.Name)
 		if !ok {
 			m.fail(msg.ID, rpcInvalidParams, "no tool %q: the read tools only read, and none writes; the only actions are start_session, spawn, hand_off, file_record, logbook_write, compact, set_up_project, the channel tools and the round tools", p.Name)
 			return
@@ -293,8 +295,24 @@ func errText(err error) string {
 
 // mcpTools describes every tool for tools/list, the read tools first. Each takes only its own
 // arguments.
-func mcpTools() []map[string]any {
-	tools := allTools()
+func mcpTools() []map[string]any { return mcpToolsOf(allTools()) }
+
+// tools is the server's tool list: every kit tool, and the personal tools with -capcom.
+func (m *mcpServer) tools() []kitTool {
+	if m.capcom {
+		return append(allTools(), personalTools...)
+	}
+	return allTools()
+}
+
+func (m *mcpServer) instructions() string {
+	if m.capcom {
+		return mcpRules + "\n" + channelRules + "\n" + personalRules
+	}
+	return mcpRules + "\n" + channelRules
+}
+
+func mcpToolsOf(tools []kitTool) []map[string]any {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		props := map[string]any{}

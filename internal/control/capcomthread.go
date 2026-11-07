@@ -17,6 +17,31 @@ type CapcomThread interface {
 	// CardAnswer answers a thread card for the client device (6.4, 7.4).
 	CardAnswer(ctx context.Context, client string, p api.CapcomCardAnswerParams) (api.CapcomCardAnswered, error)
 	RemoveSite(site string) (api.CapcomServiceStatus, error)
+	// DeviceContext takes the client device's latest context (8.1).
+	DeviceContext(client string, p api.DeviceContextPutParams) error
+}
+
+// dispatchDeviceContext answers device.context.put (capcom-service.md 8.1). Device context goes
+// only to the home hab: never over a peer link.
+func (c *conn) dispatchDeviceContext(m message, s api.Seq) (any, *Error) {
+	var p api.DeviceContextPutParams
+	if e := c.decodeUp(m, &p); e != nil {
+		return nil, e
+	}
+	ct := c.s.cfg.CapcomThread
+	if ct == nil {
+		return nil, appErr(api.ErrorKindUnavailable, hintNoCapcomThread, m.Method)
+	}
+	if c.peer != nil {
+		return nil, appErr(api.ErrorKindInvalid, "device.context.put does not run over a peer link: device context stays on the Capcom home host")
+	}
+	c.mu.Lock()
+	client := c.label
+	c.mu.Unlock()
+	if err := ct.DeviceContext(client, p); err != nil {
+		return nil, actionErr(m.Method, err)
+	}
+	return api.Empty{Seq: s}, nil
 }
 
 const hintNoCapcomThread = "%s needs the Capcom service, which this hab is not running: set [capcom] engine on the home host; the capcom-thread capability is absent"

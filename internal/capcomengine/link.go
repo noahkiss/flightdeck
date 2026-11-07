@@ -81,6 +81,12 @@ type LinkConfig struct {
 	// EngineKind is the engine the config names (claude or codex). A thread whose current
 	// session is another engine's opens the new one with a re-seed (18 A6). Nil: no check.
 	EngineKind func() string
+	// ToolSummary rewrites a tool line's summary before it is stored (8.1: device_location's
+	// line names the place, never coordinates). Nil: the engine's summary is kept.
+	ToolSummary func(name, summary string) string
+	// Attribution returns the data sources' marks a reply of turn shows (8.3: a turn that used
+	// weather). Nil: none.
+	Attribution func(turn string) []capcomthread.Attribution
 }
 
 // Link is gff-hab's side of one engine: one connection at a time, the delivery of thread items,
@@ -445,8 +451,12 @@ func (l *Link) handle(c *conn, m Message) {
 		l.mu.Lock()
 		event := l.st.Origin == "event" && l.st.Turn == m.TurnID()
 		l.mu.Unlock()
+		var marks []capcomthread.Attribution
+		if l.cfg.Attribution != nil {
+			marks = l.cfg.Attribution(m.TurnID())
+		}
 		if _, _, err := th.Add(capcomthread.Item{Kind: capcomthread.KindMessage, Author: capcomthread.Author{Kind: capcomthread.AuthorCapcom},
-			Turn: m.TurnID(), Part: m.Part, Text: m.Text, Event: event}); err != nil {
+			Turn: m.TurnID(), Part: m.Part, Text: m.Text, Event: event, Attribution: marks}); err != nil {
 			l.cfg.Logf("capcom: store a reply: %v", err)
 		}
 		l.touch()
@@ -454,7 +464,11 @@ func (l *Link) handle(c *conn, m Message) {
 		l.mu.Lock()
 		event := l.st.Origin == "event"
 		l.mu.Unlock()
-		if _, err := th.AddTool(m.TurnID(), capcomthread.ToolCall{Name: m.Name, Summary: m.Summary}, event); err != nil {
+		summary := m.Summary
+		if l.cfg.ToolSummary != nil {
+			summary = l.cfg.ToolSummary(m.Name, summary)
+		}
+		if _, err := th.AddTool(m.TurnID(), capcomthread.ToolCall{Name: m.Name, Summary: summary}, event); err != nil {
 			l.cfg.Logf("capcom: store a tool line: %v", err)
 		}
 		l.touch()
