@@ -166,6 +166,9 @@ public final class CapcomCardAdder {
         case refused(String)
         /// The hab took the answer, then the write failed.
         case writeFailed(String)
+        /// The answer's reply was lost: the hab may have taken it. Retry shows once the card
+        /// reads added by this device.
+        case unconfirmed(String)
         /// Nothing happened: a claim on its way, no card, or no writer.
         case none
     }
@@ -207,10 +210,7 @@ public final class CapcomCardAdder {
         do {
             r = try await claim(CapcomCardAnswerParams(choice: "add", item: item.id))
         } catch {
-            let why = ChatModel.refusal(error)
-            refusals[item.id] = why
-            if let e = error as? RPCError, e.kind == .conflict { return .conflict(why) }
-            return .refused(why)
+            return claimFailed(item.id, draft, error)
         }
         applied?(r.item)
         return await write(item.id, draft, writer)
@@ -225,9 +225,7 @@ public final class CapcomCardAdder {
         do {
             r = try await claim(CapcomCardAnswerParams(choice: "add", item: id))
         } catch {
-            let why = ChatModel.refusal(error)
-            if let e = error as? RPCError, e.kind == .conflict { return .conflict(why) }
-            return .refused(why)
+            return claimFailed(id, nil, error)
         }
         guard let draft = CapcomEventDraft.of(r.item) else { return .writeFailed("the card has no event") }
         return await write(id, draft, writer)
@@ -263,6 +261,20 @@ public final class CapcomCardAdder {
         busy.insert(item.id)
         defer { busy.remove(item.id) }
         return await write(item.id, draft, writer)
+    }
+
+    /// A claim that failed. A hab error means nothing was taken. Any other error may have
+    /// lost the reply to an answer the hab took: keep the draft for Retry.
+    private func claimFailed(_ id: String, _ draft: CapcomEventDraft?, _ error: Error) -> Outcome {
+        let why = ChatModel.refusal(error)
+        if let e = error as? RPCError, e.data != nil {
+            refusals[id] = why
+            if e.kind == .conflict { return .conflict(why) }
+            return .refused(why)
+        }
+        failures[id] = "Not confirmed: \(why)"
+        if let draft { drafts[id] = draft }
+        return .unconfirmed(why)
     }
 
     private func write(_ id: String, _ draft: CapcomEventDraft, _ writer: CapcomEventWriter) async -> Outcome {
