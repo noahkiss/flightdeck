@@ -992,7 +992,11 @@ Decision 5: a card with one "Add" tap, never silent.
   adds a note the model gets: "The user added … on <device>" or "dismissed". `add` on a calendar
   card whose event has ended is refused `invalid`. The card pushes once, with category
   `capcom-card` and its Add action. The app answers first and writes through EventKit only on
-  success, so a second device that taps Add writes nothing.
+  success, so a second device that taps Add writes nothing. Edit opens an editor in the app,
+  not the system's: the system editor saves the event itself before the app could claim the
+  card. A write that fails after the claim shows Retry on the device that claimed it; a
+  lock-screen Add before calendar access was ever asked fails that way and says to open the
+  app.
 - **Test seams.** A `testseam` build reads `$GFF_TEST_WEATHERKIT`, `$GFF_TEST_APPLE_MAPS` and
   `$GFF_TEST_GOOGLE_PLACES` as the services' bases. Tests use fake servers only.
 - **Owner steps.** In the Apple Developer account: a key with WeatherKit and MapKit enabled
