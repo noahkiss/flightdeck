@@ -116,8 +116,13 @@ func runSetup(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 
 // confirmationText says where a confirmation stands, for an agent.
 func confirmationText(c api.Confirmation) string {
-	if c.Kind == "group" || c.Start == nil {
+	switch {
+	case c.Kind == "group":
 		return groupConfirmText(c)
+	case c.Kind == "round" && c.Round != nil:
+		return roundConfirmationText(c)
+	case c.Start == nil:
+		return fmt.Sprintf("Confirmation %s (%s) is %s. %s\n", c.ID, c.Kind, c.State, c.Reason)
 	}
 	var b strings.Builder
 	what := "the start"

@@ -282,6 +282,14 @@ func (a toolArgs) list(name string) []string {
 // roundSpecArgs writes a tool call's definition arguments into spec, as the CLI's flags would.
 // It returns whether a project was named.
 func roundSpecArgs(spec *api.RoundSpec, a toolArgs, elsewhere bool) (bool, error) {
+	// A null argument is no argument: clients often send null for an optional field.
+	given := toolArgs{}
+	for k, v := range a {
+		if v != nil {
+			given[k] = v
+		}
+	}
+	a = given
 	d := roundDef{via: elsewhere}
 	set := map[string]bool{}
 	str := map[string]*string{"mode": &d.mode, "cron": &d.cron, "tz": &d.tz, "every": &d.every, "at": &d.at,
@@ -378,7 +386,7 @@ func runRoundRuns(ctx context.Context, c caller, a toolArgs) (any, string, error
 }
 
 func runRoundAdd(ctx context.Context, c caller, a toolArgs) (any, string, error) {
-	host := a.str("host")
+	host := a.str("host") // a null host is "": this hab
 	spec := api.RoundSpec{Name: a.str("name"), Mode: api.RoundModeFresh}
 	named, err := roundSpecArgs(&spec, a, host != "")
 	if err != nil {

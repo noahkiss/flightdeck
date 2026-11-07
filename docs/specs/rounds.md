@@ -1738,8 +1738,10 @@ choice open:
   confirmation (stage 10, below).
 - **-host from a pane is add only, and -host is refused with -via.** From a pane, `round add
   -host` is an agent's round on another host: it goes through `confirm.start_elsewhere` (Q1,
-  below). Every other verb with `-host` is refused from a pane: a direct dial would skip the
-  confirmation and the pane route's narrowing; `round ls -all` reads every host's rounds. With
+  below). Every other verb with `-host` is refused from a pane, and so is `-host` with
+  `-socket` or `-via` there ("from a pane" is `$GFF_HAB` alone, as for `confirm.answer`): a
+  direct dial would skip the confirmation and the pane route's narrowing; `round ls -all` reads
+  every host's rounds. With
   `-via` the peer list's endpoints are the remote hab's, not this machine's.
 - **The agent kit (stage 10).** `gff-hab mcp` serves the round tools `round_ls` (`all`, `host`:
   from the catalog), `round_show`, `round_runs`, `round_add`, `round_edit`, `round_rm`,
@@ -1753,7 +1755,9 @@ choice open:
   the agent's own hab), and fills in the trigger in plain words and the project's name from the
   peer's catalog. With the setting off the hab makes the round at once and the card is a record;
   on, the card waits up to 60 minutes and the tool waits 45 s, as `start_session` does; a cancel
-  or an expiry makes nothing. The hab, never the agent, makes a confirmed round, with
+  or an expiry makes nothing. `confirmation_read` and `gff-hab confirm show` show a round card in
+  its own words: runner, name, mode, trigger, project, harness, model, prompt or command, run
+  now, and the round made. A null tool argument counts as absent. The hab, never the agent, makes a confirmed round, with
   `round.create` over the peer link it dialed; the runner records no `created_by`, so the round
   is the owner's to edit; a lost answer is unknown. The card takes no edits. A round's name that
   no round has is tried as its id, so `gff round rm "$GFF_ROUND"` works; the pane route's
