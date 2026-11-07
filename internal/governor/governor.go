@@ -306,10 +306,10 @@ func (g *Governor) Spent(id string, input, output int64, usd float64) {
 	c.Output += output
 	g.saveLocked()
 	g.mu.Unlock()
+	g.Recheck()
 	if g.cfg.OnSpent != nil {
 		g.cfg.OnSpent(id)
 	}
-	g.Recheck()
 }
 
 // Recheck computes every answer again: call it when a reading or a policy changed. Each
@@ -338,6 +338,13 @@ func (g *Governor) Recheck() {
 		g.answers[id] = a
 		if !had || !old.same(a) {
 			g.queue = append(g.queue, change{id: id, a: a, first: !had})
+		} else if o, n := old, a; func() bool {
+			o.InputTok, o.OutputTok, o.SpentUSD, n.InputTok, n.OutputTok, n.SpentUSD = 0, 0, 0, 0, 0, 0
+			return o.Catalog(id) != n.Catalog(id)
+		}() {
+			// The pace holds but the use or the share moved: only Config.OnChange hears it.
+			// Spent's counters reach the catalog through OnSpent instead.
+			g.queue = append(g.queue, change{id: id, a: a, first: true})
 		}
 	}
 	if g.stop != nil {
