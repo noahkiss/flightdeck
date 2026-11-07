@@ -77,6 +77,7 @@ func (u *workspaceUI) listCatalog(hs *hostState) {
 				for _, e := range res.Hosts {
 					u.keepCatalog(e, ids)
 					u.keepHeavy(label, e, labels)
+					u.keepGovernor(label, e, labels)
 				}
 				u.dirty = true
 			}
