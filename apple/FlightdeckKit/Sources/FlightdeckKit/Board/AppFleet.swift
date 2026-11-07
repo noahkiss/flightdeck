@@ -37,7 +37,29 @@ public enum AppFleet {
         pruneUsage(fleet)
         addPush(to: fleet, environment: env)
         addSettings(to: fleet, defaults: defaults)
+        addDeviceContext(to: fleet, defaults: defaults)
         return fleet
+    }
+
+    /// Capcom's personal tools (capcom-service.md 8.1, 8.5): the device context reporter with
+    /// CoreLocation and EventKit, and the card writer. A put goes on the live connection of the
+    /// home hab; in the background, on a one-shot connection to the last home seen.
+    @MainActor
+    static func addDeviceContext(to fleet: Fleet, defaults: UserDefaults) {
+        fleet.capcom.cards.writer = SystemEventWriter()
+        fleet.capcom.cards.label = clientLabel
+        let r = DeviceContextReporter(prefs: CapcomPrefs(defaults: defaults), location: SystemLocationSource(), calendar: SystemCalendarSource())
+        let answerer = fleet.approvals?.answerer
+        r.send = { [weak fleet] p in
+            guard let fleet else { return false }
+            if await fleet.sendDeviceContextLive(p) { return true }
+            guard !fleet.isActive, let host = fleet.deviceContextHome, let answerer else { return false }
+            return await BackgroundWork.run("device context") {
+                (try? await answerer.call(host: host, HabMethods.deviceContextPut, p)) != nil
+            }
+        }
+        fleet.capcom.deviceContext = r
+        r.launch()
     }
 
     /// How long `confirm.answer` may take: a confirm returns once the hab ran

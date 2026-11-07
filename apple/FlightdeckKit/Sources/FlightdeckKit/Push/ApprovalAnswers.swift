@@ -33,6 +33,11 @@ public enum PushCategory {
     public static let capcomReply = "capcom-reply"
     public static let capcomReplyAction = "flightdeck.capcom-reply"
 
+    /// A calendar or reminder card (capcom-service.md 8.5): one Add, which claims the card
+    /// with `capcom.card.answer`, then writes on this device.
+    public static let capcomCard = "capcom-card"
+    public static let capcomCardAddAction = "flightdeck.capcom-card-add"
+
     /// The `push.register` features this build's categories cover. Sent in the same build
     /// that registers the Ask categories, never apart: iOS shows no actions for a category id
     /// the app did not register.
@@ -49,6 +54,8 @@ public enum NotificationIntent: Equatable, Sendable {
     case ask(PushMeta)
     /// Send the text to the Capcom session from a Capcom message's Reply (capcom-service.md 7.6).
     case capcomReply(host: String, session: String, text: String)
+    /// Add a Capcom calendar or reminder card from its notification (capcom-service.md 8.5).
+    case capcomCardAdd(host: String, item: String)
     /// Nothing to do (dismissed, or a push without our object).
     case none
 }
@@ -75,6 +82,9 @@ public enum NotificationAnswer {
             guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
                   let session = meta.session, !session.isEmpty else { return .open(meta) }
             return .capcomReply(host: meta.hab, session: session, text: t)
+        case PushCategory.capcomCardAddAction:
+            guard let item = meta.item, !item.isEmpty else { return .open(meta) }
+            return .capcomCardAdd(host: meta.hab, item: item)
         default:
             return .none
         }
