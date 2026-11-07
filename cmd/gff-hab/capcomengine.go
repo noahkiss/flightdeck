@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -59,6 +60,9 @@ type capcomEngine struct {
 	agents *harness.Store
 	// memory is Capcom's memory in Logbook (6.4); nil on a hab without Logbook.
 	memory *capcomMemory
+
+	// started, a func(session id), runs after each start: the groups' waiting reports.
+	started atomic.Value
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
@@ -423,6 +427,9 @@ func (e *capcomEngine) start(ctx context.Context) {
 	e.store.SetRoute(capcomRoute, id)
 	e.syncState()
 	e.sup.Ensure(ctx)
+	if f, _ := e.started.Load().(func(string)); f != nil {
+		f(id) // reports that waited while this hab ran no service (groups.md 12.1)
+	}
 }
 
 // lose stops the engine after its turn and renames the record capcom-earlier-<n>: this hab lost
