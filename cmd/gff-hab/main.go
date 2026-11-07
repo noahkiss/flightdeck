@@ -631,6 +631,11 @@ func serve(args []string) error {
 			if c := govCatalog.Load(); c != nil {
 				c.Poke()
 			}
+		},
+		OnSpent: func(string) {
+			if c := govCatalog.Load(); c != nil {
+				c.Poke() // today's tokens and cost
+			}
 		}})
 	defer gov.Close()
 	caps := []string{"usage", "host-stats"}
