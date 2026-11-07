@@ -80,6 +80,7 @@ type workspaceUI struct {
 	// Rounds (rounds.go).
 	showRuns bool             // run sessions show; off hides those that do not need the owner
 	rounds   []board.RoundRow // every round on every host, ordered
+	groups   []board.GroupRow // every group on every home host, ordered (groups.go)
 	onRound  bool             // the board's selection is on a round row
 	boardTop int              // the first board line under the head, so the selection shows
 	selRound board.RoundKey
@@ -136,6 +137,7 @@ func (u *workspaceUI) refresh() {
 	u.order.Sort(u.rows)
 	u.rounds = board.RoundRows(hs, u.catalog)
 	board.SortRounds(u.rounds)
+	u.groups = board.GroupRows(hs, u.groupCatalog, u.c.cfg.Now())
 	u.follow()
 	u.markSeen()
 	u.openPending()
@@ -1326,6 +1328,9 @@ func (u *workspaceUI) drawBoard(a rect) {
 					ctx = "round " + r.RoundName
 				}
 			}
+			if ctx == "" && r.Group != "" {
+				ctx = "group " + r.Group
+			}
 			text := fmt.Sprintf("%s %-20s %-14s %-10s %-9s %-18s %-10s %s", stateMark(r), name,
 				middle(proj, 14), middle(r.Host, 10), middle(harness, 9), middle(r.StateWord(), 18), when, ctx)
 			st := rankStyles[r.Rank]
@@ -1340,6 +1345,12 @@ func (u *workspaceUI) drawBoard(a rect) {
 	}
 	if len(u.rows) == 0 {
 		line(" no sessions on any online host", dimStyle)
+	}
+	if gl := u.groupLines(now); len(gl) > 0 {
+		line(" Groups", boldStyle)
+		for _, l := range gl {
+			line(l.text, l.st)
+		}
 	}
 	if rounds := u.visibleRounds(); len(rounds) > 0 {
 		line(" Rounds", boldStyle)
