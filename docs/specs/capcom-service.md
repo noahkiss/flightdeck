@@ -410,10 +410,15 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 - **After each `ready`** the engine sends `approval.request` again for every request still open,
   since a gff-hab that restarted holds none. gff-hab keeps one card per request id.
 - **Markers.** Each input the engine hands to the SDK starts with the line
-  `[flightdeck item <id>]`. In the item's text and context, a line that starts with
+  `[flightdeck item <id>]`; an input that is not the user's own message adds its kind
+  (`[flightdeck item <id> event]`, `agent`, `note`). In the item's text and context, a line that starts with
   `[flightdeck` or `[context` has its `[` turned into `(`, so outside text cannot forge a marker
   or a context header. At start, before it takes any input, the engine reads the resumed
-  SDK session's transcript for these lines and keeps their ids as handed.
+  SDK session's transcript for these lines and keeps their ids as handed. Only untagged inputs
+  count their URLs as seen (5.3); for a marker written before the tag, the header line after it
+  tells an agent report or a note apart. An input gff-hab sends again whose id the engine
+  already handed goes to the model no second time: when the model has it, the engine sends
+  `input.taken` again, since gff-hab holds no take of it.
 - **SDK facts the engine builds on** (SDK 0.3.319, verified in A2 against the bundled binary
   and a fake Messages API):
   - The SDK sends its `init` message only when the first user message arrives. For the start
@@ -1261,7 +1266,9 @@ sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice 
   `set_up_project`, `spawn`), the coordinator's acting group calls (`group.create`, `.amend`,
   `.close`, `.retry`, `member.compact`, `.handoff`, `.action`) and round changes. A turn an
   agent's report began counts as an event turn (9.1). Reads and Logbook writes go on as in a
-  user turn (6.4). The manual's Events part tells the model so.
+  user turn (6.4). The manual's Events part tells the model so. The engine refuses a WebFetch
+  of a URL the conversation did not show in such a turn, with no card; a user message or a
+  note that joins the turn makes it a user turn from there.
 - **The outcome.** A reply with text in the turn makes it `told`. A batch taken by a turn the
   hab never heard end (the engine crashed) is settled at the next `ready` that names another
   turn or none. On losing the mark every waiting event and every batch no turn took gives its
@@ -1269,7 +1276,8 @@ sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice 
 - **Push.** A Capcom message from a turn that took an urgent batch pushes time-sensitive.
 - **Not built in A7.** The first look on the small model and `escalate` (9.2): an event turn
   runs on the model the pace gives, as a user turn does. `unseen` after "New conversation" and
-  after the thread file is set aside.
+  after the thread file is set aside. Notices raised on other hosts, other than through a round
+  there. A batch whose items are gone from the thread still goes, as "0 event(s)".
 
 ---
 

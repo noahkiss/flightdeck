@@ -3,8 +3,9 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// A marker counts only at the start of a line.
-export const MARKER_RE = /^\[flightdeck item ([^\]\s]+)\]/gm;
+// A marker counts only at the start of a line: the item id, then its kind (a marker written
+// before the kind tag has none).
+export const MARKER_RE = /^\[flightdeck item ([^\]\s]+)(?: ([a-z]+))?\]/gm;
 
 // neutralise turns every line of outside text that starts like one of the engine's own lines
 // (an item marker, the start check, a context header) into plain text: its "[" becomes "(". So a
@@ -14,8 +15,23 @@ export function neutralise(text: string): string {
   return text.replace(/^(\s*)\[(?=\s*(flightdeck|context)\b)/gim, '$1(');
 }
 
-export function markerLine(id: string): string {
-  return `[flightdeck item ${id}]`;
+// markerLine tags an item that is not the user's own message with its kind, so a transcript
+// read later tells outside text from the user's (9.4). A user's message has no tag.
+export function markerLine(id: string, kind?: string): string {
+  if (!kind || kind === 'message') return `[flightdeck item ${id}]`;
+  return `[flightdeck item ${id} ${/^[a-z]+$/.test(kind) ? kind : 'other'}]`;
+}
+
+// The header lines itemLines writes after the marker for an item that is not the user's.
+const OUTSIDE_HEADERS = /^\s*(Flightdeck events|Channel message from|Flightdeck note)\b/;
+
+// markedUser reports whether a marked input in a transcript is the user's own message: a tagged
+// marker is not; an untagged one is, unless the header line after it names outside text (a
+// marker written before the kind tag).
+export function markedUser(kind: string | undefined, rest: string): boolean {
+  if (kind) return false;
+  const next = rest.replace(/^\r?\n/, '').split('\n', 1)[0] ?? '';
+  return !OUTSIDE_HEADERS.test(next);
 }
 
 // The Claude config directory: $CLAUDE_CONFIG_DIR, else ~/.claude.

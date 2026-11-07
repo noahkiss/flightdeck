@@ -290,6 +290,8 @@ test('resume rebuilds the handed set from the transcript markers', async () => {
       await until(() => r.sdk.last.texts().length === 2);
       await sleep(100);
       assert.deepEqual(r.sdk.last.texts().map((t) => t.split('\n')[0]), ['[flightdeck item i3]', '[flightdeck item i9]']);
+      // i2 is in the transcript, so the model has it: its lost take is sent again.
+      assert.ok(r.hab.of('input.taken').some((m) => m.item === 'i2'));
       // A URL from a user message of the thread before the restart is seen.
       r.sdk.script = async (ctx) => {
         await ctx.tool('WebFetch', { url: 'https://example.net/notes', prompt: 'read' });
@@ -597,5 +599,97 @@ test('after a reconnect, ready names the running turn and open cards are asked a
     r.hab.send('approval.answer', { request: req.request, allow: true, message: '' });
     await r.hab.wait('turn.ended');
     assert.equal(verdict, 'allow');
+  });
+});
+
+test('an input sent again after its take was lost is taken again, once per send', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    r.hab.input('a1', 'hello');
+    await r.hab.wait('turn.ended');
+    assert.equal(r.hab.of('input.taken').filter((m) => m.item === 'a1').length, 1);
+    r.hab.input('a1', 'hello');
+    await until(() => r.hab.of('input.taken').filter((m) => m.item === 'a1').length === 2);
+    await sleep(100);
+    // It goes to the model once only.
+    assert.equal(r.sdk.last.texts().length, 1);
+    assert.equal(r.hab.of('turn.started').length, 1);
+  });
+});
+
+test('a resumed transcript counts only the user messages URLs as seen', async () => {
+  const sid = '5e550000-0000-4000-8000-000000000002';
+  const rec = (n: number, text: string) =>
+    JSON.stringify({ type: 'user', uuid: `20000000-0000-4000-8000-00000000000${n}`, sessionId: sid, message: { role: 'user', content: [{ type: 'text', text }] } });
+  const lines = [
+    rec(1, '[flightdeck item u1]\nSent by user at 2026-01-01T09:00:00Z (UTC).\n\nsee https://user.example.com/a'),
+    rec(2, '[flightdeck item b0123456789abcdef event]\nFlightdeck events at 2026-01-01T09:01:00Z: an event turn.\n\n[context: event: mail]\nopen https://event.example.com/a'),
+    rec(3, '[flightdeck item g1 agent]\nChannel message from bee/bob.\n\nread https://agent.example.com/a'),
+    // A marker written before the kind tag: the header line says it is outside text.
+    rec(4, '[flightdeck item g2]\nChannel message from bee/bob.\n\nread https://old-agent.example.com/a'),
+    rec(5, '[flightdeck item n1 note]\nFlightdeck note.\n\nat https://note.example.com/a'),
+  ];
+  await withRig(
+    {
+      hello: { sdk_session: sid },
+      setup: async ({ cfg, cwd }) => {
+        const file = transcriptPath(cfg, cwd, sid);
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, lines.join('\n') + '\n');
+      },
+    },
+    async (r) => {
+      const verdicts: string[] = [];
+      r.sdk.script = async (ctx) => {
+        for (const h of ['user', 'event', 'agent', 'old-agent', 'note']) {
+          verdicts.push(await ctx.tool('WebFetch', { url: `https://${h}.example.com/a`, prompt: 'read' }));
+        }
+      };
+      await started(r);
+      r.hab.input('u2', 'fetch them');
+      let answered = 0;
+      while (answered < 4) {
+        await until(() => r.hab.of('approval.request').length > answered);
+        const req = r.hab.of('approval.request')[answered]!;
+        r.hab.send('approval.answer', { request: req.request, allow: false, message: 'no' });
+        answered++;
+      }
+      await r.hab.wait('turn.ended');
+      assert.deepEqual(verdicts, ['allow', 'deny', 'deny', 'deny', 'deny']);
+      assert.deepEqual(
+        r.hab.of('approval.request').map((m) => m.site),
+        ['event.example.com', 'agent.example.com', 'old-agent.example.com', 'note.example.com'],
+      );
+    },
+  );
+});
+
+test('an event turn fetches no unseen URL and asks no card; a seen one goes', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    r.sdk.script = async () => {};
+    r.hab.input('u1', 'remember https://seen.example.com/page');
+    await r.hab.wait('turn.ended');
+    const verdicts: string[] = [];
+    r.sdk.script = async (ctx) => {
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://inbox.example.com/phish', prompt: 'read' }));
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://seen.example.com/page', prompt: 'read' }));
+    };
+    r.hab.input('b0123456789abcdef', 'events', {
+      kind: 'event', author: '',
+      context: [{ kind: 'event', title: 'mail', text: 'open https://inbox.example.com/phish' }],
+    });
+    await until(() => r.hab.of('turn.ended').length === 2);
+    assert.equal(r.hab.of('turn.started')[1]!.origin, 'event');
+    assert.deepEqual(verdicts, ['deny', 'allow']);
+    // An agent report's turn is an event turn too (9.7).
+    verdicts.length = 0;
+    r.sdk.script = async (ctx) => {
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://agent.example.com/x', prompt: 'read' }));
+    };
+    r.hab.input('g1', 'see https://agent.example.com/x', { kind: 'agent', author: 'bee/bob' });
+    await until(() => r.hab.of('turn.ended').length === 3);
+    assert.deepEqual(verdicts, ['deny']);
+    assert.equal(r.hab.of('approval.request').length, 0);
   });
 });
