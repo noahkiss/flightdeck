@@ -4,25 +4,20 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/noahkiss/flightdeck/api"
-	"github.com/noahkiss/flightdeck/internal/channels"
 )
 
-// The far sides of the capcom and group modes (rounds.md 5.2) are built by later parts: the
-// Capcom service (Part 14 A2, capcom-service.md 9.5) and the group record (Part 15 B3,
-// groups.md 5.1). Until they exist, this hab offers no Capcom service and publishes no groups,
-// so a capcom round is refused at creation and a group round finds no group. A build with the
-// testseam tag can stand in for both from files (roundseam.go), so the rounds side is tested
-// end to end.
+// The group record is built by Part 15 B3 (groups.md 5.1). A build with the testseam tag can
+// stand in for the catalog's groups section from a file (roundseam.go), so the rounds side of a
+// group round is tested end to end. The capcom mode's far side is the Capcom service
+// (capcomevents.go, capcom-service.md 9.5).
 
 // roundWords are the capability words rounds add to this hab's catalog: round-lock, and
-// capcom-service while a Capcom service runs here.
-func roundWords() []string {
+// capcom-service while this hab holds the Capcom mark and runs the service (9.5).
+func roundWords(eng *capcomEngine) []string {
 	w := []string{capRoundLock}
-	if roundCapcomSeam != "" {
+	if eng != nil && eng.holds() {
 		w = append(w, capCapcomService)
 	}
 	return w
@@ -44,65 +39,19 @@ func roundGroups() []api.CatalogGroup {
 	return gs
 }
 
-// fakeServiceActor is the stand-in Capcom service's actor id on the hab with device id self.
-func fakeServiceActor(self string) string {
-	return "capcom-service-" + strings.TrimPrefix(shortID(self), "SHA256:")
-}
-
-// withServiceActor adds the Capcom service's actor id to this hab's capcom section while it is
-// the home host and runs the service (capcom-service.md 9.5).
-func withServiceActor(c *api.CatalogCapcom, self string) *api.CatalogCapcom {
-	if c == nil || roundCapcomSeam == "" || c.Home != self {
+// withServiceActor adds the Capcom service's actor id, its session id, to this hab's capcom
+// section while it is the home host and runs the service (capcom-service.md 9.5).
+func withServiceActor(c *api.CatalogCapcom, self string, eng *capcomEngine) *api.CatalogCapcom {
+	if c == nil || eng == nil || c.Home != self {
+		return c
+	}
+	id := eng.Session()
+	if id == "" {
 		return c
 	}
 	cc := *c
-	cc.Service = fakeServiceActor(self)
+	cc.Service = id
 	return &cc
-}
-
-// roundCapcomService is the channels Capcom hook: nil (no service) unless a test stands one in.
-// The stand-in answers each round message with the first line of its file ("accepted",
-// "declined off", "refused Capcom moved to x"), repeats are answered duplicate, every message
-// it took is appended as a JSON line to <file>.got, and a second line "outcome <word>" sends
-// that outcome a moment after an accepted message.
-func roundCapcomService(chs func() *channels.Service, logf func(string, ...any)) func(api.ChannelMessage) (api.ChannelState, string) {
-	if roundCapcomSeam == "" {
-		return nil
-	}
-	var mu sync.Mutex
-	taken := map[string]bool{}
-	return func(m api.ChannelMessage) (api.ChannelState, string) {
-		mu.Lock()
-		defer mu.Unlock()
-		b, _ := os.ReadFile(roundCapcomSeam)
-		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-		word, reason, _ := strings.Cut(strings.TrimSpace(lines[0]), " ")
-		if f, err := os.OpenFile(roundCapcomSeam+".got", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-			j, _ := json.Marshal(m)
-			f.Write(append(j, '\n'))
-			f.Close()
-		}
-		state := api.ChannelState(word)
-		if state == api.ChannelStateAccepted && taken[m.ID] {
-			return api.ChannelStateDuplicate, ""
-		}
-		if state == api.ChannelStateAccepted {
-			taken[m.ID] = true
-			if len(lines) > 1 {
-				if o, ok := strings.CutPrefix(strings.TrimSpace(lines[1]), "outcome "); ok {
-					id := m.ID
-					time.AfterFunc(300*time.Millisecond, func() {
-						if s := chs(); s != nil {
-							if err := s.Outcome(id, o, time.Now()); err != nil {
-								logf("fake capcom: outcome %s: %v", id, err)
-							}
-						}
-					})
-				}
-			}
-		}
-		return state, reason
-	}
 }
 
 // roundLock is the round lock's in-use reason for a session, "" when free (rounds.md 6.1): what

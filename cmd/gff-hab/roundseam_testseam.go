@@ -26,6 +26,5 @@ func init() {
 	if d, err := time.ParseDuration(os.Getenv("GFF_TEST_SUPERVISE_TICK")); err == nil && d > 0 {
 		superviseTickSeam = d
 	}
-	roundCapcomSeam = os.Getenv("GFF_TEST_CAPCOM_SERVICE")
 	roundGroupsSeam = os.Getenv("GFF_TEST_GROUPS")
 }
