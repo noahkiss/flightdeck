@@ -68,7 +68,9 @@ exports.act = function () { var r = fd.exec(["x"]); if (!r.stdout_cut) throw new
 	if err := r.Refresh(context.Background(), fixedCall); !errors.As(err, &se) || !strings.Contains(se.Message, "too large") {
 		t.Errorf("oversized hab answer: %v", err)
 	}
-	if d := time.Since(start); d > 2*time.Second {
+	d := time.Since(start)
+	t.Logf("the oversized answer failed its call in %s", d)
+	if d > 2*time.Second {
 		t.Errorf("took %s", d)
 	}
 	if err := r.Act(context.Background(), "x", nil, fixedCall); err != nil {

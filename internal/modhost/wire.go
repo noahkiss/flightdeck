@@ -335,9 +335,17 @@ func (c *conn) end() {
 func (c *conn) reply(re uint64, body any, err error) error {
 	f := frame{Re: re, Err: encodeError(err)}
 	if err == nil && body != nil {
+		// A raw result over the limit is refused before any encoding: json.Marshal checks and
+		// compacts a RawMessage byte by byte, twice here (the body, then the frame), and over
+		// 16 MiB that takes seconds under the race detector.
+		if raw, ok := body.(json.RawMessage); ok && len(raw) > maxFrame {
+			return fmt.Errorf("%w: a %d-byte result, the limit is %d", errFrameTooBig, len(raw), maxFrame)
+		}
 		data, merr := json.Marshal(body)
 		if merr != nil {
 			f.Err = encodeError(merr)
+		} else if len(data) > maxFrame {
+			return fmt.Errorf("%w: a %d-byte result, the limit is %d", errFrameTooBig, len(data), maxFrame)
 		} else {
 			f.Body = data
 		}
