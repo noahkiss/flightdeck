@@ -170,6 +170,7 @@ const usage = `usage:
   gff-hab confirm show   [-socket path] [-json] <id>
   gff-hab confirm answer [-socket path] [-host h -folder f] [-harness h] [-model m] [-seed text | -seed-file path] <id> confirm|cancel
   gff-hab round ls|show|add|edit|rm|pause|unpause|run|runs|export|apply [-socket path | -via command] ...
+  gff-hab group ls [-state s] | show|pause|resume|close <group>  [-socket path] [-json]
   gff-hab mcp [serve] [-socket path] [--skill]
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab agent compact [-json] [follow-up... | -]   (the same as gff agent; in an agent's pane)
@@ -253,6 +254,8 @@ func main() {
 		err = confirmCmd(os.Args[2:], os.Stdout)
 	case "round":
 		err = roundCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "group":
+		err = groupCmd(os.Args[2:], os.Stdout)
 	case "mcp":
 		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "agent":
