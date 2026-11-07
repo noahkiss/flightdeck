@@ -676,7 +676,7 @@ item lands, changes nothing. A new
 - **The idle check** runs with the members' refresh (every 5 s): a reviewer idle for
   `[groups] reviewer_idle`, or exited, with no verdict is reported once per submitted head.
 - **Not built in B7.** The fetch before a review worktree (B4). The lane that lands a `ready`
-  item (B4). The app's and gff's group card: the record carries the verdict, its findings and
+  item (B4). Both are built in B4 (7.6). The app's and gff's group card: the record carries the verdict, its findings and
   `same_harness` for them.
 
 ---
@@ -691,10 +691,10 @@ item lands, changes nothing. A new
   work. Read-only workers run in the lead's folder.
 - **Leads push their branch to the project's remote** (the `origin` the catalog knows). The lane
   reads branches from the remote, so a lead on another host needs no file path the home hab can
-  see.
-- **gff-hab fetches before it makes a group worktree.** `worktree.create` does not fetch today
-  (`hab-logic-api.md` 3.10); groups need a `fetch` option on it (12.7). A branch the hab made
-  from the remote under `group/` is not foreign, so its setup needs no yes.
+  see. Built (B4): the member's hab pushes the branch at the submit, not the lead (7.6).
+- **gff-hab fetches before it makes a group worktree,** through `worktree.create`'s `fetch`
+  option (12.7). A branch the hab made from the remote under `group/` is not foreign, so its
+  setup needs no yes.
 
 ### 7.2 Stacking
 
@@ -773,6 +773,69 @@ When every item is landed or dropped, or the coordinator calls `group_close`:
   landed items among them. A working member is left running and listed, and its worktree with
   it.
 - It marks the Logbook plan record `done` (or `dropped` when nothing landed).
+
+### 7.6 Built choices (stage B4, task-ur5zmuah)
+
+`internal/lane` runs git and the project's commands for one land; `internal/groups` holds the
+lane's rules on the record; gff-hab's group service runs the lane on the home hab.
+
+- **Who pushes member branches (a change from 7.1).** The member's own hab pushes, not the lead
+  agent: at `lane_submit` it pushes `group/<group>/<item>`, and at a pass with fixes the review
+  branch, to the project's remote (the remote whose URL is the project's identity), with
+  `--force`. A group branch belongs to its member, so the hab replaces what is there. Reason:
+  the lane must find the submitted commit on the remote, and an agent that forgets to push
+  would stall its item. The hab pushes only for a submit the home hab would take, and the
+  fixed head only while the item is in review: a push never replaces a branch the lane is
+  landing. A project with no remote pushes nothing, and the lane waits.
+- **The fetch (12.7).** Every group worktree passes `fetch`, which fetches only when `base`
+  names no commit in that repository. So a reviewer on another host than its lead gets the
+  submitted commit, and a worktree whose base is already here needs no network. The fetch names
+  its refspec (`+refs/heads/*:refs/remotes/<remote>/*`), so a single-branch clone gets the group
+  branches too.
+- **One run at a time per repository** on the home hab (one lock per project identity), one
+  item at a time per group. The lane works in its own worktree under `<state>/lane`. It runs only
+  while the group is `running`; a pause holds it.
+- **The steps.** The lane fetches, then rebases the land head in its worktree. Step 3 reads
+  `flightdeck.json` from the fetched target and runs `lane.checks` under the heavy-run lock.
+  Step 4 pushes the rebased branch with `--force-with-lease` and saves the rebased head in the
+  item's `attempts`. Step 5 runs `lane.ci` with `$1` the branch and `$2` the commit (also
+  `GFF_LANE_BRANCH`, `GFF_LANE_COMMIT` and `GFF_LANE_TARGET`). Step 6 is a plain push of the
+  rebased commit, so the remote refuses anything but a fast-forward. Once sent, the land push is
+  not cut short.
+- **Races and rules.** A push refused as `non-fast-forward`, `fetch first` or `stale info`, or a
+  server that lost its own ref lock, is a race: the lane starts again at step 1, up to
+  `[groups] lane_tries`. Any other `[remote rejected]`, or a refusal that names a protected
+  branch or a permission, is a rule: the lane stops for the repository (`lane.stopped`), and
+  `group_retry` with `lane` starts it again. Any other failure, such as no network, makes the
+  lane wait (`lane.waits`) and try again each minute, with one retry armed per group. A waiting
+  run records no attempt.
+- **A restart.** An item stays `landing` across a restart. At its next run, a saved rebased head
+  that the target already holds means the land went through: the item is marked landed and
+  nothing is pushed.
+- **Stacking.** The plan check sets `after` from `touches` that overlap an earlier item's
+  paths or name it. A stacked lead's worktree starts from the earlier item's head. The lane
+  rebases a stacked item with `--onto <target> <base head>`, from the newest head of the earlier
+  item that the stacked item holds (its land head, the commit it landed as, the reviewer's fixed
+  head, its submitted head, or a head the lane pushed for it). When the stacked item holds none
+  of them, its branch started on a head the earlier item no longer has: it goes back to its
+  lead.
+- **Back to the lead.** The lead gets the step, what to do and the first
+  `[groups] fix_output_lines` lines of output; the coordinator gets one line. "Main keeps moving"
+  names the number of tries.
+- **After the land.** The lead hears that it landed and that its session keeps running. A landed
+  item's lead slot is free. The hab removes a landed member's worktree on this hab once its
+  session has ended, with no force, so a worktree with uncommitted changes stays.
+- **The end.** `group_close`, or every item landed or dropped, ends the group. A run in flight
+  stops first; a land push already sent counts, and any other run's item goes back to `ready`
+  and is listed. Then the end closes idle members on this hab, removes landed worktrees and lists
+  the leftovers.
+- **A submit while landing** is refused with `conflict`.
+- **Not built in B4.** Members on another hab: the end lists them and their worktrees, and does
+  not close them or remove the worktrees (remote session-end detection, as in B3). A submit of a
+  ready item can still race a lane run that starts between the state check and the push; the
+  lane's lease on the branch push catches it as a race. The app's and gff's lane rows on the
+  group card. This repository's `ci.yml` has no `group/**` trigger: it matters only once a group
+  on this repository names a `lane.ci` that watches GitHub CI.
 
 ---
 
@@ -855,7 +918,7 @@ when the command dies.
   episode raises one notice; the coordinator source is a hook B3 fills (the tests name a
   session through a test seam, and that session gets one channel message per episode). The
   message names the host, the free space, the volume and the free space that resumes grants;
-  the leftovers of 7.5 come with B4. The long-hold notice is built; its message to coordinators
+  the leftovers of 7.5 are built (B4, 7.6). The long-hold notice is built; its message to coordinators
   with a member waiting comes with B3.
 - **Where it shows.** gff's status board lists, under Heavy runs, each host whose lock is in use
   or whose disk is low, from the catalog. The group card's waits line comes with B3.
@@ -1135,6 +1198,11 @@ Built (task-7kzvfcna): `app.md` 7.10, Group members, states it.
 `worktree.create` gains a `fetch` option: fetch the project's remote before the branch is made.
 A `group/` branch made from the remote is not foreign.
 
+Built (B4): the fetch runs only when `base` names no commit in the repository, so a base that is
+already here needs no network; a project with no remote fetches nothing. It fetches every branch
+of the remote whose URL is the project's identity, with an explicit refspec and no tags. A fetch
+that fails answers `unavailable`. CLI: `gff-hab worktree create -fetch`.
+
 ### 12.8 Channels across a member swap (`mesh.md` 6.5, B6) — shared
 
 Today a held message to a session renamed or replaced since it arrived is refused. A group's
@@ -1298,7 +1366,7 @@ to `app.md` 20.3, and built `[groups] trust_hold`; the app's row is not built ye
 `group.close_members` and the keys `[groups] keep_ended`, `inbox_max` and `inbox_days`; B5 adds the `heavy.*` rows; B6 built `group.compact_at`,
 `group.fresh_after_compacts`, `group.fresh_transcript_mb` and `group.handoff_at`, and the keys
 `[groups] handoff_note_wait` and `sibling_wait`; B7 built the keys `[groups] max_findings`, `brief_findings` and
-`reviewer_idle`. Each stage that
+`reviewer_idle`; B4 built `[groups] lane_tries` and `fix_output_lines`. Each stage that
 reads a `[groups]` or `[heavy]` key adds it to `docs/examples/hab.toml`.
 
 The project's `flightdeck.json` gains `lane.checks`, `lane.ci` and `lane.build_folders`, read
