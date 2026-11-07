@@ -345,6 +345,7 @@ test('WebFetch of an unseen URL raises an approval card; allow lets it run', asy
     assert.equal(req.tool, 'WebFetch');
     assert.equal(req.input.url, 'https://unseen.example.com/secret?q=1');
     assert.equal(req.reason, 'Capcom wants to open unseen.example.com/secret');
+    assert.equal(req.site, 'unseen.example.com');
     r.hab.send('approval.answer', { request: req.request, allow: true, message: '' });
     await r.hab.wait('turn.ended');
     assert.equal(verdict, 'allow,allow');

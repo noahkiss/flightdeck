@@ -180,6 +180,9 @@ type Message struct {
 	// hello, sites: the sites the user allowed with "Allow this site" (5.3). A WebFetch of a
 	// URL on one of them needs no card. A sites message with none clears the list.
 	Sites []string `json:"sites,omitempty"`
+	// approval.request: the site of a WebFetch's URL as the engine names it, so one parser
+	// decides what "Allow this site" keeps and matches (5.3).
+	Site string `json:"site,omitempty"`
 
 	// input, input.taken
 	Item json.RawMessage `json:"item,omitempty"`

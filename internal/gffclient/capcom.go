@@ -59,16 +59,32 @@ func (u *workspaceUI) readThread() {
 		if err != nil {
 			return err
 		}
+		// capcom.typing has no snapshot: a turn running now is what typing means.
+		st, serr := cl.CapcomStatus(ctx, api.CapcomServiceParams{})
 		u.c.run(func() {
 			if u.thread != nil && u.thread.host == host {
 				for _, it := range page.Items {
-					u.thread.put(it)
+					u.thread.putOlder(it)
+				}
+				if serr == nil && st.Turn == "" {
+					u.thread.typing = false
 				}
 				u.c.layoutChanged()
 			}
 		})
 		return nil
 	})
+}
+
+// putOlder adds an item from a page read: an item an event already brought is newer, and
+// stays.
+func (t *threadState) putOlder(it api.CapcomItem) {
+	for i := range t.items {
+		if t.items[i].ID == it.ID {
+			return
+		}
+	}
+	t.put(it)
 }
 
 // put adds or replaces an item, in id order.

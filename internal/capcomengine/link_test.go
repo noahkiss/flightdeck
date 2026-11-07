@@ -431,6 +431,16 @@ func TestLinkAllowSite(t *testing.T) {
 			break
 		}
 	}
+	// The engine names the site (an IDN in punycode): that is what is kept.
+	e2.send(Message{Type: TApprovalRequest, Request: "r3", Tool: "WebFetch", Site: "xn--bcher-kva.de", Input: json.RawMessage(`{"url":"https://bücher.de/x"}`)})
+	waitFor(t, "r3 open", func() bool { a := h.link.Status().Approval; return a != nil && a.Request == "r3" })
+	if err := h.link.Answer("r3", ChoiceAllowSite, "dev1"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the engine's site kept", func() bool { return strings.Join(h.link.Sites(), ",") == "xn--bcher-kva.de" })
+	if err := h.link.RemoveSite("xn--bcher-kva.de"); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.link.RemoveSite("example.com"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second remove: %v", err)
 	}
