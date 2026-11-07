@@ -4369,6 +4369,172 @@
       "x-params": {
         "$ref": "#/components/schemas/MemberActionRef"
       }
+    },
+    {
+      "name": "lane.submit",
+      "summary": "Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The lead's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "head",
+          "description": "Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LaneSubmitted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LaneSubmitParams"
+      }
+    },
+    {
+      "name": "review.verdict",
+      "summary": "A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "checked",
+          "description": "Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "descends",
+          "description": "Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "findings",
+          "description": "High and medium findings only, at most [groups] max_findings. More are refused.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          }
+        },
+        {
+          "name": "fixed",
+          "description": "Fix commits the reviewer pushed to its review branch, if any.",
+          "schema": {
+            "$ref": "#/components/schemas/ReviewFixed"
+          }
+        },
+        {
+          "name": "from",
+          "description": "The reviewer's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "reviewed",
+          "description": "Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "verdict",
+          "description": "pass or fix_needed.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ReviewVerdictTaken"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ReviewVerdictParams"
+      }
+    },
+    {
+      "name": "group.message",
+      "summary": "The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name on the receiving hab.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "At most 8000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupMessageParams"
+      }
     }
   ],
   "x-notifications": [
@@ -8836,6 +9002,32 @@
           "max_workers"
         ]
       },
+      "GroupFinding": {
+        "type": "object",
+        "properties": {
+          "place": {
+            "type": "string",
+            "description": "File and line, such as api/groups.go:42. At most 200 characters."
+          },
+          "severity": {
+            "type": "string",
+            "description": "high or medium."
+          },
+          "text": {
+            "type": "string",
+            "description": "One paragraph, at most 2000 characters."
+          },
+          "title": {
+            "type": "string",
+            "description": "One line, at most 200 characters."
+          }
+        },
+        "required": [
+          "severity",
+          "title",
+          "text"
+        ]
+      },
       "GroupItem": {
         "type": "object",
         "properties": {
@@ -8849,6 +9041,14 @@
           "id": {
             "type": "string"
           },
+          "idle_since": {
+            "type": "string",
+            "description": "RFC 3339 time the reviewer was first seen idle with no verdict on this head."
+          },
+          "land": {
+            "type": "string",
+            "description": "The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."
+          },
           "lead": {
             "type": "string",
             "description": "Its lead's session name."
@@ -8860,9 +9060,38 @@
           "review": {
             "type": "string"
           },
+          "review_branch": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/\u003citem\u003e-review: the reviewer's own branch (groups.md 6.4)."
+          },
+          "review_since": {
+            "type": "string",
+            "description": "RFC 3339 time the review of the submitted head began."
+          },
+          "reviewer": {
+            "type": "string",
+            "description": "Its reviewer's session name: a member with role reviewer. Absent with review off."
+          },
+          "same_harness": {
+            "type": "boolean",
+            "description": "The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness."
+          },
           "state": {
             "type": "string",
             "description": "queued, stalled, working, review, fix, ready, landing, landed or dropped."
+          },
+          "stuck": {
+            "type": "string",
+            "description": "Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit."
+          },
+          "submits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many times the lead submitted."
+          },
+          "submitted": {
+            "type": "string",
+            "description": "The full commit id of the lead's last lane_submit."
           },
           "task": {
             "type": "string",
@@ -8870,6 +9099,10 @@
           },
           "title": {
             "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/GroupVerdict",
+            "description": "The reviewer's verdict on the submitted head. Absent while the reviewer reviews."
           }
         },
         "required": [
@@ -8883,7 +9116,7 @@
         "properties": {
           "fix_in_place": {
             "type": "boolean",
-            "description": "A reviewer may fix in place on its review branch (groups.md 6.4)."
+            "description": "A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true."
           },
           "target": {
             "type": "string",
@@ -9012,6 +9245,27 @@
           "role",
           "item",
           "state"
+        ]
+      },
+      "GroupMessageParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name on the receiving hab."
+          },
+          "text": {
+            "type": "string",
+            "description": "At most 8000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "member",
+          "text"
         ]
       },
       "GroupNoteParams": {
@@ -9269,6 +9523,51 @@
           "lead",
           "worker",
           "reviewer"
+        ]
+      },
+      "GroupVerdict": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab took it."
+          },
+          "findings": {
+            "type": "array",
+            "description": "At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings.",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          },
+          "fixed": {
+            "type": "array",
+            "description": "The fix commits the reviewer named.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fixed_head": {
+            "type": "string",
+            "description": "The review branch head the lane takes: it descends from the submitted head."
+          },
+          "fixes_ignored": {
+            "type": "string",
+            "description": "Why the reviewer's fixes were ignored, in one line. The card shows it."
+          },
+          "head": {
+            "type": "string",
+            "description": "The submitted head the verdict is on."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "pass or fix_needed."
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "head",
+          "at"
         ]
       },
       "HabStatsParams": {
@@ -9642,6 +9941,58 @@
         },
         "required": [
           "pane"
+        ]
+      },
+      "LaneSubmitParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The lead's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string",
+            "description": "Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced."
+          },
+          "item": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "item"
+        ]
+      },
+      "LaneSubmitted": {
+        "type": "object",
+        "properties": {
+          "head": {
+            "type": "string"
+          },
+          "restart": {
+            "type": "boolean",
+            "description": "A review of an earlier head ran: it restarts on this head, and the reviewer is told."
+          },
+          "reviewer": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "head"
         ]
       },
       "LinkedPeer": {
@@ -12032,6 +12383,95 @@
           "cols",
           "rows",
           "reason"
+        ]
+      },
+      "ReviewFixed": {
+        "type": "object",
+        "properties": {
+          "commits": {
+            "type": "array",
+            "description": "The fix commits on the review branch.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "head": {
+            "type": "string",
+            "description": "The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch."
+          }
+        }
+      },
+      "ReviewVerdictParams": {
+        "type": "object",
+        "properties": {
+          "checked": {
+            "type": "string",
+            "description": "Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced."
+          },
+          "descends": {
+            "type": "boolean",
+            "description": "Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced."
+          },
+          "findings": {
+            "type": "array",
+            "description": "High and medium findings only, at most [groups] max_findings. More are refused.",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          },
+          "fixed": {
+            "$ref": "#/components/schemas/ReviewFixed",
+            "description": "Fix commits the reviewer pushed to its review branch, if any."
+          },
+          "from": {
+            "type": "string",
+            "description": "The reviewer's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "reviewed": {
+            "type": "string",
+            "description": "Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "pass or fix_needed."
+          }
+        },
+        "required": [
+          "group",
+          "item",
+          "verdict"
+        ]
+      },
+      "ReviewVerdictTaken": {
+        "type": "object",
+        "properties": {
+          "fixes_ignored": {
+            "type": "string",
+            "description": "Why the fixes were ignored, in one line."
+          },
+          "land": {
+            "type": "string",
+            "description": "After a pass: the commit the lane lands."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "ready after a pass, fix after fix_needed."
+          }
+        },
+        "required": [
+          "seq",
+          "state"
         ]
       },
       "RevisionRange": {

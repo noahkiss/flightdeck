@@ -38,7 +38,7 @@ type GroupPlanMember struct {
 // GroupLane is where the group's items land (groups.md 3.1, 7).
 type GroupLane struct {
 	Target     string `json:"target,omitempty" doc:"The target branch. Absent: the project's default branch."`
-	FixInPlace bool   `json:"fix_in_place,omitempty" doc:"A reviewer may fix in place on its review branch (groups.md 6.4)."`
+	FixInPlace *bool  `json:"fix_in_place,omitempty" doc:"A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true."`
 }
 
 // GroupPlan is what the coordinator proposes and the confirmation covers (groups.md 3.1).
@@ -94,6 +94,89 @@ type GroupItem struct {
 	Review string         `json:"review,omitempty"`
 	State  GroupItemState `json:"state" doc:"queued, stalled, working, review, fix, ready, landing, landed or dropped."`
 	Reason string         `json:"reason,omitempty" doc:"Why it is stalled or waits."`
+	// The review fields come with stage B7 of agent groups (groups.md 6). Optional, so an
+	// older hab leaves them out.
+	Reviewer     string        `json:"reviewer,omitempty" doc:"Its reviewer's session name: a member with role reviewer. Absent with review off."`
+	SameHarness  bool          `json:"same_harness,omitempty" doc:"The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness."`
+	Submitted    string        `json:"submitted,omitempty" doc:"The full commit id of the lead's last lane_submit."`
+	Submits      int           `json:"submits,omitempty" doc:"How many times the lead submitted."`
+	ReviewBranch string        `json:"review_branch,omitempty" doc:"group/<group>/<item>-review: the reviewer's own branch (groups.md 6.4)."`
+	ReviewSince  string        `json:"review_since,omitempty" doc:"RFC 3339 time the review of the submitted head began."`
+	IdleSince    string        `json:"idle_since,omitempty" doc:"RFC 3339 time the reviewer was first seen idle with no verdict on this head."`
+	Stuck        string        `json:"stuck,omitempty" doc:"Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit."`
+	Verdict      *GroupVerdict `json:"verdict,omitempty" doc:"The reviewer's verdict on the submitted head. Absent while the reviewer reviews."`
+	Land         string        `json:"land,omitempty" doc:"The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."`
+}
+
+// GroupFinding is one finding of a verdict (groups.md 6.3). Low findings are not reported.
+type GroupFinding struct {
+	Severity string `json:"severity" doc:"high or medium."`
+	Title    string `json:"title" doc:"One line, at most 200 characters."`
+	Place    string `json:"place,omitempty" doc:"File and line, such as api/groups.go:42. At most 200 characters."`
+	Text     string `json:"text" doc:"One paragraph, at most 2000 characters."`
+}
+
+// GroupVerdict is a reviewer's verdict on one submitted head (groups.md 6.3, 6.4).
+type GroupVerdict struct {
+	Verdict      string         `json:"verdict" doc:"pass or fix_needed."`
+	Findings     []GroupFinding `json:"findings" doc:"At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings."`
+	Head         string         `json:"head" doc:"The submitted head the verdict is on."`
+	Fixed        []string       `json:"fixed,omitempty" doc:"The fix commits the reviewer named."`
+	FixedHead    string         `json:"fixed_head,omitempty" doc:"The review branch head the lane takes: it descends from the submitted head."`
+	FixesIgnored string         `json:"fixes_ignored,omitempty" doc:"Why the reviewer's fixes were ignored, in one line. The card shows it."`
+	At           string         `json:"at" doc:"RFC 3339 time the home hab took it."`
+}
+
+// LaneSubmitParams is a lead's submit (groups.md 6.2, 15.1).
+type LaneSubmitParams struct {
+	Group string `json:"group"`
+	Item  string `json:"item"`
+	From  string `json:"from,omitempty" doc:"The lead's session name. From a pane the pane's session."`
+	Head  string `json:"head,omitempty" doc:"Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced."`
+}
+
+// LaneSubmitted answers lane.submit.
+type LaneSubmitted struct {
+	Seq
+	State    GroupItemState `json:"state" doc:"review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue."`
+	Head     string         `json:"head"`
+	Reviewer string         `json:"reviewer,omitempty"`
+	Restart  bool           `json:"restart,omitempty" doc:"A review of an earlier head ran: it restarts on this head, and the reviewer is told."`
+}
+
+// ReviewFixed names a reviewer's fixes in place (groups.md 6.4).
+type ReviewFixed struct {
+	Commits []string `json:"commits,omitempty" doc:"The fix commits on the review branch."`
+	Head    string   `json:"head,omitempty" doc:"The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch."`
+}
+
+// ReviewVerdictParams is a reviewer's verdict (groups.md 6.3, 15.1).
+type ReviewVerdictParams struct {
+	Group    string         `json:"group"`
+	Item     string         `json:"item"`
+	Verdict  string         `json:"verdict" doc:"pass or fix_needed."`
+	Findings []GroupFinding `json:"findings,omitempty" doc:"High and medium findings only, at most [groups] max_findings. More are refused."`
+	Fixed    *ReviewFixed   `json:"fixed,omitempty" doc:"Fix commits the reviewer pushed to its review branch, if any."`
+	From     string         `json:"from,omitempty" doc:"The reviewer's session name. From a pane the pane's session."`
+	Checked  string         `json:"checked,omitempty" doc:"Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced."`
+	Reviewed string         `json:"reviewed,omitempty" doc:"Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced."`
+	Descends bool           `json:"descends,omitempty" doc:"Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced."`
+}
+
+// ReviewVerdictTaken answers review.verdict.
+type ReviewVerdictTaken struct {
+	Seq
+	State        GroupItemState `json:"state" doc:"ready after a pass, fix after fix_needed."`
+	Land         string         `json:"land,omitempty" doc:"After a pass: the commit the lane lands."`
+	FixesIgnored string         `json:"fixes_ignored,omitempty" doc:"Why the fixes were ignored, in one line."`
+}
+
+// GroupMessageParams is the home hab's note into a member on another hab (groups.md 6.2,
+// 6.3). Peer link only.
+type GroupMessageParams struct {
+	Group  string `json:"group"`
+	Member string `json:"member" doc:"The member's session name on the receiving hab."`
+	Text   string `json:"text" doc:"At most 8000 characters."`
 }
 
 // GroupMember is one member in the record (groups.md 5.1).

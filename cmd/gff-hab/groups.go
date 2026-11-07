@@ -50,6 +50,9 @@ type groupsConfig struct {
 	// closePane closes a member's pane on this hab.
 	closePane func(ctx context.Context, pane string) error
 	logbook   *lbsvc.Service // nil: group.create refuses, "groups need Logbook"
+	// listedPeer reports whether the peer list pins a device id: the review calls and
+	// group.message are taken only over such a peer's link. nil: none is.
+	listedPeer func(device string) bool
 	// note sends a message from Flightdeck to a session on this hab, by id.
 	note    func(session, text string) error
 	setting func(id string) json.RawMessage
@@ -251,6 +254,11 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 		return cg, false, control.Errorf(api.ErrorKindUnavailable, "groups need Logbook, which this hab runs without")
 	}
 	plan := cg.Plan
+	plan.Members = slices.Clone(plan.Members)
+	for i := range plan.Members {
+		plan.Members[i] = s.resolveMember(plan.Members[i])
+	}
+	cl := s.cfg.catalog()
 	full := plan // an amend is checked as the whole plan with the change in it
 	s.mu.Lock()
 	g := s.groups[cg.Group]
@@ -260,13 +268,22 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 			return cg, false, control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", cg.Group)
 		}
 		full = g.Plan
-		full.Items = append(slices.Clone(full.Items), plan.Items...)
-		full.Members = append(slices.Clone(full.Members), plan.Members...)
 		plan.Title, plan.Brief, plan.Project, plan.Lane = full.Title, full.Brief, full.Project, full.Lane
 	}
 	s.mu.Unlock()
-	for i := range plan.Members {
-		plan.Members[i] = s.resolveMember(plan.Members[i])
+	// Each new item with review on gets a reviewer in another harness (groups.md 6.2). In an
+	// amend, the hosts it looks at are the change's.
+	for i := range plan.Items {
+		if plan.Items[i].Review == "" {
+			plan.Items[i].Review = "on"
+		}
+	}
+	plan = groups.AddReviewers(plan, s.installed(cl))
+	if cg.Amend {
+		full.Items = append(slices.Clone(full.Items), plan.Items...)
+		full.Members = append(slices.Clone(full.Members), plan.Members...)
+	} else {
+		full = plan
 	}
 	for i := range full.Members {
 		full.Members[i] = s.resolveMember(full.Members[i])
@@ -283,7 +300,6 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 	if err := groups.Check(full, s.intSetting(settings.GroupMaxWorkers, 2)); err != nil {
 		return cg, false, err
 	}
-	cl := s.cfg.catalog()
 	proj, ok := project(cl, plan.Project)
 	if !ok {
 		return cg, false, control.Errorf(api.ErrorKindNotFound, "no project %q in the catalog; the projects tool lists them", plan.Project)
@@ -326,8 +342,26 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 	}
 	cg.Plan = plan
 	cg.Trust = groups.TrustRule(cg.Group, hosts, harnessList)
-	cg.Warnings = groups.Warnings(full)
+	cg.Warnings = append(groups.Warnings(full), groups.SameHarnessLines(plan)...)
 	return cg, elsewhere, nil
+}
+
+// installed reports whether a harness is on a plan host: a capability word the host's catalog
+// detected or declares (groups.md 6.2). host is a peer label, or "" or this hab's host id.
+func (s *groupsService) installed(cl api.CatalogList) func(host, harness string) bool {
+	return func(host, harness string) bool {
+		for _, h := range cl.Hosts {
+			if (host == "" || host == s.cfg.host) != h.Own || (!h.Own && h.Label != host) {
+				continue
+			}
+			for _, c := range h.Catalog.Capabilities {
+				if c.Name == harness {
+					return true
+				}
+			}
+		}
+		return false
+	}
 }
 
 // resolveMember turns a member's alias into its harness and model.
@@ -715,21 +749,31 @@ func (s *groupsService) pass(id string) {
 			return
 		}
 		next := groups.NextLeads(*g, s.intSetting(settings.GroupMaxLeads, 3))
-		var item string
+		item, mi := "", -1
 		for _, it := range next {
+			if waitsForYes(*g, it) {
+				continue // its setup waits for the user's yes; group_retry tries it again
+			}
 			if i := groups.MemberIndex(*g, g.Items[groups.ItemIndex(*g, it)].Lead); i >= 0 && g.Members[i].State == groups.MemberPlanned {
-				item = it
+				item, mi = it, i
 				break
 			}
+		}
+		if item == "" {
+			// A reviewer starts when its item is submitted (groups.md 4.3 step 4, 6.2). It
+			// holds no lead slot.
+			item, mi = nextReviewer(*g)
 		}
 		if item == "" {
 			s.mu.Unlock()
 			return
 		}
 		ii := groups.ItemIndex(*g, item)
-		mi := groups.MemberIndex(*g, g.Items[ii].Lead)
+		reviewer := g.Members[mi].Role == groups.RoleReviewer
 		g.Members[mi].State = groups.MemberStarting
-		g.Items[ii].Reason = ""
+		if !reviewer {
+			g.Items[ii].Reason = ""
+		}
 		s.saveLocked(g)
 		snap := copyGroup(*g)
 		s.mu.Unlock()
@@ -747,11 +791,18 @@ func (s *groupsService) pass(id string) {
 		switch {
 		case err != nil && errors.Is(err, errSetupWaits):
 			m.State = groups.MemberPlanned
-			it.Reason = err.Error()
+			if !reviewer {
+				it.Reason = err.Error()
+			}
 			g.Waits = appendOnce(g.Waits, fmt.Sprintf("%s: %v", it.ID, err))
 			s.saveLocked(g)
 			s.mu.Unlock()
 			return // the yes comes from the user; a retry starts it
+		case err != nil && reviewer:
+			// The item stays in review: the coordinator retries the reviewer.
+			m.State, m.Reason = groups.MemberFailed, errText(err)
+			it.Stuck = "its reviewer failed to start"
+			s.tellLocked(g, fmt.Sprintf("Reviewer %s of item %s failed to start: %s. The item stays in review; group_retry starts the reviewer again.", m.Name, it.ID, errText(err)), "Flightdeck")
 		case err != nil:
 			m.State, m.Reason = groups.MemberFailed, errText(err)
 			it.State, it.Reason = groups.ItemStalled, "its lead failed to start: "+errText(err)
@@ -771,6 +822,13 @@ func (s *groupsService) pass(id string) {
 				cancel()
 			}
 			return
+		case reviewer:
+			m.State, m.Session, m.Device, m.Folder, m.Host = groups.MemberRunning, res.Session, res.device, res.folder, res.host
+			s.panes[g.ID+"/"+m.Name] = res.Pane
+			if it.State == groups.ItemReview && it.Submitted != snap.Items[ii].Submitted {
+				// The lead submitted again while the reviewer started: it hears of the new head.
+				s.memberNoteLocked(g, *m, newHeadText(*g, *it))
+			}
 		default:
 			m.State, m.Session, m.Device, m.Folder, m.Host = groups.MemberRunning, res.Session, res.device, res.folder, res.host
 			s.panes[g.ID+"/"+m.Name] = res.Pane
@@ -780,6 +838,33 @@ func (s *groupsService) pass(id string) {
 		s.saveLocked(g)
 		s.mu.Unlock()
 	}
+}
+
+// waitsForYes reports whether an item's member start waits for the user's yes to its
+// worktree setup: the waits line names it until group_retry clears it. The scheduler skips it,
+// so one waiting start never holds the others back.
+func waitsForYes(g api.Group, item string) bool {
+	return slices.ContainsFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, item+":") })
+}
+
+// nextReviewer returns the first item in review whose planned reviewer starts now, and the
+// reviewer's member index: in a running group only.
+func nextReviewer(g api.Group) (string, int) {
+	if g.State != groups.StateRunning {
+		return "", -1
+	}
+	for _, it := range g.Items {
+		if it.State != groups.ItemReview || it.Reviewer == "" {
+			continue
+		}
+		if waitsForYes(g, it.ID) {
+			continue
+		}
+		if i := groups.MemberIndex(g, it.Reviewer); i >= 0 && g.Members[i].State == groups.MemberPlanned {
+			return it.ID, i
+		}
+	}
+	return "", -1
 }
 
 func appendOnce(list []string, line string) []string {
@@ -844,7 +929,14 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 		}
 		caller, host = l.Caller, m.Host
 	}
-	wp := api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: src}, Branch: it.Branch, Base: g.Plan.Lane.Target}
+	branch, base := it.Branch, g.Plan.Lane.Target
+	if m.Role == groups.RoleReviewer {
+		// A review worktree on the submitted head, on the reviewer's own branch (groups.md 6.2,
+		// 6.4). The commit must be in the reviewer's repository: B4's fetch brings it there
+		// from another host.
+		branch, base = groups.ReviewBranch(g.ID, it.ID), it.Submitted
+	}
+	wp := api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: src}, Branch: branch, Base: base}
 	var wt api.WorktreeCreated
 	var err error
 	if self {
@@ -855,7 +947,7 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 	if err != nil && strings.Contains(err.Error(), "exists") {
 		// A start tried again after a restart: the branch's worktree is there already.
 		var ferr error
-		if wt, ferr = s.findWorktree(ctx, caller, src, it.Branch); ferr == nil {
+		if wt, ferr = s.findWorktree(ctx, caller, src, branch); ferr == nil {
 			err = nil
 		} else if errors.Is(ferr, errNoWorktree) {
 			// The branch is there but its worktree was removed: a new one on the branch.
@@ -881,7 +973,7 @@ func (s *groupsService) startMember(g api.Group, m api.GroupMember, it api.Group
 	}
 	key := sha256.Sum256([]byte(g.ID + "\x00" + m.Name + "\x00" + strconv.Itoa(m.Attempts)))
 	p := api.SessionCreateParams{Name: m.Name, ProjectDir: wt.Worktree.Path, Harness: m.Harness, Model: m.Model,
-		Seed: leadSeed(g, m, it, wt.Worktree.Path), IdempotencyKey: "group-" + hex.EncodeToString(key[:16]),
+		Seed: memberSeed(g, m, it, wt.Worktree.Path, s.cfg.keys), IdempotencyKey: "group-" + hex.EncodeToString(key[:16]),
 		Group:      &api.SessionGroup{ID: g.ID, Role: m.Role, Item: m.Item},
 		Envelope:   env,
 		TrustCover: &api.TrustCover{Group: g.ID, Confirmation: env.Confirmation, Harness: m.Harness, BranchPrefix: confirm.GroupBranchPrefix(g.ID)}}
@@ -930,6 +1022,65 @@ func (s *groupsService) findWorktree(ctx context.Context, caller api.Caller, src
 	return api.WorktreeCreated{}, fmt.Errorf("%w %s", errNoWorktree, branch)
 }
 
+// memberSeed is a member's first message: a lead's, or a reviewer's (groups.md 6.2).
+func memberSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string, keys groups.Keys) string {
+	if m.Role == groups.RoleReviewer {
+		return clipSeed(reviewSeed(g, it, folder, keys))
+	}
+	return leadSeed(g, m, it, folder)
+}
+
+func clipSeed(s string) string {
+	if utf8.RuneCountInString(s) > confirm.MaxSeed {
+		return string([]rune(s)[:confirm.MaxSeed])
+	}
+	return s
+}
+
+// diffCommand is how a reviewer reads the submitted head's diff against the merge base with
+// the lane target (groups.md 6.2).
+func diffCommand(g api.Group, head string) string {
+	target := g.Plan.Lane.Target
+	if target == "" {
+		target = "origin/HEAD"
+	}
+	return fmt.Sprintf("git diff $(git merge-base %s %s) %s", target, head, head)
+}
+
+// reviewSeed is a reviewer's first message (groups.md 6.2, 6.3, 6.4): the item's brief, how to
+// read the diff against the merge base, and the review rules.
+func reviewSeed(g api.Group, it api.GroupItem, folder string, keys groups.Keys) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are the reviewer of item %s (%s) in agent group %s: %s.\n", it.ID, it.Title, g.ID, g.Title)
+	fmt.Fprintf(&b, "Review commit %s, the submit of branch %s by the lead %s. Your worktree is %s, on your own branch %s at that commit; if its head is another commit, run git reset --hard %s first.\n",
+		it.Submitted, it.Branch, it.Lead, folder, it.ReviewBranch, it.Submitted)
+	fmt.Fprintf(&b, "Read the diff against the merge base: %s. The coordinator is %s.\n\n", diffCommand(g, it.Submitted), g.Coordinator.Address)
+	b.WriteString("The rules:\n")
+	fmt.Fprintf(&b, "- Review the diff against the item's brief. Report the most severe %d findings, high or medium only. Do not report low findings or style.\n", keys.BriefFindings)
+	fmt.Fprintf(&b, "- End with the review_verdict tool (group %s, item %s): verdict pass or fix_needed, at most %d findings, each with severity, title, place (file and line) and one paragraph.\n", g.ID, it.ID, keys.MaxFindings)
+	if groups.FixInPlace(g.Plan) {
+		fmt.Fprintf(&b, "- You may fix your own findings: commit in your worktree on top of the submitted commit, on %s and never on the lead's branch, and name the commits in review_verdict's fixed field. A pass with fixes lands your branch's head.\n", it.ReviewBranch)
+	} else {
+		b.WriteString("- Do not fix in place: the plan leaves the fixes to the lead.\n")
+	}
+	b.WriteString("- Your full review stays in your transcript; the coordinator gets one line. A new submit reaches you as a message from Flightdeck.\n\n")
+	for _, pi := range g.Plan.Items {
+		if pi.ID == it.ID && pi.Brief != "" {
+			b.WriteString("The item:\n" + pi.Brief + "\n\n")
+		}
+	}
+	if g.Plan.Brief != "" {
+		b.WriteString("The task:\n" + g.Plan.Brief + "\n")
+	}
+	return b.String()
+}
+
+// newHeadText tells a running reviewer of a new submit (groups.md 6.2).
+func newHeadText(g api.Group, it api.GroupItem) string {
+	return fmt.Sprintf("Group %s, item %s: the lead %s submitted again. Review commit %s now: run git reset --hard %s in your worktree, then read the diff: %s. A verdict on the earlier head no longer counts; end with review_verdict on this one.",
+		g.ID, it.ID, it.Lead, it.Submitted, it.Submitted, diffCommand(g, it.Submitted))
+}
+
 // leadSeed is a lead's first message: the group's brief, its item and how to report.
 func leadSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string) string {
 	var brief string
@@ -941,7 +1092,15 @@ func leadSeed(g api.Group, m api.GroupMember, it api.GroupItem, folder string) s
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the %s of item %s (%s) in agent group %s: %s.\n", m.Role, it.ID, it.Title, g.ID, g.Title)
 	fmt.Fprintf(&b, "Work in %s on branch %s. The coordinator is %s.\n", folder, it.Branch, g.Coordinator.Address)
-	fmt.Fprintf(&b, "Report with group_report (group %s); write progress and hand-off notes with group_note (item %s). Your item's Logbook task is %s.\n\n", g.ID, it.ID, it.Task)
+	fmt.Fprintf(&b, "Report with group_report (group %s); write progress and hand-off notes with group_note (item %s). Your item's Logbook task is %s.\n", g.ID, it.ID, it.Task)
+	if m.Role == groups.RoleLead {
+		fmt.Fprintf(&b, "When the item is done, commit on %s and call lane_submit (group %s, item %s)", it.Branch, g.ID, it.ID)
+		if it.Reviewer != "" {
+			b.WriteString(": a reviewer reviews it, and its findings reach you as a message from Flightdeck")
+		}
+		b.WriteString(".\n")
+	}
+	b.WriteString("\n")
 	if g.Plan.Brief != "" {
 		b.WriteString("The task:\n" + g.Plan.Brief + "\n\n")
 	}
@@ -1092,6 +1251,9 @@ func (s *groupsService) refresh(id string) {
 			m.Agent = "exited"
 		}
 	}
+	if s.stuckLocked(g) {
+		changed = true
+	}
 	if changed {
 		s.saveLocked(g)
 		go s.kick(g.ID)
@@ -1150,15 +1312,16 @@ func (s *groupsService) forward(ctx context.Context, group, method string, p, ou
 		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", group) // never forwarded twice
 	}
 	cl := s.cfg.catalog()
-	cg, ok := groupOf(cl, group)
-	if !ok || cg.Home == "" || cg.Home == s.cfg.self {
-		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
-	}
+	// The home is the host whose own catalog lists the group with itself as the home: another
+	// host's copy that claims the group is not taken.
 	label := ""
 	for _, h := range cl.Hosts {
-		if h.Catalog.DeviceID == cg.Home {
+		if !h.Own && h.Catalog.DeviceID != s.cfg.self && homeOf(cl, group, h.Catalog.DeviceID) {
 			label = h.Label
 		}
+	}
+	if label == "" {
+		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
 	}
 	l, ok := s.link(label)
 	if label == "" || !ok || !l.Online || l.Caller == nil {
@@ -1310,8 +1473,12 @@ func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.
 		}
 		m := &g.Members[i]
 		ii := groups.ItemIndex(*g, m.Item)
-		waits := m.State == groups.MemberPlanned && ii >= 0 && g.Items[ii].Reason != ""
-		if m.State != groups.MemberFailed && m.State != groups.MemberExited && !waits {
+		waits := m.State == groups.MemberPlanned && ii >= 0 && (g.Items[ii].Reason != "" ||
+			slices.ContainsFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, m.Item+":") }))
+		// A member whose agent exited counts as exited: a remote member's session record is
+		// on its own hab, so only its agent state says so.
+		gone := m.State == groups.MemberRunning && m.Agent == api.AgentStatusExited
+		if m.State != groups.MemberFailed && m.State != groups.MemberExited && !gone && !waits {
 			return control.Errorf(api.ErrorKindConflict, "member %s is %s; only a failed or closed member, or one whose setup waited, starts again", m.Name, m.State)
 		}
 		if !waits {
@@ -1319,7 +1486,12 @@ func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.
 		}
 		m.State, m.Session, m.Reason = groups.MemberPlanned, "", ""
 		g.Waits = slices.DeleteFunc(g.Waits, func(w string) bool { return strings.HasPrefix(w, m.Item+":") })
-		if ii >= 0 && (g.Items[ii].State == groups.ItemStalled || waits) {
+		switch {
+		case ii < 0:
+		case m.Role == groups.RoleReviewer:
+			// A reviewer starts again on the item's submitted head; the item stays in review.
+			g.Items[ii].Stuck, g.Items[ii].IdleSince = "", ""
+		case g.Items[ii].State == groups.ItemStalled || waits:
 			g.Items[ii].State, g.Items[ii].Reason = groups.ItemQueued, ""
 		}
 		return nil

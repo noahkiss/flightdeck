@@ -136,6 +136,7 @@ func Check(p api.GroupPlan, maxWorkers int) error {
 	}
 	leads := map[string]int{}
 	workers := map[string]int{}
+	reviewers := map[string]int{}
 	names := map[string]bool{}
 	for i, m := range p.Members {
 		who := fmt.Sprintf("member %d (%s)", i+1, m.Name)
@@ -159,6 +160,8 @@ func Check(p api.GroupPlan, maxWorkers int) error {
 			leads[m.Item]++
 		case RoleWorker:
 			workers[m.Item]++
+		case RoleReviewer:
+			reviewers[m.Item]++
 		}
 	}
 	for _, it := range p.Items {
@@ -167,6 +170,8 @@ func Check(p api.GroupPlan, maxWorkers int) error {
 			return invalid("item %s has no lead: give it one member with role lead", it.ID)
 		case leads[it.ID] > 1:
 			return invalid("item %s has %d leads; one lead owns an item", it.ID, leads[it.ID])
+		case reviewers[it.ID] > 1:
+			return invalid("item %s has %d reviewers; one reviewer reviews an item", it.ID, reviewers[it.ID])
 		case workers[it.ID] > maxWorkers:
 			return invalid("item %s has %d workers; group.max_workers allows %d per lead", it.ID, workers[it.ID], maxWorkers)
 		}

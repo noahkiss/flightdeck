@@ -235,6 +235,12 @@ inbox_days = 7
 # member_handoff waits for a member in use before it is skipped ("1m" to "24h").
 handoff_note_wait = "10m"
 sibling_wait = "10m"
+# A review verdict carries at most max_findings findings (1 to 20); more are refused. The card
+# shows the first brief_findings (1 to max_findings), and the reviewer's brief asks for that many.
+max_findings = 5
+brief_findings = 3
+# Tell the coordinator when a reviewer stays idle this long with no verdict: "5m" to "24h".
+reviewer_idle = "30m"
 
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and
