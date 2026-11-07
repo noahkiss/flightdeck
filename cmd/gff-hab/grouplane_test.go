@@ -6,7 +6,7 @@ package main
 
 import (
 	"context"
-		"fmt"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
