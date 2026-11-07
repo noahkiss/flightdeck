@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,9 @@ const roundUsage = `usage:
                         [-expires time] [-catch-up once|skip] [-on-finish close|keep]
                         [-notify failures|always|never] [-paused] [-run-now]
                         [-command] <prompt... | program args...>
+  gff-hab round add     [door] <name> -watch [-secrets set] [-kinds k,...] [-watch-cwd dir]
+                        [-mode capcom|group|fresh ...] [-prompt text] [-debounce d] [-cooldown d]
+                        -- <watcher program> [args...]
   gff-hab round edit    [door] <name> [the same fields] [-command] [prompt... | program args...]
   gff-hab round rm      [door] [-yes] <name>
   gff-hab round pause | unpause | run [door] <name>
@@ -60,6 +64,10 @@ type roundDef struct {
 	// Event triggers and message modes (rounds.md 4.3, 4.5, 5.2).
 	on, debounce, cooldown, group string
 	where                         stringList
+	// Watch triggers (rounds.md 4.4): -watch takes the words after the flags as the watcher.
+	watch                    bool
+	secrets, kinds, watchCwd string
+	prompt                   string
 }
 
 type stringList []string
@@ -71,8 +79,13 @@ func (d *roundDef) flags(fs *flag.FlagSet) {
 	fs.StringVar(&d.mode, "mode", "", "fresh (the default for add), resume, fork, capcom or group")
 	fs.StringVar(&d.on, "on", "", "run on this hab's events: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated")
 	fs.Var(&d.where, "where", "with -on: one filter field as key=value, a list comma-separated (status=done,dropped); repeat it for more")
-	fs.StringVar(&d.debounce, "debounce", "", "with -on: how long a batch gathers events after its first (default 30s)")
-	fs.StringVar(&d.cooldown, "cooldown", "", "with -on: the least time between two event runs' starts (default 5m)")
+	fs.StringVar(&d.debounce, "debounce", "", "with -on or -watch: how long a batch gathers events after its first (default 30s)")
+	fs.StringVar(&d.cooldown, "cooldown", "", "with -on or -watch: the least time between two event runs' starts (default 5m)")
+	fs.BoolVar(&d.watch, "watch", false, "run on a watcher's events: the words after -- are the watcher program and its arguments")
+	fs.StringVar(&d.secrets, "secrets", "", "with -watch: the secret set of the hab's config file whose values reach the watcher")
+	fs.StringVar(&d.kinds, "kinds", "", "with -watch: the event kinds that count, comma-separated (default: every kind)")
+	fs.StringVar(&d.watchCwd, "watch-cwd", "", "with -watch: the folder the watcher starts in")
+	fs.StringVar(&d.prompt, "prompt", "", "the prompt, instead of the words after the flags; with -watch those words are the watcher")
 	fs.StringVar(&d.group, "group", "", "group: the group id whose coordinator gets each run's message")
 	fs.StringVar(&d.cron, "cron", "", "a 5-field cron expression")
 	fs.StringVar(&d.tz, "tz", "", "the IANA time zone of -cron or -at (default: the hab's zone)")
@@ -103,13 +116,13 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 		spec.Mode = api.RoundMode(d.mode)
 	}
 	triggers := 0
-	for _, f := range []string{"cron", "every", "at", "manual", "on"} {
+	for _, f := range []string{"cron", "every", "at", "manual", "on", "watch"} {
 		if set[f] {
 			triggers++
 		}
 	}
 	if triggers > 1 {
-		return errors.New("give one trigger: -cron, -every, -at, -manual or -on")
+		return errors.New("give one trigger: -cron, -every, -at, -manual, -on or -watch")
 	}
 	switch {
 	case set["cron"]:
@@ -126,6 +139,21 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 		spec.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindManual}
 	case set["on"]:
 		spec.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindEvent, Event: d.on}
+	case set["watch"] && d.watch:
+		if len(words) == 0 {
+			return errors.New("-watch needs the watcher program after the flags: -watch -- <program> [args...]")
+		}
+		// The words up to a second -- are the watcher; with -command, the words after it are the
+		// run's program.
+		argv, rest := words, []string(nil)
+		if i := slices.Index(words, "--"); i >= 0 {
+			argv, rest = words[:i], words[i+1:]
+		}
+		if len(argv) == 0 {
+			return errors.New("-watch needs the watcher program after the flags: -watch -- <program> [args...]")
+		}
+		spec.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindWatch, Watch: &api.RoundWatch{Argv: argv}}
+		words = rest
 	case set["tz"]:
 		spec.Trigger.Zone = d.tz
 	}
@@ -154,6 +182,38 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 	}
 	if set["group"] {
 		spec.Group = d.group
+	}
+	for _, f := range []string{"kinds", "watch-cwd"} {
+		if set[f] && (spec.Trigger.Kind != api.RoundTriggerKindWatch || spec.Trigger.Watch == nil) {
+			return fmt.Errorf("-%s is for a watch trigger: give -watch", f)
+		}
+	}
+	if set["kinds"] {
+		spec.Trigger.Watch.Kinds = nil
+		for _, k := range strings.Split(d.kinds, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				spec.Trigger.Watch.Kinds = append(spec.Trigger.Watch.Kinds, k)
+			}
+		}
+	}
+	if set["watch-cwd"] {
+		dir := d.watchCwd
+		if dir != "" {
+			if d.via && !filepath.IsAbs(dir) {
+				return fmt.Errorf("-watch-cwd %q: with -via or -host, give the absolute folder on the hab's host", dir)
+			}
+			var err error
+			if dir, err = filepath.Abs(dir); err != nil {
+				return err
+			}
+		}
+		spec.Trigger.Watch.Cwd = dir
+	}
+	switch {
+	case set["secrets"]:
+		spec.Secrets = d.secrets
+	case spec.Trigger.Kind != api.RoundTriggerKindWatch:
+		spec.Secrets = "" // a trigger changed away from watch takes its secret set with it
 	}
 	if set["project"] && set["remote"] {
 		return errors.New("give -project or -remote, not both")
@@ -235,6 +295,9 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 	}
 	if set["paused"] {
 		spec.Paused = d.paused
+	}
+	if set["prompt"] {
+		spec.Prompt, spec.Command = d.prompt, nil
 	}
 	switch {
 	case d.command && len(words) == 0:
@@ -619,6 +682,15 @@ func triggerText(t api.RoundTrigger) string {
 			return "on " + t.Event + " " + w
 		}
 		return "on " + t.Event
+	case api.RoundTriggerKindWatch:
+		if t.Watch == nil {
+			return "watch"
+		}
+		text := "watch " + strings.Join(t.Watch.Argv, " ")
+		if len(t.Watch.Kinds) > 0 {
+			text += " (kinds " + strings.Join(t.Watch.Kinds, ",") + ")"
+		}
+		return text
 	}
 	return string(t.Kind)
 }
@@ -673,7 +745,26 @@ func printRound(out io.Writer, r api.Round, runs []api.RoundRun) {
 	row("cwd", r.Cwd)
 	row("target", r.Target)
 	row("group", r.Group)
-	if r.Trigger.Kind == api.RoundTriggerKindEvent {
+	row("secrets", r.Secrets)
+	if w := r.Trigger.Watch; w != nil {
+		row("watch cwd", w.Cwd)
+	}
+	if wt := r.Watcher; wt != nil {
+		st := string(wt.State)
+		switch {
+		case wt.Reason != "":
+			st += ": " + wt.Reason
+		case wt.NextStart != "":
+			st += " until " + wt.NextStart
+		}
+		row("watcher", st)
+		row("watcher session", wt.Session)
+		if wt.Restarts > 0 || wt.Drops > 0 {
+			row("watcher counts", fmt.Sprintf("%d restarts, %d lines dropped", wt.Restarts, wt.Drops))
+		}
+		row("last exit", wt.LastExit)
+	}
+	if r.Trigger.Kind == api.RoundTriggerKindEvent || r.Trigger.Kind == api.RoundTriggerKindWatch {
 		row("debounce", (time.Duration(r.DebounceMS) * time.Millisecond).String())
 		row("cooldown", (time.Duration(r.CooldownMS) * time.Millisecond).String())
 		row("pending", strconv.Itoa(r.Pending)+" events")
@@ -780,6 +871,16 @@ type fileRound struct {
 	Debounce string      `toml:"debounce,omitempty"`
 	Cooldown string      `toml:"cooldown,omitempty"`
 	Group    string      `toml:"group,omitempty"`
+	// Watch triggers (rounds.md 4.4): the export carries the secret set by name only.
+	Secrets string     `toml:"secrets,omitempty"`
+	Watch   *fileWatch `toml:"watch,omitempty"`
+}
+
+// fileWatch is a watch trigger's watcher in an exported file: [rounds.watch].
+type fileWatch struct {
+	Argv  []string `toml:"argv"`
+	Cwd   string   `toml:"cwd,omitempty"`
+	Kinds []string `toml:"kinds,omitempty"`
 }
 
 // fileFilter is an event trigger's filter in an exported file.
@@ -808,7 +909,7 @@ func toFile(r api.Round) fileRound {
 		Name: r.Name, Mode: string(r.Mode), Zone: r.Trigger.Zone, Prompt: r.Prompt, Harness: r.Harness,
 		Model: r.Model, HarnessArgs: r.HarnessArgs, Command: r.Command, Cwd: r.Cwd, Target: r.Target,
 		MaxRuns: r.MaxRuns, ExpiresAt: r.ExpiresAt, CatchUp: string(r.CatchUp), OnFinish: string(r.OnFinish),
-		Notify: string(r.Notify), Paused: r.Paused,
+		Notify: string(r.Notify), Paused: r.Paused, Secrets: r.Secrets,
 	}
 	switch r.Trigger.Kind {
 	case api.RoundTriggerKindCron:
@@ -825,6 +926,13 @@ func toFile(r api.Round) fileRound {
 				ff.Project = ""
 			}
 			f.Filter = &ff
+		}
+		f.Debounce = (time.Duration(r.DebounceMS) * time.Millisecond).String()
+		f.Cooldown = (time.Duration(r.CooldownMS) * time.Millisecond).String()
+	}
+	if r.Trigger.Kind == api.RoundTriggerKindWatch {
+		if w := r.Trigger.Watch; w != nil {
+			f.Watch = &fileWatch{Argv: w.Argv, Cwd: w.Cwd, Kinds: w.Kinds}
 		}
 		f.Debounce = (time.Duration(r.DebounceMS) * time.Millisecond).String()
 		f.Cooldown = (time.Duration(r.CooldownMS) * time.Millisecond).String()
@@ -912,7 +1020,7 @@ func (f fileRound) normalize(have *fileRound) (fileRound, error) {
 	if err := dur(&f.Wait, wdef); err != nil {
 		return f, err
 	}
-	if f.On != "" {
+	if f.On != "" || f.Watch != nil {
 		if err := dur(&f.Debounce, rounds.DefaultDebounce); err != nil {
 			return f, err
 		}
@@ -944,18 +1052,20 @@ func (f fileRound) spec() (api.RoundSpec, error) {
 		HarnessArgs: f.HarnessArgs, Command: f.Command, Project: f.Project, ProjectRemote: f.ProjectRemote,
 		Cwd: f.Cwd, Target: f.Target, MaxRuns: f.MaxRuns, ExpiresAt: f.ExpiresAt, CatchUp: api.RoundCatchUp(f.CatchUp),
 		OnFinish: api.RoundOnFinish(f.OnFinish), Notify: api.RoundNotify(f.Notify), Paused: f.Paused,
-		Group: f.Group,
+		Group: f.Group, Secrets: f.Secrets,
 	}
 	kinds := 0
-	for _, b := range []bool{f.Cron != "", f.At != "", f.Manual, f.On != ""} {
+	for _, b := range []bool{f.Cron != "", f.At != "", f.Manual, f.On != "", f.Watch != nil} {
 		if b {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return s, fmt.Errorf("round %s: give one trigger: cron, every, at, manual or on", f.Name)
+		return s, fmt.Errorf("round %s: give one trigger: cron, every, at, manual, on or a [rounds.watch] table", f.Name)
 	}
 	switch {
+	case f.Watch != nil:
+		s.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindWatch, Watch: &api.RoundWatch{Argv: f.Watch.Argv, Cwd: f.Watch.Cwd, Kinds: f.Watch.Kinds}}
 	case f.On != "":
 		s.Trigger = api.RoundTrigger{Kind: api.RoundTriggerKindEvent, Event: f.On}
 		if f.Filter != nil {
