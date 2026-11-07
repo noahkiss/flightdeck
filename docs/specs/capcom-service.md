@@ -304,7 +304,7 @@ declares what it lacks, and gff-hab adapts.
 | `mid_turn_input` | Yes | No | gff-hab holds a message that arrives during a turn and sends it when the turn ends |
 | `approval_callback` | Yes (`canUseTool`) | No | The engine must not expose any tool that 5.3 would send to a card. Web fetch is off |
 | `compaction_events` | Yes | No | The context manager re-seeds earlier, at `reseed_early_at` (45%; 6.2, 19.2), and no compaction divider shows |
-| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | No | The governor paces by the engine's own token counts (10.1) |
+| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | Yes: the rollout's `token_count` rate limits, sent at each turn's end when they changed (10.1) | The governor paces by the engine's own token counts (10.1) |
 | `resume_by_id` | Yes | Yes (`resumeThread`) | A restart is a re-seed |
 
 ### 4.2 Messages
@@ -457,7 +457,7 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
   re-seeded again at its next start.
 - **Markers and context use** come from the rollout: user `input_text` lines keep the
   `[flightdeck item <id>]` marker, and the `token_count` event's last usage and model window
-  give `context_used`.
+  give `context_used`. Its `rate_limits` give the usage reading (10.1).
 - **Switching engines is a re-seed.** When the thread's current session belongs to another
   engine, `hello` names no session and asks for `reseed: switch`. The new engine opens with the
   summary and the Logbook part (6.2), and the old session stays with its own CLI.
@@ -1186,7 +1186,8 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   call is made for it. "Send now" in the send button's long-press menu runs that one message
   on the small model anyway.
 - Readings: under the OAuth token (10.2), the SDK's rate-limit events as the engine's usage reading, with
-  the harness `claude` and its own account key (`app.md` 14.1). Under an API key, the result
+  the harness `claude` and its own account key (`app.md` 14.1). On the Codex engine under the
+  login, the rollout's rate limits, with the harness `codex`. Under an API key, the result
   cost, against a daily dollar cap `[capcom] daily_usd` (default none). If the SDK gives no
   reading, the governor counts Capcom's tokens and lists it unpaced (task-k0ydtgae).
 - Settings: `[capcom] model` (default the SDK's default), `small_model` (default the provider's
@@ -1213,6 +1214,19 @@ first consumer.
   key `usage.Key(host, "claude", <state>/capcom/engine)`, so `usage.list` shows Capcom's own
   account. The governor keeps each account's last weekly window in `<state>/governor.json`, so
   after a restart it paces from that window until a new reading comes.
+- **Codex readings.** `codex exec --json` carries no rate limits; the rollout does (probed with
+  CLI 0.167 against a loopback endpoint that sends `x-codex-primary-*` and `x-codex-secondary-*`
+  headers). Each `token_count` record holds `rate_limits`: `limit_id`, `primary` and
+  `secondary` (`used_percent`, `window_minutes`, `resets_at` Unix seconds) and `plan_type`, or
+  null when a response carries none, as under an API key. At each turn's end the Codex engine
+  sends `usage` with `reading: {rollout: [...]}`, the newest such record of each limit id, as
+  the CLI wrote it, and only when the set changed since its last `usage`. gff-hab reads them as
+  the end of a rollout (`internal/usage`, as for Codex panes: each window read at its record's
+  timestamp, `10080` minutes named `7d`) and stores them under `usage.Key(host, "codex",
+  <state>/capcom/engine)` with the harness `codex`. The account follows the engine: the
+  governor paces by the account of the engine the config names, and a reading goes to the
+  account of the engine that sent it. A model family with its own limit id adds windows named
+  after it (`<limit> 7d`), which the governor does not read.
 - **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
   reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
   until local midnight. With the default steps user turns wait at 120% of `daily_usd`, and the

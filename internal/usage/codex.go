@@ -226,3 +226,28 @@ func planLabel(p string) string {
 	r, n := utf8.DecodeRuneInString(p)
 	return string(unicode.ToUpper(r)) + p[n:]
 }
+
+// CodexEngineReading reads a usage message of the Capcom engine on Codex (capcom-service.md
+// 10.1): {"rollout": [record, ...]}, the newest token_count record of each limit id in the
+// thread's rollout, as the CLI wrote it. The records read as the end of a rollout does, under
+// key, Capcom's own account. A message of another shape is drift.
+func CodexEngineReading(key string, raw json.RawMessage) Reading {
+	var m struct {
+		Rollout []json.RawMessage `json:"rollout"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil || m.Rollout == nil {
+		r := Reading{Key: key, Harness: detect.KindCodex, Drift: []string{"usage reading has no rollout records"}}
+		r.Degrade = r.Drift
+		return r
+	}
+	var b bytes.Buffer
+	for _, rec := range m.Rollout {
+		// One record a line: compact JSON holds no newline.
+		if json.Compact(&b, rec) == nil {
+			b.WriteByte('\n')
+		}
+	}
+	r := ParseCodexRollout(b.Bytes(), "", "").Reading
+	r.Key = key
+	return r
+}

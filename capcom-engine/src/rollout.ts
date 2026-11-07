@@ -3,7 +3,9 @@
 // <CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl, one JSON record a line:
 // {type: session_meta | response_item | event_msg | turn_context, payload}. A user message is a
 // response_item {type: message, role: user, content: [{type: input_text, text}]}; an event_msg
-// token_count carries info.last_token_usage and info.model_context_window.
+// token_count carries info.last_token_usage, info.model_context_window and rate_limits: the plan
+// windows the CLI read from the x-codex-* response headers, or null when a response carries none,
+// as the API under a key (probed with CLI 0.167 against a loopback endpoint).
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,14 +80,33 @@ export async function rolloutHandedIds(file: string | undefined): Promise<Set<st
 // rolloutContext is the context use after the last model call: its input and output tokens over
 // the model's window, from the last token_count; 0 when the rollout has none.
 export async function rolloutContext(file: string | undefined): Promise<number> {
+  return (await rolloutTurnEnd(file)).used;
+}
+
+// The rollout as read at a turn's end: the context use, and the newest token_count record with
+// rate limits of each limit id (a login's plan windows; an API key's rollout has none), oldest
+// first. Each record goes to gff-hab as it is, timestamp included (capcom-service.md 10.1).
+export interface RolloutTurnEnd {
+  used: number;
+  rateLimits: any[];
+}
+
+export async function rolloutTurnEnd(file: string | undefined): Promise<RolloutTurnEnd> {
   let used = 0;
+  const limits = new Map<string, any>();
   for (const rec of await records(file)) {
     const p = rec?.payload;
     if (rec?.type !== 'event_msg' || p?.type !== 'token_count') continue;
+    const rl = p.rate_limits;
+    if (rl && typeof rl === 'object' && !Array.isArray(rl)) {
+      const id = typeof rl.limit_id === 'string' && rl.limit_id ? rl.limit_id : 'codex';
+      limits.delete(id); // a newer record goes last
+      limits.set(id, rec);
+    }
     const last = p.info?.last_token_usage;
     const window = p.info?.model_context_window;
     if (!last || !(window > 0)) continue;
     used = Math.min(1, ((last.input_tokens ?? 0) + (last.output_tokens ?? 0)) / window);
   }
-  return used;
+  return { used, rateLimits: [...limits.values()] };
 }

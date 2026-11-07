@@ -23,10 +23,13 @@ const capcomConsumer = "capcom"
 
 // capcomPacer paces one Capcom engine.
 type capcomPacer struct {
-	gov    *governor.Governor
-	usage  *habusage.Store
-	key    string // Capcom's own usage account key (app.md 14.1)
-	config func() capcom.ServiceConfig
+	gov   *governor.Governor
+	usage *habusage.Store
+	// host and dir name Capcom's own usage account (app.md 14.1), one per engine kind: the key
+	// usage.Key(host, <engine>, dir), so a Codex engine's plan windows are a Codex account.
+	host, dir string
+	engine    func() string // the running engine's kind; "": none ready
+	config    func() capcom.ServiceConfig
 	// configPath is the hab's config file: a pace_* edit rechecks once it held for one poll.
 	// "": no watch.
 	configPath string
@@ -72,7 +75,7 @@ func (p *capcomPacer) refresh() bool {
 	st := stampFile(p.configPath)
 	cfg := p.config()
 	pol := governor.Policy{DailyShare: cfg.Pace.DailyShare, EventStop: cfg.Pace.EventStop, SmallAt: cfg.Pace.SmallAt, WaitAt: cfg.Pace.WaitAt}
-	acct := p.key
+	acct := p.key(cfg.Engine)
 	if cfg.Auth == capcom.AuthAPIKey {
 		pol.DailyUSD = cfg.Limits.DailyUSD
 		acct = ""
@@ -202,12 +205,34 @@ func paceTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// reading stores one usage event of the engine under Capcom's account, then rechecks.
+// key is Capcom's usage account key for an engine kind; the Claude engine's for any other.
+func (p *capcomPacer) key(engine string) string {
+	if engine != capcom.EngineCodex {
+		engine = capcom.EngineClaude
+	}
+	return habusage.Key(p.host, engine, p.dir)
+}
+
+// reading stores one usage event of the engine under Capcom's account for the engine that sent
+// it, then rechecks: the Claude SDK's rate_limit_info, or the Codex rollout's token_count
+// records.
 func (p *capcomPacer) reading(raw json.RawMessage) {
 	if p.usage == nil {
 		return
 	}
-	r := habusage.SDKReading(p.key, raw, p.now())
+	kind := ""
+	if p.engine != nil {
+		kind = p.engine()
+	}
+	var r habusage.Reading
+	if kind == capcom.EngineCodex {
+		r = habusage.CodexEngineReading(p.key(kind), raw)
+		if len(r.Windows) == 0 && len(r.Drift) == 0 {
+			return // no plan window: nothing to store
+		}
+	} else {
+		r = habusage.SDKReading(p.key(kind), raw, p.now())
+	}
 	if len(r.Drift) > 0 {
 		line := strings.Join(r.Drift, "; ")
 		p.mu.Lock()
