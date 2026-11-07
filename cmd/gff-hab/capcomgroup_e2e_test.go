@@ -96,6 +96,12 @@ func TestCapcomGroup(t *testing.T) {
 	if g.State != "confirming" || g.Coordinator.Address != "capcom" || g.Coordinator.Session != st.Session {
 		t.Fatalf("record %+v", g)
 	}
+	waitUntil(t, "the catalog's Capcom mark on the group", func() bool {
+		var l api.CatalogList
+		call(t, c, "catalog.list", api.CatalogListParams{}, &l)
+		cg, ok := groupOf(l, gid)
+		return ok && cg.Coordinator != nil && cg.Coordinator.Capcom
+	})
 	cards := 0
 	for _, it := range threadText(t, c) {
 		if it.Kind == "card" && it.Card != nil && it.Card.Type == "group" {

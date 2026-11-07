@@ -524,3 +524,27 @@ func TestLinkTypingTimeout(t *testing.T) {
 		t.Fatal("an event turn's reply is not marked")
 	}
 }
+
+// A user message the engine takes during an event turn makes it a user turn (capcom-service.md
+// 9.4): the hab's event-turn refusals stop, and typing shows.
+func TestLinkUserJoinsEventTurn(t *testing.T) {
+	h := newHarness(t)
+	e, _ := h.connect()
+	e.send(readyMsg())
+	e.send(Message{Type: TTurnStarted, Turn: StrTurn("t1"), Origin: "event"})
+	agent, _, err := h.thread.Add(capcomthread.Item{Kind: capcomthread.KindAgent, Author: capcomthread.Author{Kind: capcomthread.AuthorAgent}, Text: "a report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.send(Message{Type: TInputTaken, Item: json.RawMessage(`"` + agent.ID + `"`)})
+	e.acked(e.seq)
+	if st := h.link.Status(); st.Origin != "event" || st.Typing {
+		t.Fatalf("an agent item turned the event turn: %+v", st)
+	}
+	u := h.user("do it")
+	e.send(Message{Type: TInputTaken, Item: json.RawMessage(`"` + u.ID + `"`)})
+	e.acked(e.seq)
+	if st := h.link.Status(); st.Origin != "user" || st.Turn != "t1" || !st.Typing {
+		t.Fatalf("after the user's message: %+v", st)
+	}
+}

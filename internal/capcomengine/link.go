@@ -93,6 +93,9 @@ type Link struct {
 	// sitesMu orders the allowed-site lists the engine gets: each save and its send, and the
 	// hello's read and send, hold it, so a later list never arrives before an earlier one.
 	sitesMu sync.Mutex
+	// opened are the items the running turn started with: a user message among them does not
+	// join the turn, it is the turn.
+	opened []string
 }
 
 type openApproval struct {
@@ -387,6 +390,7 @@ func (l *Link) handle(c *conn, m Message) {
 	case TTurnStarted:
 		l.mu.Lock()
 		l.st.Turn, l.st.Origin = m.TurnID(), m.Origin
+		l.opened = append([]string(nil), m.Items...)
 		l.typingLocked(m.Origin == "user")
 		l.stopQuietLocked()
 		l.mu.Unlock()
@@ -396,8 +400,19 @@ func (l *Link) handle(c *conn, m Message) {
 		if id == "" {
 			return
 		}
-		if _, ok := th.Get(id); !ok {
+		it, ok := th.Get(id)
+		if !ok {
 			return
+		}
+		if it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorUser {
+			// A user message that joins an event turn makes it a user turn from here
+			// (capcom-service.md 9.4).
+			l.mu.Lock()
+			if l.st.Turn != "" && l.st.Origin == "event" && !slices.Contains(l.opened, id) {
+				l.st.Origin = "user"
+				l.typingLocked(true)
+			}
+			l.mu.Unlock()
 		}
 		th.MarkRead(id, l.cfg.Now())
 		l.cfg.Record.Update(func(r *Record) {

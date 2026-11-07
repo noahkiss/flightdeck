@@ -155,7 +155,7 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 			if err != nil {
 				return err
 			}
-			if g.Coordinator.Session != ss.ID {
+			if !svc.CoordinatedBy(g, ss.ID) {
 				return control.Errorf(api.ErrorKindDenied, "only group %s's coordinator %s calls %s", id, g.Coordinator.Name, method)
 			}
 			return nil
@@ -166,7 +166,7 @@ func groupHook(store *structure.Store, svc *groupsService, eventTurn func(pane s
 			if ss.Group != nil && ss.Group.ID == id {
 				return nil
 			}
-			if g, err := svc.Get(id); err == nil && g.Coordinator.Session == ss.ID {
+			if g, err := svc.Get(id); err == nil && svc.CoordinatedBy(g, ss.ID) {
 				return nil
 			}
 			return control.Errorf(api.ErrorKindDenied, "session %s is not a member of group %s", ss.Name, id)

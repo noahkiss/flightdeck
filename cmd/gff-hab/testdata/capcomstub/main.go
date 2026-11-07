@@ -286,6 +286,7 @@ func turns(sock, token string) {
 			origin, text = "event", t
 		}
 		send(map[string]any{"type": "turn.started", "turn": turn, "origin": origin, "items": []string{id}})
+		waitHandled("turn.started") // as the real engine's model call does, before any tool call
 		send(map[string]any{"type": "input.taken", "item": id})
 		reply := "echo: " + text
 		used := 0.0
@@ -360,6 +361,25 @@ func routeCall(sock, token, body string) string {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return fmt.Sprintf("%d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+}
+
+// waitHandled waits up to 10 s until gff-hab acknowledged every sent message of a type.
+func waitHandled(typ string) {
+	for i := 0; i < 200; i++ {
+		outMu.Lock()
+		pending := false
+		for _, o := range outbox {
+			if o["type"] == typ {
+				pending = true
+			}
+		}
+		outMu.Unlock()
+		if !pending {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	logf("%s never acknowledged", typ)
 }
 
 // send numbers m, keeps it until acknowledged, and writes it when connected.

@@ -1419,6 +1419,9 @@ func serve(args []string) error {
 		groupsRef.p.Store(groupsSvc)
 		groupsCtl = groupsSvc
 		sessionActs.resumed = groupsSvc.Resumed
+		if capcomEng != nil {
+			capcomEng.started.Store(groupsSvc.CapcomStarted)
+		}
 		cs.Poke()
 		caps = append(caps, groups.Capability)
 	}

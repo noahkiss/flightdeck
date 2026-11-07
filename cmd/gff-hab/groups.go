@@ -73,6 +73,8 @@ type groupsCapcom interface {
 	// IsService reports whether a session is the Capcom service's running session: it takes
 	// reports at once, also while its engine is busy or down, and its address is capcom.
 	IsService(session string) bool
+	// Session is the service session's id while this hab runs the service, else "".
+	Session() string
 	// GroupCard puts a card into Capcom's thread that opens the group's card.
 	GroupCard(group, text string)
 }
@@ -81,6 +83,28 @@ type groupsCapcom interface {
 func (s *groupsService) capcomCoordinator(session string) bool {
 	return s.cfg.capcom != nil && session != "" && s.cfg.capcom.IsService(session)
 }
+
+// coordinatorOf is the session that coordinates a group now. A Capcom group's coordinator is
+// the service session that runs now: a mark that left this hab and came back files a new
+// record, and the group follows it (groups.md 12.1). "" while this hab runs no service.
+func (s *groupsService) coordinatorOf(g api.Group) string {
+	if groups.ByCapcom(g) {
+		if s.cfg.capcom == nil {
+			return ""
+		}
+		return s.cfg.capcom.Session()
+	}
+	return g.Coordinator.Session
+}
+
+// CoordinatedBy reports whether a session coordinates a group now.
+func (s *groupsService) CoordinatedBy(g api.Group, session string) bool {
+	return session != "" && s.coordinatorOf(g) == session
+}
+
+// CapcomStarted delivers the waiting reports of Capcom's groups to the service session that
+// started: reports wait in the inbox only while this hab runs no service.
+func (s *groupsService) CapcomStarted(session string) { s.deliverInbox(session) }
 
 // groupsService keeps the groups this hab is the home of.
 type groupsService struct {
@@ -412,7 +436,7 @@ func (s *groupsService) Create(ctx context.Context, p api.GroupCreateParams) (ap
 	address := s.cfg.host + "/" + coord.Name
 	viaCapcom := s.capcomCoordinator(coord.ID)
 	if viaCapcom {
-		address = capcomServiceName // the channel name that follows the mark (groups.md 12.1)
+		address = groups.CapcomAddress
 	}
 	g := groups.New(id, plan, proj.Name, s.cfg.self,
 		api.GroupCoordinator{Session: coord.ID, Name: coord.Name, Address: address}, s.cfg.now())
@@ -1130,7 +1154,7 @@ func (s *groupsService) refresh(id string) {
 // tellLocked sends the coordinator a report: a message from Flightdeck while it runs, else it
 // waits in the inbox (groups.md 5.5). The caller holds s.mu and saves the record.
 func (s *groupsService) tellLocked(g *api.Group, text, from string) string {
-	ss, ok := s.cfg.store.Session(g.Coordinator.Session)
+	ss, ok := s.cfg.store.Session(s.coordinatorOf(*g))
 	// Capcom always counts as running: its thread takes the report while the engine is busy
 	// or down (groups.md 12.1).
 	if ok && (ss.State == "running" || s.capcomCoordinator(ss.ID)) && s.cfg.note != nil {
@@ -1288,10 +1312,10 @@ func (s *groupsService) UsagePause(id string, on bool, until string) (api.Group,
 	return g, err
 }
 
-// Close ends the group: no new starts; with group.close_members on, its idle members on this
-// hab are closed (groups.md 5.2, 7.5). Members on other habs keep running until B4's end.
-// Close ends a group at the user's word: the coordinator gets one message with the result
-// (groups.md 7.5), which a Capcom coordinator sums up in its thread (12.1).
+// Close ends the group at the user's word: no new starts; with group.close_members on, its idle
+// members on this hab are closed (groups.md 5.2, 7.5). Members on other habs keep running until
+// B4's end. The coordinator gets one message with the result, which a Capcom coordinator sums
+// up in its thread (12.1).
 func (s *groupsService) Close(ctx context.Context, id string) (api.Group, error) {
 	return s.closeGroup(ctx, id, false)
 }
@@ -1415,7 +1439,7 @@ func (s *groupsService) deliverInbox(session string) {
 	defer s.mu.Unlock()
 	for _, id := range s.order {
 		g := s.groups[id]
-		if g == nil || g.Coordinator.Session != session || len(g.Inbox) == 0 || s.cfg.note == nil {
+		if g == nil || !s.CoordinatedBy(*g, session) || len(g.Inbox) == 0 || s.cfg.note == nil {
 			continue
 		}
 		if err := s.cfg.note(session, groups.InboxText(*g)); err != nil {

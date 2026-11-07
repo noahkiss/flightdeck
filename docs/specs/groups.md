@@ -1009,15 +1009,23 @@ Built (task-itwl1sbg, B8):
 - Capcom's engine already serves every `gff-hab mcp` tool under its `mcp__flightdeck__*` allow
   rule, so the group tools needed no engine change. Their calls reach the hab on the engine's
   pane route as the Capcom session, which is the coordinator. Its group's coordinator address
-  is `capcom`, not `<host>/capcom`.
+  is `capcom`, not `<host>/capcom`, and its catalog entry marks the coordinator `capcom`, so a
+  `group` round's message goes to the service.
+- The coordinator of a group whose address is `capcom` is the service session that runs now,
+  not the record that made the plan. When the mark leaves this hab and comes back, the hab files
+  a new service record (`capcom-service.md` 2.4); the group follows it, and reports that waited
+  meanwhile go to it at its start. Moving the group with the mark is B9.
 - A report to a Capcom coordinator goes into the thread at once as an agent item, whatever the
   engine's state; it never waits in the inbox.
 - `group_create` from Capcom puts one card into the thread, type `group`, its ref the group id,
   before the plan's confirmation is asked. The app opens the group's card from it. The plan's
   confirmation is the same one any coordinator's plan raises.
 - In an event turn the hab refuses `group_create`, `group_amend`, `group_close` and
-  `group_retry` with `denied`, "ask the user first". `group_status` reads, as 9.4 allows. The
-  Capcom job exception (`capcom-service.md` 9.6) comes with A9.
+  `group_retry` with `denied`, "ask the user first". `group_status` reads, as 9.4 allows. A
+  user message the engine takes during an event turn makes it a user turn from there, as 9.4
+  says. The Capcom job exception (`capcom-service.md` 9.6) comes with A9. A report from a
+  member starts a user turn, as any agent message does: the plan the user confirmed covers the
+  coordinator's later writes.
 - A close by the user (`group.close` on the API) sends the coordinator one message with the
   result: items landed, dropped and not landed, and the leftovers (7.5). A Capcom coordinator
   sums it up in the thread, as its manual says. A close by the coordinator's own `group_close`
