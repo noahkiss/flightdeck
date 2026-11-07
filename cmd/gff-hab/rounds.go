@@ -992,7 +992,8 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 // dropSession removes the session record of a succeeded run once its program exited (7.6), so
 // a frequent round leaves no trail of exited sessions in the sidebar and the board. It waits for
 // the exit the pane close brings; a record that never exits stays until retention. Only a
-// record the run made goes. Transcripts are not touched.
+// record the run made goes, only once its program is known to have ended, and never while a round names it as its
+// target (closeExited). Transcripts are not touched.
 func (s *roundsService) dropSession(ctx context.Context, runID, session string) {
 	t := time.NewTicker(20 * time.Millisecond)
 	defer t.Stop()
@@ -1002,9 +1003,7 @@ func (s *roundsService) dropSession(ctx context.Context, runID, session string) 
 			return
 		}
 		if ss.State == api.SessionStateExited {
-			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
-				s.cfg.logf("rounds: run %s: remove session %s: %v", runID, ss.ID, err)
-			}
+			s.closeExited(runID, ss.ID)
 			return
 		}
 		select {
@@ -1018,6 +1017,8 @@ func (s *roundsService) dropSession(ctx context.Context, runID, session string) 
 
 // dropFinished removes, at start, the exited session records of succeeded runs whose round
 // closes on a good run: one a gff-hab that stopped before the drop left, or an older build's.
+// A record whose holder is not reached yet stays: its program may still run
+// (CloseExitedSession).
 func (s *roundsService) dropFinished() {
 	byRound := map[string][]api.Session{}
 	for _, ss := range s.cfg.store.Snapshot(api.HostInfo{}).Sessions {
@@ -1044,11 +1045,33 @@ func (s *roundsService) dropFinished() {
 			if !ok || r.SessionID != ss.ID || !rounds.DropsSession(r, e.Round.Mode, e.Round.OnFinish) {
 				continue
 			}
-			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
-				s.cfg.logf("rounds: run %s: remove session %s: %v", r.ID, ss.ID, err)
-			}
+			s.closeExited(r.ID, ss.ID)
 		}
 	}
+}
+
+// closeExited removes a run's session record once its program is known to have ended (an exit
+// status, or a pane gone from a complete holder list; not a pane whose holder was not reached
+// yet), unless a round names the session as its
+// target: a resume or fork round, such as one an agent in the run scheduled with -target self,
+// still needs it.
+func (s *roundsService) closeExited(runID, session string) {
+	if s.targeted(session) {
+		return
+	}
+	if _, err := s.cfg.store.CloseExitedSession(session); err != nil {
+		s.cfg.logf("rounds: run %s: remove session %s: %v", runID, session, err)
+	}
+}
+
+// targeted reports whether a round in the store names the session as its target.
+func (s *roundsService) targeted(session string) bool {
+	for _, e := range s.store.List() {
+		if e.Round.Target == session {
+			return true
+		}
+	}
+	return false
 }
 
 // prune applies the retention rule to a round's runs (rounds.md 7.6) and removes the session
@@ -1065,7 +1088,8 @@ func (s *roundsService) prune(roundID string) {
 			continue
 		}
 		// A resume run's session is its target, the user's: only a session the run made goes.
-		if ss, ok := s.cfg.store.Session(r.SessionID); ok && ss.State == api.SessionStateExited && ss.Round != nil && ss.Round.Run == r.ID {
+		// A session another round names as its target stays too.
+		if ss, ok := s.cfg.store.Session(r.SessionID); ok && ss.State == api.SessionStateExited && ss.Round != nil && ss.Round.Run == r.ID && !s.targeted(ss.ID) {
 			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
 				s.cfg.logf("rounds: run %s: remove session %s: %v", r.ID, ss.ID, err)
 			}
