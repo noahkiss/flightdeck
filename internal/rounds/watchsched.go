@@ -174,4 +174,3 @@ func (s *Scheduler) PauseWatcher(roundID, lastExit, session string, exits int) e
 	s.unlockAndFlush()
 	return err
 }
-
