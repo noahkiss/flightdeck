@@ -101,11 +101,18 @@ public enum SettingsRegistry {
     public static let voiceYesAllows = "voice.yes_allows"
     public static let sshRequireFaceID = "ssh.require_face_id"
     public static let permissionWait = "hab.permission_wait"
+    public static let groupPlan = "confirm.group_plan"
+    public static let groupConfirmMaxAge = "group.confirm_max_age"
+    public static let groupMaxLeads = "group.max_leads"
+    public static let groupMaxWorkers = "group.max_workers"
+    public static let groupCloseMembers = "group.close_members"
 
     /// The levelled settings, in registry order (app.md 20.3).
     public static let levelled: [SettingDef] = [
         SettingDef(id: startElsewhere, title: "Confirm before an agent starts work on another host", area: .agents, kind: .bool, store: .everyHab,
                    levels: [.safe: .bool(true), .balanced: .bool(false), .bypass: .bool(false)]),
+        SettingDef(id: groupPlan, title: "Confirm a group's plan before it starts", area: .agents, kind: .bool, store: .everyHab,
+                   levels: [.safe: .bool(true), .balanced: .bool(true), .bypass: .bool(false)]),
         SettingDef(id: approvalMaxAge, title: "Remote answers expire after", area: .approvals, kind: .integer(0...1440, unit: "min"), store: .everyHab,
                    levels: [.safe: .int(60), .balanced: .int(60), .bypass: .int(0)]),
         SettingDef(id: logbookApproval, title: "Require approval for memories", area: .agents,
@@ -129,6 +136,11 @@ public enum SettingsRegistry {
         SettingDef(id: "mac.keep_connected", title: "Stay connected in the background", area: .connection, kind: .page, store: .app, built: false),
         SettingDef(id: permissionWait, title: "Answer permissions from the app (blocking hook)", area: .approvals,
                    kind: .integer(0...120, unit: "s"), store: .oneHab),
+        SettingDef(id: groupConfirmMaxAge, title: "A plan's confirmation expires after", area: .agents,
+                   kind: .integer(1...1440, unit: "min"), store: .everyHab),
+        SettingDef(id: groupMaxLeads, title: "Leads at once", area: .agents, kind: .integer(1...10, unit: ""), store: .everyHab),
+        SettingDef(id: groupMaxWorkers, title: "Workers per lead", area: .agents, kind: .integer(0...5, unit: ""), store: .everyHab),
+        SettingDef(id: groupCloseMembers, title: "Close idle members at the end", area: .agents, kind: .bool, store: .everyHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareLocationID, title: "Share location with Capcom", area: .agents, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareCalendarID, title: "Share calendar with Capcom", area: .agents, kind: .page, store: .app),
