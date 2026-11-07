@@ -86,11 +86,16 @@ type watchSup struct {
 	kick   chan struct{}
 	stop   chan struct{}
 	done   chan struct{}
+	// born is when the supervisor was made, read from the scheduler's clock, so the start
+	// settle counts on the same clock as now.
+	born time.Time
 }
 
 func newWatchSup(s *roundsService) *watchSup {
-	return &watchSup{s: s, m: map[string]*watcher{}, byPane: map[string]string{}, dirty: map[string]bool{},
+	w := &watchSup{s: s, m: map[string]*watcher{}, byPane: map[string]string{}, dirty: map[string]bool{},
 		kick: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	w.born = w.now()
+	return w
 }
 
 func (w *watchSup) now() time.Time {
@@ -187,7 +192,7 @@ func (w *watchSup) becomeReady() bool {
 	if w.ready {
 		return true
 	}
-	at := w.s.started.Add(settle)
+	at := w.born.Add(settle)
 	for _, e := range w.s.store.List() {
 		if e.Round.Trigger.Kind != rounds.TriggerWatch {
 			continue
