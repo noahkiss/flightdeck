@@ -303,7 +303,7 @@ func ByCapcom(g api.Group) bool { return g.Coordinator.Address == CapcomAddress 
 func Short(g api.Group) api.CatalogGroup {
 	c := api.CatalogGroup{ID: g.ID, Title: g.Title, State: string(g.State), Generation: g.Generation, Home: g.Home, Revision: g.Revision,
 		Coordinator: &api.CatalogMember{Device: CoordinatorDevice(g), Session: g.Coordinator.Session, Name: g.Coordinator.Name, Capcom: ByCapcom(g)},
-		Moving: g.Moving, Moved: g.Moved, Tried: g.Tried}
+		Moving:      g.Moving, Moved: g.Moved, Tried: g.Tried}
 	for _, it := range g.Items {
 		if it.State != ItemDropped {
 			c.Items++
