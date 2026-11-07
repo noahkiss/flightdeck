@@ -172,8 +172,15 @@ func TestGroupMove(t *testing.T) {
 		t.Fatalf("group.get on the old home: %q", k)
 	}
 	g := getGroup(t, m.b, gid)
+	// The item's lead, and since B7 its reviewer, still planned.
+	var leads []api.GroupMember
+	for _, mb := range g.Members {
+		if mb.Role == groups.RoleLead {
+			leads = append(leads, mb)
+		}
+	}
 	if g.Home != devB || g.Generation != 2 || g.State != "running" || g.Pending || g.Coordinator.Device != devA ||
-		len(g.Members) != 1 || g.Members[0].Host != "sea" || g.Members[0].Device != devC {
+		len(leads) != 1 || leads[0].Host != "sea" || leads[0].Device != devC {
 		t.Fatalf("the new home's record: %+v", g)
 	}
 	waitUntil(t, "the coordinator's line", func() bool {
