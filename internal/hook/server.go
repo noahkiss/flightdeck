@@ -56,6 +56,7 @@ type Server struct {
 	context  ContextHandler
 	reads    ReadHandler
 	agent    ChannelHandler
+	engine   EngineHandler
 	http     *http.Server
 }
 
@@ -104,6 +105,10 @@ func (s *Server) Close() error { return s.http.Close() }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if token, ok := strings.CutPrefix(r.URL.Path, ChannelPath); ok && r.Method == http.MethodPost {
 		s.serveChannel(w, r, token)
+		return
+	}
+	if token, ok := strings.CutPrefix(r.URL.Path, EnginePath); ok && r.Method == http.MethodPost {
+		s.serveEngine(w, r, token)
 		return
 	}
 	token, ok := strings.CutPrefix(r.URL.Path, "/hooks/")
