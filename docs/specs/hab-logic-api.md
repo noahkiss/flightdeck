@@ -1080,7 +1080,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   |---|---|---|---|
   | `Session` | `title` | String; absent when the harness gives none | Part 4 stage 5 (transcript reader), then each adapter |
   | `Session` | `model` | String, as the harness names the model | Part 4 stage 4 (Claude Code adapter), then each adapter |
-  | `Session` | `context_pct` | Integer, whole percent of the current model's window; absent when unknown, never guessed | Part 4 stages 4 and 5 (adapter and transcript reader) |
+  | `Session` | `context_pct` | Integer, whole percent of the current model's window; absent when unknown, never guessed | Filled for group members by context supervision (`groups.md` 9.5, stage B6): Claude Code and Codex. Other sessions: Part 4 stages 4 and 5 |
+  | `Session` | `compacts`, `replaced` | A group member's compactions its hab counted; the session a fresh member session replaced | `groups.md` 9.5, stage B6 |
   | `PermissionRequest` | `title` | String. `app.md` 17 lists it as always present; it is optional here, because a request from an older hab has none. A client builds a title from `tool` when it is absent | Part 4 stage 4 |
   | `PermissionRequest` | `description` | String, the harness's longer description of the call | Part 4 stage 4 |
   | `PermissionRequest` | `context_line` | String, the agent's last message before the request | Part 4 stage 5 (transcript reader) |
