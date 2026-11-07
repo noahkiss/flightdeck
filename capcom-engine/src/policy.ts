@@ -97,19 +97,22 @@ export function textOf(v: unknown, depth = 0): string {
   return '';
 }
 
+const COORD_KEYS = new Set(['lat', 'lon', 'latitude', 'longitude', 'lng']);
+
 // One line for the folded tool line (7.2).
 export function toolSummary(name: string, input: unknown): string {
   let s = '';
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>;
-    for (const k of ['url', 'query', 'q', 'project', 'title', 'name', 'text', 'message']) {
+    for (const k of ['url', 'query', 'q', 'project', 'title', 'name', 'place', 'near', 'text', 'message']) {
       if (typeof o[k] === 'string' && o[k]) {
         s = String(o[k]);
         break;
       }
     }
     if (!s) {
-      const first = Object.values(o).find((x) => typeof x === 'string' && x);
+      // Never a position (capcom-service.md 8.1): lat and lon stay out of the tool line.
+      const first = Object.entries(o).find(([k, x]) => !COORD_KEYS.has(k) && typeof x === 'string' && x)?.[1];
       if (typeof first === 'string') s = first;
     }
   }

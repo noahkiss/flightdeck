@@ -20,11 +20,30 @@ const (
 // the banner. A message from an event turn is passive; any other is active. session is the
 // service session: a device whose Capcom view is in focus gets no push (app.md 8.3), and the
 // app's Reply goes to it.
-func CapcomMessage(item, session, text string, event bool) Notice {
-	no := Notice{Kind: KindCapcom, Title: "Capcom", Body: Fit(text, capcomBodyWords, capcomBodyChars), Level: LevelActive,
+// marks are data sources' marks the message shows (capcom-service.md 8.3: Apple Weather); each
+// goes on its own line after the cut text, so the budget never cuts one off.
+func CapcomMessage(item, session, text string, event bool, marks ...string) Notice {
+	body := Fit(text, capcomBodyWords, capcomBodyChars)
+	for _, m := range marks {
+		body += "\n" + m
+	}
+	no := Notice{Kind: KindCapcom, Title: "Capcom", Body: body, Level: LevelActive,
 		Session: session, Collapse: collapseID("capcom-", item), Category: CategoryCapcomReply, Item: item}
 	if event {
 		no.Level = LevelPassive
 	}
+	return no
+}
+
+// CategoryCapcomCard is a calendar or reminder card's category (capcom-service.md 8.5): one Add
+// action, which the app runs by writing the event on the device that taps it, then answering
+// the card with capcom.card.answer.
+const CategoryCapcomCard = "capcom-card"
+
+// CapcomCard is the notice for a calendar or reminder card in the thread: titled "Capcom", the
+// card's line as the body, collapsed by item id, with the Add action.
+func CapcomCard(item, session, text string, event bool) Notice {
+	no := CapcomMessage(item, session, text, event)
+	no.Category = CategoryCapcomCard
 	return no
 }

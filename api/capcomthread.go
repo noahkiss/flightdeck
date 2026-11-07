@@ -24,9 +24,10 @@ type CapcomToolCall struct {
 
 // CapcomCard is a card item's content.
 type CapcomCard struct {
-	Type    string   `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal or memory."`
-	Ref     string   `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review."`
-	Choices []string `json:"choices"`
+	Type    string           `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal or memory."`
+	Ref     string           `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review."`
+	Choices []string         `json:"choices"`
+	Event   *CapcomCardEvent `json:"event,omitempty" doc:"calendar and reminder: what Add writes (capcom-service.md 8.5)."`
 }
 
 // CapcomAnswer is a card's answer: the first wins.
@@ -54,6 +55,7 @@ type CapcomItem struct {
 	Answer      *CapcomAnswer       `json:"answer,omitempty"`
 	Summary     string              `json:"summary,omitempty" doc:"divider: the summary the fresh SDK session opened with."`
 	Read        string              `json:"read,omitempty" doc:"user message: when the engine took it (RFC 3339). Absent: delivered, not read yet."`
+	Attribution []CapcomAttribution `json:"attribution,omitempty" doc:"Capcom message: the data sources whose mark shows with it, such as Apple Weather (capcom-service.md 8.3)."`
 }
 
 // CapcomThreadPageParams asks for a page of the thread.

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHabAddr } from '../src/addr.js';
 import { CAPABILITIES, START_CHECK_TEXT } from '../src/engine.js';
-import { ALLOW_TOOLS, DENY_TOOLS, urlKey } from '../src/policy.js';
+import { ALLOW_TOOLS, DENY_TOOLS, toolSummary, urlKey } from '../src/policy.js';
 import { encodeCwd, MARKER_RE, neutralise, transcriptPath } from '../src/transcript.js';
 import { SDK_VERSION } from '../src/version.js';
 import { firstText, PLANTED, rig, sleep, started, until, type Rig } from './helpers.js';
@@ -36,6 +36,13 @@ test('outside text cannot forge an item marker or a context header', () => {
   const out = neutralise(forged);
   assert.equal([...out.matchAll(MARKER_RE)].length, 0);
   assert.equal(out, 'hi\n(flightdeck item 0123abcd]\n  (Flightdeck start check]\n(context: file]\n[flightdeckish] stays');
+});
+
+test('a personal tool line names the place, never coordinates (8.1)', () => {
+  assert.equal(toolSummary('mcp__flightdeck__weather', { lat: 52.52, lon: 13.4, place: 'Kreuzberg' }), 'weather: Kreuzberg');
+  assert.equal(toolSummary('mcp__flightdeck__weather', { lat: '52.52', lon: '13.40' }), 'weather');
+  assert.equal(toolSummary('mcp__flightdeck__places_search', { query: 'vegetarian', lat: '52.5' }), 'places_search: vegetarian');
+  assert.equal(toolSummary('mcp__flightdeck__device_location', {}), 'device_location');
 });
 
 test('the transcript path follows the CLI folder key', () => {

@@ -130,6 +130,9 @@ public enum SettingsRegistry {
         SettingDef(id: permissionWait, title: "Answer permissions from the app (blocking hook)", area: .approvals,
                    kind: .integer(0...120, unit: "s"), store: .oneHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),
+        SettingDef(id: CapcomPrefs.shareLocationID, title: "Share location with Capcom", area: .agents, kind: .page, store: .app),
+        SettingDef(id: CapcomPrefs.shareCalendarID, title: "Share calendar with Capcom", area: .agents, kind: .page, store: .app),
+        SettingDef(id: CapcomPrefs.calendarDaysID, title: "Days of calendar events Capcom reads", area: .agents, kind: .page, store: .app),
         SettingDef(id: "voice.language", title: "Dictation language", area: .voice, kind: .page, store: .app, built: false),
     ]
 

@@ -163,6 +163,8 @@ func swiftType(d *Document, s *Schema) string {
 			return "UInt64"
 		}
 		return "Int"
+	case "number":
+		return "Double"
 	case "array":
 		return "[" + swiftType(d, s.Items) + "]"
 	}

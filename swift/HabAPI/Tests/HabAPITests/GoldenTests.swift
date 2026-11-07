@@ -122,6 +122,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.capcomResume)
         result(HabMethods.capcomCardAnswer)
         result(HabMethods.capcomSiteRemove)
+        result(HabMethods.deviceContextPut)
         result(HabMethods.habPermissions)
         result(HabMethods.detectExplain)
         result(HabMethods.channelSend)

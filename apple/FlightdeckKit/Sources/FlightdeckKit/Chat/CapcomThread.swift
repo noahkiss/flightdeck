@@ -219,6 +219,13 @@ public final class CapcomThread {
         }
     }
 
+    /// How a calendar or reminder card's answer reaches the hab (`capcom.card.answer`); nil
+    /// for an earlier thread, which takes no answers.
+    public var cardClaim: CapcomCardAdder.Claim? {
+        guard let conn = connection, session != nil else { return nil }
+        return { p in try await conn.call(HabMethods.capcomCardAnswer, p) }
+    }
+
     /// The hab runs the Capcom service: the thread calls and events.
     public nonisolated static let capability = "capcom-thread"
 
@@ -307,8 +314,9 @@ public enum CapcomCardChoice: String, CaseIterable, Sendable {
 public enum CapcomRow: Equatable, Identifiable, Sendable {
     /// The user's message: its text, thumbnails, context chips, and read (true) or delivered.
     case user(id: String, text: String, attachments: [String], context: [CapcomContextItem], read: Bool)
-    /// Capcom's message; `wroteFirst` when an event turn wrote it.
-    case capcom(id: String, text: String, wroteFirst: Bool)
+    /// Capcom's message; `wroteFirst` when an event turn wrote it, and the marks of the data
+    /// sources its turn used (capcom-service.md 8.3).
+    case capcom(id: String, text: String, wroteFirst: Bool, marks: [CapcomMark] = [])
     /// A turn's tool calls, folded into one quiet line: its summary, then each call.
     case tools(id: String, line: String, calls: [CapcomToolCall])
     /// A quiet line that opens to a text: an agent's report, a round message.
@@ -322,7 +330,7 @@ public enum CapcomRow: Equatable, Identifiable, Sendable {
 
     public var id: String {
         switch self {
-        case .user(let id, _, _, _, _), .capcom(let id, _, _), .tools(let id, _, _), .quiet(let id, _, _),
+        case .user(let id, _, _, _, _), .capcom(let id, _, _, _), .tools(let id, _, _), .quiet(let id, _, _),
              .note(let id, _), .divider(let id, _, _): return id
         case .card(let it): return it.id
         }
@@ -335,7 +343,7 @@ public enum CapcomRow: Equatable, Identifiable, Sendable {
             if it.author.kind.rawValue == "user" {
                 return .user(id: it.id, text: text, attachments: it.attachments ?? [], context: it.context ?? [], read: it.read != nil)
             }
-            return .capcom(id: it.id, text: text, wroteFirst: it.event == true)
+            return .capcom(id: it.id, text: text, wroteFirst: it.event == true, marks: CapcomMark.of(it.attribution ?? []))
         case "tools":
             return .tools(id: it.id, line: toolsLine(it.tools ?? []), calls: it.tools ?? [])
         case "agent":
@@ -389,5 +397,24 @@ public enum CapcomRow: Equatable, Identifiable, Sendable {
 
     static func firstLine(_ s: String) -> String {
         s.split(separator: "\n", omittingEmptySubsequences: true).first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+    }
+}
+
+/// A data source's mark under a Capcom message (capcom-service.md 8.3). WeatherKit's terms ask
+/// for the Apple Weather mark, linked to its data sources page, wherever its data shows.
+public struct CapcomMark: Hashable, Sendable {
+    /// An SF Symbol drawn before the text, such as `apple.logo`.
+    public var symbol: String?
+    public var text: String
+    public var url: URL?
+
+    public static func of(_ a: [CapcomAttribution]) -> [CapcomMark] {
+        a.map { x in
+            let url = URL(string: x.url).flatMap { $0.scheme == "https" ? $0 : nil }
+            if x.source == "weather" {
+                return CapcomMark(symbol: "apple.logo", text: "Weather", url: url)
+            }
+            return CapcomMark(symbol: nil, text: x.text, url: url)
+        }
     }
 }

@@ -57,6 +57,7 @@ type Server struct {
 	context  ContextHandler
 	reads    ReadHandler
 	agent    ChannelHandler
+	personal ChannelHandler
 	engine   EngineHandler
 	http     *http.Server
 }

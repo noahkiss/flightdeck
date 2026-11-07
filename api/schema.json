@@ -40,7 +40,8 @@
     "heavy",
     "round-lock",
     "capcom-thread",
-    "groups"
+    "groups",
+    "device-context"
   ],
   "methods": [
     {
@@ -2592,6 +2593,55 @@
       }
     },
     {
+      "name": "device.context.put",
+      "summary": "Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link; unavailable on a hab that does not hold the Capcom mark. Needs the device-context capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "calendar",
+          "schema": {
+            "$ref": "#/components/schemas/DeviceCalendar"
+          }
+        },
+        {
+          "name": "calendar_off",
+          "description": "Why the device shares no calendar: off or no_permission. The hab drops the snapshot this device sent.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "location",
+          "schema": {
+            "$ref": "#/components/schemas/DeviceLocation"
+          }
+        },
+        {
+          "name": "location_off",
+          "description": "Why the device shares no location: off (the capcom.share_location preference) or no_permission. The hab drops the fix this device sent.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "tz",
+          "description": "The device's IANA time zone, such as Europe/Berlin.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DeviceContextPutParams"
+      }
+    },
+    {
       "name": "worktree.remove",
       "summary": "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).",
       "paramStructure": "by-name",
@@ -5129,6 +5179,28 @@
           "pending"
         ]
       },
+      "CapcomAttribution": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "weather: Apple Weather."
+          },
+          "text": {
+            "type": "string",
+            "description": "The mark's text, such as Apple Weather."
+          },
+          "url": {
+            "type": "string",
+            "description": "The data sources page the mark links to."
+          }
+        },
+        "required": [
+          "source",
+          "text",
+          "url"
+        ]
+      },
       "CapcomAuthor": {
         "type": "object",
         "properties": {
@@ -5165,6 +5237,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "event": {
+            "$ref": "#/components/schemas/CapcomCardEvent",
+            "description": "calendar and reminder: what Add writes (capcom-service.md 8.5)."
           },
           "ref": {
             "type": "string",
@@ -5217,6 +5293,45 @@
         "required": [
           "seq",
           "item"
+        ]
+      },
+      "CapcomCardEvent": {
+        "type": "object",
+        "properties": {
+          "all_day": {
+            "type": "boolean"
+          },
+          "due": {
+            "type": "string",
+            "description": "reminder: RFC 3339, or a date (YYYY-MM-DD)."
+          },
+          "end": {
+            "type": "string",
+            "description": "calendar: RFC 3339, or a date (YYYY-MM-DD) for an all-day event, the last day included."
+          },
+          "location": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "calendar: RFC 3339, or a date (YYYY-MM-DD) for an all-day event."
+          },
+          "title": {
+            "type": "string"
+          },
+          "tz": {
+            "type": "string",
+            "description": "The time zone the times are meant in, from the device context; absent: the times carry their offset."
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
         ]
       },
       "CapcomContextItem": {
@@ -5311,6 +5426,13 @@
             "description": "The attachment ids of images, in order: attachment.get reads their thumbnails.",
             "items": {
               "type": "string"
+            }
+          },
+          "attribution": {
+            "type": "array",
+            "description": "Capcom message: the data sources whose mark shows with it, such as Apple Weather (capcom-service.md 8.3).",
+            "items": {
+              "$ref": "#/components/schemas/CapcomAttribution"
             }
           },
           "author": {
@@ -8329,6 +8451,89 @@
           "paired_at"
         ]
       },
+      "DeviceCalendar": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceEvent"
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "The start of the window the snapshot covers, RFC 3339."
+          },
+          "time": {
+            "type": "string",
+            "description": "When the phone read the calendars, RFC 3339."
+          },
+          "to": {
+            "type": "string",
+            "description": "The end of the window the snapshot covers, RFC 3339."
+          }
+        },
+        "required": [
+          "time",
+          "from",
+          "to",
+          "events"
+        ]
+      },
+      "DeviceContextPutParams": {
+        "type": "object",
+        "properties": {
+          "calendar": {
+            "$ref": "#/components/schemas/DeviceCalendar"
+          },
+          "calendar_off": {
+            "type": "string",
+            "description": "Why the device shares no calendar: off or no_permission. The hab drops the snapshot this device sent."
+          },
+          "location": {
+            "$ref": "#/components/schemas/DeviceLocation"
+          },
+          "location_off": {
+            "type": "string",
+            "description": "Why the device shares no location: off (the capcom.share_location preference) or no_permission. The hab drops the fix this device sent."
+          },
+          "tz": {
+            "type": "string",
+            "description": "The device's IANA time zone, such as Europe/Berlin."
+          }
+        }
+      },
+      "DeviceEvent": {
+        "type": "object",
+        "properties": {
+          "all_day": {
+            "type": "boolean"
+          },
+          "calendar": {
+            "type": "string",
+            "description": "The calendar's title."
+          },
+          "end": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "location": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "start",
+          "end"
+        ]
+      },
       "DeviceKind": {
         "type": "string",
         "x-known-values": [
@@ -8357,6 +8562,42 @@
         "required": [
           "seq",
           "devices"
+        ]
+      },
+      "DeviceLocation": {
+        "type": "object",
+        "properties": {
+          "accuracy": {
+            "type": "number",
+            "format": "double",
+            "description": "Horizontal accuracy in metres."
+          },
+          "country": {
+            "type": "string",
+            "description": "The ISO 3166-1 alpha-2 country code from the reverse geocoder: weather alerts need it."
+          },
+          "lat": {
+            "type": "number",
+            "format": "double"
+          },
+          "lon": {
+            "type": "number",
+            "format": "double"
+          },
+          "place": {
+            "type": "string",
+            "description": "The place name from the phone's reverse geocoder, such as a neighbourhood and city."
+          },
+          "time": {
+            "type": "string",
+            "description": "When the phone took the fix, RFC 3339."
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "accuracy",
+          "time"
         ]
       },
       "DeviceState": {

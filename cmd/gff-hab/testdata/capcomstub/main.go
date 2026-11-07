@@ -304,6 +304,13 @@ func turns(sock, token string) {
 			reply = "lb: " + routeCall(sock, token, body)
 		case "ctx":
 			fmt.Sscanf(arg, "%g", &used)
+		case "personal":
+			// "personal <tool> <method> <params json>": a tool line as the SDK reports the call,
+			// then the call on the route, as gff-hab mcp makes it.
+			tool, rest, _ := strings.Cut(arg, " ")
+			method, params, _ := strings.Cut(rest, " ")
+			send(map[string]any{"type": "tool", "turn": turn, "name": "mcp__flightdeck__" + tool, "summary": tool + ": " + params})
+			reply = "personal: " + routeCall(sock, token, fmt.Sprintf(`{"method":%q,"params":%s}`, method, params))
 		case "compact":
 			if !codex {
 				summarise(askContext("compact"))
