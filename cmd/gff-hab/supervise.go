@@ -96,6 +96,7 @@ type superviseService struct {
 	live    map[string]*supAction // the running action, by member session id
 	retryAt map[string]time.Time  // no automatic action before this, by session id
 	ours    map[string]time.Time  // a compaction of ours ended at, by session id: its hook is not counted again
+	fails   map[string]int        // automatic actions failed in a row, by session id
 	stop    chan struct{}
 	wg      sync.WaitGroup
 }
@@ -123,7 +124,7 @@ func newSupervisor(cfg superviseConfig) *superviseService {
 		cfg.tick = superviseTick
 	}
 	return &superviseService{cfg: cfg, byID: map[string]*supAction{}, live: map[string]*supAction{},
-		retryAt: map[string]time.Time{}, ours: map[string]time.Time{}, stop: make(chan struct{})}
+		retryAt: map[string]time.Time{}, ours: map[string]time.Time{}, fails: map[string]int{}, stop: make(chan struct{})}
 }
 
 // Start runs the reading loop until Stop.
@@ -364,7 +365,13 @@ func (s *superviseService) end(a *supAction, state api.MemberActionState, reason
 		delete(s.live, a.a.Session)
 	}
 	if a.auto && state != actDone {
-		s.retryAt[a.a.Session] = time.Now().Add(superviseRetry)
+		// A lasting failure backs off, doubling to 30 minutes, so the member is not asked
+		// again every minute (review M4).
+		s.fails[a.a.Session]++
+		d := superviseRetry << min(s.fails[a.a.Session]-1, 5)
+		s.retryAt[a.a.Session] = time.Now().Add(min(d, 30*time.Minute))
+	} else if state == actDone {
+		delete(s.fails, a.a.Session)
 	}
 	s.ended = append(s.ended, a.a.ID)
 	for len(s.ended) > keptActions {
@@ -450,12 +457,20 @@ func (s *superviseService) waitFree(a *supAction) (api.Session, api.AgentState, 
 // conflict (a client typed, another send) waits again. It returns the agent's revision just
 // before the send.
 func (s *superviseService) sendFree(a *supAction, text string) (api.Session, uint64, error) {
+	return s.sendFreeThen(a, text, nil)
+}
+
+// sendFreeThen is sendFree with before, run just before each try of the send.
+func (s *superviseService) sendFreeThen(a *supAction, text string, before func()) (api.Session, uint64, error) {
 	for {
 		ss, st, err := s.waitFree(a)
 		if err != nil {
 			return ss, 0, err
 		}
 		guard := func(pane string) error { return s.cfg.guard(ss.ID, pane) }
+		if before != nil {
+			before()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err = s.cfg.send(ctx, ss.ID, text, guard)
 		cancel()
@@ -606,17 +621,24 @@ func (s *superviseService) run(a *supAction) {
 	}
 
 	// A hand-off, then a fresh session (9.3).
-	s.mu.Lock()
-	a.asked = true
-	s.mu.Unlock()
 	text := fmt.Sprintf("Send a hand-off with %s: what is done, what is next, open questions; then end your turn. A fresh session continues %s from it.", noteArgs, itemRef)
-	ss2, rev, err := s.sendFree(a, channels.NoteEnvelope(text))
+	// Only a note written after the ask goes in counts as the hand-off (review M5).
+	ss2, rev, err := s.sendFreeThen(a, channels.NoteEnvelope(text), func() {
+		s.mu.Lock()
+		a.asked = true
+		s.mu.Unlock()
+	})
 	if err != nil {
 		return
 	}
-	_, noted, err := s.waitTurn(a, ss2.Pane, rev, true, s.cfg.keys.HandoffNoteWait)
+	ended, noted, err := s.waitTurn(a, ss2.Pane, rev, true, s.cfg.keys.HandoffNoteWait)
 	if errors.Is(err, errStopped) {
 		s.end(a, actFailed, "gff-hab stopped")
+		return
+	}
+	if !ended {
+		// Never close a pane mid-turn (review M1): the action fails and is tried again later.
+		s.end(a, actFailed, fmt.Sprintf("the member's turn did not end within %s; no fresh session", s.cfg.keys.HandoffNoteWait))
 		return
 	}
 	// The member may have gone meanwhile; the swap needs it still there.
@@ -638,6 +660,13 @@ func (s *superviseService) run(a *supAction) {
 	}
 	seed += fmt.Sprintf("\nYou are a fresh session of member %s, which ran out of context. Read the notes on %s and continue.", ss3.Name, task)
 	fctx, fcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	go func() {
+		select {
+		case <-s.stop:
+			fcancel() // the swap is cut short at Stop, and undoes its rename
+		case <-fctx.Done():
+		}
+	}()
 	id, err := s.cfg.fresh(fctx, ss3, st, recp, seed)
 	fcancel()
 	if err != nil {
