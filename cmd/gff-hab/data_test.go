@@ -30,7 +30,7 @@ type habEnv struct {
 	t                 *testing.T
 	hdir, state, sock string
 	work              string
-	env               []string // extra environment for each gff-hab started
+	env               []string  // extra environment for each gff-hab started
 	stderr            io.Writer // gff-hab's log; nil: the test's stderr
 	srv               *served
 	holder            *exec.Cmd
