@@ -23,6 +23,7 @@ export interface Item {
   text?: string;
   images?: string[];
   context?: { kind?: string; title?: string; text?: string }[];
+  send_now?: boolean; // sent with "Send now": runs while user turns wait (10.1)
 }
 
 // hello's settings, with 19.2's defaults where hello carries none.
