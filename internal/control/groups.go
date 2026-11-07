@@ -38,11 +38,21 @@ type Groups interface {
 	Message(ctx context.Context, p api.GroupMessageParams) error
 	// Sync takes a group home's push over a peer link; from is the link's hello.
 	Sync(from api.PeerHello, p api.GroupSyncParams) error
+	// Move is the user's move of the home (groups.md 5.7). Adopt, AdoptCommit and Tell come
+	// over peer links only: ctx carries the caller's hello (CallerPeer).
+	Move(ctx context.Context, p api.GroupMoveParams) (api.GroupMoveResult, error)
+	Adopt(ctx context.Context, p api.GroupAdoptParams) error
+	AdoptCommit(ctx context.Context, p api.GroupAdoptCommitParams) error
+	Tell(ctx context.Context, p api.GroupTellParams) error
 }
 
 // maxGroupTime bounds one group call: a create waits up to 120 s for its confirmation, and a
 // retry starts a member on a peer.
 const maxGroupTime = 150 * time.Second
+
+// maxMoveTime bounds group.move: a start in flight, then the adopt's answer ([groups] move_answer,
+// at most 10 minutes), then the commit (groups.md 5.7).
+const maxMoveTime = 15 * time.Minute
 
 // handleGroups answers the group methods off the read loop: a create may wait for its answer,
 // and each change is saved before it answers.
@@ -146,6 +156,33 @@ func (c *conn) handleGroups(m message) {
 		if e = c.decodeUp(m, &p); e == nil {
 			call = func(context.Context) (any, error) { return api.Empty{}, gs.Sync(from, p) }
 		}
+	case "group.move":
+		var p api.GroupMoveParams
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(ctx context.Context) (any, error) { return gs.Move(ctx, p) }
+		}
+	case "group.adopt", "group.adopt_commit", "group.tell":
+		if c.peer == nil {
+			e = appErr(api.ErrorKindDenied, "%s comes over a peer link only", m.Method)
+			break
+		}
+		switch m.Method {
+		case "group.adopt":
+			var p api.GroupAdoptParams
+			if e = c.decodeUp(m, &p); e == nil {
+				call = func(ctx context.Context) (any, error) { return api.Empty{}, gs.Adopt(ctx, p) }
+			}
+		case "group.adopt_commit":
+			var p api.GroupAdoptCommitParams
+			if e = c.decodeUp(m, &p); e == nil {
+				call = func(ctx context.Context) (any, error) { return api.Empty{}, gs.AdoptCommit(ctx, p) }
+			}
+		default:
+			var p api.GroupTellParams
+			if e = c.decodeUp(m, &p); e == nil {
+				call = func(ctx context.Context) (any, error) { return api.Empty{}, gs.Tell(ctx, p) }
+			}
+		}
 	default:
 		e = appErr(api.ErrorKindNotFound, "no method %s", m.Method)
 	}
@@ -155,7 +192,11 @@ func (c *conn) handleGroups(m message) {
 	}
 	peer := c.peer
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxGroupTime)
+		limit := maxGroupTime
+		if m.Method == "group.move" {
+			limit = maxMoveTime
+		}
+		ctx, cancel := context.WithTimeout(c.ctx, limit)
 		defer cancel()
 		if peer != nil {
 			// The service answers a peer's forward and never forwards it again; the lane and
@@ -189,6 +230,9 @@ func withSeq(res any, seq uint64) any {
 		r.Seq = s
 		return r
 	case api.MemberActionResult:
+		r.Seq = s
+		return r
+	case api.GroupMoveResult:
 		r.Seq = s
 		return r
 	case api.Empty:

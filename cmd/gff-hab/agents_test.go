@@ -68,14 +68,6 @@ func fileIs(path, want string) func() bool {
 	}
 }
 
-func errKind(err error) api.ErrorKind {
-	var e *control.Error
-	if errors.As(err, &e) {
-		return e.Data.Kind
-	}
-	return ""
-}
-
 // startFakeClaude files a session running fakeClaude and returns it.
 func startFakeClaude(t *testing.T, e *habEnv, c *control.Client, msgLen int) api.SessionCreated {
 	t.Helper()

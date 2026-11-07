@@ -1548,7 +1548,12 @@ func serve(args []string) error {
 				return err
 			},
 			capcom: groupsCapcomOf(capcomEng),
-			logf:   logger.Printf,
+			notice: func(title, body string) {
+				if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+					logger.Printf("groups: notice: %v", err)
+				}
+			},
+			logf: logger.Printf,
 		})
 		if err != nil {
 			return err

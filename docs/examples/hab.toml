@@ -299,6 +299,17 @@ reviewer_idle = "30m"
 lane_tries = 3
 # Lines of a failed lane step's output in the lead's message (0 to 500).
 fix_output_lines = 40
+# Moving a group's home hab (docs/specs/groups.md 5.7). How long a land past its push may finish
+# before the move ("1m" to "2h"); how long the old home waits for the new home's answer ("10s"
+# to "10m"); how soon a member's hab calls a group that is still moving again ("1s" to "60s").
+move_drain = "10m"
+move_answer = "60s"
+move_retry = "2s"
+# How long the old home keeps its tombstone, in whole days (7 to 365; a shorter one could lose a
+# commit a sleeping hab has not seen), and how long a move queued while the home is offline
+# waits on its target hab (1 to 90).
+tombstone_keep = 30
+queued_move_days = 7
 
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and

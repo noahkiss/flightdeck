@@ -75,11 +75,13 @@ type groupsConfig struct {
 	// 9); noteName sends a message from Flightdeck to a session on this hab, by name.
 	supervisor *supervisorRef
 	noteName   func(name, text string) error
-	now        func() time.Time
-	logf       func(string, ...any)
 	// capcom is the Capcom service on this hab, a coordinator like any session (groups.md
 	// 12.1). Nil: none.
 	capcom groupsCapcom
+	// notice raises a Flightdeck notice: a queued move that expired or was refused (5.7).
+	notice func(title, body string)
+	now    func() time.Time
+	logf   func(string, ...any)
 }
 
 // groupsCapcom is what groups need of the Capcom service (groups.md 12.1).
@@ -143,9 +145,21 @@ type groupsService struct {
 	// peerAsked is when that member was last asked about; peerChecking, a check in flight.
 	peerAsked    map[string]time.Time
 	peerChecking map[string]bool
-	closed       bool
-	wg           sync.WaitGroup
-	stop         chan struct{}
+	// The movable home (groups.md 5.7, groupmove.go): tombstones of groups that moved away,
+	// pending copies of groups moving here, and moves queued on this hab as the target.
+	tombs      map[string]*api.Group
+	pending    map[string]*api.Group
+	queued     []groups.Queued
+	queuing    map[string]bool // a queued move is being sent
+	committing map[string]bool // an adopt_commit is being sent
+	flushing   map[string]bool // a remote coordinator's inbox is being handed over
+	queueTries map[string]int  // unavailable answers to a queued move
+	closed     bool
+	wg         sync.WaitGroup
+	stop       chan struct{}
+	// base is cancelled by Stop: the move's calls over links end with it.
+	base       context.Context
+	baseCancel context.CancelFunc
 }
 
 var _ control.Groups = (*groupsService)(nil)
@@ -168,7 +182,8 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	s := &groupsService{cfg: cfg, st: st, groups: map[string]*api.Group{}, running: map[string]bool{}, again: map[string]bool{},
 		panes: map[string]string{}, syncKey: map[string]string{}, syncWant: map[string]uint64{}, synced: map[string]uint64{},
 		syncing: map[string]bool{}, peerSeen: map[string]string{}, peerAsked: map[string]time.Time{},
-		peerChecking: map[string]bool{}, stop: make(chan struct{})}
+		peerChecking: map[string]bool{}, stop: make(chan struct{}), tombs: map[string]*api.Group{}, pending: map[string]*api.Group{},
+		queuing: map[string]bool{}, committing: map[string]bool{}, flushing: map[string]bool{}, queueTries: map[string]int{}}
 	s.laneInit()
 	loaded, problems := st.Load(cfg.now())
 	for _, p := range problems {
@@ -178,8 +193,31 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	// push that reads the maps this loop still fills.
 	s.mu.Lock()
 	now := cfg.now()
+	if q, err := st.LoadQueued(now); err != nil {
+		cfg.logf("groups: %v", err)
+	} else {
+		s.queued = q
+	}
 	for i := range loaded {
 		g := loaded[i]
+		switch {
+		case g.Moved != nil:
+			s.tombs[g.ID] = &g
+			s.order = append(s.order, g.ID)
+			continue
+		case g.Pending:
+			s.pending[g.ID] = &g
+			s.order = append(s.order, g.ID)
+			continue
+		case g.Moving != nil:
+			// The hab restarted mid-move, before its tombstone: the group stays here. A pending
+			// copy on the target goes once the catalog shows it (groups.md 5.7 step 7).
+			g.MoveFailed = fmt.Sprintf("the move to %s did not commit: this hab restarted during it", nameOr(g.Moving.Label, g.Moving.To))
+			g.Moving = nil
+			if err := st.Save(g); err != nil {
+				cfg.logf("groups: %s: %v", g.ID, err)
+			}
+		}
 		if !groups.Live(g) && endedBefore(g, now.Add(-cfg.keys.KeepEnded)) {
 			if err := st.Remove(g.ID); err != nil {
 				cfg.logf("groups: %s: %v", g.ID, err)
@@ -205,6 +243,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	for _, id := range s.order {
 		s.kick(id) // the lane follows each pass, so an item cut short in landing runs again
 	}
+	s.base, s.baseCancel = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.watch()
 	return s, nil
@@ -228,6 +267,7 @@ func (s *groupsService) Stop() {
 	}
 	s.closed = true
 	close(s.stop)
+	s.baseCancel()
 	s.mu.Unlock()
 	s.lane.cancel()
 	s.wg.Wait()
@@ -566,6 +606,11 @@ func (s *groupsService) CheckPlan(cg api.ConfirmGroup) (api.ConfirmGroup, bool, 
 	cg.Plan = plan
 	cg.Trust = groups.TrustRule(cg.Group, hosts, harnessList)
 	cg.Warnings = append(groups.Warnings(full), groups.SameHarnessLines(plan)...)
+	if !cg.Amend {
+		if line := s.alwaysOnLine(cl, proj); line != "" {
+			cg.Warnings = append(cg.Warnings, line)
+		}
+	}
 	return cg, elsewhere, nil
 }
 
@@ -585,6 +630,27 @@ func (s *groupsService) installed(cl api.CatalogList) func(host, harness string)
 		}
 		return false
 	}
+}
+
+// alwaysOnLine is the plan card's line when this hab is not marked always on and an always-on
+// peer has the project (groups.md 5.7, at creation): the user may move the home there.
+func (s *groupsService) alwaysOnLine(cl api.CatalogList, proj api.CatalogProjectGroup) string {
+	var peers []string
+	for _, h := range cl.Hosts {
+		if h.Own {
+			if h.Catalog.AlwaysOn {
+				return ""
+			}
+			continue
+		}
+		if h.Catalog.AlwaysOn && h.Label != "" && folderOn(proj, h.Catalog.DeviceID) != "" {
+			peers = append(peers, h.Label)
+		}
+	}
+	if len(peers) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is not marked always on; %s is and has the project: move the group home there to keep the lane going while this host sleeps", s.cfg.host, strings.Join(peers, ", "))
 }
 
 // resolveMember turns a member's alias into its harness and model.
@@ -1017,9 +1083,9 @@ func (s *groupsService) pass(id string) {
 	for {
 		s.mu.Lock()
 		g := s.groups[id]
-		if g == nil || s.closed {
+		if g == nil || s.closed || g.Moving != nil {
 			s.mu.Unlock()
-			return
+			return // a moving group starts nothing: the new home does (groups.md 5.7)
 		}
 		next := groups.NextLeads(*g, s.intSetting(settings.GroupMaxLeads, 3))
 		item, mi := "", -1
@@ -1400,9 +1466,22 @@ func (s *groupsService) Get(id string) (api.Group, error) {
 	defer s.mu.Unlock()
 	g := s.groups[id]
 	if g == nil {
-		return api.Group{}, control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
+		return api.Group{}, s.notHereLocked(id)
 	}
 	return copyGroup(*g), nil
+}
+
+// notHereLocked is the refusal for a group this hab is not the home of: moved, with the new
+// home, for a tombstone; unavailable for a pending copy, so the caller tries again after
+// [groups] move_retry; else not found. The caller holds s.mu.
+func (s *groupsService) notHereLocked(id string) error {
+	if t := s.tombs[id]; t != nil {
+		return movedErr(id, t.Moved.To, t.Moved.Label)
+	}
+	if s.pending[id] != nil {
+		return control.Errorf(api.ErrorKindUnavailable, "group %s is moving to this hab; try again in a moment", id)
+	}
+	return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
 }
 
 // List returns the short forms, newest first.
@@ -1432,7 +1511,8 @@ func (s *groupsService) Snapshot() []api.Group {
 	return out
 }
 
-// Section is the catalog's groups section: the short form of each group (groups.md 5.1).
+// Section is the catalog's groups section: the short form of each group (groups.md 5.1), and
+// each tombstone, so other habs follow a move (5.7). A pending copy is not published.
 func (s *groupsService) Section() []api.CatalogGroup {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1440,6 +1520,8 @@ func (s *groupsService) Section() []api.CatalogGroup {
 	for _, id := range s.order {
 		if g := s.groups[id]; g != nil {
 			out = append(out, groups.Short(*g))
+		} else if t := s.tombs[id]; t != nil {
+			out = append(out, groups.Short(*t))
 		}
 	}
 	return out
@@ -1473,6 +1555,7 @@ func (s *groupsService) watch() {
 			}
 			s.mu.Unlock()
 		}
+		s.moveTick()
 	}
 }
 
@@ -1703,6 +1786,14 @@ func admitMember(g api.Group, a api.CatalogAgent, dev string) bool {
 // tellLocked sends the coordinator a report: a message from Flightdeck while it runs, else it
 // waits in the inbox (groups.md 5.5). The caller holds s.mu and saves the record.
 func (s *groupsService) tellLocked(g *api.Group, text, from string) string {
+	if groups.CoordinatorDevice(*g) != s.cfg.self {
+		// A moved group: the coordinator runs on another hab. The report waits in the inbox
+		// and goes over the link as group.tell (groups.md 5.7).
+		groups.AddReport(g, api.GroupReport{At: stampT(s.cfg.now()), From: from, Text: text}, s.cfg.keys.InboxMax, s.cfg.keys.InboxDays, s.cfg.now())
+		id := g.ID
+		s.bgLocked(func() { s.flushRemote(id) })
+		return "waiting"
+	}
 	ss, ok := s.cfg.store.Session(s.coordinatorOf(*g))
 	// Capcom always counts as running: its thread takes the report while the engine is busy
 	// or down (groups.md 12.1).
@@ -1739,35 +1830,84 @@ func (s *groupsService) Report(ctx context.Context, p api.GroupReportParams) (ap
 	if from == "" {
 		from = "the user"
 	}
+	if groups.CoordinatorDevice(*g) != s.cfg.self {
+		groups.AddReport(g, api.GroupReport{At: stampT(s.cfg.now()), From: from, Text: p.Text}, s.cfg.keys.InboxMax, s.cfg.keys.InboxDays, s.cfg.now())
+		s.saveLocked(g)
+		s.mu.Unlock()
+		if s.flushRemote(p.Group) {
+			return api.GroupReported{State: "sent"}, nil
+		}
+		return api.GroupReported{State: "waiting"}, nil
+	}
 	state := s.tellLocked(g, p.Text, from)
 	s.saveLocked(g)
 	s.mu.Unlock()
 	return api.GroupReported{State: state}, nil
 }
 
-// forward sends a call about a group this hab is not the home of to its home, found in the
-// catalog's groups sections, over the link to it.
+// forward sends a call about a group this hab is not the home of to its home: the tombstone's
+// new home when this hab moved it, else the catalog copy with the highest generation (groups.md
+// 5.7). A moved refusal sends it once more to the hab it names; an unavailable answer from a
+// pending copy is tried again after [groups] move_retry. A call that came over a peer link is
+// passed on only by the hab that holds its tombstone, so a call is never forwarded in a loop.
 func (s *groupsService) forward(ctx context.Context, group, method string, p, out any) error {
-	if _, peer := control.CallerPeer(ctx); peer {
-		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", group) // never forwarded twice
+	_, fromPeer := control.CallerPeer(ctx)
+	s.mu.Lock()
+	t := s.tombs[group]
+	var to, label string
+	if t != nil {
+		to, label = t.Moved.To, t.Moved.Label
+	}
+	here := s.notHereLocked(group)
+	s.mu.Unlock()
+	if fromPeer && t == nil {
+		return here
+	}
+	if t == nil && errKind(here) == api.ErrorKindUnavailable {
+		return here // a pending copy here: the caller tries again
 	}
 	cl := s.cfg.catalog()
-	// The home is the host whose own catalog lists the group with itself as the home: another
-	// host's copy that claims the group is not taken.
-	label := ""
-	for _, h := range cl.Hosts {
-		if !h.Own && h.Catalog.DeviceID != s.cfg.self && homeOf(cl, group, h.Catalog.DeviceID) {
-			label = h.Label
+	if t == nil {
+		w, ok := groups.Find(cl, group)
+		if !ok || w.Device == s.cfg.self {
+			return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
+		}
+		to = w.Device
+	}
+	hops := 0
+	for {
+		l, l2, up := s.linkTo(cl, to)
+		if l2 != "" {
+			label = l2
+		}
+		if !up {
+			if t != nil {
+				return movedErr(group, to, label) // the caller's hab sends it to the new home
+			}
+			return control.Errorf(api.ErrorKindUnavailable, "group %s's home hab %s is offline; try again once it is back", group, nameOr(label, to))
+		}
+		err := l.Caller.Call(ctx, method, p, out)
+		var e *control.Error
+		switch {
+		case err == nil:
+			return nil
+		case fromPeer:
+			return err
+		case errors.As(err, &e) && e.Data.Kind == api.ErrorKindMoved && e.Data.Home != "" && e.Data.Home != s.cfg.self && hops < 2:
+			to, label, hops = e.Data.Home, "", hops+1
+		case errors.As(err, &e) && e.Data.Kind == api.ErrorKindUnavailable && hops < 30:
+			// A pending copy on the new home: tried again until it commits.
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(s.cfg.keys.MoveRetry):
+			}
+			hops++
+			cl = s.cfg.catalog()
+		default:
+			return err
 		}
 	}
-	if label == "" {
-		return control.Errorf(api.ErrorKindNotFound, "no group %s on this hab or in the catalog", group)
-	}
-	l, ok := s.link(label)
-	if label == "" || !ok || !l.Online || l.Caller == nil {
-		return control.Errorf(api.ErrorKindUnavailable, "group %s's home hab is offline; try again once it is back", group)
-	}
-	return l.Caller.Call(ctx, method, p, out)
 }
 
 // Note writes a note on an item's Logbook task, as the hab (groups.md 4.3, 13 Q5).
@@ -1807,7 +1947,10 @@ func (s *groupsService) change(id string, f func(g *api.Group) error) (api.Group
 	defer s.mu.Unlock()
 	g := s.groups[id]
 	if g == nil {
-		return api.Group{}, control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
+		return api.Group{}, s.notHereLocked(id)
+	}
+	if g.Moving != nil {
+		return api.Group{}, control.Errorf(api.ErrorKindUnavailable, "group %s is moving to %s; try again in a moment", id, nameOr(g.Moving.Label, g.Moving.To))
 	}
 	if err := f(g); err != nil {
 		return api.Group{}, err
