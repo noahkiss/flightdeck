@@ -388,8 +388,16 @@ func TestSessionAdopt(t *testing.T) {
 	if n := len(readLines(t, log)); n != 1 {
 		t.Fatalf("a refused resume started claude: %d starts", n)
 	}
-	// A stale entry whose pid now names another process frees it.
-	adoptWrite(t, running, `{"pid":`+strconv.Itoa(os.Getpid())+`,"sessionId":"`+native+`","procStart":"Thu Jan  1 00:00:00 1970"}`)
+	// A stale entry whose pid now names another process frees it. Its start is written in this
+	// platform's form (a start tick on Linux, lstart on macOS): a start in another form keeps
+	// the entry live.
+	stale := "Thu Jan  1 00:00:00 1970"
+	if now, ok := procStart(os.Getpid()); !ok {
+		t.Skip("no process start on this platform")
+	} else if _, err := strconv.ParseUint(now, 10, 64); err == nil {
+		stale = "1"
+	}
+	adoptWrite(t, running, `{"pid":`+strconv.Itoa(os.Getpid())+`,"sessionId":"`+native+`","procStart":"`+stale+`"}`)
 	if _, err := resume(t, c, res.Session); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
