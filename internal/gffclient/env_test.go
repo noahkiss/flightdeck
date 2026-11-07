@@ -166,7 +166,9 @@ func stopProc(cmd *exec.Cmd, done chan struct{}) {
 	}
 }
 
-// other is a control client that stands for another device.
+// other is a control client that stands for another device. Like a real client it pings
+// while it has nothing to send (spec 3.5): a test can leave it quiet for longer than gff-hab's
+// idle timeout, and gff-hab then closes the connection.
 func (h *hab) other() *control.Client {
 	t := h.t
 	t.Helper()
@@ -180,6 +182,7 @@ func (h *hab) other() *control.Client {
 	if _, err := c.Hello(ctx, api.ClientInfo{Name: "other", Version: "0", Kind: api.ClientKindApp}, "", ""); err != nil {
 		t.Fatal(err)
 	}
+	c.KeepAlive(control.DefaultHeartbeat)
 	return c
 }
 
