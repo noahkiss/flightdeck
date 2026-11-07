@@ -229,3 +229,24 @@ func (g Git) DirtyFiles(ctx context.Context, path string) ([]string, error) {
 func (g Git) GitDir(ctx context.Context, path string) (string, error) {
 	return g.run(ctx, path, "rev-parse", "--absolute-git-dir")
 }
+
+// Resolve returns the full commit id rev names in the repository that holds dir.
+func (g Git) Resolve(ctx context.Context, dir, rev string) (string, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") {
+		return "", fmt.Errorf("%w: %q is not a revision", ErrInvalid, rev)
+	}
+	out, err := g.run(ctx, dir, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
+	if err != nil {
+		if exitCode(err) > 0 {
+			return "", fmt.Errorf("%w: no commit %s in %s", ErrNotFound, rev, dir)
+		}
+		return "", err
+	}
+	return out, nil
+}
+
+// IsAncestor reports whether commit is rev or an ancestor of it, in the repository that holds
+// dir.
+func (g Git) IsAncestor(ctx context.Context, dir, commit, rev string) bool {
+	return g.contains(ctx, dir, commit, rev)
+}
