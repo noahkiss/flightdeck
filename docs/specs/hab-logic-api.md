@@ -1341,8 +1341,9 @@ project's identity, so the session files into the same project. No method of its
   a new branch starts at `base`, else at the source checkout's HEAD, with `--no-track`, so its
   first push names its own branch, never the base. No branch: `wt/<word>-<word>-<4 hex>`. A
   branch checked out elsewhere, or on several remotes with no base, is a `conflict`; a bad name
-  is `invalid`; an unknown base is `not_found`. gff-hab never fetches: `base: origin/main` is
-  whatever the last fetch brought.
+  is `invalid`; an unknown base is `not_found`. gff-hab fetches only with `fetch`, and then only
+  when `base` names no commit here (`groups.md` 12.7): otherwise `base: origin/main` is whatever
+  the last fetch brought. A fetch that fails is `unavailable`.
 - **Included files.** `.worktreeinclude` is read from the source checkout. gff-hab asks git for
   the untracked files its patterns match (`ls-files --others --ignored --exclude-from`), keeps
   those git ignores anyway (`check-ignore --stdin`), and copies each: regular files with their
