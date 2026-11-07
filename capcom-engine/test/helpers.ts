@@ -85,9 +85,12 @@ export class FakeQuery implements QueryHandle {
   private abort = new AbortController();
   interrupts = 0;
   readonly sessionId: string;
+  model?: string; // the model setModel set, else the options' model
+  turnModels: (string | undefined)[] = []; // the model each turn ran on
 
   constructor(private sdk: FakeSdk, prompt: AsyncIterable<SDKUserMessage>, readonly options: Options) {
     this.sessionId = options.resume ?? fakeUuid();
+    this.model = options.model;
     void this.read(prompt);
   }
 
@@ -130,6 +133,7 @@ export class FakeQuery implements QueryHandle {
   private async turn(): Promise<void> {
     const first = this.queue.shift()!;
     const consumed = [first];
+    this.turnModels.push(this.model);
     this.emitInit();
     this.replay(first);
     let auth = false;
@@ -223,6 +227,10 @@ export class FakeQuery implements QueryHandle {
     }
     this.emit({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: verdict === 'allow' ? response : 'denied' }] } });
     return verdict;
+  }
+
+  async setModel(model?: string): Promise<void> {
+    this.model = model;
   }
 
   async interrupt(): Promise<unknown> {
