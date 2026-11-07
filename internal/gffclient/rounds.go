@@ -32,6 +32,7 @@ type pendingRun struct {
 // catCopy is one host's catalog copy, kept from the habs' catalog.list answers.
 type catCopy struct {
 	rounds []api.CatalogRound
+	groups []api.CatalogGroup
 	seenAt time.Time
 }
 
@@ -106,7 +107,7 @@ func (u *workspaceUI) keepCatalog(e api.CatalogEntry, ids map[string]bool) {
 	if old, ok := u.cats[id]; ok && !seen.After(old.seenAt) {
 		return
 	}
-	u.cats[id] = catCopy{rounds: e.Catalog.Rounds, seenAt: seen}
+	u.cats[id] = catCopy{rounds: e.Catalog.Rounds, groups: e.Catalog.Groups, seenAt: seen}
 }
 
 // visibleRounds lists the round rows the board shows: those matching the filter.

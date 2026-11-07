@@ -78,6 +78,9 @@ type Row struct {
 	// RunBlocked: the round's newest run is this session's run and it is blocked, as on
 	// Claude Code's trust dialog, which gives no blocked agent state (rounds.md 7).
 	RunBlocked bool
+	// Group is a group member's group title (groups.md 5.4); "group" when no host gff
+	// reaches holds the group; empty for any other row.
+	Group string
 }
 
 // RunSession reports whether the row is a round's run session.
@@ -166,6 +169,7 @@ type Seen func(host, pane string, a *api.AgentState) bool
 func Rows(hs []hosts.Host, seen Seen) []Row {
 	var rows []Row
 	shown := merge.Shown(hs) // one hab reached by two labels shows once (mesh.md 2)
+	groups := GroupTitles(hs)
 	for i, h := range hs {
 		if !shown[i] {
 			continue
@@ -197,6 +201,11 @@ func Rows(hs []hosts.Host, seen Seen) []Row {
 				r.RunBlocked = blockedRuns[rr.Round+"/"+rr.Run]
 				if r.RoundName == "" {
 					r.RoundName = "round"
+				}
+			}
+			if s.Group != nil {
+				if r.Group = groups[s.Group.ID]; r.Group == "" {
+					r.Group = "group"
 				}
 			}
 			if s.Pane != "" {

@@ -16,6 +16,7 @@ type state struct {
 	panes    map[string]api.Pane
 	agents   map[string]api.AgentState
 	rounds   map[string]api.Round
+	groups   map[string]api.Group
 	// revs holds the last revision seen per object, deleted ones included, so a late
 	// update after a delete is still ignored within the epoch.
 	revs map[string]uint64
@@ -28,6 +29,7 @@ func newState() *state {
 		panes:    map[string]api.Pane{},
 		agents:   map[string]api.AgentState{},
 		rounds:   map[string]api.Round{},
+		groups:   map[string]api.Group{},
 		revs:     map[string]uint64{},
 	}
 }
@@ -55,6 +57,10 @@ func (s *state) reset(st api.Structure) {
 	for _, r := range st.Rounds {
 		s.rounds[r.ID] = r
 		s.revs["round/"+r.ID] = r.Revision
+	}
+	for _, g := range st.Groups {
+		s.groups[g.ID] = g
+		s.revs["group/"+g.ID] = g.Revision
 	}
 }
 
@@ -135,6 +141,12 @@ func (s *state) apply(e api.Event) bool {
 			}
 			s.rounds[e.ID] = v
 		}
+	case api.EventGroupUpdated:
+		var v api.Group
+		if json.Unmarshal(e.Data, &v) != nil {
+			return false
+		}
+		s.groups[e.ID] = v
 	case api.EventProjectDeleted:
 		delete(s.projects, e.ID)
 	case api.EventSessionDeleted:
@@ -162,6 +174,8 @@ func eventKey(t api.EventType) (string, bool) {
 		return "agent", true
 	case api.EventRoundUpdated:
 		return "round", true
+	case api.EventGroupUpdated:
+		return "group", true
 	}
 	return "", false
 }
@@ -208,6 +222,9 @@ func (s *state) structure() api.Structure {
 	}
 	for _, id := range sortedKeys(s.rounds) {
 		st.Rounds = append(st.Rounds, s.rounds[id])
+	}
+	for _, id := range sortedKeys(s.groups) {
+		st.Groups = append(st.Groups, s.groups[id])
 	}
 	return st
 }
