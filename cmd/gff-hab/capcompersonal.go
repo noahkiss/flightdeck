@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -98,26 +99,33 @@ func (p *capcomPersonal) attribution(turn string) []capcomthread.Attribution {
 	return nil
 }
 
-// coords matches a coordinate pair or a lone number with 3 or more decimals: what a tool line
-// must never show (8.1).
-var coords = regexp.MustCompile(`-?\d{1,3}\.\d{3,}(\s*,\s*-?\d{1,3}\.\d+)?`)
+// coords matches a decimal pair ("52.5,13.4", "52.52 13.40") or a lone number with 2 or more
+// decimals: what a tool line must never show (8.1). A version such as 1.2.3 has no 2-decimal
+// part and stays.
+var coords = regexp.MustCompile(`-?\d{1,3}\.\d+(\s*[, ]\s*-?\d{1,3}\.\d+)?|-?\d{1,3}\.\d{2,}`)
 
 // toolSummary is the link's ToolSummary hook (8.1, 8.2): device_location's line names the place
-// the store holds, never coordinates; any personal tool's line loses coordinates.
+// the store holds; every tool line, a web search's too, loses coordinates.
 func (p *capcomPersonal) toolSummary(name, summary string) string {
 	short := strings.TrimPrefix(strings.TrimPrefix(name, "mcp__flightdeck__"), "mcp__flightdeck.")
-	if !slices.Contains(personalToolNames, short) {
-		return summary
-	}
 	if short == "device_location" {
 		f, why := p.dev.Location()
 		return "device_location: " + personal.ToolLine(f, why)
 	}
-	return strings.TrimSpace(coords.ReplaceAllString(summary, "(a position)"))
+	return scrubCoords(summary)
 }
 
-// personalToolNames are the MCP tools of 8, as tools.go names them.
-var personalToolNames = []string{"device_location", "calendar_read", "weather", "places_search", "place_details", "calendar_add", "reminder_add"}
+var twoDecimals = regexp.MustCompile(`\.\d{2,}`)
+
+func scrubCoords(s string) string {
+	return strings.TrimSpace(coords.ReplaceAllStringFunc(s, func(m string) string {
+		if !strings.ContainsAny(m, ", ") && !twoDecimals.MatchString(m) {
+			return m // one number with one decimal, such as 2.5 hours
+		}
+		return "(a position)"
+	}))
+}
+
 
 // personalResult is a personal route call's answer: its text for the model, and the data for
 // -json.
@@ -272,8 +280,12 @@ func (p *capcomPersonal) weatherCall(ctx context.Context, q weatherParams) (any,
 			kinds = append(kinds, k)
 		}
 	}
+	country := q.Country
+	if f, why := p.dev.Location(); country == "" && why == "" && math.Abs(f.Lat-*q.Lat) < 0.5 && math.Abs(f.Lon-*q.Lon) < 0.5 {
+		country = f.Country // near the held fix: its country, so alerts can come
+	}
 	w := p.weather()
-	r, err := w.Get(ctx, personal.WeatherQuery{Lat: *q.Lat, Lon: *q.Lon, Kinds: kinds, Country: q.Country, Zone: p.dev.Zone().Zone})
+	r, err := w.Get(ctx, personal.WeatherQuery{Lat: *q.Lat, Lon: *q.Lon, Kinds: kinds, Country: country, Zone: p.dev.Zone().Zone})
 	if errors.Is(err, personal.ErrNoWeather) {
 		return nil, nil, control.Errorf(api.ErrorKindUnavailable, "weather is not set up on this hab: tell the user to set [capcom.weather] key_command, key_id, team_id and service_id in the hab's config file, with a WeatherKit key from their Apple Developer account (capcom-service.md 8.3)")
 	}

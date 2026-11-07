@@ -964,7 +964,10 @@ Decision 5: a card with one "Add" tap, never silent.
   reverse geocoder's ISO code, because WeatherKit alerts need one; with none, `weather` leaves
   alerts out.
 - **The tool line.** gff-hab rewrites `device_location`'s line to the place the store holds, and
-  strips any coordinate from every personal tool's line. The engine's `toolSummary` prefers
+  strips coordinates from every other tool line, a web search's too: a decimal pair, or a number
+  with 2 or more decimals. The MCP server's instructions carry the personal rules with
+  `-capcom`. Without a `country`, `weather` takes the held fix's when the place is near it, and
+  otherwise says alerts were left out. The engine's `toolSummary` prefers
   `place` and `near` and never takes `lat` or `lon`. `weather` takes an optional `place` for the
   line.
 - **Attribution.** A reply stored after a `weather` call in the same turn carries
