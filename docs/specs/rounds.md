@@ -1836,6 +1836,45 @@ modes (`internal/rounds/events.go`, `internal/rounds/batch.go`, `cmd/gff-hab/rou
   both in from files (`cmd/gff-hab/roundfake.go`: `$GFF_TEST_CAPCOM_SERVICE`,
   `$GFF_TEST_GROUPS`), and the tests run the rounds side end to end against them.
 
+Built (stage 11, task-qhdhg0x2): watchers (`internal/rounds/watch.go`,
+`internal/rounds/watchsched.go`, `cmd/gff-hab/roundwatch.go`, `cmd/gff-hab/watchpane.go`) and the
+mail watcher example (`docs/examples/mailwatch`). Where this spec left a choice open:
+
+- **The pane.** The watcher session's pane runs `gff-hab watch-pane -round <id> -rate n -burst n
+  -buffer-lines n -buffer-bytes n -- <argv>`. With no `watch.cwd` it starts in
+  `<state>/rounds/watchers/<round>` (0700). `Session.round` names the round with `watcher` set
+  and no `run`. Resume on the session is refused with `conflict`, and the resume book leaves it
+  out: gff-hab alone starts watchers.
+- **The wrapper.** It reads the program's stdout and posts the lines a page at a time to
+  `round.watch_event` on the pane's hook route. gff-hab takes a page only from the round's own
+  watcher pane; any other pane gets `denied`, and the control socket refuses the method. While
+  gff-hab does not answer (`unavailable`, no socket, a 404 or 5xx) the wrapper keeps the lines
+  and tries again with a backoff. It prints `event: <title>` for each line taken and the paced
+  drop line, with every control character as U+FFFD, since a title comes from outside.
+- **Starts and exits.** gff-hab adopts the watchers that survived it once the link reached every
+  holder; the others start after the start settle. An adopted watcher counts as this gff-hab's
+  first start, so `restarts` counts the starts after it. A secret set's command that fails, or a
+  pane that cannot be made, counts as an exit and backs off. gff-hab's own hang-ups (a wake, an
+  edit of `watch` or `secrets`, a pause, a delete) start no backoff and count toward no pause.
+  At `hab.woke` (after the scheduler's settle) gff-hab hangs up each running watcher and starts
+  it again at once.
+- **Secrets on the pane route.** A round created or edited from a pane cannot name a secret set
+  (`denied`): an agent could otherwise read the owner's credentials through a watcher it writes.
+  A pane's create cannot set a cursor either; only a move carries one. A secret set's command
+  runs at each start, with stdin `/dev/null`, in its own process group, cut off at
+  `secrets_timeout`. Its output and stderr are never logged; an error names only a line number or
+  the exit status.
+- **The CLI.** `-watch` takes the watcher after the flags: `-watch -- <program> [args...]`. With
+  `-command`, a second `--` ends the watcher and the words after it are the run's program.
+  `-secrets`, `-kinds` and `-watch-cwd` set the rest, and `-prompt` gives the run's prompt. Export
+  and apply carry `[rounds.watch]` and the set's name, never a value. A move refuses a round with
+  `watch.cwd` (a folder of this host) and carries the cursor to the new runner.
+- **The example.** `mailwatch` reads `IMAP_HOST`, `IMAP_USER` and `IMAP_PASSWORD`, speaks TLS
+  (port 993 by default), and plain text only with `-plain` to a name whose every address is
+  loopback. Its cursor is `<uidvalidity>:<uid>`; a cursor of another mailbox generation reports
+  only mail after the start.
+- **Not built.** The live check against Capcom waits for Part 14 A7.
+
 ---
 
 ## 14. Build stages

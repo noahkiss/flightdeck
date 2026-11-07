@@ -171,6 +171,38 @@ block_data_max = 1024
 state_save_every = "10s"
 # How long a capcom run waits for Capcom's outcome before it reads unknown.
 outcome_wait = "7d"
+# Watch rounds (rounds.md 4.4, 4.7): at most this many watchers on this host; 0 allows none.
+max_watchers = 16
+# A watcher that exits on its own starts again after 1 s, doubling up to watch_backoff_max; a
+# run of watch_backoff_reset sets the backoff back to 1 s. After watch_pause_after exits in a
+# row, each sooner than watch_quick_exit after its start, the round pauses.
+watch_backoff_max = "5m"
+watch_backoff_reset = "10m"
+watch_pause_after = 5
+watch_quick_exit = "1m"
+# Lines the wrapper keeps while gff-hab does not answer (a restart), by count and bytes.
+watch_buffer_lines = 1000
+watch_buffer_bytes = 1048576
+# Events a minute per watcher, with a burst of watch_burst; lines over the rate are dropped.
+watch_rate = 60
+watch_burst = 60
+# Event bounds: title characters, how long a dedup key is kept and how many, the bytes of an
+# event's data, and the bytes of the cursor.
+event_title_max = 200
+event_key_window = "24h"
+event_keys_max = 1000
+event_data_max = 16384
+cursor_max = 1024
+# How long a secret set's command may run.
+secrets_timeout = "30s"
+
+# A secret set a watch round names with `-secrets mail`: its variables reach only the watcher's
+# environment, never a log, a record or an event. vars are plain values; command prints
+# NAME=value lines, one per variable, from your own credential store. The addresses here are
+# invented.
+[rounds.secrets.mail]
+vars = { IMAP_HOST = "imap.example.com", IMAP_USER = "me@example.com" }
+command = ["/usr/local/bin/print-mail-secrets"]
 
 # The [heavy] section: the heavy-run lock that `gff heavy -- <command>` takes (docs/specs/groups.md
 # 8). A value outside its range is logged and the default runs.

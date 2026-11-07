@@ -42,7 +42,7 @@ const roundUsage = `usage:
                         [-command] <prompt... | program args...>
   gff-hab round add     [door] <name> -watch [-secrets set] [-kinds k,...] [-watch-cwd dir]
                         [-mode capcom|group|fresh ...] [-prompt text] [-debounce d] [-cooldown d]
-                        -- <watcher program> [args...]
+                        -- <watcher program> [args...] [-- <run program> args... with -command]
   gff-hab round edit    [door] <name> [the same fields] [-command] [prompt... | program args...]
   gff-hab round rm      [door] [-yes] <name>
   gff-hab round pause | unpause | run [door] <name>
