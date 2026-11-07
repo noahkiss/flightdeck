@@ -31,6 +31,8 @@ type Groups interface {
 	// hello (CallerPeer).
 	MemberAction(ctx context.Context, kind api.MemberActionKind, p api.MemberActionParams) (api.MemberAction, error)
 	MemberActionGet(ctx context.Context, id string) (api.MemberAction, error)
+	// Sync takes a group home's push over a peer link; from is the link's hello.
+	Sync(from api.PeerHello, p api.GroupSyncParams) error
 }
 
 // maxGroupTime bounds one group call: a create waits up to 120 s for its confirmation, and a
@@ -113,6 +115,16 @@ func (c *conn) handleGroups(m message) {
 				a, err := gs.MemberActionGet(ctx, p.ID)
 				return api.MemberActionResult{Action: a}, err
 			}
+		}
+	case "group.sync":
+		if c.peer == nil {
+			e = appErr(api.ErrorKindInvalid, "group.sync needs a peer link: client.kind hab with the hello's peer field")
+			break
+		}
+		from := *c.peer
+		var p api.GroupSyncParams
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(context.Context) (any, error) { return api.Empty{}, gs.Sync(from, p) }
 		}
 	default:
 		e = appErr(api.ErrorKindNotFound, "no method %s", m.Method)

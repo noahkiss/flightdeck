@@ -558,13 +558,20 @@ it on the home hab.
   (`[groups] inbox_max`, `inbox_days`). Another hab forwards a report over the link to the home
   hab once, never twice. The inbox goes in as one message once the resumed coordinator's pane
   reports an agent state.
-- **A pause** holds channel messages into members and new member starts; members read it from
-  the catalog copy, so it can reach them up to one catalog pull late.
+- **A pause** holds channel messages into members and new member starts.
+- **The push to members.** When the envelope or the pause changes, the home hab sends
+  `group.sync` (the record's revision, the envelope, the pause) over the link it dialed to
+  each hab with a running member; members on the home hab get the envelope in their session
+  records. A member's hab replaces the envelope of that group's members whose envelope names
+  the sender as home, and takes the pause. It accepts a push only from the hab the catalog
+  lists as the group's home, or the home a member's envelope names. The pause holds by the
+  newer revision: the last push, or the catalog copy's group entry, which carries the revision
+  too. A hab the push misses (offline, or linked only the other way) gets it at a later pass,
+  every 5 s, and once more after a home restart; until then it reads the pause from the
+  catalog copy.
 - **The CLI** is `gff-hab group ls|show|pause|resume|close`. The agent kit has `group_create`,
   `group_status`, `group_amend`, `group_close`, `group_retry`, `group_report` and `group_note`.
-- **Not built in B3.** The envelope is not pushed to running members after an amend, so a host
-  an amend adds is not in older members' envelopes. A pause reaches members through the catalog
-  only, not at once over member links (5.6). The usage pause has its call but no governor
+- **Not built in B3.** The usage pause has its call but no governor
   (Part 14 G). Reviewers and plan workers stay planned (B7). The scheduler does not wait for a
   started worktree setup or fetch first (B4). Stall detection covers local leads only, and
   `group.close` closes local members only. The app's group card and gff's board section come
@@ -1130,6 +1137,7 @@ to 3.6.
 | `group.report {group, text}`, `group.note {group, item, text}` | A report to the coordinator (5.5); a note the hab writes on the item's task (9) | B3 |
 | `group.pause`, `group.resume`, `group.close {group}` | → the record | B3 |
 | `group.retry {group, member}` | Start a failed member again | B3 |
+| `group.sync {group, revision, envelope?, pause?}` | Peer link only, from the home hab: the envelope after an amend and the pause, at once (3.3, 5.6) | B3 follow-up |
 | `group.move {group, host}` | The user's move of the home hab (5.7); from a pane route `denied` | B9 |
 | `group.adopt {record, generation}`, `group.adopt_commit {group, generation}` | Peer link only: the hand-over of 5.7 | B9 |
 | event `group.updated` | `id`, `revision`, `data` the record; host scope | B3 |

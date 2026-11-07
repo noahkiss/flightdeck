@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -63,10 +64,55 @@ func (r *groupRunnerRef) section() []api.CatalogGroup {
 	return nil
 }
 
-// groupPaused reports whether the catalog (this hab's own section and the copies) lists the
-// group as paused, by the user or for usage.
-func groupPaused(cl api.CatalogList, group string) bool {
+// groupSyncs keeps what each group's home hab pushed to this hab with group.sync (groups.md
+// 5.6): the pause, by the record's revision. The catalog copy's group entry carries the
+// revision too, so the newer of the two holds.
+type groupSyncs struct {
+	mu sync.Mutex
+	m  map[string]groupSynced
+}
+
+type groupSynced struct {
+	home  string
+	rev   uint64
+	pause *api.GroupPause
+}
+
+func newGroupSyncs() *groupSyncs { return &groupSyncs{m: map[string]groupSynced{}} }
+
+// take keeps a push from home; false when one of that revision or later from home is kept.
+func (p *groupSyncs) take(home string, s api.GroupSyncParams) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if old, ok := p.m[s.Group]; ok && old.home == home && old.rev >= s.Revision {
+		return false
+	}
+	var pause *api.GroupPause
+	if s.Pause != nil {
+		c := *s.Pause
+		pause = &c
+	}
+	p.m[s.Group] = groupSynced{home: home, rev: s.Revision, pause: pause}
+	return true
+}
+
+// paused reports whether the group is paused, by the user or for usage: by the latest push
+// from its home, unless the catalog (this hab's own section and the copies) lists a later
+// revision or another home. A push the catalog has caught up with is dropped.
+func (p *groupSyncs) paused(cl api.CatalogList, group string) bool {
 	g, ok := groupOf(cl, group)
+	if p != nil {
+		p.mu.Lock()
+		s, pushed := p.m[group]
+		if pushed && ok && (g.Home != s.home || g.Revision >= s.rev) {
+			delete(p.m, group)
+			pushed = false
+		}
+		p.mu.Unlock()
+		if pushed {
+			return s.pause != nil
+		}
+	}
 	return ok && g.Pause != nil
 }
 
@@ -75,7 +121,7 @@ func groupPaused(cl api.CatalogList, group string) bool {
 // 3.3). A start from a member is inside its envelope when its host and harness are the plan's,
 // its role is worker or reviewer, a worker works the member's own item within the envelope's
 // workers per lead, and the group is not paused (groups.md 3.3, 5.6).
-func memberEnvelope(store *structure.Store, host, self string, catalog func() api.CatalogList) func(from string, s api.ConfirmStart) (bool, error) {
+func memberEnvelope(store *structure.Store, host, self string, catalog func() api.CatalogList, syncs *groupSyncs) func(from string, s api.ConfirmStart) (bool, error) {
 	return func(from string, s api.ConfirmStart) (bool, error) {
 		ss, ok := store.SessionByName(from)
 		if !ok || ss.Group == nil || ss.Group.ID != s.Group {
@@ -103,7 +149,7 @@ func memberEnvelope(store *structure.Store, host, self string, catalog func() ap
 			return true, control.Errorf(api.ErrorKindInvalid, "%s is not a host of group %s's plan; the coordinator adds it with group_amend", s.Host, s.Group)
 		case !slices.Contains(env.Harnesses, s.Harness):
 			return true, control.Errorf(api.ErrorKindInvalid, "%s is not a harness of group %s's plan; the coordinator adds it with group_amend", s.Harness, s.Group)
-		case groupPaused(cl, s.Group):
+		case syncs.paused(cl, s.Group):
 			return true, control.Errorf(api.ErrorKindUnavailable, "group %s is paused; no new member starts until it is resumed", s.Group)
 		}
 		if role == groups.RoleWorker {

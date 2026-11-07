@@ -40,6 +40,7 @@ type groupsConfig struct {
 	store   *structure.Store
 	catalog func() api.CatalogList
 	links   func() []confirmLink
+	syncs   *groupSyncs          // what other homes pushed to this hab; nil: a push is refused
 	aliases func() aliases.Table // nil: none
 	// confirm asks the plan's confirmation (confirm.Service.Request).
 	confirm func(ctx context.Context, p api.ConfirmRequestParams) (api.Confirmation, error)
@@ -76,9 +77,16 @@ type groupsService struct {
 	running map[string]bool // a scheduler pass runs for the group
 	again   map[string]bool // another pass was asked for meanwhile
 	panes   map[string]string
-	closed  bool
-	wg      sync.WaitGroup
-	stop    chan struct{}
+	// The member push (groups.md 3.3, 5.6): per group, the envelope and pause last saved
+	// (syncKey) and the revision that changed them (syncWant); per group and member device,
+	// the revision that device took (synced) and a push in flight (syncing).
+	syncKey  map[string]string
+	syncWant map[string]uint64
+	synced   map[string]uint64
+	syncing  map[string]bool
+	closed   bool
+	wg       sync.WaitGroup
+	stop     chan struct{}
 }
 
 var _ control.Groups = (*groupsService)(nil)
@@ -99,7 +107,8 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		cfg.logf = func(string, ...any) {}
 	}
 	s := &groupsService{cfg: cfg, st: st, groups: map[string]*api.Group{}, running: map[string]bool{}, again: map[string]bool{},
-		panes: map[string]string{}, stop: make(chan struct{})}
+		panes: map[string]string{}, syncKey: map[string]string{}, syncWant: map[string]uint64{}, synced: map[string]uint64{},
+		syncing: map[string]bool{}, stop: make(chan struct{})}
 	loaded, problems := st.Load(cfg.now())
 	for _, p := range problems {
 		cfg.logf("groups: %s", p)
@@ -124,6 +133,9 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		}
 		s.groups[g.ID] = &g
 		s.order = append(s.order, g.ID)
+		// After a restart each member's hab gets the envelope and pause once more: a push
+		// the restart cut short is not lost.
+		s.syncKey[g.ID], s.syncWant[g.ID] = syncKey(g), g.Revision
 	}
 	for _, id := range s.order {
 		s.kick(id)
@@ -200,7 +212,138 @@ func (s *groupsService) saveLocked(g *api.Group) error {
 	if s.cfg.poke != nil {
 		s.cfg.poke()
 	}
+	if k := syncKey(*g); k != s.syncKey[g.ID] {
+		// The envelope or the pause changed: each member's hab hears it now (groups.md 3.3,
+		// 5.6), not at its next catalog pull.
+		s.syncKey[g.ID], s.syncWant[g.ID] = k, g.Revision
+		if !s.closed {
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.syncMembers(g.ID)
+			}()
+		}
+	}
 	return err
+}
+
+// syncKey sums up what group.sync carries: the envelope and the pause.
+func syncKey(g api.Group) string {
+	b, _ := json.Marshal(struct {
+		E *api.GroupEnvelope
+		P *api.GroupPause
+	}{g.Envelope, syncPause(g)})
+	return string(b)
+}
+
+// syncPause is the pause reasons while paused, else nil.
+func syncPause(g api.Group) *api.GroupPause {
+	if g.Pause.User == "" && g.Pause.Usage == "" {
+		return nil
+	}
+	p := g.Pause
+	return &p
+}
+
+// syncMembers pushes the group's envelope and pause to each member's hab that has not taken
+// the latest change (groups.md 3.3, 5.6): over the link this hab dialed, at once. The members
+// on this hab get the envelope straight into their session records. A hab offline, or one
+// only the other way linked, gets it at a later pass (every 5 s) and reads the pause from the
+// catalog copy meanwhile.
+func (s *groupsService) syncMembers(id string) {
+	s.mu.Lock()
+	g := s.groups[id]
+	if g == nil || s.closed || !groups.Live(*g) || g.State == groups.StateConfirming {
+		s.mu.Unlock()
+		return
+	}
+	want := s.syncWant[id]
+	p := api.GroupSyncParams{Group: g.ID, Revision: g.Revision, Pause: syncPause(*g)}
+	if g.Envelope != nil {
+		e := *g.Envelope
+		e.Hosts, e.Harnesses = slices.Clone(e.Hosts), slices.Clone(e.Harnesses)
+		p.Envelope = &e
+	}
+	var devs []string
+	for _, m := range g.Members {
+		key := id + "\x00" + m.Device
+		if m.Device == "" || m.Session == "" || m.State != groups.MemberRunning || slices.Contains(devs, m.Device) ||
+			s.synced[key] >= want || s.syncing[key] {
+			continue
+		}
+		devs = append(devs, m.Device)
+		s.syncing[key] = true
+	}
+	s.mu.Unlock()
+	if len(devs) == 0 {
+		return
+	}
+	cl := s.cfg.catalog()
+	for _, dev := range devs {
+		ok := true
+		if dev == s.cfg.self {
+			if p.Envelope != nil {
+				s.cfg.store.SetGroupEnvelope(*p.Envelope)
+			}
+		} else {
+			ok = s.pushSync(cl, dev, p)
+		}
+		s.mu.Lock()
+		key := id + "\x00" + dev
+		delete(s.syncing, key)
+		if ok && p.Revision > s.synced[key] {
+			s.synced[key] = p.Revision
+		}
+		s.mu.Unlock()
+	}
+}
+
+// pushSync sends one group.sync to a member's hab over the link this hab dialed.
+func (s *groupsService) pushSync(cl api.CatalogList, dev string, p api.GroupSyncParams) bool {
+	label := ""
+	for _, h := range cl.Hosts {
+		if !h.Own && h.Catalog.DeviceID == dev {
+			label = h.Label
+		}
+	}
+	l, ok := s.link(label)
+	if label == "" || !ok || !l.Online || l.Caller == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := l.Caller.Call(ctx, "group.sync", p, &api.Empty{}); err != nil {
+		s.cfg.logf("groups: %s: group.sync to %s: %v", p.Group, label, err)
+		return false
+	}
+	return true
+}
+
+// Sync takes a group's envelope and pause from its home hab over a peer link (groups.md 3.3,
+// 5.6): the envelope of that group's members on this hab is replaced, and the pause holds
+// messages and starts at once. Only the group's home sends it: the catalog lists that hab as
+// the home, or a member here carries its envelope.
+func (s *groupsService) Sync(from api.PeerHello, p api.GroupSyncParams) error {
+	switch {
+	case !confirm.ValidGroupID(p.Group):
+		return control.Errorf(api.ErrorKindInvalid, "group %q: use 1 to 64 lowercase letters, digits and '-'", p.Group)
+	case p.Envelope != nil && (p.Envelope.Group != p.Group || p.Envelope.Home != from.DeviceID):
+		return control.Errorf(api.ErrorKindInvalid, "the envelope is for group %q from %q; this push is for group %q from %q",
+			p.Envelope.Group, p.Envelope.Home, p.Group, from.DeviceID)
+	case s.cfg.syncs == nil:
+		return control.Errorf(api.ErrorKindUnavailable, "this hab takes no group pushes")
+	}
+	cg, listed := groupOf(s.cfg.catalog(), p.Group)
+	if !(listed && cg.Home == from.DeviceID) && !s.cfg.store.GroupHome(p.Group, from.DeviceID) {
+		return control.Errorf(api.ErrorKindDenied, "%s is not the home of group %s here: no member of it on this hab came from there", from.Host, p.Group)
+	}
+	if !s.cfg.syncs.take(from.DeviceID, p) {
+		return nil // an older push than one taken: nothing changes
+	}
+	if p.Envelope != nil {
+		s.cfg.store.SetGroupEnvelope(*p.Envelope)
+	}
+	return nil
 }
 
 func copyGroup(g api.Group) api.Group {
@@ -1066,6 +1209,7 @@ func (s *groupsService) watch() {
 		s.mu.Unlock()
 		for _, id := range ids {
 			s.refresh(id)
+			s.syncMembers(id)
 		}
 	}
 }
