@@ -1225,7 +1225,8 @@ first consumer.
   timestamp, `10080` minutes named `7d`) and stores them under `usage.Key(host, "codex",
   <state>/capcom/engine)` with the harness `codex`. The account follows the engine: the
   governor paces by the account of the engine the config names, and a reading goes to the
-  account of the engine that sent it. A model family with its own limit id adds windows named
+  account of the engine whose connection sent it (the kind its `ready` named). After a switch
+  Capcom is unpaced until the new engine's first reading. A model family with its own limit id adds windows named
   after it (`<limit> 7d`), which the governor does not read.
 - **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
   reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
