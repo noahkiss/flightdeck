@@ -29,17 +29,28 @@ type Keys struct {
 	// the lead gets (7.4).
 	LaneTries      int // lane_tries
 	FixOutputLines int // fix_output_lines
+
+	// The movable home (groups.md 5.7).
+	MoveDrain     time.Duration // move_drain: how long a land past its push may finish before a move
+	MoveAnswer    time.Duration // move_answer: how long the old home waits for group.adopt's answer
+	MoveRetry     time.Duration // move_retry: a member hab's pause before it calls a pending copy again
+	TombstoneKeep time.Duration // tombstone_keep: how long the old home keeps its tombstone
+	QueuedMove    time.Duration // queued_move_days: how long a queued move waits on its target hab
 }
 
 // Defaults of the [groups] keys.
 var DefaultKeys = Keys{KeepEnded: 30 * 24 * time.Hour, InboxMax: 200, InboxDays: 7,
 	HandoffNoteWait: 10 * time.Minute, SiblingWait: 10 * time.Minute,
-	MaxFindings: 5, BriefFindings: 3, ReviewerIdle: 30 * time.Minute, LaneTries: 3, FixOutputLines: 40}
+	MaxFindings: 5, BriefFindings: 3, ReviewerIdle: 30 * time.Minute, LaneTries: 3, FixOutputLines: 40,
+	MoveDrain: 10 * time.Minute, MoveAnswer: time.Minute, MoveRetry: 2 * time.Second,
+	TombstoneKeep: 30 * 24 * time.Hour, QueuedMove: 7 * 24 * time.Hour}
 
 // LoadKeys reads [groups] keep_ended (whole days, 1 to 365), inbox_max (10 to 5000),
 // inbox_days (1 to 90), max_findings (1 to 20), brief_findings (1 to max_findings), lane_tries
-// (1 to 20) and fix_output_lines (0 to 500), and the durations handoff_note_wait ("1m" to "2h"),
-// sibling_wait ("1m" to "24h") and reviewer_idle ("5m" to "24h"). A value outside its range, or of the wrong type, is logged once and the
+// (1 to 20), fix_output_lines (0 to 500), tombstone_keep (whole days, 7 to 365) and
+// queued_move_days (1 to 90), and the durations handoff_note_wait ("1m" to "2h"), sibling_wait
+// ("1m" to "24h"), reviewer_idle ("5m" to "24h"), move_drain ("1m" to "2h"), move_answer ("10s"
+// to "10m") and move_retry ("1s" to "60s"). A value outside its range, or of the wrong type, is logged once and the
 // default runs; a file that does not parse runs every default. A missing file is no problem.
 // Other [groups] keys belong to other stages and are left alone.
 func LoadKeys(path string, logf func(string, ...any)) Keys {
@@ -105,5 +116,23 @@ func LoadKeys(path string, logf func(string, ...any)) Keys {
 			k.ReviewerIdle = d
 		}
 	}
+	dur := func(key string, lo, hi, def time.Duration) time.Duration {
+		v, ok := fc.Groups[key]
+		if !ok {
+			return def
+		}
+		str, isStr := v.(string)
+		d, err := time.ParseDuration(str)
+		if !isStr || err != nil || d < lo || d > hi {
+			logf("groups: %s: [groups] %s %v is not a duration from %q to %q; %s runs", filepath.Base(path), key, fmt.Sprint(v), lo.String(), hi.String(), def)
+			return def
+		}
+		return d
+	}
+	k.MoveDrain = dur("move_drain", time.Minute, 2*time.Hour, DefaultKeys.MoveDrain)
+	k.MoveAnswer = dur("move_answer", 10*time.Second, 10*time.Minute, DefaultKeys.MoveAnswer)
+	k.MoveRetry = dur("move_retry", time.Second, time.Minute, DefaultKeys.MoveRetry)
+	k.TombstoneKeep = time.Duration(whole("tombstone_keep", 7, 365, 30)) * 24 * time.Hour
+	k.QueuedMove = time.Duration(whole("queued_move_days", 1, 90, 7)) * 24 * time.Hour
 	return k
 }

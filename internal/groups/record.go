@@ -302,7 +302,8 @@ func ByCapcom(g api.Group) bool { return g.Coordinator.Address == CapcomAddress 
 // Short is a group's short form for the catalog and group.list (groups.md 5.1).
 func Short(g api.Group) api.CatalogGroup {
 	c := api.CatalogGroup{ID: g.ID, Title: g.Title, State: string(g.State), Generation: g.Generation, Home: g.Home, Revision: g.Revision,
-		Items: len(g.Items), Coordinator: &api.CatalogMember{Device: g.Home, Session: g.Coordinator.Session, Name: g.Coordinator.Name, Capcom: ByCapcom(g)}}
+		Items: len(g.Items), Coordinator: &api.CatalogMember{Device: CoordinatorDevice(g), Session: g.Coordinator.Session, Name: g.Coordinator.Name, Capcom: ByCapcom(g)},
+		Moving: g.Moving, Moved: g.Moved, Tried: g.Tried}
 	for _, it := range g.Items {
 		if it.State == ItemLanded {
 			c.Landed++
@@ -320,6 +321,85 @@ func Short(g api.Group) api.CatalogGroup {
 	return c
 }
 
+// CoordinatorDevice is the device id of the hab the coordinator runs on: the home hab for a
+// record from before the movable home (groups.md 5.7).
+func CoordinatorDevice(g api.Group) string {
+	if g.Coordinator.Device != "" {
+		return g.Coordinator.Device
+	}
+	return g.Home
+}
+
+// Where is a group's home as the catalog copies show it (groups.md 5.7).
+type Where struct {
+	Device     string           // the home hab's device id
+	Generation uint64           // the generation that won
+	Entry      api.CatalogGroup // the winning short form: the live one, else the tombstone
+	Publisher  string           // the device id of the hab whose catalog holds Entry
+}
+
+// Find finds a group's home in the catalog copies: the entry with the highest generation wins,
+// a tombstone counting as its move's generation and pointing at its to; at a tie the live entry
+// wins (groups.md 5.7, how members re-point).
+func Find(cl api.CatalogList, id string) (Where, bool) {
+	var w Where
+	found, live := false, false
+	for _, h := range cl.Hosts {
+		for _, g := range h.Catalog.Groups {
+			if g.ID != id {
+				continue
+			}
+			gen, dev, isLive := g.Generation, h.Catalog.DeviceID, g.Moved == nil
+			if isLive && g.Home != dev {
+				continue // a live copy counts only from the home's own catalog: another host's claim is not taken
+			}
+			if !isLive {
+				gen, dev = g.Moved.Generation, g.Moved.To
+			}
+			if !found || gen > w.Generation || (gen == w.Generation && isLive && !live) {
+				w, found, live = Where{Device: dev, Generation: gen, Entry: g, Publisher: h.Catalog.DeviceID}, true, isLive
+			}
+		}
+	}
+	return w, found
+}
+
+// Movable reports why a group cannot move now, or "" (groups.md 5.7, the checks).
+func Movable(g api.Group) string {
+	switch {
+	case g.State != StateRunning && g.State != StatePaused:
+		return fmt.Sprintf("group %s is %s; only a running or paused group moves", g.ID, g.State)
+	case g.Moving != nil:
+		return fmt.Sprintf("group %s is moving to %s already", g.ID, nameOr(g.Moving.Label, g.Moving.To))
+	}
+	return ""
+}
+
+func nameOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// Drain puts every item in landing back to ready at the front of the lane queue: a move's
+// step 2 for a land before its push (groups.md 5.7). It reports whether anything changed.
+func Drain(g *api.Group) bool {
+	changed := false
+	for i := len(g.Items) - 1; i >= 0; i-- {
+		it := &g.Items[i]
+		if it.State != ItemLanding {
+			continue
+		}
+		it.State, changed = ItemReady, true
+		g.Lane.Queue = append([]string{it.ID}, slices.DeleteFunc(g.Lane.Queue, func(q string) bool { return q == it.ID })...)
+		if g.Lane.Landing == it.ID {
+			g.Lane.Landing = ""
+		}
+	}
+	return changed
+}
+
 // --- The record files ---
 
 // Store keeps one file per group in its folder, <state>/groups/<id>.json, each written through
@@ -329,6 +409,11 @@ type Store struct {
 }
 
 var fileName = regexp.MustCompile(`^[0-9a-f]{16}\.json$`)
+
+var idForm = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// ValidID reports whether id is a group id: 16 hex digits.
+func ValidID(id string) bool { return idForm.MatchString(id) }
 
 // NewStore makes the folder.
 func NewStore(dir string) (*Store, error) {
@@ -379,6 +464,47 @@ func (s *Store) Save(g api.Group) error {
 		return err
 	}
 	return writeSynced(filepath.Join(s.dir, g.ID+".json"), append(b, '\n'))
+}
+
+// Queued is a move that waits on its target hab for the group's home to be back (groups.md 5.7).
+type Queued struct {
+	Group string `json:"group"`
+	Title string `json:"title,omitempty"`
+	Home  string `json:"home"`
+	Label string `json:"label,omitempty"`
+	At    string `json:"at"`
+}
+
+const queuedFile = "queued-moves.json"
+
+// LoadQueued reads the queued moves; a file that does not parse is set aside and none load.
+func (s *Store) LoadQueued(now time.Time) ([]Queued, error) {
+	p := filepath.Join(s.dir, queuedFile)
+	b, err := os.ReadFile(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Queued
+	if err := json.Unmarshal(b, &out); err != nil {
+		os.Rename(p, fmt.Sprintf("%s.bad-%d", p, now.Unix()))
+		return nil, fmt.Errorf("%s: %v; set aside", queuedFile, err)
+	}
+	return out, nil
+}
+
+// SaveQueued writes the queued moves.
+func (s *Store) SaveQueued(q []Queued) error {
+	if q == nil {
+		q = []Queued{}
+	}
+	b, err := json.MarshalIndent(q, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeSynced(filepath.Join(s.dir, queuedFile), append(b, '\n'))
 }
 
 // Remove deletes a record's file.

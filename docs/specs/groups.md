@@ -584,6 +584,57 @@ it on the home hab.
   started worktree setup or fetch first (B4). The app's group card and gff's board section come
   later.
 
+### 5.9 Built choices (stage B9, task-3vwhq3dn)
+
+`cmd/gff-hab/groupmove.go` runs the hand-over of 5.7; `groups.Find` picks a group's home from
+the catalog copies.
+
+- **One file per group per hab.** A tombstone and a pending copy are the record file
+  `<state>/groups/<id>.json` with `moved` or `pending` set. Neither is scheduled, listed by
+  `group.list` or in the host snapshot. The catalog publishes a tombstone, never a pending copy.
+- **The checks run in this order:** the group's state, then the target's link, its `groups`
+  and `logbook` capabilities, then the project. A start in flight finishes first (at most
+  3 minutes), so its outcome moves with the record.
+- **Labels move by device.** Each member's host is a label of the home. The old home sends
+  every member's device id; the new home names the hosts its own way, plan members too.
+- **The commit carries the record.** `group.adopt_commit` holds the record at the tombstone,
+  with the reports that came after the adopt. A commit from the catalog keeps the pending
+  copy, which lacks only those reports.
+- **A stale pending copy and catalog lag.** The pending copy keeps the generation of the old
+  home's catalog copy at the adopt. The catalog's short form carries `tried`, the highest
+  generation a move attempt of the home used. Only a later copy with `tried` at the attempt's
+  generation or above, which shows the group live with no `moving` for this attempt, drops it.
+  A tombstone the old home could not save commits nothing: the group stays, and the card says
+  why. Another hab's copy drops it when it shows the group live
+  at this generation or later, or a tombstone of this generation or later to another hab.
+- **A restart during the move,** before the tombstone, clears `moving` and keeps the group. The
+  card says why (`move_failed`).
+- **The coordinator after a move** runs on another hab than the home. The record names its
+  device (`coordinator.device`). Its reports wait in the inbox. The home hands them over with
+  `group.tell`, one message each time, when the coordinator's hab answers that it runs. The
+  watch tries every 5 s. The line "group <title> moved home to <label>" uses the old home's
+  label for the new home.
+- **Forwarding.** A member's hab sends a call to the home the catalog names. The old home
+  forwards a call over its link to the new home, or refuses it `moved` with `data.home`. The
+  member's hab then sends it there itself, twice at most. A pending copy answers `unavailable`;
+  the member's hab tries again every `[groups] move_retry`, up to 30 times. A coordinator of a
+  moved group amends, closes and retries through its own hab, which forwards the call.
+- **The queued move** is `<state>/groups/queued-moves.json` on the target, one entry per group.
+  `group.move` with `cancel` removes it. The target sends `group.move {device}` once its link to
+  the home is up. An answer ends the request, and a refusal raises one notice, as an expired
+  request does. An `unavailable` answer is tried again 12 times (about a minute) first, since
+  a home that just started may not reach the target yet. A hab that reaches the home passes a
+  user's `group.move` on to it, and the home's refusal is final: it queues nothing. A call that
+  came over a link is not passed on again.
+- **While a move runs** pause, resume, close and retry answer `unavailable`.
+- **At creation** the plan's card gets the always-on line as a warning. It offers no button:
+  the user moves the home after the plan runs.
+- **Not built in B9.** The lane (B4) is not built, so the drain only puts an item in `landing`
+  back to `ready`, and no lane worktree goes; `move_drain` is read but has nothing to wait for.
+  `lane.submit` and `review.verdict` (B7) are not merged; they use the same forwarding when they
+  land. Capcom-coordinated groups (B8) do not exist yet, so the move with the Capcom mark waits
+  for B8. The app's "Move home" and the home label on the card come with the card.
+
 ---
 
 ## 6. Review
@@ -1324,7 +1375,8 @@ to 3.6.
 | `member_compact`, `member_handoff` | Any member, the coordinator | Sibling actions |
 
 CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`. Built in B3 as
-`gff-hab group ls|show|pause|resume|close`; `move` comes with B9.
+`gff-hab group ls|show|pause|resume|close`; B9 adds `gff-hab group move <group> -host <label>`
+and `-cancel`.
 
 ### 15.3 Settings
 

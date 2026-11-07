@@ -4660,6 +4660,160 @@
       "x-params": {
         "$ref": "#/components/schemas/GroupSyncParams"
       }
+    },
+    {
+      "name": "group.move",
+      "summary": "The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "cancel",
+          "description": "Cancel the move queued on this hab for the group.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "device",
+          "description": "The new home by device id, in place of host: a queued move names its own hab this way.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "description": "The new home: a peer label of the hab that takes the call, or its own host id.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupMoveResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupMoveParams"
+      }
+    },
+    {
+      "name": "group.adopt",
+      "summary": "The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "generation",
+          "description": "The generation the new home takes (groups.md 5.7 step 3).",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "record",
+          "description": "The group record as the current home holds it.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Group"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAdoptParams"
+      }
+    },
+    {
+      "name": "group.adopt_commit",
+      "summary": "The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "generation",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "record",
+          "description": "The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start.",
+          "schema": {
+            "$ref": "#/components/schemas/Group"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAdoptCommitParams"
+      }
+    },
+    {
+      "name": "group.tell",
+      "summary": "A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The coordinator's session id on the hab that takes the call.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The report, or the waiting reports in one message.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupTellParams"
+      }
     }
   ],
   "x-notifications": [
@@ -6392,6 +6546,14 @@
             "format": "int64",
             "description": "Members started."
           },
+          "moved": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A tombstone: the group moved home to this hab with this generation."
+          },
+          "moving": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A hand-over to this hab runs."
+          },
           "pause": {
             "$ref": "#/components/schemas/GroupPause",
             "description": "The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."
@@ -6407,6 +6569,11 @@
           },
           "title": {
             "type": "string"
+          },
+          "tried": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest generation a move attempt of the home used: a copy with a lower one was built before that attempt's freeze."
           }
         },
         "required": [
@@ -8922,6 +9089,10 @@
           "hint": {
             "type": "string"
           },
+          "home": {
+            "type": "string",
+            "description": "On moved: the device id of the group's new home hab (groups.md 5.7)."
+          },
           "id": {
             "type": "string",
             "description": "On every settings.set error: the id of the first refused row (app.md 20.5)."
@@ -8955,7 +9126,8 @@
           "ticket_invalid",
           "locked",
           "denied",
-          "invalid"
+          "invalid",
+          "moved"
         ]
       },
       "Event": {
@@ -9164,6 +9336,10 @@
             "$ref": "#/components/schemas/GroupEnvelope",
             "description": "What the confirmed plan allows (groups.md 3.3). Absent while confirming."
           },
+          "from": {
+            "$ref": "#/components/schemas/GroupFrom",
+            "description": "On a pending copy: the old home it came from."
+          },
           "generation": {
             "type": "integer",
             "format": "uint64",
@@ -9204,8 +9380,24 @@
               "$ref": "#/components/schemas/GroupMember"
             }
           },
+          "move_failed": {
+            "type": "string",
+            "description": "Why the last move did not commit, for the card."
+          },
+          "moved": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A tombstone: the group moved home to this hab. The old home keeps it [groups] tombstone_keep."
+          },
+          "moving": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A hand-over to another hab runs: the lane and the scheduler take no new item."
+          },
           "pause": {
             "$ref": "#/components/schemas/GroupPause"
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "A copy adopted from the old home, not yet committed: not published, runs nothing."
           },
           "plan": {
             "$ref": "#/components/schemas/GroupPlan",
@@ -9229,6 +9421,11 @@
           },
           "title": {
             "type": "string"
+          },
+          "tried": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest generation a move attempt used."
           },
           "updated": {
             "type": "string"
@@ -9261,6 +9458,44 @@
           "plan",
           "created",
           "updated"
+        ]
+      },
+      "GroupAdoptCommitParams": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "group": {
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start."
+          }
+        },
+        "required": [
+          "group",
+          "generation"
+        ]
+      },
+      "GroupAdoptParams": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation the new home takes (groups.md 5.7 step 3)."
+          },
+          "record": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The group record as the current home holds it."
+          }
+        },
+        "required": [
+          "record",
+          "generation"
         ]
       },
       "GroupAmendParams": {
@@ -9304,6 +9539,10 @@
           "address": {
             "type": "string",
             "description": "Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id."
+          },
+          "device": {
+            "type": "string",
+            "description": "The device id of the hab the coordinator runs on. Absent in a record from before B9: the home hab."
           },
           "name": {
             "type": "string"
@@ -9431,6 +9670,28 @@
           "severity",
           "title",
           "text"
+        ]
+      },
+      "GroupFrom": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation of the old home's catalog copy this hab held at the adopt: only a later copy can show the move failed."
+          },
+          "device": {
+            "type": "string",
+            "description": "The old home's device id."
+          },
+          "label": {
+            "type": "string",
+            "description": "This hab's label on the old home: the coordinator's line names the new home by it."
+          }
+        },
+        "required": [
+          "device",
+          "catalog"
         ]
       },
       "GroupItem": {
@@ -9733,6 +9994,86 @@
           "text"
         ]
       },
+      "GroupMoveParams": {
+        "type": "object",
+        "properties": {
+          "cancel": {
+            "type": "boolean",
+            "description": "Cancel the move queued on this hab for the group."
+          },
+          "device": {
+            "type": "string",
+            "description": "The new home by device id, in place of host: a queued move names its own hab this way."
+          },
+          "group": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The new home: a peer label of the hab that takes the call, or its own host id."
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "GroupMoveRef": {
+        "type": "object",
+        "properties": {
+          "acked": {
+            "type": "boolean",
+            "description": "On a tombstone: the new home acknowledged group.adopt_commit."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation of the attempt: one above any the old home used for the group."
+          },
+          "label": {
+            "type": "string",
+            "description": "Its label, as the hab that wrote this knows it."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time the move started (moving) or committed (moved)."
+          },
+          "to": {
+            "type": "string",
+            "description": "The new home hab's device id."
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "GroupMoveResult": {
+        "type": "object",
+        "properties": {
+          "home": {
+            "type": "string",
+            "description": "The new home's device id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."
+          },
+          "text": {
+            "type": "string",
+            "description": "One line for the user, such as: \u003clabel\u003e is offline; the group moves when it is back."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "home",
+          "text"
+        ]
+      },
       "GroupNoteParams": {
         "type": "object",
         "properties": {
@@ -10017,6 +10358,27 @@
         "required": [
           "group",
           "revision"
+        ]
+      },
+      "GroupTellParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The coordinator's session id on the hab that takes the call."
+          },
+          "text": {
+            "type": "string",
+            "description": "The report, or the waiting reports in one message."
+          }
+        },
+        "required": [
+          "group",
+          "session",
+          "text"
         ]
       },
       "GroupVerdict": {

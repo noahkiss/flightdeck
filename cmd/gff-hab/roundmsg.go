@@ -14,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 )
 
@@ -105,16 +106,16 @@ func serviceActor(l api.CatalogList, device string) string {
 	return ""
 }
 
-// groupOf finds a group in the catalog's groups sections (groups.md 5.1, 12.5).
+// groupOf finds a group in the catalog's groups sections (groups.md 5.1, 12.5): the entry with
+// the highest generation, and for a tombstone its new home (5.7).
 func groupOf(l api.CatalogList, id string) (api.CatalogGroup, bool) {
-	for _, h := range l.Hosts {
-		for _, g := range h.Catalog.Groups {
-			if g.ID == id {
-				return g, true
-			}
-		}
+	w, ok := groups.Find(l, id)
+	if !ok {
+		return api.CatalogGroup{}, false
 	}
-	return api.CatalogGroup{}, false
+	g := w.Entry
+	g.Home = w.Device
+	return g, true
 }
 
 func entryOf(l api.CatalogList, device string) (api.CatalogEntry, bool) {
