@@ -558,7 +558,8 @@ it on the home hab.
   its item, and the coordinator hears it. On this hab the session record shows it; for a member
   on a peer, the home hab asks the peer (`structure.get` over the link it dialed) once per
   catalog copy that no longer lists the member's agent: a session gone is closed, one exited
-  shows exited. A peer offline is not asked; its members stay as they were.
+  shows exited, and is asked about again every 2 minutes at most. Each call waits 5 s at most.
+  A peer offline is not asked; its members stay as they were.
 - **Reports.** From a pane, only a member of the group or its coordinator reports or notes; a
   member notes its own item only. A report goes to a running coordinator as a Flightdeck note, else to the inbox
   (`[groups] inbox_max`, `inbox_days`). Another hab forwards a report over the link to the home
@@ -574,7 +575,8 @@ it on the home hab.
   newer revision: the last push, or the catalog copy's group entry, which carries the revision
   too. A hab the push misses (offline, or linked only the other way) gets it at a later pass,
   every 5 s, and once more after a home restart; until then it reads the pause from the
-  catalog copy.
+  catalog copy. A hab that answers but refuses the push (an older build) is not asked again
+  for that change, and reads the pause from the catalog copy.
 - **The CLI** is `gff-hab group ls|show|pause|resume|close`. The agent kit has `group_create`,
   `group_status`, `group_amend`, `group_close`, `group_retry`, `group_report` and `group_note`.
 - **Not built in B3.** The usage pause has its call but no governor

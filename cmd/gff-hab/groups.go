@@ -85,9 +85,12 @@ type groupsService struct {
 	synced   map[string]uint64
 	syncing  map[string]bool
 	peerSeen map[string]string // group and member name: the peer copy's SeenAt last asked about
-	closed   bool
-	wg       sync.WaitGroup
-	stop     chan struct{}
+	// peerAsked is when that member was last asked about; peerChecking, a check in flight.
+	peerAsked    map[string]time.Time
+	peerChecking map[string]bool
+	closed       bool
+	wg           sync.WaitGroup
+	stop         chan struct{}
 }
 
 var _ control.Groups = (*groupsService)(nil)
@@ -109,7 +112,8 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	}
 	s := &groupsService{cfg: cfg, st: st, groups: map[string]*api.Group{}, running: map[string]bool{}, again: map[string]bool{},
 		panes: map[string]string{}, syncKey: map[string]string{}, syncWant: map[string]uint64{}, synced: map[string]uint64{},
-		syncing: map[string]bool{}, peerSeen: map[string]string{}, stop: make(chan struct{})}
+		syncing: map[string]bool{}, peerSeen: map[string]string{}, peerAsked: map[string]time.Time{},
+		peerChecking: map[string]bool{}, stop: make(chan struct{})}
 	loaded, problems := st.Load(cfg.now())
 	for _, p := range problems {
 		cfg.logf("groups: %s", p)
@@ -305,13 +309,36 @@ func (s *groupsService) pushSync(cl api.CatalogList, dev string, p api.GroupSync
 	if err != nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := s.peerCtx()
 	defer cancel()
 	if err := c.Call(ctx, "group.sync", p, &api.Empty{}); err != nil {
+		var ce *control.Error
+		if errors.As(err, &ce) && (ce.Data.Kind == api.ErrorKindNotFound || ce.Data.Kind == api.ErrorKindDenied ||
+			ce.Data.Kind == api.ErrorKindInvalid) {
+			// A hab that answers but takes no push (an older build, or one that does not know
+			// this home yet) is not asked again for this change: it reads the pause from the
+			// catalog copy.
+			s.cfg.logf("groups: %s: %s takes no group.sync: %v", p.Group, label, err)
+			return true
+		}
 		s.cfg.logf("groups: %s: group.sync to %s: %v", p.Group, label, err)
 		return false
 	}
 	return true
+}
+
+// peerCtx bounds one call to a peer: 5 s, and cut short when the service stops, so a peer
+// that is linked but does not answer holds up neither the watch pass nor Stop for long.
+func (s *groupsService) peerCtx() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	go func() {
+		select {
+		case <-s.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }
 
 // Sync takes a group's envelope and pause from its home hab over a peer link (groups.md 3.3,
@@ -1202,8 +1229,16 @@ func (s *groupsService) watch() {
 		s.mu.Unlock()
 		for _, id := range ids {
 			s.refresh(id)
-			s.checkPeerMembers(id)
-			s.syncMembers(id)
+			// The peer calls run beside the pass, so a peer that does not answer holds up
+			// no other group's refresh. syncMembers skips a device with a push in flight;
+			// checkPeerMembers runs once at a time per group.
+			s.mu.Lock()
+			if !s.closed {
+				s.wg.Add(2)
+				go func() { defer s.wg.Done(); s.syncMembers(id) }()
+				go func() { defer s.wg.Done(); s.checkPeerMembers(id) }()
+			}
+			s.mu.Unlock()
 		}
 	}
 }
@@ -1273,6 +1308,9 @@ func (s *groupsService) refresh(id string) {
 	}
 }
 
+// peerExitedRecheck is how often a peer is asked again about a member whose agent exited.
+const peerExitedRecheck = 2 * time.Minute
+
 // checkPeerMembers asks a peer hab about its running members that its latest catalog copy no
 // longer lists as agents (groups.md 14): a session that is gone was closed, which stalls a
 // lead's item as on this hab; one that exited shows exited. A member is asked about once per
@@ -1288,10 +1326,17 @@ func (s *groupsService) checkPeerMembers(id string) {
 	}
 	s.mu.Lock()
 	g := s.groups[id]
-	if g == nil || s.closed || !groups.Live(*g) {
+	if g == nil || s.closed || !groups.Live(*g) || s.peerChecking[id] {
 		s.mu.Unlock()
 		return
 	}
+	s.peerChecking[id] = true
+	defer func() {
+		s.mu.Lock()
+		delete(s.peerChecking, id)
+		s.mu.Unlock()
+	}()
+	now := s.cfg.now()
 	ask := map[string][]string{} // device: member names
 	seen := map[string]string{}  // member key: the copy's SeenAt asked at
 	for _, m := range g.Members {
@@ -1306,6 +1351,12 @@ func (s *groupsService) checkPeerMembers(id string) {
 		if s.peerSeen[key] == h.SeenAt {
 			continue
 		}
+		if m.Agent == "exited" && now.Sub(s.peerAsked[key]) < peerExitedRecheck {
+			// An exited agent never shows in the copy: its session is asked about again only
+			// now and then, to see whether the user closed it.
+			continue
+		}
+		s.peerAsked[key] = now
 		seen[key] = h.SeenAt
 		ask[m.Device] = append(ask[m.Device], m.Name)
 	}
@@ -1352,7 +1403,7 @@ func (s *groupsService) peerSessions(cl api.CatalogList, dev string) (map[string
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := s.peerCtx()
 	defer cancel()
 	var st api.StructureResult
 	if err := c.Call(ctx, "structure.get", api.StructureGetParams{}, &st); err != nil {
