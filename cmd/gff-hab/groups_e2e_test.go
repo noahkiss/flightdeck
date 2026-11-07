@@ -249,8 +249,11 @@ func TestGroupPlanOnPeer(t *testing.T) {
 	})
 }
 
-// fakeCoordinator is fakeSpawner that also saves its pid, so the test can end it.
+// fakeCoordinator is fakeSpawner that also saves its pid, so the test can end it. Its folder
+// comes as $1, not from the environment: session.resume starts the same argv again, but not
+// the environment of the first create.
 const fakeCoordinator = `
+DIR=$1
 printf '%s' "$GFF_HAB" > "$DIR/addr.tmp" && mv "$DIR/addr.tmp" "$DIR/addr"
 echo $$ > "$DIR/alice-pid"
 stty raw -echo
@@ -283,8 +286,8 @@ func TestGroupLifecycle(t *testing.T) {
 	}
 	repo := gitRepo(t, e.work, "shop")
 	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
-	alice := createSession(t, e.sock, api.SessionCreateParams{Name: "alice", Argv: []string{"/bin/sh", "-c", fakeCoordinator}, ProjectDir: repo,
-		Cols: 80, Rows: 24, Env: []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "DIR=" + work}})
+	alice := createSession(t, e.sock, api.SessionCreateParams{Name: "alice", Argv: []string{"/bin/sh", "-c", fakeCoordinator, "sh", work}, ProjectDir: repo,
+		Cols: 80, Rows: 24, Env: []string{"PATH=/usr/bin:/bin", "LC_ALL=C"}})
 	waitUntil(t, "alice's GFF_HAB", func() bool { return readIn(work, "addr") != "" })
 	addr := readIn(work, "addr")
 	waitCatalogProject(t, e, "shop", 1)

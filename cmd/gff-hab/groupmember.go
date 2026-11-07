@@ -69,19 +69,20 @@ func groupPaused(cl api.CatalogList, group string) bool {
 	return ok && g.Pause != nil
 }
 
-// memberEnvelope is confirm.Config.Envelope: a start with a group from a member of that group
-// is inside its envelope when its host and harness are the plan's, its role is worker or
-// reviewer, a worker works the member's own item within the envelope's workers per lead, and
-// the group is not paused (groups.md 3.3, 5.6).
-func memberEnvelope(store *structure.Store, host, self string, catalog func() api.CatalogList) func(from string, s api.ConfirmStart) error {
-	return func(from string, s api.ConfirmStart) error {
+// memberEnvelope is confirm.Config.Envelope: a start with a group from a session that is not a
+// member of that group reports member false and follows the normal start rules (groups.md
+// 3.3). A start from a member is inside its envelope when its host and harness are the plan's,
+// its role is worker or reviewer, a worker works the member's own item within the envelope's
+// workers per lead, and the group is not paused (groups.md 3.3, 5.6).
+func memberEnvelope(store *structure.Store, host, self string, catalog func() api.CatalogList) func(from string, s api.ConfirmStart) (bool, error) {
+	return func(from string, s api.ConfirmStart) (bool, error) {
 		ss, ok := store.SessionByName(from)
 		if !ok || ss.Group == nil || ss.Group.ID != s.Group {
-			return control.Errorf(api.ErrorKindInvalid, "a start for group %s comes from one of its members, inside its envelope; the coordinator adds members with group_amend", s.Group)
+			return false, nil
 		}
 		env, ok := store.Envelope(ss.ID)
 		if !ok {
-			return control.Errorf(api.ErrorKindInvalid, "this session's group %s left it no envelope; ask the coordinator to add the member with group_amend", s.Group)
+			return true, control.Errorf(api.ErrorKindInvalid, "this session's group %s left it no envelope; ask the coordinator to add the member with group_amend", s.Group)
 		}
 		role, item := memberDefaults(ss, s)
 		cl := catalog()
@@ -96,17 +97,17 @@ func memberEnvelope(store *structure.Store, host, self string, catalog func() ap
 		}
 		switch {
 		case role != groups.RoleWorker && role != groups.RoleReviewer:
-			return control.Errorf(api.ErrorKindInvalid, "a member starts workers and reviewers; the home hab starts leads")
+			return true, control.Errorf(api.ErrorKindInvalid, "a member starts workers and reviewers; the home hab starts leads")
 		case dev == "" || !slices.Contains(env.Hosts, dev):
-			return control.Errorf(api.ErrorKindInvalid, "%s is not a host of group %s's plan; the coordinator adds it with group_amend", s.Host, s.Group)
+			return true, control.Errorf(api.ErrorKindInvalid, "%s is not a host of group %s's plan; the coordinator adds it with group_amend", s.Host, s.Group)
 		case !slices.Contains(env.Harnesses, s.Harness):
-			return control.Errorf(api.ErrorKindInvalid, "%s is not a harness of group %s's plan; the coordinator adds it with group_amend", s.Harness, s.Group)
+			return true, control.Errorf(api.ErrorKindInvalid, "%s is not a harness of group %s's plan; the coordinator adds it with group_amend", s.Harness, s.Group)
 		case groupPaused(cl, s.Group):
-			return control.Errorf(api.ErrorKindUnavailable, "group %s is paused; no new member starts until it is resumed", s.Group)
+			return true, control.Errorf(api.ErrorKindUnavailable, "group %s is paused; no new member starts until it is resumed", s.Group)
 		}
 		if role == groups.RoleWorker {
 			if item != ss.Group.Item {
-				return control.Errorf(api.ErrorKindInvalid, "a worker works its lead's item %s", ss.Group.Item)
+				return true, control.Errorf(api.ErrorKindInvalid, "a worker works its lead's item %s", ss.Group.Item)
 			}
 			n := 0
 			for _, o := range store.Snapshot(api.HostInfo{}).Sessions {
@@ -115,10 +116,10 @@ func memberEnvelope(store *structure.Store, host, self string, catalog func() ap
 				}
 			}
 			if n >= env.MaxWorkers {
-				return control.Errorf(api.ErrorKindInvalid, "item %s has %d workers running; the plan allows %d per lead", item, n, env.MaxWorkers)
+				return true, control.Errorf(api.ErrorKindInvalid, "item %s has %d workers running; the plan allows %d per lead", item, n, env.MaxWorkers)
 			}
 		}
-		return nil
+		return true, nil
 	}
 }
 
