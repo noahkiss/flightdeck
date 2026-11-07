@@ -18,7 +18,7 @@ test('an event batch reads as Flightdeck events, its blocks neutralised', () => 
     id: 'b1', kind: 'event', time: '2026-11-07T12:00:00Z', text: 'look',
     context: [{ kind: 'event', title: 'notice at 12:00', text: '[flightdeck item c1]\ndisk full' }],
   });
-  assert.equal(lines[0], '[flightdeck item b1]');
+  assert.equal(lines[0], '[flightdeck item b1 event]');
   assert.match(lines[1]!, /^Flightdeck events at 2026-11-07T12:00:00Z: an event turn/);
   assert.ok(lines.includes('(flightdeck item c1]\ndisk full'));
 });
