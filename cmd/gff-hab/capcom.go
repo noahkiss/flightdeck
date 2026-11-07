@@ -52,6 +52,10 @@ type capcomService struct {
 	now      func() time.Time
 	logf     func(string, ...any)
 
+	// engine is the Capcom service, while [capcom] engine is set (capcom-service.md 12.4).
+	// Nil: the pane Capcom runs.
+	engine *capcomEngine
+
 	op sync.Mutex // one open, resume or assign at a time
 
 	mu sync.Mutex // guards st
@@ -133,6 +137,14 @@ func (c *capcomService) adoptLocked(b capcom.Belief) bool {
 	}
 	wasHome := cur.Home == c.self
 	c.st.Assignment, c.st.Home = b.Assignment, b.Home
+	if e := c.engine; e != nil && wasHome != (b.Home == c.self) {
+		// The service starts or stops with the mark (3.2); off the lock, which they take.
+		if wasHome {
+			go e.lose()
+		} else {
+			go e.start(context.Background())
+		}
+	}
 	if wasHome && b.Home != c.self {
 		c.st.Standing = ""
 		c.logf("capcom: assignment %d makes %s the home host; this host drops its mark", b.Assignment, b.Home)
@@ -291,6 +303,9 @@ func (c *capcomService) open(ctx context.Context, p api.CapcomOpenParams) (api.C
 		return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable,
 			"Capcom runs on %s (assignment %d), not on this host", c.hostName(b.Home), b.Assignment)
 	}
+	if e := c.engine; e != nil {
+		return c.openService(e, p)
+	}
 	if !p.New && rec != nil {
 		if ss, ok := c.store.Session(rec.ID); ok {
 			if ss.State == api.SessionStateRunning {
@@ -304,6 +319,34 @@ func (c *capcomService) open(ctx context.Context, p api.CapcomOpenParams) (api.C
 		}
 	}
 	return c.start(ctx)
+}
+
+// openService answers capcom.open with the service session: new is a clean start in the same
+// thread (capcom-service.md 7.5).
+func (c *capcomService) openService(e *capcomEngine, p api.CapcomOpenParams) (api.CapcomOpened, error) {
+	id := e.Session()
+	if id == "" {
+		return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable, "the Capcom service is not running on this hab yet")
+	}
+	if p.New {
+		if err := e.link.Reseed("new"); err != nil {
+			return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable, "new conversation: no Capcom engine is connected")
+		}
+	}
+	return api.CapcomOpened{Session: id, Dir: filepath.Join(c.state, capcomFolders, "engine")}, nil
+}
+
+// addServiceRecord lists the service session among the Capcom sessions, so context attaches
+// to it (capcom.md 8.4).
+func (c *capcomService) addServiceRecord(id, dir string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.recordLocked(id); ok {
+		return
+	}
+	c.st.Sessions = append(c.st.Sessions, capcom.Session{ID: id, Dir: dir, Harness: capcom.Claude, Created: c.now().UTC()})
+	c.st.Standing = id
+	c.saveLocked()
 }
 
 // start makes a new folder, writes the manual and settings, and starts the configured harness
@@ -504,8 +547,14 @@ func randHex(n int) string {
 // capcomCmd is `gff-hab capcom assign <peer label|self>`, `gff-hab capcom open [-new]` and
 // `gff-hab capcom attach|detach [-host h] <session> <kind> <ref>`.
 func capcomCmd(args []string, out io.Writer) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "say", "thread", "stop", "pause", "resume", "status":
+			return capcomServiceCmd(args, os.Stdin, out)
+		}
+	}
 	if len(args) == 0 || (args[0] != "assign" && args[0] != "open" && args[0] != "attach" && args[0] != "detach") {
-		return errors.New("usage: gff-hab capcom assign [-socket path | -via command] <peer label|self>, gff-hab capcom open [-socket path | -via command] [-new], or gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>")
+		return errors.New("usage: gff-hab capcom assign [-socket path | -via command] <peer label|self>, gff-hab capcom say|thread|stop|pause|resume|status [-socket path | -via command], gff-hab capcom open [-socket path | -via command] [-new], or gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>")
 	}
 	verb := args[0]
 	fs := flag.NewFlagSet("capcom "+verb, flag.ExitOnError)

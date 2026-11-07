@@ -48,6 +48,9 @@ type channelLocal struct {
 	trust  *trustService // nil without the holder link
 	// lock is the round lock's in-use reason for a session, "" when free (rounds.md 5.2, 6.1).
 	lock func(api.Session) string
+	// capcom is the Capcom service: a message to its session goes into the thread
+	// (capcom-service.md 2.4, 9.1). Nil: the service is off.
+	capcom *capcomEngine
 }
 
 var _ channels.RoundLocal = (*channelLocal)(nil)
@@ -55,6 +58,9 @@ var _ channels.RoundLocal = (*channelLocal)(nil)
 // CheckRound is Check under the round lock, for a message with the round mark (rounds.md 5.2):
 // a session in use holds it with the lock's reason.
 func (l *channelLocal) CheckRound(sessionID string) error {
+	if l.service(sessionID) {
+		return nil // the thread takes every message
+	}
 	ss, err := l.ready(sessionID)
 	if err != nil {
 		return err
@@ -65,6 +71,11 @@ func (l *channelLocal) CheckRound(sessionID string) error {
 		}
 	}
 	return nil
+}
+
+// service reports whether a session id is the running Capcom service's.
+func (l *channelLocal) service(id string) bool {
+	return l.capcom != nil && id != "" && l.capcom.Session() == id
 }
 
 func (l *channelLocal) Session(name string) (string, bool) {
@@ -125,11 +136,17 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 }
 
 func (l *channelLocal) Check(sessionID string) error {
+	if l.service(sessionID) {
+		return nil // the thread takes every message
+	}
 	_, err := l.ready(sessionID)
 	return err
 }
 
 func (l *channelLocal) Deliver(ctx context.Context, sessionID, text string) error {
+	if l.service(sessionID) {
+		return l.capcom.DeliverAgent(text)
+	}
 	ss, err := l.ready(sessionID)
 	if err != nil {
 		return err
@@ -166,6 +183,9 @@ func (l *channelLocal) Agent(session string) (api.AgentStatus, bool, <-chan stru
 	ss, ok := l.store.SessionByName(session)
 	if !ok {
 		return "", false, nil
+	}
+	if l.service(ss.ID) {
+		return api.AgentStatusIdle, true, nil
 	}
 	if ss.State == api.SessionStateExited || ss.Pane == "" {
 		return api.AgentStatusExited, true, nil
