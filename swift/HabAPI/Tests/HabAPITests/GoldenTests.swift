@@ -161,6 +161,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.roundUnpause)
         result(HabMethods.roundRun)
         result(HabMethods.roundRuns)
+        result(HabMethods.roundWatchEvent)
         result(HabMethods.heavyTake)
         result(HabMethods.heavyRelease)
         result(HabMethods.heavyStatus)

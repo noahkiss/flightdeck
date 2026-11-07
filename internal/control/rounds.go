@@ -38,7 +38,7 @@ const maxRoundTime = 30 * time.Second
 func isRoundMethod(m string) bool {
 	switch m {
 	case "round.list", "round.get", "round.create", "round.update", "round.delete",
-		"round.pause", "round.unpause", "round.run", "round.runs":
+		"round.pause", "round.unpause", "round.run", "round.runs", "round.watch_event":
 		return true
 	}
 	return false
@@ -55,6 +55,11 @@ func (c *conn) handleRounds(m message) {
 		var p api.RoundRef
 		e = c.decodeUp(m, &p)
 		return p
+	}
+	if m.Method == "round.watch_event" {
+		// A watcher's wrapper calls it from its pane (rounds.md 4.4); the control socket names no pane.
+		c.reply(m, seq, nil, appErr(api.ErrorKindDenied, "round.watch_event is on the pane route only: a watcher's wrapper calls it from its pane"))
+		return
 	}
 	switch m.Method {
 	case "round.list":

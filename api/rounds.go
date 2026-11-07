@@ -24,7 +24,7 @@ type RoundRunState string
 
 // RoundTrigger is a round's one trigger.
 type RoundTrigger struct {
-	Kind  RoundTriggerKind `json:"kind" doc:"cron, once, event or manual."`
+	Kind  RoundTriggerKind `json:"kind" doc:"cron, once, event, watch or manual."`
 	Cron  string           `json:"cron,omitempty" doc:"Kind cron: a 5-field cron expression."`
 	Every string           `json:"every,omitempty" doc:"Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every."`
 	Zone  string           `json:"zone,omitempty" doc:"Kind cron or once: the IANA time zone. Absent in a create: the hab's zone, stored by name."`
@@ -32,6 +32,31 @@ type RoundTrigger struct {
 	// Event and Filter were added by stage 9 (rounds.md 4.3).
 	Event  string            `json:"event,omitempty" doc:"Kind event: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated. Only this hab's own events."`
 	Filter *RoundEventFilter `json:"filter,omitempty" doc:"Kind event: which events of its kind make a run. Each event takes only its own fields; an absent field matches everything."`
+	// Watch was added by stage 11 (rounds.md 4.4).
+	Watch *RoundWatch `json:"watch,omitempty" doc:"Kind watch: the watcher, a long-lived program gff-hab keeps running in a pane; each JSON line it prints is an event."`
+}
+
+// RoundWatch is a watch trigger's watcher (rounds.md 4.4).
+type RoundWatch struct {
+	Argv  []string `json:"argv" doc:"The program and its arguments. No shell."`
+	Cwd   string   `json:"cwd,omitempty" doc:"An absolute folder to start in. Absent: a folder of the round's own in the hab's state."`
+	Kinds []string `json:"kinds,omitempty" doc:"The event kinds that count; other lines are dropped quietly. Absent: every kind."`
+}
+
+// RoundWatcherState is a watcher's state (rounds.md 4.4). The server sends it, so the set is
+// open.
+type RoundWatcherState string
+
+// RoundWatcher is a watch round's watcher as it runs now (rounds.md 4.4, 13): read only.
+type RoundWatcher struct {
+	State     RoundWatcherState `json:"state" doc:"starting, running, backoff or stopped."`
+	Session   string            `json:"session,omitempty" doc:"The watcher session's id: <round>-watch."`
+	StartedAt string            `json:"started_at,omitempty" doc:"RFC 3339 time the running watcher started."`
+	NextStart string            `json:"next_start,omitempty" doc:"Backoff: RFC 3339 time of the next start."`
+	Restarts  int               `json:"restarts,omitempty" doc:"Starts after the first since gff-hab started."`
+	Drops     int               `json:"drops,omitempty" doc:"Lines dropped since the watcher started: malformed, over a bound or over the rate. Quiet drops (kinds, repeated keys) are not counted."`
+	LastExit  string            `json:"last_exit,omitempty" doc:"How the watcher last exited, such as exit status 1."`
+	Reason    string            `json:"reason,omitempty" doc:"Stopped: why, such as paused or over max_watchers."`
 }
 
 // RoundEventFilter is an event trigger's filter (rounds.md 4.3).
@@ -79,6 +104,8 @@ type RoundSpec struct {
 	Group      string `json:"group,omitempty" doc:"Group only: the group id. Its coordinator gets each run's message."`
 	DebounceMS int64  `json:"debounce_ms,omitempty" doc:"Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s."`
 	CooldownMS int64  `json:"cooldown_ms,omitempty" doc:"Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."`
+	// Secrets was added by stage 11 (rounds.md 4.4).
+	Secrets string `json:"secrets,omitempty" doc:"Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."`
 }
 
 // Round is one round as the hab holds it: its definition and where its schedule stands.
@@ -100,14 +127,18 @@ type Round struct {
 	CompletedReason string    `json:"completed_reason,omitempty"`
 	TriggerError    string    `json:"trigger_error,omitempty" doc:"The stored trigger no longer compiles on this host, such as a zone its zone database lacks. The round is not scheduled until an edit fixes it."`
 	LastRun         *RoundRun `json:"last_run,omitempty" doc:"The newest run, in round.list and round.get."`
-	Pending         int       `json:"pending,omitempty" doc:"Event rounds: the events waiting for the next run."`
-	Deleted         bool      `json:"deleted,omitempty" doc:"In a round.updated event only: the round was deleted. Its live run goes on to its end."`
+	Pending         int       `json:"pending,omitempty" doc:"Event and watch rounds: the events waiting for the next run."`
+	// Watcher was added by stage 11 (rounds.md 4.4).
+	Watcher *RoundWatcher `json:"watcher,omitempty" doc:"Watch rounds: the watcher's state."`
+	Deleted bool          `json:"deleted,omitempty" doc:"In a round.updated event only: the round was deleted. Its live run goes on to its end."`
 }
 
 // SessionRound marks a run session (rounds.md 7.2): Session.round.
 type SessionRound struct {
 	Round string `json:"round" doc:"The round id."`
-	Run   string `json:"run" doc:"The run id."`
+	Run   string `json:"run" doc:"The run id. Empty on a watcher's session."`
+	// Watcher was added by stage 11 (rounds.md 4.4).
+	Watcher bool `json:"watcher,omitempty" doc:"A watch round's watcher session: not a run. gff-hab starts it; session.resume refuses it."`
 }
 
 // RoundRun is one run's record (rounds.md 7.7).
@@ -165,6 +196,31 @@ type RoundResult struct {
 	Round Round `json:"round"`
 	// Batch was added for round move (rounds.md 9, Moving these rounds).
 	Batch *RoundBatch `json:"batch,omitempty" doc:"round.get with batch, for an event round: its pending batch."`
+	// Cursor was added by stage 11 (rounds.md 9).
+	Cursor string `json:"cursor,omitempty" doc:"round.get with batch, for a watch round: its watcher's cursor, as a move carries it."`
+}
+
+// RoundWatchEventParams is round.watch_event: a page of the lines a watcher printed, in order
+// (rounds.md 4.4).
+type RoundWatchEventParams struct {
+	Round   string   `json:"round" doc:"The round id. The calling pane must be that round's watcher pane."`
+	Lines   []string `json:"lines" doc:"Event lines and cursor lines, each at most 64 KiB, as the watcher printed them."`
+	Dropped int      `json:"dropped,omitempty" doc:"Lines the wrapper dropped since its last page: over 64 KiB, over the rate, or past its buffer while gff-hab was down."`
+}
+
+// RoundWatchEventResult answers round.watch_event: what became of each line, in order.
+type RoundWatchEventResult struct {
+	Seq
+	Lines []RoundWatchLine `json:"lines"`
+}
+
+// RoundWatchLine is what became of one watcher line.
+type RoundWatchLine struct {
+	Taken  bool   `json:"taken,omitempty" doc:"The event joined the round's pending batch."`
+	Cursor bool   `json:"cursor,omitempty" doc:"A cursor line: the round keeps it."`
+	Title  string `json:"title,omitempty" doc:"The event's title, when the line had one."`
+	Drop   string `json:"drop,omitempty" doc:"Why the line was dropped."`
+	Quiet  bool   `json:"quiet,omitempty" doc:"A quiet drop: a kind the round does not count, or a key seen within the key window. Shown nowhere, counted nowhere."`
 }
 
 type RoundCreateParams struct {
@@ -172,6 +228,8 @@ type RoundCreateParams struct {
 	RunNow bool      `json:"run_now,omitempty" doc:"Also start one run now. It does not move the next slot."`
 	// Batch was added for round move (rounds.md 9, Moving these rounds).
 	Batch *RoundBatch `json:"batch,omitempty" doc:"Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route."`
+	// Cursor was added by stage 11 (rounds.md 9).
+	Cursor string `json:"cursor,omitempty" doc:"Watch triggers: the watcher cursor the new round starts with, as a move carries it. Refused on the pane route."`
 }
 
 // RoundGetParams names the round of round.get.

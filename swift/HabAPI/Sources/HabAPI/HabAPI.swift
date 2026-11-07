@@ -6732,7 +6732,7 @@ public struct Round: Codable, Sendable, Hashable {
     public var paused: Bool?
     /// Why the round paused itself. Absent for a pause by the user.
     public var pausedReason: String?
-    /// Event rounds: the events waiting for the next run.
+    /// Event and watch rounds: the events waiting for the next run.
     public var pending: Int?
     /// Fresh: the project id. The run starts in the project's most recently used folder.
     public var project: String?
@@ -6744,6 +6744,8 @@ public struct Round: Codable, Sendable, Hashable {
     public var prompt: String?
     /// Raised by one on each change; starts at 1 when gff-hab starts. Compared only within an epoch (spec 3.5).
     public var revision: UInt64
+    /// Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route.
+    public var secrets: String?
     /// Skipped runs in a row.
     public var skips: Int?
     /// Resume and fork: the target session id.
@@ -6757,6 +6759,8 @@ public struct Round: Codable, Sendable, Hashable {
     public var updatedAt: String
     /// Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes.
     public var waitMs: Int?
+    /// Watch rounds: the watcher's state.
+    public var watcher: RoundWatcher?
 
     enum CodingKeys: String, CodingKey {
         case catchUp = "catch_up"
@@ -6793,6 +6797,7 @@ public struct Round: Codable, Sendable, Hashable {
         case projectRemote = "project_remote"
         case prompt = "prompt"
         case revision = "revision"
+        case secrets = "secrets"
         case skips = "skips"
         case target = "target"
         case timeoutMs = "timeout_ms"
@@ -6800,9 +6805,10 @@ public struct Round: Codable, Sendable, Hashable {
         case triggerError = "trigger_error"
         case updatedAt = "updated_at"
         case waitMs = "wait_ms"
+        case watcher = "watcher"
     }
 
-    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, cooldownMs: Int? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, debounceMs: Int? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, pending: Int? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil) {
+    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, cooldownMs: Int? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, debounceMs: Int? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, pending: Int? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, secrets: String? = nil, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil, watcher: RoundWatcher? = nil) {
         self.catchUp = catchUp
         self.command = command
         self.completed = completed
@@ -6837,6 +6843,7 @@ public struct Round: Codable, Sendable, Hashable {
         self.projectRemote = projectRemote
         self.prompt = prompt
         self.revision = revision
+        self.secrets = secrets
         self.skips = skips
         self.target = target
         self.timeoutMs = timeoutMs
@@ -6844,6 +6851,7 @@ public struct Round: Codable, Sendable, Hashable {
         self.triggerError = triggerError
         self.updatedAt = updatedAt
         self.waitMs = waitMs
+        self.watcher = watcher
     }
 }
 
@@ -6873,18 +6881,22 @@ public struct RoundCatchUp: RawRepresentable, Codable, Sendable, Hashable {
 public struct RoundCreateParams: Codable, Sendable, Hashable {
     /// Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route.
     public var batch: RoundBatch?
+    /// Watch triggers: the watcher cursor the new round starts with, as a move carries it. Refused on the pane route.
+    public var cursor: String?
     public var round: RoundSpec
     /// Also start one run now. It does not move the next slot.
     public var runNow: Bool?
 
     enum CodingKeys: String, CodingKey {
         case batch = "batch"
+        case cursor = "cursor"
         case round = "round"
         case runNow = "run_now"
     }
 
-    public init(batch: RoundBatch? = nil, round: RoundSpec, runNow: Bool? = nil) {
+    public init(batch: RoundBatch? = nil, cursor: String? = nil, round: RoundSpec, runNow: Bool? = nil) {
         self.batch = batch
+        self.cursor = cursor
         self.round = round
         self.runNow = runNow
     }
@@ -7089,18 +7101,22 @@ public struct RoundRef: Codable, Sendable, Hashable {
 public struct RoundResult: Codable, Sendable, Hashable {
     /// round.get with batch, for an event round: its pending batch.
     public var batch: RoundBatch?
+    /// round.get with batch, for a watch round: its watcher's cursor, as a move carries it.
+    public var cursor: String?
     public var round: Round
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
 
     enum CodingKeys: String, CodingKey {
         case batch = "batch"
+        case cursor = "cursor"
         case round = "round"
         case seq = "seq"
     }
 
-    public init(batch: RoundBatch? = nil, round: Round, seq: UInt64) {
+    public init(batch: RoundBatch? = nil, cursor: String? = nil, round: Round, seq: UInt64) {
         self.batch = batch
+        self.cursor = cursor
         self.round = round
         self.seq = seq
     }
@@ -7310,6 +7326,8 @@ public struct RoundSpec: Codable, Sendable, Hashable {
     public var projectRemote: String?
     /// The text the agent gets each run, at most 64 KiB. Required unless command is set.
     public var prompt: String?
+    /// Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route.
+    public var secrets: String?
     /// Resume and fork: the target session id.
     public var target: String?
     /// The longest a run may take. Absent: 60 minutes.
@@ -7339,13 +7357,14 @@ public struct RoundSpec: Codable, Sendable, Hashable {
         case projectDir = "project_dir"
         case projectRemote = "project_remote"
         case prompt = "prompt"
+        case secrets = "secrets"
         case target = "target"
         case timeoutMs = "timeout_ms"
         case trigger = "trigger"
         case waitMs = "wait_ms"
     }
 
-    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, cooldownMs: Int? = nil, cwd: String? = nil, debounceMs: Int? = nil, expiresAt: String? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
+    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, cooldownMs: Int? = nil, cwd: String? = nil, debounceMs: Int? = nil, expiresAt: String? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, secrets: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
         self.catchUp = catchUp
         self.command = command
         self.cooldownMs = cooldownMs
@@ -7366,6 +7385,7 @@ public struct RoundSpec: Codable, Sendable, Hashable {
         self.projectDir = projectDir
         self.projectRemote = projectRemote
         self.prompt = prompt
+        self.secrets = secrets
         self.target = target
         self.timeoutMs = timeoutMs
         self.trigger = trigger
@@ -7384,8 +7404,10 @@ public struct RoundTrigger: Codable, Sendable, Hashable {
     public var every: String?
     /// Kind event: which events of its kind make a run. Each event takes only its own fields; an absent field matches everything.
     public var filter: RoundEventFilter?
-    /// cron, once, event or manual.
+    /// cron, once, event, watch or manual.
     public var kind: RoundTriggerKind
+    /// Kind watch: the watcher, a long-lived program gff-hab keeps running in a pane; each JSON line it prints is an event.
+    public var watch: RoundWatch?
     /// Kind cron or once: the IANA time zone. Absent in a create: the hab's zone, stored by name.
     public var zone: String?
 
@@ -7396,16 +7418,18 @@ public struct RoundTrigger: Codable, Sendable, Hashable {
         case every = "every"
         case filter = "filter"
         case kind = "kind"
+        case watch = "watch"
         case zone = "zone"
     }
 
-    public init(at: String? = nil, cron: String? = nil, event: String? = nil, every: String? = nil, filter: RoundEventFilter? = nil, kind: RoundTriggerKind, zone: String? = nil) {
+    public init(at: String? = nil, cron: String? = nil, event: String? = nil, every: String? = nil, filter: RoundEventFilter? = nil, kind: RoundTriggerKind, watch: RoundWatch? = nil, zone: String? = nil) {
         self.at = at
         self.cron = cron
         self.event = event
         self.every = every
         self.filter = filter
         self.kind = kind
+        self.watch = watch
         self.zone = zone
     }
 }
@@ -7417,6 +7441,7 @@ public struct RoundTriggerKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let cron = RoundTriggerKind(rawValue: "cron")
     public static let once = RoundTriggerKind(rawValue: "once")
     public static let event = RoundTriggerKind(rawValue: "event")
+    public static let watch = RoundTriggerKind(rawValue: "watch")
     public static let manual = RoundTriggerKind(rawValue: "manual")
 }
 
@@ -7438,6 +7463,144 @@ public struct RoundUpdateParams: Codable, Sendable, Hashable {
         self.revision = revision
         self.round = round
     }
+}
+
+public struct RoundWatch: Codable, Sendable, Hashable {
+    /// The program and its arguments. No shell.
+    public var argv: [String]
+    /// An absolute folder to start in. Absent: a folder of the round's own in the hab's state.
+    public var cwd: String?
+    /// The event kinds that count; other lines are dropped quietly. Absent: every kind.
+    public var kinds: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case argv = "argv"
+        case cwd = "cwd"
+        case kinds = "kinds"
+    }
+
+    public init(argv: [String], cwd: String? = nil, kinds: [String]? = nil) {
+        self.argv = argv
+        self.cwd = cwd
+        self.kinds = kinds
+    }
+}
+
+public struct RoundWatchEventParams: Codable, Sendable, Hashable {
+    /// Lines the wrapper dropped since its last page: over 64 KiB, over the rate, or past its buffer while gff-hab was down.
+    public var dropped: Int?
+    /// Event lines and cursor lines, each at most 64 KiB, as the watcher printed them.
+    public var lines: [String]
+    /// The round id. The calling pane must be that round's watcher pane.
+    public var round: String
+
+    enum CodingKeys: String, CodingKey {
+        case dropped = "dropped"
+        case lines = "lines"
+        case round = "round"
+    }
+
+    public init(dropped: Int? = nil, lines: [String], round: String) {
+        self.dropped = dropped
+        self.lines = lines
+        self.round = round
+    }
+}
+
+public struct RoundWatchEventResult: Codable, Sendable, Hashable {
+    public var lines: [RoundWatchLine]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case lines = "lines"
+        case seq = "seq"
+    }
+
+    public init(lines: [RoundWatchLine], seq: UInt64) {
+        self.lines = lines
+        self.seq = seq
+    }
+}
+
+public struct RoundWatchLine: Codable, Sendable, Hashable {
+    /// A cursor line: the round keeps it.
+    public var cursor: Bool?
+    /// Why the line was dropped.
+    public var drop: String?
+    /// A quiet drop: a kind the round does not count, or a key seen within the key window. Shown nowhere, counted nowhere.
+    public var quiet: Bool?
+    /// The event joined the round's pending batch.
+    public var taken: Bool?
+    /// The event's title, when the line had one.
+    public var title: String?
+
+    enum CodingKeys: String, CodingKey {
+        case cursor = "cursor"
+        case drop = "drop"
+        case quiet = "quiet"
+        case taken = "taken"
+        case title = "title"
+    }
+
+    public init(cursor: Bool? = nil, drop: String? = nil, quiet: Bool? = nil, taken: Bool? = nil, title: String? = nil) {
+        self.cursor = cursor
+        self.drop = drop
+        self.quiet = quiet
+        self.taken = taken
+        self.title = title
+    }
+}
+
+public struct RoundWatcher: Codable, Sendable, Hashable {
+    /// Lines dropped since the watcher started: malformed, over a bound or over the rate. Quiet drops (kinds, repeated keys) are not counted.
+    public var drops: Int?
+    /// How the watcher last exited, such as exit status 1.
+    public var lastExit: String?
+    /// Backoff: RFC 3339 time of the next start.
+    public var nextStart: String?
+    /// Stopped: why, such as paused or over max_watchers.
+    public var reason: String?
+    /// Starts after the first since gff-hab started.
+    public var restarts: Int?
+    /// The watcher session's id: <round>-watch.
+    public var session: String?
+    /// RFC 3339 time the running watcher started.
+    public var startedAt: String?
+    /// starting, running, backoff or stopped.
+    public var state: RoundWatcherState
+
+    enum CodingKeys: String, CodingKey {
+        case drops = "drops"
+        case lastExit = "last_exit"
+        case nextStart = "next_start"
+        case reason = "reason"
+        case restarts = "restarts"
+        case session = "session"
+        case startedAt = "started_at"
+        case state = "state"
+    }
+
+    public init(drops: Int? = nil, lastExit: String? = nil, nextStart: String? = nil, reason: String? = nil, restarts: Int? = nil, session: String? = nil, startedAt: String? = nil, state: RoundWatcherState) {
+        self.drops = drops
+        self.lastExit = lastExit
+        self.nextStart = nextStart
+        self.reason = reason
+        self.restarts = restarts
+        self.session = session
+        self.startedAt = startedAt
+        self.state = state
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundWatcherState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let starting = RoundWatcherState(rawValue: "starting")
+    public static let running = RoundWatcherState(rawValue: "running")
+    public static let backoff = RoundWatcherState(rawValue: "backoff")
+    public static let stopped = RoundWatcherState(rawValue: "stopped")
 }
 
 public struct Scope: Codable, Sendable, Hashable {
@@ -7779,17 +7942,21 @@ public struct SessionRenameParams: Codable, Sendable, Hashable {
 public struct SessionRound: Codable, Sendable, Hashable {
     /// The round id.
     public var round: String
-    /// The run id.
+    /// The run id. Empty on a watcher's session.
     public var run: String
+    /// A watch round's watcher session: not a run. gff-hab starts it; session.resume refuses it.
+    public var watcher: Bool?
 
     enum CodingKeys: String, CodingKey {
         case round = "round"
         case run = "run"
+        case watcher = "watcher"
     }
 
-    public init(round: String, run: String) {
+    public init(round: String, run: String, watcher: Bool? = nil) {
         self.round = round
         self.run = run
+        self.watcher = watcher
     }
 }
 
@@ -9212,6 +9379,8 @@ public enum HabMethods {
     public static let roundRun = HabMethod<RoundRef, RoundRunResult>(name: "round.run")
     /// A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.
     public static let roundRuns = HabMethod<RoundRunsParams, RoundRuns>(name: "round.runs")
+    /// A page of the lines a watch round's watcher printed, from its wrapper (rounds.md 4.4): events join the pending batch, a cursor line is kept. Pane route only: the calling pane must be the round's watcher pane, else denied. Needs the rounds capability.
+    public static let roundWatchEvent = HabMethod<RoundWatchEventParams, RoundWatchEventResult>(name: "round.watch_event")
     /// Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.
     public static let heavyTake = HabMethod<HeavyTakeParams, HeavyTaken>(name: "heavy.take")
     /// Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.

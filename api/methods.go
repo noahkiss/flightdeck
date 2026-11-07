@@ -168,6 +168,7 @@ var Methods = []Method{
 	{"round.unpause", "Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.", RoundRef{}, RoundResult{}},
 	{"round.run", "Start a run now, outside the trigger. It answers after the run's session is spawned, or once the run is queued behind the host limit or the wake settle. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundRunResult{}},
 	{"round.runs", "A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.", RoundRunsParams{}, RoundRuns{}},
+	{"round.watch_event", "A page of the lines a watch round's watcher printed, from its wrapper (rounds.md 4.4): events join the pending batch, a cursor line is kept. Pane route only: the calling pane must be the round's watcher pane, else denied. Needs the rounds capability.", RoundWatchEventParams{}, RoundWatchEventResult{}},
 	{"heavy.take", "Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.", HeavyTakeParams{}, HeavyTaken{}},
 	{"heavy.release", "Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.", HeavyReleaseParams{}, Empty{}},
 	{"heavy.status", "Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.", HeavyStatusParams{}, HeavyStatus{}},
@@ -301,12 +302,14 @@ var Enums = map[string][]string{
 	"SessionKind": {"capcom"},
 	// Sets added for rounds (rounds.md 3, 7.1).
 	"RoundMode":        {"fresh", "resume", "fork", "capcom", "group"},
-	"RoundTriggerKind": {"cron", "once", "event", "manual"},
+	"RoundTriggerKind": {"cron", "once", "event", "watch", "manual"},
 	"RoundCatchUp":     {"once", "skip"},
 	"RoundOnFinish":    {"close", "keep"},
 	"RoundNotify":      {"failures", "always", "never"},
 	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
 	"RoundNoticeKind":  {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
+	// Sets added for watchers (rounds.md 4.4).
+	"RoundWatcherState": {"starting", "running", "backoff", "stopped"},
 	// Sets added for the Capcom entry API (capcom.md 8.1).
 	"CapcomContextKind": {"notification", "session", "file", "command", "logbook"},
 	// Sets added for Logbook (logbook.md 10.3).

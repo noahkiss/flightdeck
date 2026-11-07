@@ -3561,6 +3561,13 @@
           }
         },
         {
+          "name": "cursor",
+          "description": "Watch triggers: the watcher cursor the new round starts with, as a move carries it. Refused on the pane route.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "round",
           "required": true,
           "schema": {
@@ -3778,6 +3785,49 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/RoundRunsParams"
+      }
+    },
+    {
+      "name": "round.watch_event",
+      "summary": "A page of the lines a watch round's watcher printed, from its wrapper (rounds.md 4.4): events join the pending batch, a cursor line is kept. Pane route only: the calling pane must be the round's watcher pane, else denied. Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "dropped",
+          "description": "Lines the wrapper dropped since its last page: over 64 KiB, over the rate, or past its buffer while gff-hab was down.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "lines",
+          "description": "Event lines and cursor lines, each at most 64 KiB, as the watcher printed them.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "round",
+          "description": "The round id. The calling pane must be that round's watcher pane.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundWatchEventResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundWatchEventParams"
       }
     },
     {
@@ -11810,7 +11860,7 @@
           "pending": {
             "type": "integer",
             "format": "int64",
-            "description": "Event rounds: the events waiting for the next run."
+            "description": "Event and watch rounds: the events waiting for the next run."
           },
           "project": {
             "type": "string",
@@ -11832,6 +11882,10 @@
             "type": "integer",
             "format": "uint64",
             "description": "Raised by one on each change; starts at 1 when gff-hab starts. Compared only within an epoch (spec 3.5)."
+          },
+          "secrets": {
+            "type": "string",
+            "description": "Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."
           },
           "skips": {
             "type": "integer",
@@ -11862,6 +11916,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes."
+          },
+          "watcher": {
+            "$ref": "#/components/schemas/RoundWatcher",
+            "description": "Watch rounds: the watcher's state."
           }
         },
         "required": [
@@ -11902,6 +11960,10 @@
           "batch": {
             "$ref": "#/components/schemas/RoundBatch",
             "description": "Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Watch triggers: the watcher cursor the new round starts with, as a move carries it. Refused on the pane route."
           },
           "round": {
             "$ref": "#/components/schemas/RoundSpec"
@@ -12115,6 +12177,10 @@
           "batch": {
             "$ref": "#/components/schemas/RoundBatch",
             "description": "round.get with batch, for an event round: its pending batch."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "round.get with batch, for a watch round: its watcher's cursor, as a move carries it."
           },
           "round": {
             "$ref": "#/components/schemas/Round"
@@ -12393,6 +12459,10 @@
             "type": "string",
             "description": "The text the agent gets each run, at most 64 KiB. Required unless command is set."
           },
+          "secrets": {
+            "type": "string",
+            "description": "Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."
+          },
           "target": {
             "type": "string",
             "description": "Resume and fork: the target session id."
@@ -12442,7 +12512,11 @@
           },
           "kind": {
             "$ref": "#/components/schemas/RoundTriggerKind",
-            "description": "cron, once, event or manual."
+            "description": "cron, once, event, watch or manual."
+          },
+          "watch": {
+            "$ref": "#/components/schemas/RoundWatch",
+            "description": "Kind watch: the watcher, a long-lived program gff-hab keeps running in a pane; each JSON line it prints is an event."
           },
           "zone": {
             "type": "string",
@@ -12459,6 +12533,7 @@
           "cron",
           "once",
           "event",
+          "watch",
           "manual"
         ]
       },
@@ -12481,6 +12556,153 @@
         "required": [
           "id",
           "round"
+        ]
+      },
+      "RoundWatch": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "description": "The program and its arguments. No shell.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "description": "An absolute folder to start in. Absent: a folder of the round's own in the hab's state."
+          },
+          "kinds": {
+            "type": "array",
+            "description": "The event kinds that count; other lines are dropped quietly. Absent: every kind.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "argv"
+        ]
+      },
+      "RoundWatchEventParams": {
+        "type": "object",
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lines the wrapper dropped since its last page: over 64 KiB, over the rate, or past its buffer while gff-hab was down."
+          },
+          "lines": {
+            "type": "array",
+            "description": "Event lines and cursor lines, each at most 64 KiB, as the watcher printed them.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "round": {
+            "type": "string",
+            "description": "The round id. The calling pane must be that round's watcher pane."
+          }
+        },
+        "required": [
+          "round",
+          "lines"
+        ]
+      },
+      "RoundWatchEventResult": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoundWatchLine"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "lines"
+        ]
+      },
+      "RoundWatchLine": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "boolean",
+            "description": "A cursor line: the round keeps it."
+          },
+          "drop": {
+            "type": "string",
+            "description": "Why the line was dropped."
+          },
+          "quiet": {
+            "type": "boolean",
+            "description": "A quiet drop: a kind the round does not count, or a key seen within the key window. Shown nowhere, counted nowhere."
+          },
+          "taken": {
+            "type": "boolean",
+            "description": "The event joined the round's pending batch."
+          },
+          "title": {
+            "type": "string",
+            "description": "The event's title, when the line had one."
+          }
+        }
+      },
+      "RoundWatcher": {
+        "type": "object",
+        "properties": {
+          "drops": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lines dropped since the watcher started: malformed, over a bound or over the rate. Quiet drops (kinds, repeated keys) are not counted."
+          },
+          "last_exit": {
+            "type": "string",
+            "description": "How the watcher last exited, such as exit status 1."
+          },
+          "next_start": {
+            "type": "string",
+            "description": "Backoff: RFC 3339 time of the next start."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Stopped: why, such as paused or over max_watchers."
+          },
+          "restarts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Starts after the first since gff-hab started."
+          },
+          "session": {
+            "type": "string",
+            "description": "The watcher session's id: \u003cround\u003e-watch."
+          },
+          "started_at": {
+            "type": "string",
+            "description": "RFC 3339 time the running watcher started."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RoundWatcherState",
+            "description": "starting, running, backoff or stopped."
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "RoundWatcherState": {
+        "type": "string",
+        "x-known-values": [
+          "starting",
+          "running",
+          "backoff",
+          "stopped"
         ]
       },
       "Scope": {
@@ -12836,7 +13058,11 @@
           },
           "run": {
             "type": "string",
-            "description": "The run id."
+            "description": "The run id. Empty on a watcher's session."
+          },
+          "watcher": {
+            "type": "boolean",
+            "description": "A watch round's watcher session: not a run. gff-hab starts it; session.resume refuses it."
           }
         },
         "required": [
