@@ -83,9 +83,10 @@ type workspaceUI struct {
 	onRound  bool             // the board's selection is on a round row
 	boardTop int              // the first board line under the head, so the selection shows
 	selRound board.RoundKey
-	cats     map[string]catCopy   // device id -> the newest catalog copy
-	catBusy  map[string]int       // host -> 1 a catalog read is out, 2 and another is due
-	heavy    map[string]heavyCopy // device id -> the heavy-run lock's section (heavy.go)
+	cats     map[string]catCopy      // device id -> the newest catalog copy
+	catBusy  map[string]int          // host -> 1 a catalog read is out, 2 and another is due
+	heavy    map[string]heavyCopy    // device id -> the heavy-run lock's section (heavy.go)
+	governor map[string]governorCopy // device id -> the usage governor's section (governor.go)
 	pendRun  pendingRun
 
 	// Modules (modules.go).
@@ -105,6 +106,7 @@ func (u *workspaceUI) init(c *client) {
 	u.showRuns = true
 	u.cats, u.catBusy = map[string]catCopy{}, map[string]int{}
 	u.heavy = map[string]heavyCopy{}
+	u.governor = map[string]governorCopy{}
 	u.order.Now = func() time.Time { return c.cfg.Now() }
 	if c.ws && len(c.cfg.Panes) == 0 {
 		u.mode = modeSidebar // nothing on screen yet: start where sessions are picked
@@ -1357,6 +1359,12 @@ func (u *workspaceUI) drawBoard(a rect) {
 	if hl := u.heavyLines(); len(hl) > 0 {
 		line(" Heavy runs", boldStyle)
 		for _, l := range hl {
+			line(l, vt.Style{})
+		}
+	}
+	if gl := u.governorLines(now); len(gl) > 0 {
+		line(" Usage pacing", boldStyle)
+		for _, l := range gl {
 			line(l, vt.Style{})
 		}
 	}
