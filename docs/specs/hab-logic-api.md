@@ -934,6 +934,10 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   reaches the agent as its first message when the agent can take one, in a start envelope that
   names `seed_from` as the writer, on the owner's behalf (`capcom.md` 6.4). A seed that cannot
   be queued after the spawn is logged, not answered, so a retry never starts a second session.
+  With `harness`, the optional `report_to` names a session on the calling hab (the hab at the
+  other end of the peer link the call came over, else this one): this hab sends it the final
+  agent message of each turn the seed or a message from it began, as a channel message from
+  the new session (`harness-adapters.md`, Spawn).
 - **`cwd_of`** on `session.create` names a pane: with no `cwd` and no `project_dir`, the new
   pane starts in that pane's working folder (its program's folder, else its shell's last OSC 7
   report, else its session's start folder, else the default) and is filed in that pane's

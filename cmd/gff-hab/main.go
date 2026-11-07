@@ -90,6 +90,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/agentcli"
+	"github.com/noahkiss/flightdeck/internal/aliases"
 	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/catalog"
@@ -452,6 +453,9 @@ func serve(args []string) error {
 	var contentRef atomic.Pointer[content.Service] // set once the content service exists
 	var attachRef atomic.Pointer[attach.Service]   // set once the attachment store exists
 	var resumeRef atomic.Pointer[resumeBook]       // set once the store is open
+	// Teammates report their turns to their spawner (teammates.go): it follows agent states.
+	mates := openTeammates(dir, logger.Printf)
+	defer mates.Close()
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
@@ -467,6 +471,7 @@ func serve(args []string) error {
 				if b := resumeRef.Load(); b != nil {
 					b.forget(e.ID)
 				}
+				mates.forget(e.ID)
 			}
 			pokeCatalog()
 		},
@@ -515,7 +520,8 @@ func serve(args []string) error {
 				}
 			}
 			if st, ok := e.Data.(api.AgentState); ok {
-				resumes.agent(st) // never blocks
+				resumes.agent(st)    // never blocks
+				mates.agentState(st) // never blocks
 			}
 			if e.Type == api.EventAgentState {
 				pokeCatalog() // pokes channels too
@@ -1066,7 +1072,8 @@ func serve(args []string) error {
 			s := srv.Load()
 			return s != nil && s.NotifyLink(device, structure.Event{Type: api.EventMeshChanged, ID: key.Fingerprint(), Data: api.MeshChanged{Reasons: []api.MeshReason{api.MeshReasonMail}}}) > 0
 		},
-		Logf: logger.Printf,
+		Delivering: mates.delivering,
+		Logf:       logger.Printf,
 	})
 	if err != nil {
 		return err
@@ -1074,6 +1081,22 @@ func serve(args []string) error {
 	defer chSvc.Close()
 	chs.Store(chSvc)
 	chRef.Store(chSvc)
+	mates.agent = agents.Get
+	mates.name = func(id string) (string, bool) {
+		ss, ok := store.Session(id)
+		return ss.Name, ok
+	}
+	mates.read = func(ctx context.Context, session, harness, native string) ([]api.ChatMessage, error) {
+		return roundMessages(ctx, chats, findTranscript, session, harness, native)
+	}
+	mates.send = func(ctx context.Context, from string, to api.ChannelEnd, text string) error {
+		_, err := chSvc.SendTo(ctx, from, to, text)
+		return err
+	}
+	if sessionActs != nil {
+		sessionActs.mates = mates
+		sessionActs.self = api.ChannelEnd{DeviceID: key.Fingerprint(), Host: *hostID}
+	}
 	if trustSvc != nil {
 		trustSvc.refuse = func(pane, reason string) (int, error) {
 			ss, ok := store.SessionByPane(pane)
@@ -1159,7 +1182,8 @@ func serve(args []string) error {
 					return ss.Name
 				}
 				return ""
-			}},
+			},
+			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get},
 		Enabled: func() bool { return string(setSvc.Value(settings.StartElsewhere)) == "true" },
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
@@ -1485,7 +1509,11 @@ func serve(args []string) error {
 		hooks.SetAgent(compactHook(compacts))
 	}
 	hooks.SetReads(readHook(reads, cs, pm))
-	hooks.SetConfirm(confirmHook(store, cfSvc))
+	folders := spawnFolders{catalog: cs.List, host: *hostID}
+	if sessionActs != nil {
+		folders.folderOf = sessionActs.folderOf
+	}
+	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote))
 	// One context handler: the Logbook habit and the context nudge, joined when both are due
 	// (harness-adapters.md, Context nudge).

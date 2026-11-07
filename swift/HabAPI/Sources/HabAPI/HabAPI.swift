@@ -2049,6 +2049,8 @@ public struct ConfirmRequested: Codable, Sendable, Hashable {
 }
 
 public struct ConfirmResult: Codable, Sendable, Hashable {
+    /// The new session's channel address as this hab sees it: its name on this hab, label/name on a peer.
+    public var address: String?
     /// The target hab, as this hab labels it.
     public var host: String
     /// The new session's name.
@@ -2059,13 +2061,15 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
     public var session: String
 
     enum CodingKeys: String, CodingKey {
+        case address = "address"
         case host = "host"
         case name = "name"
         case pane = "pane"
         case session = "session"
     }
 
-    public init(host: String, name: String? = nil, pane: String, session: String) {
+    public init(address: String? = nil, host: String, name: String? = nil, pane: String, session: String) {
+        self.address = address
         self.host = host
         self.name = name
         self.pane = pane
@@ -2099,6 +2103,8 @@ public struct ConfirmSetup: Codable, Sendable, Hashable {
 }
 
 public struct ConfirmStart: Codable, Sendable, Hashable {
+    /// The alias the request named, from the [aliases] table of the requesting hab's config file. Filled by the hab; harness and model are what the alias stands for.
+    public var alias: String?
     /// The folder's branch, from the catalog. Filled by the hab.
     public var branch: String?
     /// The absolute project folder on the target host. The session starts there, in its project.
@@ -2115,8 +2121,11 @@ public struct ConfirmStart: Codable, Sendable, Hashable {
     public var project: String?
     /// The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf.
     public var seed: String?
+    /// Report back to the requesting session: the target hab sends it the final agent message of each turn that a message from it began, as a channel message from the new session. Needs a requesting session.
+    public var teammate: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case alias = "alias"
         case branch = "branch"
         case folder = "folder"
         case harness = "harness"
@@ -2125,9 +2134,11 @@ public struct ConfirmStart: Codable, Sendable, Hashable {
         case name = "name"
         case project = "project"
         case seed = "seed"
+        case teammate = "teammate"
     }
 
-    public init(branch: String? = nil, folder: String, harness: String, host: String, model: String? = nil, name: String? = nil, project: String? = nil, seed: String? = nil) {
+    public init(alias: String? = nil, branch: String? = nil, folder: String, harness: String, host: String, model: String? = nil, name: String? = nil, project: String? = nil, seed: String? = nil, teammate: Bool? = nil) {
+        self.alias = alias
         self.branch = branch
         self.folder = folder
         self.harness = harness
@@ -2136,6 +2147,7 @@ public struct ConfirmStart: Codable, Sendable, Hashable {
         self.name = name
         self.project = project
         self.seed = seed
+        self.teammate = teammate
     }
 }
 
@@ -6554,6 +6566,8 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var project: String?
     /// Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new.
     public var projectDir: String?
+    /// A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability.
+    public var reportTo: String?
     /// Initial height. Default 24.
     public var rows: Int?
     /// The session's first message, at most 8000 characters. The hab delivers it once the agent can take it, marked as written by seed_from on the owner's behalf. Needs harness and the confirm capability.
@@ -6573,12 +6587,13 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case name = "name"
         case project = "project"
         case projectDir = "project_dir"
+        case reportTo = "report_to"
         case rows = "rows"
         case seed = "seed"
         case seedFrom = "seed_from"
     }
 
-    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil) {
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, cwdOf: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, reportTo: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil) {
         self.argv = argv
         self.cols = cols
         self.cwd = cwd
@@ -6590,6 +6605,7 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         self.name = name
         self.project = project
         self.projectDir = projectDir
+        self.reportTo = reportTo
         self.rows = rows
         self.seed = seed
         self.seedFrom = seedFrom

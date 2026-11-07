@@ -1406,6 +1406,9 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
 		defer cancel()
+		if c.peer != nil {
+			ctx = WithCallerPeer(ctx, *c.peer) // report_to names a session on that hab
+		}
 		made, e := c.s.createIdem(ctx, p, func(pane string) {
 			if c.s.cfg.Size != nil {
 				c.s.cfg.Size.Created(c.clientID, pane) // the creator owns the new pane (spec 6.5)

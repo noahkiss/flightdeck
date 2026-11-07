@@ -37,6 +37,22 @@ func PeerCall(ctx context.Context) bool {
 	return v
 }
 
+// callerPeerKey carries the hello of the peer hab a call came from.
+type callerPeerKey struct{}
+
+// WithCallerPeer marks ctx as a call from the peer hab whose hello is p.
+func WithCallerPeer(ctx context.Context, p api.PeerHello) context.Context {
+	return context.WithValue(ctx, callerPeerKey{}, p)
+}
+
+// CallerPeer returns the hello of the peer hab a call came over, with ok false for a call from
+// any other client. session.create's report_to names a session on that hab
+// (harness-adapters.md, Spawn): the device comes from the link, never from the params.
+func CallerPeer(ctx context.Context) (api.PeerHello, bool) {
+	p, ok := ctx.Value(callerPeerKey{}).(api.PeerHello)
+	return p, ok
+}
+
 // maxChannelTime bounds one channel call: the longest wait plus a margin.
 const maxChannelTime = 610 * time.Second
 

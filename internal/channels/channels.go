@@ -142,10 +142,15 @@ type Config struct {
 	// Outcome hears Capcom's second answer to a round message this hab sent (rounds.md 5.2).
 	// It is called with the service's lock held and must not block or call back into it.
 	Outcome func(id, word, at string)
-	Poll    time.Duration // the mail round; default 15 s
-	Retry   time.Duration // the delivery round; default 1 s
-	Now     func() time.Time
-	Logf    func(string, ...any)
+	// Delivering hears a message or a seed about to be written to a session's agent, before the
+	// write, and the returned func (when not nil) hears whether it was delivered. Notes from
+	// Flightdeck are not heard. A teammate's report watches the turn it begins
+	// (harness-adapters.md, Spawn). Nil: none. It is called with no lock held.
+	Delivering func(sessionID string, from api.ChannelEnd, seed bool) func(delivered bool)
+	Poll       time.Duration // the mail round; default 15 s
+	Retry      time.Duration // the delivery round; default 1 s
+	Now        func() time.Time
+	Logf       func(string, ...any)
 	// write saves the state file; tests replace it to fail. Default writeSynced.
 	write func(path string, b []byte) error
 }
@@ -392,6 +397,47 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 	if err != nil {
 		return api.ChannelSent{}, err
 	}
+	return s.sendTo(p, t)
+}
+
+// SendTo sends text from a session on this hab to an end named by its device id, with no
+// address to resolve: a teammate's report to the session that spawned it (harness-adapters.md,
+// Spawn). A device that is not this hab's must be a peer's.
+func (s *Service) SendTo(ctx context.Context, from string, to api.ChannelEnd, text string) (api.ChannelSent, error) {
+	p := api.ChannelSendParams{From: from, To: to.Session, Text: text}
+	switch {
+	case from == "" || to.Session == "" || to.DeviceID == "":
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "a send needs from, a device and a session")
+	case strings.TrimSpace(text) == "":
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "the message is empty")
+	case len(text) > MaxText:
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "the message is %d bytes; at most %d", len(text), MaxText)
+	case !ValidName(s.cfg.Host):
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindUnavailable, "this hab's host id %q is outside %s", s.cfg.Host, NameRule)
+	}
+	if _, ok := s.cfg.Local.Session(from); !ok {
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindNotFound, "no session named %q on this hab to send from", from)
+	}
+	t := target{device: to.DeviceID, session: to.Session, address: to.Session}
+	if to.DeviceID != s.cfg.Self {
+		found := false
+		if s.cfg.Peers != nil {
+			for _, pr := range s.cfg.Peers.List().Peers {
+				if pr.DeviceID == to.DeviceID && pr.Label != "" {
+					t.label, t.address, found = pr.Label, pr.Label+"/"+to.Session, true
+					break
+				}
+			}
+		}
+		if !found {
+			return api.ChannelSent{}, control.Errorf(api.ErrorKindNotFound, "no peer in the peer list has device %s", to.DeviceID)
+		}
+	}
+	return s.sendTo(p, t)
+}
+
+// sendTo makes the message of a checked p to a resolved target.
+func (s *Service) sendTo(p api.ChannelSendParams, t target) (api.ChannelSent, error) {
 	if !ValidName(t.session) {
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "%q is not a session name: use %s", t.session, NameRule)
 	}
@@ -1129,8 +1175,16 @@ func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arr
 	case kind == kindNote:
 		text = NoteEnvelope(m.Text)
 	}
+	var heard func(bool)
+	if kind != kindNote && s.cfg.Delivering != nil {
+		heard = s.cfg.Delivering(sessionID, m.From, kind == kindSeed)
+	}
 	err := s.cfg.Local.Deliver(ctx, sessionID, text)
-	release(s.classify(err, arrived, s.cfg.Now()))
+	st, reason := s.classify(err, arrived, s.cfg.Now())
+	if heard != nil {
+		heard(st == api.ChannelStateDelivered)
+	}
+	release(st, reason)
 }
 
 // finishLocked removes an inbox item with its final state and sends the state to the sender.

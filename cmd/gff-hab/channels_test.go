@@ -54,6 +54,13 @@ type meshPair struct {
 
 func newMeshPair(t *testing.T) *meshPair {
 	t.Helper()
+	return newMeshPairEnv(t, "")
+}
+
+// newMeshPairEnv is newMeshPair with path first on both habs' PATH (none when empty) and env
+// added to both habs' environment.
+func newMeshPairEnv(t *testing.T, path string, env ...string) *meshPair {
+	t.Helper()
 	a, b := newHolderEnv(t, 0), newHolderEnv(t, 0)
 	d := shortDir(t)
 	standIn := sshStandIn(t, map[string]string{"hab-a": a.sock, "hab-b": b.sock})
@@ -64,11 +71,15 @@ func newMeshPair(t *testing.T) *meshPair {
 		e     *habEnv
 		peers string
 	}{{a, filesA}, {b, filesB}} {
-		x.e.env = []string{
-			"PATH=" + standIn + string(os.PathListSeparator) + os.Getenv("PATH"),
+		pathList := standIn + string(os.PathListSeparator) + os.Getenv("PATH")
+		if path != "" {
+			pathList = path + string(os.PathListSeparator) + pathList
+		}
+		x.e.env = append([]string{
+			"PATH=" + pathList,
 			"GFF_HAB_PEERS=" + x.peers,
 			"XDG_RUNTIME_DIR=" + shortDir(t),
-		}
+		}, env...)
 		x.e.serve()
 	}
 	if w := welcome(t, a.sock); !strings.Contains(strings.Join(w.Capabilities, " "), channels.Capability) {

@@ -141,3 +141,14 @@ restart_hold = "10s"
 # Once free space was low, grant again only when it is this many GiB above heavy.disk_min_free:
 # 0 to 100.
 disk_resume_margin = 2
+
+# The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
+# (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and
+# model. Each alias names a harness (claude, codex or opencode) and, optionally, a model. An
+# alias may shadow a harness word, to give that harness a model. A model the agent names wins
+# over the alias's. Aliases are lowercase letters, digits, '.', '_' and '-'. gff-hab reads the
+# table again when the file changes; a bad entry is logged and left out.
+[aliases]
+# gpt = { harness = "codex", model = "gpt-5.5" }
+# opus = { harness = "claude", model = "opus" }
+# sonnet = { harness = "claude", model = "sonnet" }
