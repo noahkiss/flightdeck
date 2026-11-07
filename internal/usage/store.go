@@ -117,6 +117,17 @@ func (s *Store) List() api.UsageReadings {
 	return out
 }
 
+// Get returns one account by key.
+func (s *Store) Get(key string) (api.UsageAccount, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accounts[key]
+	if a == nil {
+		return api.UsageAccount{}, false
+	}
+	return clone(a.acct), true
+}
+
 // before reports whether RFC 3339 time a is earlier than b. A time that does not parse is
 // never earlier.
 func before(a, b string) bool {
