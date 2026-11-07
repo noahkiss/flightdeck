@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -316,6 +316,27 @@ public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let trust = BlockedKind(rawValue: "trust")
 }
 
+public struct CapcomAnswer: Codable, Sendable, Hashable {
+    /// The device that answered.
+    public var by: String?
+    /// One of the card's choices, or expired.
+    public var choice: String
+    /// RFC 3339.
+    public var time: String
+
+    enum CodingKeys: String, CodingKey {
+        case by = "by"
+        case choice = "choice"
+        case time = "time"
+    }
+
+    public init(by: String? = nil, choice: String, time: String) {
+        self.by = by
+        self.choice = choice
+        self.time = time
+    }
+}
+
 public struct CapcomAssignParams: Codable, Sendable, Hashable {
     /// The lowest counter to use. A hab that forwards an assignment to the chosen peer sends one above every counter it has seen.
     public var assignment: UInt64?
@@ -393,6 +414,56 @@ public struct CapcomAttached: Codable, Sendable, Hashable {
         self.pending = pending
         self.seq = seq
         self.session = session
+    }
+}
+
+public struct CapcomAuthor: Codable, Sendable, Hashable {
+    /// agent: the sender's channel address.
+    public var address: String?
+    /// user: the device id that sent it.
+    public var device: String?
+    public var kind: CapcomAuthorKind
+
+    enum CodingKeys: String, CodingKey {
+        case address = "address"
+        case device = "device"
+        case kind = "kind"
+    }
+
+    public init(address: String? = nil, device: String? = nil, kind: CapcomAuthorKind) {
+        self.address = address
+        self.device = device
+        self.kind = kind
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct CapcomAuthorKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let user = CapcomAuthorKind(rawValue: "user")
+    public static let capcom = CapcomAuthorKind(rawValue: "capcom")
+    public static let agent = CapcomAuthorKind(rawValue: "agent")
+    public static let flightdeck = CapcomAuthorKind(rawValue: "flightdeck")
+}
+
+public struct CapcomCard: Codable, Sendable, Hashable {
+    public var choices: [String]
+    /// approval: the request id, as approval.answer takes it.
+    public var ref: String?
+    /// approval, confirmation, handoff, calendar, reminder or proposal.
+    public var type: String
+
+    enum CodingKeys: String, CodingKey {
+        case choices = "choices"
+        case ref = "ref"
+        case type = "type"
+    }
+
+    public init(choices: [String], ref: String? = nil, type: String) {
+        self.choices = choices
+        self.ref = ref
+        self.type = type
     }
 }
 
@@ -475,6 +546,78 @@ public struct CapcomDetachParams: Codable, Sendable, Hashable {
     }
 }
 
+public struct CapcomItem: Codable, Sendable, Hashable {
+    public var answer: CapcomAnswer?
+    public var author: CapcomAuthor
+    public var card: CapcomCard?
+    /// The attached context that went with a user message.
+    public var context: [CapcomContextItem]?
+    /// Written in an event turn: the app marks it wrote first.
+    public var event: Bool?
+    /// Time ordered: a later item has a greater id.
+    public var id: String
+    /// Paths on the home hab.
+    public var images: [String]?
+    public var kind: CapcomItemKind
+    /// user message: when the engine took it (RFC 3339). Absent: delivered, not read yet.
+    public var read: String?
+    /// divider: the summary the fresh SDK session opened with.
+    public var summary: String?
+    public var text: String?
+    /// RFC 3339.
+    public var time: String
+    /// tools: each call of the turn, in order.
+    public var tools: [CapcomToolCall]?
+    public var turn: String?
+
+    enum CodingKeys: String, CodingKey {
+        case answer = "answer"
+        case author = "author"
+        case card = "card"
+        case context = "context"
+        case event = "event"
+        case id = "id"
+        case images = "images"
+        case kind = "kind"
+        case read = "read"
+        case summary = "summary"
+        case text = "text"
+        case time = "time"
+        case tools = "tools"
+        case turn = "turn"
+    }
+
+    public init(answer: CapcomAnswer? = nil, author: CapcomAuthor, card: CapcomCard? = nil, context: [CapcomContextItem]? = nil, event: Bool? = nil, id: String, images: [String]? = nil, kind: CapcomItemKind, read: String? = nil, summary: String? = nil, text: String? = nil, time: String, tools: [CapcomToolCall]? = nil, turn: String? = nil) {
+        self.answer = answer
+        self.author = author
+        self.card = card
+        self.context = context
+        self.event = event
+        self.id = id
+        self.images = images
+        self.kind = kind
+        self.read = read
+        self.summary = summary
+        self.text = text
+        self.time = time
+        self.tools = tools
+        self.turn = turn
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct CapcomItemKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let message = CapcomItemKind(rawValue: "message")
+    public static let tools = CapcomItemKind(rawValue: "tools")
+    public static let agent = CapcomItemKind(rawValue: "agent")
+    public static let round = CapcomItemKind(rawValue: "round")
+    public static let card = CapcomItemKind(rawValue: "card")
+    public static let note = CapcomItemKind(rawValue: "note")
+    public static let divider = CapcomItemKind(rawValue: "divider")
+}
+
 public struct CapcomOpenParams: Codable, Sendable, Hashable {
     /// Context to attach to the returned session's next message, in order, as capcom.attach takes it (capcom.md 8.1). A refused item fails the call; items checked before the open fail it before any start. A file names an attachment of the returned session, or a path under its folder.
     public var context: [CapcomContextRef]?
@@ -533,6 +676,143 @@ public struct CapcomPendingParams: Codable, Sendable, Hashable {
 
     public init(session: String) {
         self.session = session
+    }
+}
+
+public struct CapcomSDKSession: Codable, Sendable, Hashable {
+    /// RFC 3339. Absent: the current session.
+    public var end: String?
+    public var id: String
+    /// RFC 3339.
+    public var start: String
+    /// first, restart, reseed or new.
+    public var why: String
+
+    enum CodingKeys: String, CodingKey {
+        case end = "end"
+        case id = "id"
+        case start = "start"
+        case why = "why"
+    }
+
+    public init(end: String? = nil, id: String, start: String, why: String) {
+        self.end = end
+        self.id = id
+        self.start = start
+        self.why = why
+    }
+}
+
+public struct CapcomServiceParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+public struct CapcomServiceStatus: Codable, Sendable, Hashable {
+    public var connected: Bool
+    public var engine: String?
+    /// The engine's folder: a plain terminal resumes its SDK sessions from here.
+    public var folder: String
+    public var reason: String?
+    public var sdkSessions: [CapcomSDKSession]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The service session's id.
+    public var session: String?
+    /// off, running, paused or error.
+    public var state: String
+    /// The running turn. Absent: idle.
+    public var turn: String?
+    public var version: String?
+
+    enum CodingKeys: String, CodingKey {
+        case connected = "connected"
+        case engine = "engine"
+        case folder = "folder"
+        case reason = "reason"
+        case sdkSessions = "sdk_sessions"
+        case seq = "seq"
+        case session = "session"
+        case state = "state"
+        case turn = "turn"
+        case version = "version"
+    }
+
+    public init(connected: Bool, engine: String? = nil, folder: String, reason: String? = nil, sdkSessions: [CapcomSDKSession], seq: UInt64, session: String? = nil, state: String, turn: String? = nil, version: String? = nil) {
+        self.connected = connected
+        self.engine = engine
+        self.folder = folder
+        self.reason = reason
+        self.sdkSessions = sdkSessions
+        self.seq = seq
+        self.session = session
+        self.state = state
+        self.turn = turn
+        self.version = version
+    }
+}
+
+public struct CapcomThreadPage: Codable, Sendable, Hashable {
+    public var items: [CapcomItem]
+    /// Older items remain.
+    public var more: Bool
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case items = "items"
+        case more = "more"
+        case seq = "seq"
+    }
+
+    public init(items: [CapcomItem], more: Bool, seq: UInt64) {
+        self.items = items
+        self.more = more
+        self.seq = seq
+    }
+}
+
+public struct CapcomThreadPageParams: Codable, Sendable, Hashable {
+    /// An item id: items older than it. Absent: the newest.
+    public var before: String?
+    /// At most this many, and never more than 200. 0: 200.
+    public var limit: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case before = "before"
+        case limit = "limit"
+    }
+
+    public init(before: String? = nil, limit: Int? = nil) {
+        self.before = before
+        self.limit = limit
+    }
+}
+
+public struct CapcomToolCall: Codable, Sendable, Hashable {
+    public var name: String
+    public var summary: String
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case summary = "summary"
+    }
+
+    public init(name: String, summary: String) {
+        self.name = name
+        self.summary = summary
+    }
+}
+
+public struct CapcomTyping: Codable, Sendable, Hashable {
+    public var on: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case on = "on"
+    }
+
+    public init(on: Bool) {
+        self.on = on
     }
 }
 
@@ -8028,6 +8308,16 @@ public enum HabMethods {
     public static let capcomPending = HabMethod<CapcomPendingParams, CapcomAttached>(name: "capcom.pending")
     /// Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
     public static let capcomAssign = HabMethod<CapcomAssignParams, CapcomAssigned>(name: "capcom.assign")
+    /// A page of the Capcom thread, newest first, folded: at most 200 items (capcom-service.md 7.4). Needs the capcom-thread capability.
+    public static let capcomThreadPage = HabMethod<CapcomThreadPageParams, CapcomThreadPage>(name: "capcom.thread.page")
+    /// Stop the Capcom engine's current turn; messages it has not taken wait for the next turn. unavailable when the engine lacks interrupt or none is connected (capcom-service.md 7.4). Needs the capcom-thread capability.
+    public static let capcomInterrupt = HabMethod<CapcomServiceParams, Empty>(name: "capcom.interrupt")
+    /// The Capcom service on this hab: the engine job's state, the engine, and the SDK sessions with the engine's folder (capcom-service.md 3.4, 11). Needs the capcom-thread capability.
+    public static let capcomStatus = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.status")
+    /// Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.
+    public static let capcomPause = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.pause")
+    /// Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.
+    public static let capcomResume = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.resume")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
     /// Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.
@@ -8162,6 +8452,10 @@ public enum HabEvent: Sendable, Hashable {
     case logbookUpdated(LogbookUpdated)
     /// A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.
     case logbookConflict(LogbookConflict)
+    /// A Capcom thread item was added or changed: a message, a read mark, a card's answer, a tool call on a turn's line; the id is the item id (capcom-service.md 7.4). Host scope only. Ephemeral: clients read the thread with capcom.thread.page.
+    case capcomItem(CapcomItem)
+    /// Capcom's typing mark changed; the id is the service session id (capcom-service.md 7.3). Host scope only. Ephemeral.
+    case capcomTyping(CapcomTyping)
     /// Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.
     case meshChanged(MeshChanged)
     case unknown(type: String, data: JSONValue)
@@ -8197,6 +8491,8 @@ public enum HabEvent: Sendable, Hashable {
         case "hab.woke": self = .habWoke(try event.data.decode(HabWoke.self))
         case "logbook.updated": self = .logbookUpdated(try event.data.decode(LogbookUpdated.self))
         case "logbook.conflict": self = .logbookConflict(try event.data.decode(LogbookConflict.self))
+        case "capcom.item": self = .capcomItem(try event.data.decode(CapcomItem.self))
+        case "capcom.typing": self = .capcomTyping(try event.data.decode(CapcomTyping.self))
         case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))
         default: self = .unknown(type: event.type, data: event.data)
         }

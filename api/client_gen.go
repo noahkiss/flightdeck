@@ -39,11 +39,28 @@ const (
 )
 
 const (
+	CapcomAuthorKindUser       CapcomAuthorKind = "user"
+	CapcomAuthorKindCapcom     CapcomAuthorKind = "capcom"
+	CapcomAuthorKindAgent      CapcomAuthorKind = "agent"
+	CapcomAuthorKindFlightdeck CapcomAuthorKind = "flightdeck"
+)
+
+const (
 	CapcomContextKindNotification CapcomContextKind = "notification"
 	CapcomContextKindSession      CapcomContextKind = "session"
 	CapcomContextKindFile         CapcomContextKind = "file"
 	CapcomContextKindCommand      CapcomContextKind = "command"
 	CapcomContextKindLogbook      CapcomContextKind = "logbook"
+)
+
+const (
+	CapcomItemKindMessage CapcomItemKind = "message"
+	CapcomItemKindTools   CapcomItemKind = "tools"
+	CapcomItemKindAgent   CapcomItemKind = "agent"
+	CapcomItemKindRound   CapcomItemKind = "round"
+	CapcomItemKindCard    CapcomItemKind = "card"
+	CapcomItemKindNote    CapcomItemKind = "note"
+	CapcomItemKindDivider CapcomItemKind = "divider"
 )
 
 const (
@@ -441,6 +458,8 @@ const (
 	EventHabWoke          EventType = "hab.woke"
 	EventLogbookUpdated   EventType = "logbook.updated"
 	EventLogbookConflict  EventType = "logbook.conflict"
+	EventCapcomItem       EventType = "capcom.item"
+	EventCapcomTyping     EventType = "capcom.typing"
 	EventMeshChanged      EventType = "mesh.changed"
 )
 
@@ -562,6 +581,14 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventLogbookConflict:
 		var v LogbookConflict
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventCapcomItem:
+		var v CapcomItem
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventCapcomTyping:
+		var v CapcomTyping
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventMeshChanged:
@@ -1062,6 +1089,41 @@ func (c Client) CapcomPending(ctx context.Context, params CapcomPendingParams) (
 func (c Client) CapcomAssign(ctx context.Context, params CapcomAssignParams) (CapcomAssigned, error) {
 	var result CapcomAssigned
 	err := c.Caller.Call(ctx, "capcom.assign", params, &result)
+	return result, err
+}
+
+// CapcomThreadPage calls capcom.thread.page. A page of the Capcom thread, newest first, folded: at most 200 items (capcom-service.md 7.4). Needs the capcom-thread capability.
+func (c Client) CapcomThreadPage(ctx context.Context, params CapcomThreadPageParams) (CapcomThreadPage, error) {
+	var result CapcomThreadPage
+	err := c.Caller.Call(ctx, "capcom.thread.page", params, &result)
+	return result, err
+}
+
+// CapcomInterrupt calls capcom.interrupt. Stop the Capcom engine's current turn; messages it has not taken wait for the next turn. unavailable when the engine lacks interrupt or none is connected (capcom-service.md 7.4). Needs the capcom-thread capability.
+func (c Client) CapcomInterrupt(ctx context.Context, params CapcomServiceParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "capcom.interrupt", params, &result)
+	return result, err
+}
+
+// CapcomStatus calls capcom.status. The Capcom service on this hab: the engine job's state, the engine, and the SDK sessions with the engine's folder (capcom-service.md 3.4, 11). Needs the capcom-thread capability.
+func (c Client) CapcomStatus(ctx context.Context, params CapcomServiceParams) (CapcomServiceStatus, error) {
+	var result CapcomServiceStatus
+	err := c.Caller.Call(ctx, "capcom.status", params, &result)
+	return result, err
+}
+
+// CapcomPause calls capcom.pause. Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.
+func (c Client) CapcomPause(ctx context.Context, params CapcomServiceParams) (CapcomServiceStatus, error) {
+	var result CapcomServiceStatus
+	err := c.Caller.Call(ctx, "capcom.pause", params, &result)
+	return result, err
+}
+
+// CapcomResume calls capcom.resume. Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.
+func (c Client) CapcomResume(ctx context.Context, params CapcomServiceParams) (CapcomServiceStatus, error) {
+	var result CapcomServiceStatus
+	err := c.Caller.Call(ctx, "capcom.resume", params, &result)
 	return result, err
 }
 
