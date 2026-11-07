@@ -345,6 +345,57 @@ From the engine to gff-hab:
 - **No engine.** While no engine is connected, the thread still takes messages (`delivered`),
   and the session record shows `offline` with the reason.
 
+### 4.4 Wire format (built in A2)
+
+**Start.** gff-hab starts the engine as `node <engine file>` in `<state>/capcom/engine/`, with
+`GFF_HAB` (`http+unix://<hook socket>/hooks/<token>`, 3.3) and, when set, `CLAUDE_CONFIG_DIR`
+in its environment. Nothing else in the environment names a credential.
+
+**Connect.** The engine sends `POST /capcom/<token>` on the hook socket with `Connection:
+Upgrade` and `Upgrade: gff-capcom/1`. gff-hab answers `101 Switching Protocols`, and the
+connection then carries one JSON object per line, UTF-8, each line at most 4 MiB, both ways. An
+unknown or old token gets `404`; a second connection while one is open replaces the first.
+
+**Envelope.** Every message is `{"seq": n, "type": "<type>", ...fields}`. Each side numbers its
+own messages from 1 on each connection. `{"type": "ack", "ack": n}` (no `seq`) says the sender
+handled every message of the other side up to `n`. Unknown types are acknowledged and ignored;
+unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answers `ready`.
+
+| Type (hab to engine) | Fields |
+|---|---|
+| `hello` | `credential {kind: "oauth_token"\|"api_key", value}`, `device`, `last_item`, `sdk_session` (the session to resume, or empty), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms}` |
+| `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}]}` |
+| `interrupt` | none |
+| `reseed` | `reason` |
+| `pace` | `pace: "ok"\|"small"\|"wait"`, `until` |
+| `approval.answer` | `request`, `allow` (bool), `message` |
+| `shutdown` | none |
+
+| Type (engine to hab) | Fields |
+|---|---|
+| `ready` | `engine`, `version`, `sdk_version`, `capabilities: [..]` (4.1 names) |
+| `session.started` | `session`, `why` (`first`, `restart`, `reseed`, `new`) |
+| `turn.started` | `turn`, `origin` (`user`, `event`), `items: [id]` |
+| `input.taken` | `item` |
+| `reply` | `turn`, `part` (0, 1, ... within the turn), `text` |
+| `tool` | `turn`, `name`, `summary` |
+| `approval.request` | `request`, `tool`, `input` (object), `reason` |
+| `turn.ended` | `turn`, `result` (`success`, `interrupted`, `limit`, `error`), `input_tokens`, `output_tokens`, `cost_usd`, `context_used` (0 to 1) |
+| `summary` | `text`, `through` (item id) |
+| `compacted` | none |
+| `usage` | `reading` (object, 10.1) |
+| `error` | `text`, `kind` (`auth` for a refused credential, `start` for the start check, else empty), `exiting` (bool) |
+
+- **Resend.** The engine keeps each message it sent until it is acknowledged, and sends them
+  again, in order and with new `seq` numbers, on the next connection. gff-hab drops a repeated
+  `reply` by `turn` and `part`, and a repeated `input.taken` by item id.
+- **Markers.** Each input the engine hands to the SDK starts with the line
+  `[flightdeck item <id>]`. At start, before it takes any input, the engine reads the resumed
+  SDK session's transcript for these lines and keeps their ids as handed.
+- **Credential.** The engine keeps `credential.value` in memory only and passes it to the SDK's
+  bundled binary through the SDK's `env` option, as `CLAUDE_CODE_OAUTH_TOKEN` or
+  `ANTHROPIC_API_KEY`. It never logs it.
+
 ---
 
 ## 5. Tools and approvals
