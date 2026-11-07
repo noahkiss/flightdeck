@@ -1431,7 +1431,7 @@ in the chat view.
 | Harness | Prompt | Built |
 |---|---|---|
 | Claude Code 2.1.317 | "Accessing workspace: `<folder>`", "Quick safety check: Is this a project you created or one you trust? ...", "Claude Code'll be able to read, edit, and execute files here.", then two rows: "❯ No, exit" (first, and selected) and "Yes, I trust this folder"; "Enter to confirm · Esc to cancel". No digits. Earlier builds list "1. Yes, I trust this folder" first, then "2. No, exit". It reports no state, by hook or OSC 7501, until the dialog is answered | Yes |
-| Codex 0.166 | The vendored manifest's `trust_directory` rule knows two wordings: "Do you trust the contents of this directory?" and "Trust this folder? ... Codex can read, edit, and run files here ... Trust and continue". The prompt could not be drawn on the build machine (a fresh `CODEX_HOME` asks for a sign-in first), so its keys are not checked | No: follow-up |
+| Codex 0.167 (checked live 2026-11-06) | "Folder access", the folder, "Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. ...", then "› 1. Trust and continue" (first, and selected) and "2. Back to Agent Command Center"; "enter continue · esc back". Up and Down move the `›` cursor. Esc and Ctrl-C do not exit: they go back, and Codex runs on with the folder untrusted. Older builds ask "Do you trust the contents of this directory?" with "1. Yes, continue" and "2. No, quit". Codex skips the prompt when its approval policy is never | Trust: yes (screen rule `codex_trust_folder`). Exit: refused (`unsupported`, "answer it in the terminal"), as no key exits |
 | opencode | No folder trust prompt; its manifest has no rule for one | Nothing to build |
 
 **Report.** gff-hab reports the prompt as an agent state, so every client, the board and push
@@ -1441,7 +1441,7 @@ see it with no new event:
   `trust: {folder}`. `folder` is the folder the session started in.
 - gff-hab watches each pane it starts with a harness (`session.create` or `session.resume` with
   `harness`, a round's run, a Capcom start). It reads the pane's screen every 0.5 s with the
-  screen rule `claude_trust_folder`. The watch ends when the harness first reports a state by hook
+  harness's screen rule: `claude_trust_folder` or `codex_trust_folder`. The watch ends when the harness first reports a state by hook
   or OSC 7501, when the pane goes, or after 10 minutes with no dialog. While the dialog shows, the
   watch goes on without a limit.
 - The dialog counts as gone only after 3 reads in a row without it (1.5 s), so a frame read
@@ -1463,8 +1463,9 @@ see it with no new event:
   refuses the call with `conflict`: a key typed in the terminal view could move the cursor.
 - gff-hab reads the screen at once. The dialog must still show, with exactly one cursor row
   (`❯`) and exactly one row that carries the chosen label: "Yes, I trust this folder" for
-  `trust`, "No, exit" for `exit`. Otherwise the call is refused with `conflict` and nothing is
-  sent. It never answers blind.
+  `trust`, "No, exit" for `exit`. Codex: the cursor is `›`, the labels "Trust and continue" (or
+  "Yes, continue") and "Back to Agent Command Center" (or "No, quit"), and `exit` is refused.
+  Otherwise the call is refused with `conflict` and nothing is sent. It never answers blind.
 - Each key goes to the pane as its own write: a terminal UI may read one chunk as a paste.
 - `exit` sends Esc. Claude Code 2.1.317 exits at Esc whatever row the cursor is on (checked live
   2026-11-02), so a moved cursor cannot turn it into a trust.
@@ -1507,6 +1508,34 @@ without it, then without `round`. Hold-while-watched applies (8.3). The folder d
 bidi characters, and a path over 60 characters keeps its end, where the folder's name is. When
 the pane leaves `blocked:trust`, a quiet banner with the same collapse id replaces it: "Trust
 prompt answered", or "Session ended" when the agent exited.
+
+**Group members (stage B2, `groups.md` 4.2, 12.6).** The one exception to "the hab never
+answers the dialog by itself". A group member's start carries a trust cover from the group's
+confirmation, or `confirmation: none` when `confirm.group_plan` is off (owner, 2026-11-06,
+`groups.md` 13 Q2). The user's answer to the group's card, or the choice of a hands-off group,
+is the trust answer for the group's worktrees. The member's own hab answers its own pane:
+
+- **What the cover matches.** The cover's harness is the pane's, and it is Claude Code: Codex
+  records trust for a worktree on the repository's main checkout ("Trusting will apply to the
+  repository root", checked live 2026-11-06), which would trust every worktree of it, so a Codex
+  member's prompt always shows the card. The session's start folder is inside a linked worktree
+  this hab made (it carries gff-hab's worktree mark), not the main checkout, and not a foreign
+  checkout whose setup still waits for a yes; that worktree's branch starts with
+  `group/<group>/`. The hab reads this from git
+  when the dialog first shows. Only `session.create` from this hab's own confirmations, or over
+  a listed peer's link, brings a cover. A resumed session has none.
+- **The hold.** While the hab answers, it holds the `blocked:trust` report back, so no card,
+  board row or push shows, for up to `[groups] trust_hold` (10 s, 1 s to 60 s). A message for
+  the session waits as busy meanwhile. The answer is `trust`'s, with all its checks: the dialog
+  read from the screen, one key per write, Enter only on the trust row, the outcome read back.
+  An answer that fails (a layout it does not know, a cursor that does not move) is tried again
+  until the hold ends.
+- **Falls back to the card.** A folder the cover does not match shows the card at once. Client
+  input in the last second before the dialog, or during the hold, stops the hab's answer: it
+  sends nothing more, and the card shows when the hold ends. So does an answer still failing at
+  the hold's end; the hab then tells the session's spawner once, from the session, when it
+  reports to one. The dialog coming back after the hab's answer shows the card.
+- **Never `exit`.** The hab only ever answers `trust`. A round's run is never covered.
 
 **Rounds.** A round never answers the trust dialog (`rounds.md` 7.3). Its run shows `blocked`
 with the reason that names the dialog. The owner may answer it from the card; that is not a
@@ -3437,6 +3466,7 @@ every key, so a change never makes a new key.
 | Id | Title | Area | Type | Safe | Balanced | Bypass | Stored | Source |
 |---|---|---|---|---|---|---|---|---|
 | `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | bool | `true` | `false` | `false` | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
+| `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2), the app row comes with B3 | `groups.md` 3.2, 13 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |

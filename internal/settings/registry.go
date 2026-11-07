@@ -18,7 +18,10 @@ const Capability = "settings"
 
 // The hab-side setting ids (app.md 20.3, 20.4).
 const (
-	StartElsewhere  = "confirm.start_elsewhere"
+	StartElsewhere = "confirm.start_elsewhere"
+	// GroupPlan: a group start asks, and its answer is the group's folder trust answer
+	// (groups.md 3.2, 4.2). Levelled: Safe and Balanced true, Bypass false.
+	GroupPlan       = "confirm.group_plan"
 	ApprovalMaxAge  = "approval.max_age"
 	LogbookApproval = "logbook.approval"
 	PermissionWait  = "hab.permission_wait"
@@ -58,6 +61,7 @@ type Def struct {
 // Defs is every hab-side setting, in the order settings.get lists them.
 var Defs = []Def{
 	{ID: StartElsewhere, Default: json.RawMessage(`false`), check: checkBool},
+	{ID: GroupPlan, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440), integer: true},
 	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents")},
 	{ID: PermissionWait, Default: json.RawMessage(`0`), check: checkInt(0, 120), integer: true},

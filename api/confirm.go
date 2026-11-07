@@ -28,6 +28,11 @@ type ConfirmStart struct {
 	// older hab ignores them.
 	Alias    string `json:"alias,omitempty" doc:"The alias the request named, from the [aliases] table of the requesting hab's config file. Filled by the hab; harness and model are what the alias stands for."`
 	Teammate bool   `json:"teammate,omitempty" doc:"Report back to the requesting session: the target hab sends it the final agent message of each turn that a message from it began, as a channel message from the new session. Needs a requesting session."`
+	// Group, Role and Item come with stage B2 of agent groups (groups.md 4.1, 12.3). Optional,
+	// so an older hab ignores them.
+	Group string `json:"group,omitempty" doc:"The agent group the new session is a member of: 1 to 64 lowercase letters, digits and '-'. A group start asks while confirm.group_plan is on, also on the requesting hab's own host, and its target hab answers the harness's folder trust prompt for the group's worktrees (groups.md 4.2)."`
+	Role  string `json:"role,omitempty" doc:"With group: the member's role, lead, worker or reviewer (groups.md 2.1)."`
+	Item  string `json:"item,omitempty" doc:"With group: the plan item the member works on, 1 to 64 lowercase letters, digits and '-'."`
 }
 
 // ConfirmSetup is the project set-up a confirmation would run (mesh.md 7, set up elsewhere).

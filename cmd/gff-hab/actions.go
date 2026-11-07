@@ -52,9 +52,10 @@ type actions struct {
 	// startedIn hears the folder a new session started in (content and attachments, app.md
 	// 4.4 and 4.7). nil: none.
 	startedIn func(session, dir string)
-	// started hears each pane started with a harness, and the folder it runs in: the trust
-	// card watches it for a folder trust prompt (app.md 7.10). nil: none.
-	started func(pane, harness, dir string)
+	// started hears each pane started with a harness, the folder it runs in and its group's
+	// trust cover, if any: the trust card watches it for a folder trust prompt (app.md 7.10,
+	// groups.md 4.2). nil: none.
+	started func(pane, harness, dir string, cover *api.TrustCover)
 	// seed queues a new session's first message in the channels inbox (capcom.md 3.3). nil: a
 	// create with a seed answers unavailable.
 	seed func(session, from, text string) (string, error)
@@ -145,6 +146,9 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		return "", "", control.Errorf(api.ErrorKindInvalid, "report_to %q: use %s", p.ReportTo, channels.NameRule)
 	case p.ReportTo != "" && (a.mates == nil || a.self.DeviceID == ""):
 		return "", "", control.Errorf(api.ErrorKindUnavailable, "this hab cannot report a session's turns: it runs without channels")
+	}
+	if err := checkCoverParams(ctx, p, a.listedPeer); err != nil {
+		return "", "", err
 	}
 	var reportTo api.ChannelEnd
 	if p.ReportTo != "" {
@@ -259,7 +263,7 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		a.startedIn(ss.ID, cwd)
 	}
 	if a.started != nil && p.Harness != "" {
-		a.started(pane, p.Harness, cwd)
+		a.started(pane, p.Harness, cwd, p.TrustCover)
 	}
 	if p.ReportTo != "" {
 		// Filed before the seed is queued, so the seed's delivery arms the first report.
@@ -301,7 +305,7 @@ func (a *actions) resumeSession(ctx context.Context, session string, p api.Sessi
 		a.startedIn(session, cwd)
 	}
 	if a.started != nil && p.Harness != "" {
-		a.started(pane, p.Harness, cwd)
+		a.started(pane, p.Harness, cwd, nil) // a resumed pane has no cover: its prompt shows the card
 	}
 	return pane, nil
 }

@@ -1,0 +1,67 @@
+{
+  "confirmations": [
+    {
+      "answered_by": "answered_by-25",
+      "closed": "closed-24",
+      "created": "created-22",
+      "edited": true,
+      "expires_at": "expires_at-23",
+      "from": "from-5",
+      "id": "id-4",
+      "kind": "setup",
+      "reason": "reason-31",
+      "record": true,
+      "result": {
+        "address": "address-30",
+        "host": "host-26",
+        "name": "name-28",
+        "pane": "pane-29",
+        "session": "session-27",
+        "x_unknown_field": "later"
+      },
+      "setup": {
+        "bootstrap": "bootstrap-21",
+        "branch": "branch-20",
+        "host": "host-18",
+        "repository": "repository-19",
+        "x_unknown_field": "later"
+      },
+      "start": {
+        "alias": "alias-14",
+        "branch": "branch-9",
+        "folder": "folder-7",
+        "group": "group-15",
+        "harness": "harness-10",
+        "host": "host-6",
+        "item": "item-17",
+        "model": "model-11",
+        "name": "name-12",
+        "project": "project-8",
+        "role": "role-16",
+        "seed": "seed-13",
+        "teammate": true,
+        "x_unknown_field": "later"
+      },
+      "state": "unknown",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "targets": [
+    {
+      "host": "host-32",
+      "ready": true,
+      "reason": "reason-33",
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

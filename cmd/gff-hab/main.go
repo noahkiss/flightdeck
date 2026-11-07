@@ -123,6 +123,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/transcript"
 	habusage "github.com/noahkiss/flightdeck/internal/usage"
 	gffversion "github.com/noahkiss/flightdeck/internal/version"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // build is set at link time: -ldflags "-X main.build=<id>".
@@ -779,6 +780,9 @@ func serve(args []string) error {
 		// The folder trust card (app.md 7.10): watch each new harness pane for its trust prompt.
 		trustSvc = newTrustService(agents, agentSvc.screen, func(ctx context.Context, pane string, b []byte) error { return agentSvc.write(ctx, pane, b) }, trustLive(store.SessionByPane), logger.Printf)
 		defer trustSvc.Close()
+		// A group member's prompt the cover matches is answered by this hab (groups.md 4.2).
+		trustSvc.covers = coverCheck(worktree.Git{})
+		trustSvc.tell = mates.note
 		sessionActs.started = trustSvc.watch
 		trustCtl = trustSvc
 		input = trustInput{Input: input, trust: trustSvc} // an answer waits until the pane is quiet
@@ -1183,6 +1187,7 @@ func serve(args []string) error {
 		caps = append(caps, teammatesCapability)
 	}
 	if trustSvc != nil {
+		trustSvc.hold = loadTrustHold(cpath, logger.Printf) // [groups] trust_hold, read at start
 		trustSvc.refuse = func(pane, reason string) (int, error) {
 			ss, ok := store.SessionByPane(pane)
 			if !ok {
@@ -1269,7 +1274,8 @@ func serve(args []string) error {
 				return ""
 			},
 			aliases: (&aliases.File{Path: cpath, Harnesses: harnesses, Logf: logger.Printf}).Get},
-		Enabled: func() bool { return string(setSvc.Value(settings.StartElsewhere)) == "true" },
+		Enabled:   func() bool { return string(setSvc.Value(settings.StartElsewhere)) == "true" },
+		GroupPlan: func() bool { return string(setSvc.Value(settings.GroupPlan)) != "false" },
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)

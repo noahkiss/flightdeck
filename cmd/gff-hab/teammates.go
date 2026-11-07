@@ -277,6 +277,32 @@ func (t *teammates) report(session string, to api.ChannelEnd, st api.AgentState)
 	}
 }
 
+// note sends the spawner of the session in pane one line from Flightdeck, as a channel message
+// from the session, off the caller's goroutine. A pane that reports to nobody sends nothing.
+func (t *teammates) note(pane, text string) {
+	t.mu.Lock()
+	m := t.byID[t.byPane[pane]]
+	if m == nil || t.closed || t.send == nil {
+		t.mu.Unlock()
+		return
+	}
+	session, to := m.Session, m.To
+	t.wg.Add(1)
+	t.mu.Unlock()
+	go func() {
+		defer t.wg.Done()
+		name, ok := t.name(session)
+		if !ok {
+			return
+		}
+		ctx, cancel := context.WithTimeout(t.ctx, 10*time.Second)
+		defer cancel()
+		if err := t.send(ctx, name, to, text); err != nil {
+			t.logf("teammates: %s: note to %s/%s: %v", name, to.Host, to.Session, err)
+		}
+	}()
+}
+
 // reportText is a teammate's report: a first line from Flightdeck, then the final message, cut
 // to fit one channel message.
 func reportText(st api.AgentState, final string, readErr error) string {

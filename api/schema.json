@@ -555,6 +555,13 @@
           "schema": {
             "type": "string"
           }
+        },
+        {
+          "name": "trust_cover",
+          "description": "Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before.",
+          "schema": {
+            "$ref": "#/components/schemas/TrustCover"
+          }
         }
       ],
       "result": {
@@ -6711,6 +6718,10 @@
             "type": "string",
             "description": "The absolute project folder on the target host. The session starts there, in its project."
           },
+          "group": {
+            "type": "string",
+            "description": "The agent group the new session is a member of: 1 to 64 lowercase letters, digits and '-'. A group start asks while confirm.group_plan is on, also on the requesting hab's own host, and its target hab answers the harness's folder trust prompt for the group's worktrees (groups.md 4.2)."
+          },
           "harness": {
             "type": "string",
             "description": "The harness to start: claude, codex or opencode."
@@ -6718,6 +6729,10 @@
           "host": {
             "type": "string",
             "description": "The target hab: a peer label from the peer list, or this hab's host id. In confirm.request an empty host means this hab."
+          },
+          "item": {
+            "type": "string",
+            "description": "With group: the plan item the member works on, 1 to 64 lowercase letters, digits and '-'."
           },
           "model": {
             "type": "string",
@@ -6730,6 +6745,10 @@
           "project": {
             "type": "string",
             "description": "The project's name, from the catalog. Filled by the hab."
+          },
+          "role": {
+            "type": "string",
+            "description": "With group: the member's role, lead, worker or reviewer (groups.md 2.1)."
           },
           "seed": {
             "type": "string",
@@ -11497,6 +11516,10 @@
           "seed_from": {
             "type": "string",
             "description": "Who wrote the seed, as host/session, shown in its envelope."
+          },
+          "trust_cover": {
+            "$ref": "#/components/schemas/TrustCover",
+            "description": "Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before."
           }
         }
       },
@@ -12399,6 +12422,33 @@
         "x-known-values": [
           "trust",
           "exit"
+        ]
+      },
+      "TrustCover": {
+        "type": "object",
+        "properties": {
+          "branch_prefix": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/: the cover answers only for a worktree whose branch starts with it."
+          },
+          "confirmation": {
+            "type": "string",
+            "description": "The id of the confirmation the user answered, 32 hex digits, or none when the plan started with no confirmation (confirm.group_plan off)."
+          },
+          "group": {
+            "type": "string",
+            "description": "The group id: 1 to 64 lowercase letters, digits and '-'."
+          },
+          "harness": {
+            "type": "string",
+            "description": "The harness the plan names for this member; the cover answers only its prompt."
+          }
+        },
+        "required": [
+          "group",
+          "confirmation",
+          "harness",
+          "branch_prefix"
         ]
       },
       "TrustPrompt": {
