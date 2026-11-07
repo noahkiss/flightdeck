@@ -89,10 +89,13 @@ func (s *child) handle(ctx context.Context, f frame) {
 	}
 	if d, ok := body.(wireDone); ok && err != nil {
 		// A failed call still tells its heap growth: the host's hint for a hog (modules.md 8.4).
-		_ = s.c.send(frame{Re: f.ID, Body: marshalBody(wireDone{Growth: d.Growth}), Err: encodeError(err)})
+		data, _ := marshalBody(wireDone{Growth: d.Growth})
+		_ = s.c.send(frame{Re: f.ID, Body: data, Err: encodeError(err)})
 		return
 	}
-	_ = s.c.reply(f.ID, body, err)
+	if rerr := s.c.reply(f.ID, body, err); errors.Is(rerr, errFrameTooBig) {
+		_ = s.c.reply(f.ID, nil, rerr) // the caller waits: an answer it can take
+	}
 }
 
 func (s *child) do(ctx context.Context, f frame) (any, error) {
@@ -192,14 +195,19 @@ func (backendPanic) RuntimeError()   {}
 // runtime's stuck-call guard handles that (modules.md 8.4). The answer of a closed pipe is an
 // error.
 func (b *childBackends) call(ctx context.Context, op string, body any, out any) error {
+	f := frame{Op: op, Mod: b.mod}
+	if body != nil {
+		data, err := marshalBody(body)
+		if err != nil {
+			return err
+		}
+		f.Body = data
+	}
 	id, ch, ok := b.s.c.start()
 	if !ok {
 		return errors.New("module host: gff-hab is gone")
 	}
-	f := frame{ID: id, Op: op, Mod: b.mod}
-	if body != nil {
-		f.Body = marshalBody(body)
-	}
+	f.ID = id
 	if err := b.s.c.send(f); err != nil {
 		b.s.c.forget(id)
 		return fmt.Errorf("module host: %w", err)
@@ -272,7 +280,9 @@ func (b *childBackends) Save(_ string, state map[string]json.RawMessage) error {
 }
 
 func (b *childBackends) log(line string) {
-	_ = b.s.c.send(frame{Op: opLog, Mod: b.mod, Body: marshalBody(line)})
+	if data, err := marshalBody(line); err == nil {
+		_ = b.s.c.send(frame{Op: opLog, Mod: b.mod, Body: data})
+	}
 }
 
 // heldMemory is the memory the Go runtime holds from the system, less what it gave back: the

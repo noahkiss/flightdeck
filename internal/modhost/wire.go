@@ -262,13 +262,16 @@ func newConn(w io.Writer) *conn {
 	return &conn{w: bufio.NewWriter(w), pending: map[uint64]chan frame{}}
 }
 
+// errFrameTooBig is a message over maxFrame; nothing was written.
+var errFrameTooBig = errors.New("module host message too large")
+
 func (c *conn) send(f frame) error {
 	data, err := json.Marshal(f)
 	if err != nil {
 		return err
 	}
 	if len(data) > maxFrame {
-		return fmt.Errorf("module host message of %d bytes is over the limit of %d", len(data), maxFrame)
+		return fmt.Errorf("%w: %d bytes, the limit is %d", errFrameTooBig, len(data), maxFrame)
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
@@ -362,10 +365,12 @@ func readFrame(r *bufio.Reader) (frame, error) {
 	return f, nil
 }
 
-func marshalBody(v any) json.RawMessage {
+// marshalBody encodes a request's body. It fails for a value JSON cannot hold: a caller's bad
+// RawMessage, or NaN in settings.
+func marshalBody(v any) (json.RawMessage, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
-		panic(err) // only the package's own wire types are marshalled here
+		return nil, fmt.Errorf("module host message: %w", err)
 	}
-	return data
+	return data, nil
 }

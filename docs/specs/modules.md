@@ -652,6 +652,13 @@ gff-hab reads the bundle (5.1) and sends its files; the child reads no file.
 | `log` | Child | One line | Never answered |
 | `cancel` | Either | None; `id` names the request | Never answered |
 
+gff-hab cuts `exec` and `fetch` output to the output limit (plus 4 bytes, so the runtime still
+cuts and flags it) before the pipe. An answer over 16 MiB, such as a huge `fd.hab.get` result,
+is replaced by an error answer, so the bridge call throws `BridgeError` at once and nothing
+waits. `act` args and settings are checked in gff-hab, so a malformed value fails the call as
+in process. `fd.log` lines reach the options' `Log` on the Host's own goroutine, in order, and
+before the call that wrote them returns; a slow `Log` never holds the pipe or a ping.
+
 A cancelled request still gets its answer. A backend that ignores its context holds the call in
 the child as it would in process, and the runtime's stuck guard (8.4) answers. A backend panic is
 answered as `panic`, and the child panics with the same kind of value, so goja handles it as in
@@ -676,7 +683,9 @@ process.
   the reason and when the child starts again. A call that ran when the child ended gets one too.
   `Culprit` is set for the calls that ran at a crash or a memory kill, and for the call whose
   wedge got the child killed; that module counts one failure (8.2, 8.3). A call refused during
-  the backoff, or cut off by another module's wedge, is no culprit.
+  the backoff, sent after the child began to end, cut off by another module's wedge, or cut
+  off by `Close`, is no culprit. A write that fails on a dying child's pipe is a `HostError`
+  too.
 - **Kills.** gff-hab kills only the pid it started. Closing the Host closes the child's stdin;
   a healthy child exits, and one still running after a second is killed.
 - **Ids.** A Host refuses a second module with an id it already holds (7.3).
