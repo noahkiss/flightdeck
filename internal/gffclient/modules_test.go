@@ -20,11 +20,12 @@ import (
 
 // hostModule is a ModuleSource that runs one module in a module host process (the built
 // gff-hab module-host, through modhost.Host), as the hab will: an action runs the module's
-// act, then its render, and the new tree arrives through Changed (modules.md 4, 5, 7.4).
+// act, then its render, and the new tree arrives through Changed (modules.md 4, 5, 7.4). A
+// modhost.Managed keeps the last good tree and counts failures (8.3).
 type hostModule struct {
 	t       *testing.T
 	host    string
-	m       modhost.Runner
+	m       *modhost.Managed
 	changed chan struct{}
 	callMu  sync.Mutex
 
@@ -41,10 +42,11 @@ func newHostModule(t *testing.T, host, dir string) *hostModule {
 	}
 	mh := modhost.NewHost(modhost.HostOptions{Command: func() *exec.Cmd { return exec.Command(habBin, "module-host") }})
 	t.Cleanup(func() { mh.Close() })
-	m, err := mh.New(b, modhost.Options{Backends: modhost.Backends{State: &modhost.MemStore{}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := &modhost.MemStore{}
+	m := modhost.NewManaged(func(_ context.Context, log func(string)) (modhost.Runner, error) {
+		return mh.New(b, modhost.Options{Backends: modhost.Backends{State: state, Log: log}})
+	}, modhost.ManagedOptions{})
+	t.Cleanup(m.Close)
 	s := &hostModule{t: t, host: host, m: m, changed: make(chan struct{}, 1),
 		card: ModuleCard{Host: host, Module: b.Manifest.ID, Name: b.Manifest.Name}}
 	s.render(context.Background())
@@ -54,10 +56,11 @@ func newHostModule(t *testing.T, host, dir string) *hostModule {
 func (s *hostModule) render(ctx context.Context) {
 	tree, err := s.m.Render(ctx, modhost.Call{Host: s.host, OS: "linux", Place: "board", Vocabulary: modules.Version})
 	s.mu.Lock()
+	// On a failure Managed returns the last good tree beside the error (modules.md 8.3).
+	s.card.Tree, s.card.At = tree.JSON, tree.Made
+	s.card.Err = ""
 	if err != nil {
-		s.card.Err = err.Error() // the last good tree stays (modules.md 8.3)
-	} else {
-		s.card.Tree, s.card.Err, s.card.At = tree, "", time.Now()
+		s.card.Err = err.Error()
 	}
 	s.mu.Unlock()
 	select {
