@@ -912,7 +912,8 @@ read only when needed, never in the context by default.
   decimal places) and kind.
 - **Attribution.** WeatherKit requires the Apple Weather mark and a link to its data sources
   where its data shows. A reply whose turn used `weather` carries the attribution line in the
-  thread and in its push's expanded view. *(gk; A5 confirms the exact rule.)*
+  thread and in its push's expanded view. A5 confirmed the rule: Apple's WeatherKit terms ask
+  for the Apple Weather mark and a link to its data-source page wherever the data shows (8.6).
 - No config: the tool answers "weather is not set up on <hab>", and the manual says to tell the
   user what to set up.
 
@@ -946,6 +947,57 @@ Decision 5: a card with one "Add" tap, never silent.
 - A card whose event has ended shows "Past" and no Add. A card never expires otherwise.
 - The phone never writes a calendar without that tap. No tool writes one, and no setting turns
   the card off.
+
+### 8.6 Built choices (A5, task-j2xf34ld)
+
+- **The route.** The tools are `gff-hab mcp` tools that call `personal.location`,
+  `personal.calendar`, `personal.weather`, `personal.places`, `personal.place`,
+  `personal.calendar_add` and `personal.reminder_add` on the hook route. gff-hab answers them
+  only for the engine's token; a pane's call gets `denied` (E12). The service folder's
+  `.mcp.json` runs `gff-hab mcp -capcom`, which lists them; a pane's `gff-hab mcp` does not.
+- **`device.context.put`** (capability `device-context`, sent with `capcom-thread`): `tz`,
+  `location` (`lat`, `lon`, `accuracy`, `time`, `place`, `country`), `calendar` (`time`, `from`,
+  `to`, `events`), and `location_off` or `calendar_off` (`off`, `no_permission`). A field left
+  out keeps the held value; an `_off` reason drops the value that device sent. Refused over a
+  peer link. Each value carries the client's hello label as its device name. `country` is the
+  reverse geocoder's ISO code, because WeatherKit alerts need one; with none, `weather` leaves
+  alerts out.
+- **The tool line.** gff-hab rewrites `device_location`'s line to the place the store holds, and
+  strips any coordinate from every personal tool's line. The engine's `toolSummary` prefers
+  `place` and `near` and never takes `lat` or `lon`. `weather` takes an optional `place` for the
+  line.
+- **Attribution.** A reply stored after a `weather` call in the same turn carries
+  `attribution` (`source` `weather`, `text` "Apple Weather", `url` Apple's data-source page).
+  The app shows the mark and the link under the message; the push body ends with a line
+  "Apple Weather". A reply written before the call in that turn carries none: it holds no
+  weather data.
+- **Keys.** `[capcom.weather]` (`key_command`, `key_id`, `team_id`, `service_id`, `cache`),
+  `[capcom.maps]` (`key_command`, `key_id`, `team_id`) and `[capcom.places]`
+  (`google_key_command`). A table with a `key`, `api_key` or `google_key` entry is refused,
+  naming the command key. A `[capcom.weather]` with only `service_id` takes the Maps key (one
+  key with both services). gff-hab keeps the key in memory, runs the command again after the
+  service refuses it, and waits 30 s after a failed run. WeatherKit gets an ES256 JWT with
+  `kid`, `id` (team.service), `iss`, `sub`, `iat` and `exp`; Apple Maps trades a JWT for an
+  access token at `/v1/token`, kept until a minute before it expires. Google Places is the
+  Places API (New), text search and place details, with the key in a header.
+- **Place ids** are `apple:<id>` or `google:<id>`. `near` is geocoded by Apple for either source.
+  `radius` filters by the distance gff-hab computes, and bounds Apple's search region.
+- **Cards.** `calendar_add` and `reminder_add` add a `card` item (type `calendar` or
+  `reminder`, choices `add` and `dismiss`, the fields in `card.event`, the device's zone in
+  `card.event.tz`) and return its id at once. `capcom.card.answer` takes the first answer and
+  adds a note the model gets: "The user added … on <device>" or "dismissed". `add` on a calendar
+  card whose event has ended is refused `invalid`. The card pushes once, with category
+  `capcom-card` and its Add action. The app answers first and writes through EventKit only on
+  success, so a second device that taps Add writes nothing.
+- **Test seams.** A `testseam` build reads `$GFF_TEST_WEATHERKIT`, `$GFF_TEST_APPLE_MAPS` and
+  `$GFF_TEST_GOOGLE_PLACES` as the services' bases. Tests use fake servers only.
+- **Owner steps.** In the Apple Developer account: a key with WeatherKit and MapKit enabled
+  (the Maps Server API), and a WeatherKit service id. The app needs no WeatherKit entitlement,
+  since gff-hab calls the REST API. The Mac app runs with the hardened runtime: location and
+  calendar access there need the `com.apple.security.personal-information.location` and
+  `com.apple.security.personal-information.calendars` entitlements, which the signing setup does
+  not hold yet. Until they are added, the Mac shares neither and its card says to add from the
+  phone.
 
 ---
 
