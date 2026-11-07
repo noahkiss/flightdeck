@@ -379,7 +379,11 @@ final class VoiceModelTests: XCTestCase {
     func testARequestReplacedDuringTheTranscriptionIsNotAnswered() async {
         let r1 = PermissionRequest(command: "ls", id: "r1", title: "Run ls?", tool: "Bash")
         let b = await setup(state: .blocked, kind: .permission, request: r1, speech: false)
-        let (m, _) = slowModel(b, text: "allow")
+        let (m, engine) = slowModel(b, text: "allow")
+        // The transcription ends only once r2 reached the model. Ending before that, the allow
+        // goes to r1, the request the owner heard, which is right: the hab refuses it when r1
+        // was answered elsewhere, and it never reaches r2.
+        engine.hold = { await eventually("r2 reached the model") { m.request?.id == "r2" } }
         await m.start()
         await eventually("asked r1") { m.phase == .answering }
         b.io.emit(.words("allow", at: 0))
@@ -391,7 +395,7 @@ final class VoiceModelTests: XCTestCase {
         await turn.value
         await eventually("r2 read back") { m.request?.id == "r2" && m.phase == .answering }
         let answers = await b.hab.answers
-        XCTAssertTrue(answers.isEmpty, "the allow was for r1, never r2")
+        XCTAssertTrue(answers.isEmpty, "the allow was for r1, never r2: \(answers)")
         XCTAssertTrue(b.io.spoken.contains { $0.hasPrefix("Run rm?") })
         await m.end()
         await b.fleet.setActive(false)

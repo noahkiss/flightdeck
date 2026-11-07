@@ -133,7 +133,7 @@ func order(t *testing.T, work, tag, what string) {
 	t.Helper()
 	ack := filepath.Join(work, "ack-"+tag)
 	_ = os.Remove(ack)
-	writeFile(t, filepath.Join(work, "ctl-"+tag), what)
+	placeFile(t, filepath.Join(work, "ctl-"+tag), what)
 	waitUntil(t, tag+" took "+what, func() bool { _, err := os.Stat(ack); return err == nil })
 }
 
@@ -161,6 +161,11 @@ func addLockRound(t *testing.T, c *control.Client, name string, mode api.RoundMo
 func waitRunWhy(t *testing.T, c *control.Client, name string, state api.RoundRunState, why string) api.RoundRun {
 	t.Helper()
 	var last []api.RoundRun
+	defer func() {
+		if t.Failed() && len(last) > 0 {
+			t.Logf("%s newest run: %+v", name, last[0])
+		}
+	}()
 	waitUntil(t, name+" "+string(state)+" "+why, func() bool {
 		last = roundRuns(t, c, name)
 		return len(last) > 0 && last[0].State == state && strings.Contains(last[0].Reason, why)
