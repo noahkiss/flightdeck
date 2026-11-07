@@ -34,6 +34,8 @@ public actor FakeHab {
         var subscribed = false
         var seq: UInt64 = 0
         var clientID = ""
+        /// The hello's label: the device name the hab records on answers.
+        var label: String?
         var heartbeat: Task<Void, Never>?
         init(stream: ByteStream) { self.stream = stream }
     }
@@ -317,6 +319,14 @@ public actor FakeHab {
     private var capcomInterruptUnavailable = false
     /// Pending proposals `logbook.list` answers for a session (capcom-service.md 6.4).
     private var capcomProposals: [String: [LogbookRecord]] = [:]
+
+    /// Every `capcom.card.answer` received, oldest first, refused ones too.
+    public private(set) var capcomCardAnswers: [CapcomCardAnswerParams] = []
+    /// Every `device.context.put` received, oldest first.
+    public private(set) var deviceContextPuts: [DeviceContextPutParams] = []
+
+    /// Lists `device-context` in the welcome: the hab takes `device.context.put`.
+    public func setDeviceContext(_ on: Bool) { setCapability("device-context", on) }
 
     public func setCapcomService(_ on: Bool) {
         capcomService = on
@@ -928,6 +938,7 @@ public actor FakeHab {
                 return false
             }
             hellos.append(h)
+            c.label = h.label
             let chosen = min(h.revision, serverRevisions.upperBound)
             if chosen < h.minRevision || chosen < serverRevisions.lowerBound {
                 await fail(c, id: id, kind: .revisionUnsupported, hint: "no API revision fits",
@@ -1116,6 +1127,44 @@ public actor FakeHab {
             capcomSites.removeAll { $0 == p.site }
             await reply(c, id: id, result: CapcomServiceStatus(connected: true, folder: "/state/capcom/engine", sdkSessions: [], seq: c.seq,
                                                                session: capcomStanding, sites: capcomSites, state: "running"))
+        case HabMethods.capcomCardAnswer.name where capcomService:
+            guard let p = try? params.decode(CapcomCardAnswerParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad capcom.card.answer params")
+                break
+            }
+            capcomCardAnswers.append(p)
+            // The real hab's rules (capcom-service.md 7.4, 8.5): the first answer wins, only a
+            // choice the card offers, and no add once a calendar card's event has ended.
+            guard var it = capcomThread.first(where: { $0.id == p.item }), let card = it.card else {
+                await fail(c, id: id, kind: .notFound, hint: "no card \(p.item) in the thread")
+                break
+            }
+            guard it.answer == nil else {
+                await fail(c, id: id, kind: .conflict, hint: "card \(p.item) is answered already")
+                break
+            }
+            guard card.choices.contains(p.choice) else {
+                await fail(c, id: id, kind: .invalid, hint: "card \(p.item) does not offer \(p.choice)")
+                break
+            }
+            if p.choice == "add", let d = CapcomEventDraft.of(it), d.isPast(Date()) {
+                await fail(c, id: id, kind: .invalid, hint: "the event has ended")
+                break
+            }
+            it.answer = CapcomAnswer(by: c.label ?? "fake-device", choice: p.choice, time: Fixture.stamp(Date()))
+            await reply(c, id: id, result: CapcomCardAnswered(item: it, seq: c.seq))
+            await putCapcomItem(it)
+        case HabMethods.deviceContextPut.name where capabilities.contains("device-context"):
+            guard let p = try? params.decode(DeviceContextPutParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad device.context.put params")
+                break
+            }
+            if (p.location != nil && p.locationOff != nil) || (p.calendar != nil && p.calendarOff != nil) {
+                await fail(c, id: id, kind: .invalid, hint: "a value and its off reason together")
+                break
+            }
+            deviceContextPuts.append(p)
+            await reply(c, id: id, result: Empty(seq: c.seq))
         case HabMethods.capcomInterrupt.name:
             guard capcomService, !capcomInterruptUnavailable else {
                 await fail(c, id: id, kind: .unavailable, hint: "capcom.interrupt: no engine is connected")
