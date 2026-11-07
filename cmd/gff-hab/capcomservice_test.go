@@ -257,6 +257,33 @@ func testServiceApproval(t *testing.T, e *serviceEnv, c *control.Client) {
 
 func testServiceRest(t *testing.T, e *serviceEnv, c *control.Client, st api.CapcomServiceStatus, kind string) {
 
+	// A photo for the service session uploads into <state>/capcom/files, and its message
+	// carries the stored path as an image (7.6).
+	photo := []byte("\x89PNG\r\n\x1a\nnot really a png")
+	photoSum := sha256.Sum256(photo)
+	ctx := context.Background()
+	put, err := api.Client{Caller: c}.AttachmentPut(ctx, api.AttachmentPutParams{Session: st.Session, Name: "flyer.png", Type: "image/png", Size: uint64(len(photo)), SHA256: hex.EncodeToString(photoSum[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w, err := (api.Client{Caller: c}).AttachmentWrite(ctx, api.AttachmentWriteParams{ID: put.ID, Data: photo}); err != nil || !w.Done {
+		t.Fatalf("write: %+v %v", w, err)
+	}
+	if !strings.HasPrefix(evalDir(t, put.Path), evalDir(t, filepath.Join(e.state, capcomFolders, "files"))+"/") {
+		t.Fatalf("photo stored at %s", put.Path)
+	}
+	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: st.Session, Text: "what is on this flyer", Attachments: []string{put.ID}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the photo message", func() bool {
+		for _, it := range threadText(t, c) {
+			if it.Text == "what is on this flyer" && len(it.Images) == 1 && it.Images[0] == put.Path {
+				return true
+			}
+		}
+		return false
+	})
+
 	// "Allow this site" (5.3): the web fetch card offers it, the answer allows the fetch and
 	// keeps the site in capcom.status, and capcom.site.remove takes it off.
 	run(t, "capcom", "say", "-socket", e.sock, "approve")

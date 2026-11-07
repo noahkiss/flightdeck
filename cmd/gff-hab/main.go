@@ -756,9 +756,20 @@ func serve(args []string) error {
 		attachSvc := attach.New(attach.Config{
 			StatePath: filepath.Join(dir, attachmentsFile),
 			Session:   func(id string) bool { _, ok := store.Session(id); return ok },
-			Folder:    contentSvc.Folder,
-			Fallback:  filepath.Join(dir, "attachments"),
-			Logf:      logger.Printf,
+			// The Capcom service session has no pane: its photos go to <state>/capcom/files
+			// (capcom-service.md 7.6), where the engine reads them.
+			Folder: func(ctx context.Context, id string) string {
+				if ss, ok := store.Session(id); ok && ss.Kind == api.SessionKindCapcom && ss.Pane == "" {
+					files := filepath.Join(dir, capcomFolders, "files")
+					if os.MkdirAll(files, 0o700) != nil {
+						return ""
+					}
+					return files
+				}
+				return contentSvc.Folder(ctx, id)
+			},
+			Fallback: filepath.Join(dir, "attachments"),
+			Logf:     logger.Printf,
 		})
 		defer attachSvc.Close()
 		attachments = attachSvc
