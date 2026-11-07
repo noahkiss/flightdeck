@@ -36,8 +36,12 @@ type Client struct {
 	w        *bufio.Writer
 	lastSend time.Time
 
-	lastRead atomic.Int64 // unix nanos when the last line from the server arrived
-	dead     atomic.Bool  // DeadAfter's window ran out
+	// lastRead is when the last line from the server arrived, as elapsed's offset in nanos.
+	// elapsed reads the monotonic clock (time.Since of a base time), so a wall-clock step, such
+	// as NTP or a manual change, never counts as silence.
+	lastRead atomic.Int64
+	elapsed  func() time.Duration
+	dead     atomic.Bool // DeadAfter's window ran out
 
 	mu      sync.Mutex
 	nextID  uint64
@@ -65,7 +69,14 @@ func Dial(path string) (*Client, error) {
 
 // NewClient starts a client on rw. The client owns rw and closes it.
 func NewClient(rw io.ReadWriteCloser) *Client {
+	base := time.Now()
+	return newClient(rw, func() time.Duration { return time.Since(base) })
+}
+
+// newClient is NewClient with the clock DeadAfter reads; tests pass a fake one.
+func newClient(rw io.ReadWriteCloser, elapsed func() time.Duration) *Client {
 	c := &Client{
+		elapsed: elapsed,
 		rw:      rw,
 		w:       bufio.NewWriter(rw),
 		pending: map[string]chan message{},
@@ -74,7 +85,7 @@ func NewClient(rw io.ReadWriteCloser) *Client {
 		done:    make(chan struct{}),
 		stop:    make(chan struct{}),
 	}
-	c.lastRead.Store(time.Now().UnixNano())
+	c.lastRead.Store(int64(elapsed()))
 	go c.readLoop()
 	go c.pump()
 	return c
@@ -151,7 +162,7 @@ func (c *Client) DeadAfter(window time.Duration) {
 			case <-c.stop:
 				return
 			case <-t.C:
-				if time.Since(time.Unix(0, c.lastRead.Load())) > window {
+				if c.elapsed()-time.Duration(c.lastRead.Load()) > window {
 					c.dead.Store(true)
 					c.rw.Close() // the read loop ends with ErrDead
 					return
@@ -297,7 +308,7 @@ func (c *Client) readLoop() {
 		var line []byte
 		line, err = readLine(br)
 		if len(line) > 0 {
-			c.lastRead.Store(time.Now().UnixNano())
+			c.lastRead.Store(int64(c.elapsed()))
 		}
 		if len(line) > 0 && line[0] == '{' {
 			var m message

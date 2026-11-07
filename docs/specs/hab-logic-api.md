@@ -734,9 +734,10 @@ Built choices (`internal/control`):
   message.
 - Clients apply the 45 s rule: `gff` through `habconn` (`DeadAfter`), the app through
   `HabConnection.deadAfter`, and `gff-hab events` through `control.Client.DeadAfter`. `gff-hab
-  events` then exits 1 with "no message from the hab", so a
-  stream that stops is an error, never a silent wait. A ping's answer counts as hearing from the
-  hab: it restarts the hab's heartbeat timer too.
+  events` then exits 1 with "no message from the hab", so a stream that stops is an error, never
+  a silent wait. A ping's answer counts as hearing from the hab: it restarts the hab's heartbeat
+  timer too. The Go clients measure the 45 s on the monotonic clock, so a wall-clock step (NTP,
+  a manual change) never counts as silence.
 
 ### 3.6 Errors
 

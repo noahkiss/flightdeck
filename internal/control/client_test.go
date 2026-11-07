@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -170,4 +172,47 @@ func TestClientDeadAfter(t *testing.T) {
 		case <-time.After(4 * window):
 		}
 	})
+}
+
+// TestClientDeadAfterClock: the dead check reads the monotonic clock it was given, never the
+// wall clock. With the clock held still, real time well past the window ends nothing, as a
+// wall-clock step forward (NTP, a manual change) must not. Moving the clock past the window
+// ends the connection with ErrDead; a line that arrives first restarts the window.
+func TestClientDeadAfterClock(t *testing.T) {
+	const window = 40 * time.Millisecond
+	var now atomic.Int64
+	a, b := net.Pipe()
+	defer b.Close()
+	go func() { _, _ = io.Copy(io.Discard, b) }()
+	c := newClient(a, func() time.Duration { return time.Duration(now.Load()) })
+	defer c.Close()
+	c.DeadAfter(window)
+
+	select {
+	case <-c.Done():
+		t.Fatalf("ended while the clock stood still: %v", c.Err())
+	case <-time.After(10 * window):
+	}
+
+	// A line at clock 30 ms; the clock then moves to 60 ms, inside the window from that line.
+	now.Store(int64(30 * time.Millisecond))
+	if _, err := b.Write([]byte("x\n")); err != nil {
+		t.Fatal(err)
+	}
+	now.Store(int64(60 * time.Millisecond))
+	select {
+	case <-c.Done():
+		t.Fatalf("ended inside the window after a line: %v", c.Err())
+	case <-time.After(5 * window):
+	}
+
+	now.Store(int64(30*time.Millisecond + 2*window))
+	select {
+	case <-c.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the clock moved past the window and the connection stayed open")
+	}
+	if err := c.Err(); !errors.Is(err, ErrDead) {
+		t.Fatalf("err %v, want ErrDead", err)
+	}
 }
