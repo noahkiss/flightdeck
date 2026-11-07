@@ -17,14 +17,16 @@ import (
 
 // Files in the Capcom folder the supervisor writes.
 const (
-	EnvFile = "engine.env" // the job's environment: GFF_HAB with the pane route token, the engine route token, CLAUDE_CONFIG_DIR (3.3)
+	EnvFile = "engine.env" // the job's environment: GFF_HAB with the pane route token, the engine route token, the engine kind, CLAUDE_CONFIG_DIR or CODEX_HOME (3.3)
 	// TokenVar names the engine route's token in the job's environment. GFF_HAB holds another
 	// token, for the pane route: the engine passes GFF_HAB on to the SDK's binary and gff-hab
 	// mcp, and keeps this one to itself, so a process with GFF_HAB cannot open /capcom/<token>
 	// (3.3, 4.4).
 	TokenVar = "GFF_HAB_CAPCOM_TOKEN"
-	PidFile  = "engine.pid" // ProcessJob's pid
-	LogFile  = "engine.log" // the engine's stdout and stderr
+	// KindVar names the engine the job runs: claude or codex ([capcom] engine).
+	KindVar = "GFF_HAB_CAPCOM_KIND"
+	PidFile = "engine.pid" // ProcessJob's pid
+	LogFile = "engine.log" // the engine's stdout and stderr
 )
 
 // Supervisor states, for the session row (7.6).
@@ -173,19 +175,33 @@ func (s *Supervisor) Credential() (Credential, bool) {
 }
 
 // noCredential is the session row's line when there is no credential (10.2).
-func noCredential(auth string) string {
-	if auth == capcom.AuthAPIKey {
+func noCredential(cfg capcom.ServiceConfig) string {
+	if cfg.Auth == capcom.AuthAPIKey {
 		return "no API key: set [capcom] api_key_command"
 	}
 	return "no Claude token: run claude setup-token and set [capcom] oauth_token_command"
 }
 
+// keyEnv is the variable of gff-hab's own environment an API key comes from when no command
+// prints it: the provider's own name.
+func keyEnv(cfg capcom.ServiceConfig) string {
+	if cfg.Engine == capcom.EngineCodex {
+		return "OPENAI_API_KEY"
+	}
+	return "ANTHROPIC_API_KEY"
+}
+
 // loadCredential reads the credential: the command first, then gff-hab's environment (10.2).
-// It returns the reason when there is none. The value is never logged.
+// It returns the reason when there is none. The value is never logged. The Codex engine's login
+// is the user's own `codex login` in CODEX_HOME, which gff-hab never reads: hello names it and
+// the CLI uses it.
 func (s *Supervisor) loadCredential(ctx context.Context, cfg capcom.ServiceConfig) (*Credential, string) {
+	if cfg.Auth == capcom.AuthLogin {
+		return &Credential{Kind: capcom.AuthLogin}, ""
+	}
 	cmd, env := cfg.OAuthCommand, "CLAUDE_CODE_OAUTH_TOKEN"
 	if cfg.Auth == capcom.AuthAPIKey {
-		cmd, env = cfg.APIKeyCommand, "ANTHROPIC_API_KEY"
+		cmd, env = cfg.APIKeyCommand, keyEnv(cfg)
 	}
 	if len(cmd) > 0 && s.cfg.RunSecret != nil {
 		v, err := s.cfg.RunSecret(ctx, cmd, cfg.Limits.CommandTimeout)
@@ -205,7 +221,7 @@ func (s *Supervisor) loadCredential(ctx context.Context, cfg capcom.ServiceConfi
 	if v := strings.TrimSpace(s.cfg.Getenv(env)); v != "" {
 		return &Credential{Kind: cfg.Auth, Value: v}, ""
 	}
-	return nil, noCredential(cfg.Auth)
+	return nil, noCredential(cfg)
 }
 
 func commandKey(auth string) string {
@@ -312,8 +328,13 @@ func (s *Supervisor) start(ctx context.Context) {
 	}
 	token, paneToken := newToken(), newToken()
 	envs := []string{"GFF_HAB=" + s.cfg.RouteAddr(paneToken), TokenVar + "=" + token}
-	if v := s.cfg.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
-		envs = append(envs, "CLAUDE_CONFIG_DIR="+v)
+	// The engine kind picks the engine in the one bundle (main.ts); its CLI's folders follow the
+	// user's own, so a plain terminal resumes the engine's sessions (11).
+	envs = append(envs, KindVar+"="+cfg.Engine)
+	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
+		if v := s.cfg.Getenv(k); v != "" {
+			envs = append(envs, k+"="+v)
+		}
 	}
 	// The token is in place before the job runs, so its first connection is taken; the old one
 	// is refused from here on.
@@ -403,8 +424,11 @@ func (s *Supervisor) exited(p Proc) {
 		s.mu.Unlock()
 		if fails >= 2 {
 			reason := "the Claude token was refused again: run claude setup-token, update the token your command prints, then gff-hab capcom resume"
-			if cfg.Auth == capcom.AuthAPIKey {
+			switch cfg.Auth {
+			case capcom.AuthAPIKey:
 				reason = "the API key was refused again: update the key your command prints, then gff-hab capcom resume"
+			case capcom.AuthLogin:
+				reason = "the Codex login was refused again: run codex login, then gff-hab capcom resume"
 			}
 			s.cfg.Record.Update(func(r *Record) { r.Stopped = reason })
 			s.mu.Lock()

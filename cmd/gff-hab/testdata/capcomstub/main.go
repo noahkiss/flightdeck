@@ -17,6 +17,12 @@
 // summary and compacted. A "reseed" asks context.request for a re-seed, writes the context it
 // got to $STUB_DIR/context-<n>.json, sends a summary (none for new) and session.started. A text
 // that starts with "event:" runs as an event turn.
+//
+// With GFF_HAB_CAPCOM_KIND=codex it stands in for the Codex engine (A6): ready names engine
+// codex and only images, interrupt and resume_by_id; "approve" asks no approval; "compact" sends
+// no compaction; a re-seed announces the fresh session with no id and sends the id at its first
+// turn, as a Codex thread gets its id then. An input that arrives while a turn runs is logged as
+// "input during a turn". A hello with reseed runs that re-seed before any input.
 package main
 
 import (
@@ -33,6 +39,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -50,6 +57,9 @@ var (
 	contexts = make(chan map[string]any, 10)
 	reseeds  = make(chan string, 10)
 	ctxN     int
+	codex    = os.Getenv("GFF_HAB_CAPCOM_KIND") == "codex"
+	inTurn   atomic.Bool
+	pendID   string // codex: the why of a fresh session whose id comes at its first turn
 )
 
 func logf(format string, args ...any) {
@@ -75,7 +85,8 @@ func main() {
 		os.Exit(3)
 	}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") ||
+			strings.HasPrefix(kv, "OPENAI_API_KEY=") || strings.HasPrefix(kv, "CODEX_API_KEY=") {
 			logf("env holds a credential")
 		}
 	}
@@ -142,10 +153,19 @@ func session(sock, token string) error {
 			if st, ok := m["settings"].(map[string]any); ok {
 				logf("settings max_turns %v", st["max_turns"])
 			}
-			if !readyDone {
-				readyDone = true
+			if r, _ := m["reseed"].(string); r != "" && !readyDone {
+				logf("hello reseed %s", r)
+				reseeds <- r
 			}
-			send(map[string]any{"type": "ready", "engine": "stub", "version": "1", "capabilities": []string{"interrupt", "mid_turn_input"}})
+			if s, _ := m["sdk_session"].(string); s != "" {
+				logf("hello resume %s", s)
+			}
+			readyDone = true
+			if codex {
+				send(map[string]any{"type": "ready", "engine": "codex", "version": "1", "capabilities": []string{"images", "interrupt", "resume_by_id"}})
+			} else {
+				send(map[string]any{"type": "ready", "engine": "stub", "version": "1", "capabilities": []string{"images", "interrupt", "mid_turn_input", "approval_callback", "compaction_events", "usage_events", "resume_by_id"}})
+			}
 			// Resend what the last connection left unacknowledged, in order, with new numbers.
 			outMu.Lock()
 			old := outbox
@@ -156,7 +176,11 @@ func session(sock, token string) error {
 				send(o)
 			}
 		case "input":
-			inputs <- m["item"].(map[string]any)
+			it := m["item"].(map[string]any)
+			if inTurn.Load() {
+				logf("input during a turn %v", it["text"])
+			}
+			inputs <- it
 		case "approval.answer":
 			answer <- m
 		case "context":
@@ -212,6 +236,11 @@ func reseed(reason string) {
 		why = "new"
 	}
 	ctxN++
+	if codex {
+		send(map[string]any{"type": "session.started", "session": "", "why": why})
+		pendID = why
+		return
+	}
 	send(map[string]any{"type": "session.started", "session": fmt.Sprintf("s-%d-%d", os.Getpid(), ctxN), "why": why})
 }
 
@@ -219,11 +248,24 @@ func reseed(reason string) {
 func turns(sock, token string) {
 	for {
 		var it map[string]any
+		// A re-seed that waits goes first: a hello's re-seed comes before any input.
+		select {
+		case reason := <-reseeds:
+			reseed(reason)
+			continue
+		default:
+		}
 		select {
 		case reason := <-reseeds:
 			reseed(reason)
 			continue
 		case it = <-inputs:
+		}
+		inTurn.Store(true)
+		if pendID != "" {
+			ctxN++
+			send(map[string]any{"type": "session.started", "session": fmt.Sprintf("x-%d-%d", os.Getpid(), ctxN), "why": pendID})
+			pendID = ""
 		}
 		id, _ := it["id"].(string)
 		text, _ := it["text"].(string)
@@ -257,8 +299,10 @@ func turns(sock, token string) {
 		case "ctx":
 			fmt.Sscanf(arg, "%g", &used)
 		case "compact":
-			summarise(askContext("compact"))
-			send(map[string]any{"type": "compacted"})
+			if !codex {
+				summarise(askContext("compact"))
+				send(map[string]any{"type": "compacted"})
+			}
 		}
 		switch text {
 		case "crash":
@@ -276,6 +320,10 @@ func turns(sock, token string) {
 		case "lbwrite":
 			reply = "lb: " + routeCall(sock, token, `{"method":"logbook.write","params":{"idempotency_key":"stub-lb-1","changes":[{"op":"create","type":"task","title":"from capcom"}]}}`)
 		case "approve":
+			if codex {
+				reply = "no approvals here"
+				break
+			}
 			req := "req-" + turn
 			send(map[string]any{"type": "approval.request", "request": req, "tool": "WebFetch",
 				"input": map[string]any{"url": "https://example.com/x"}, "reason": "Capcom wants to open example.com/x"})
@@ -283,6 +331,7 @@ func turns(sock, token string) {
 			reply = fmt.Sprintf("approved: %v", a["allow"])
 		}
 		send(map[string]any{"type": "reply", "turn": turn, "part": 0, "text": reply})
+		inTurn.Store(false)
 		send(map[string]any{"type": "turn.ended", "turn": turn, "result": "success", "context_used": used})
 	}
 }

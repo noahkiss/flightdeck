@@ -145,6 +145,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		Logf:        s.logf,
 		Limits:      func() capcomengine.ContextLimits { return contextLimits(config().Limits) },
 		Logbook:     e.logbookPart,
+		EngineKind:  func() string { return config().Engine },
 	})
 	job := s.job
 	if job == nil {
@@ -262,7 +263,8 @@ func engineBaseEnv() []string {
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		switch k {
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GFF_HAB", "CLAUDE_CONFIG_DIR", "CLAUDECODE":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GFF_HAB", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+			"CLAUDECODE", "CODEX_THREAD_ID", "GFF_HAB_CAPCOM_KIND", "GFF_HAB_CAPCOM_TOKEN":
 			continue
 		}
 		out = append(out, kv)
@@ -302,7 +304,7 @@ func (e *capcomEngine) hello() (capcomengine.Message, bool) {
 // contextLimits are the context manager's [capcom] keys (6, 19.2).
 func contextLimits(l capcom.Limits) capcomengine.ContextLimits {
 	return capcomengine.ContextLimits{SummaryMaxChars: l.SummaryMaxChars, SummaryInputChars: l.SummaryInputChars,
-		SummaryQuiet: l.SummaryQuiet, ReseedAt: l.ReseedAt, ReseedQuiet: l.ReseedQuiet, ReseedQuietAt: l.ReseedQuietAt,
+		SummaryQuiet: l.SummaryQuiet, ReseedAt: l.ReseedAt, ReseedEarlyAt: l.ReseedEarlyAt, ReseedQuiet: l.ReseedQuiet, ReseedQuietAt: l.ReseedQuietAt,
 		SeedMessages: l.SeedMessages, SeedMessagesChars: l.SeedMessagesChars, SeedLogbookBytes: l.SeedLogbookBytes}
 }
 

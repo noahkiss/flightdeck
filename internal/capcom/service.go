@@ -15,16 +15,20 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// The engines that can run the Capcom service (capcom-service.md 3.5). Codex comes in A6.
+// The engines that can run the Capcom service (capcom-service.md 3.5).
 const (
 	EngineNone   = ""       // the pane Capcom runs (12.4, until A8)
 	EngineClaude = "claude" // the Claude Agent SDK engine
+	EngineCodex  = "codex"  // the Codex SDK engine (A6)
 )
 
-// The logins an engine takes (capcom-service.md 10.2).
+// The logins an engine takes (capcom-service.md 10.2). The Claude engine takes oauth_token (its
+// default) or api_key; the Codex engine takes login (its default: the user's own `codex login`)
+// or api_key.
 const (
 	AuthOAuthToken = "oauth_token"
 	AuthAPIKey     = "api_key"
+	AuthLogin      = "login"
 )
 
 // ServiceCapability is the capability a hab that runs the Capcom service sends
@@ -51,6 +55,7 @@ type Limits struct {
 	SummaryInputChars int
 	SummaryQuiet      time.Duration
 	ReseedAt          float64 // a share of the model's window, 0 to 1
+	ReseedEarlyAt     float64 // the size trigger for an engine with no compaction events (4.1)
 	ReseedQuiet       time.Duration
 	ReseedQuietAt     float64
 	SeedMessages      int
@@ -76,6 +81,7 @@ var DefaultLimits = Limits{
 	SummaryInputChars: 64000,
 	SummaryQuiet:      10 * time.Minute,
 	ReseedAt:          0.60,
+	ReseedEarlyAt:     0.45,
 	ReseedQuiet:       60 * time.Minute,
 	ReseedQuietAt:     0.25,
 	SeedMessages:      6,
@@ -86,10 +92,10 @@ var DefaultLimits = Limits{
 
 // ServiceConfig is the service half of the [capcom] section (capcom-service.md 3.5, 19.2).
 type ServiceConfig struct {
-	Engine          string   // EngineNone or EngineClaude
+	Engine          string   // EngineNone, EngineClaude or EngineCodex
 	Model           string   // "": the SDK's default
 	SmallModel      string   // "": the provider's smallest current model
-	Auth            string   // AuthOAuthToken or AuthAPIKey
+	Auth            string   // AuthOAuthToken or AuthAPIKey (claude); AuthLogin or AuthAPIKey (codex)
 	OAuthCommand    []string // an argv that prints the OAuth token
 	APIKeyCommand   []string // an argv that prints an API key
 	Limits          Limits
@@ -154,10 +160,10 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	}
 	if s, ok := str("engine"); ok {
 		switch s {
-		case EngineClaude:
+		case EngineClaude, EngineCodex:
 			c.Engine = s
 		default:
-			bad("engine %q: want %q (codex comes later); the pane Capcom runs", s, EngineClaude)
+			bad("engine %q: want %q or %q; the pane Capcom runs", s, EngineClaude, EngineCodex)
 		}
 	}
 	if s, ok := str("model"); ok {
@@ -166,10 +172,16 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	if s, ok := str("small_model"); ok {
 		c.SmallModel = s
 	}
+	// The login: the engine's default unless auth names one it takes.
+	if c.Engine == EngineCodex {
+		c.Auth = AuthLogin
+	}
 	if s, ok := str("auth"); ok {
-		switch s {
-		case AuthOAuthToken, AuthAPIKey:
+		switch {
+		case s == AuthAPIKey, c.Engine == EngineCodex && s == AuthLogin, c.Engine != EngineCodex && s == AuthOAuthToken:
 			c.Auth = s
+		case c.Engine == EngineCodex:
+			bad("auth %q: the codex engine takes %q or %q; using %s", s, AuthLogin, AuthAPIKey, AuthLogin)
 		default:
 			bad("auth %q: want %q or %q; using %s", s, AuthOAuthToken, AuthAPIKey, AuthOAuthToken)
 		}
@@ -301,12 +313,14 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	share("reseed_at", &l.ReseedAt, 20, 90)
 	share("reseed_quiet_at", &l.ReseedQuietAt, 0, l.ReseedAt*100)
 	l.ReseedQuietAt = min(l.ReseedQuietAt, l.ReseedAt) // the default 25% under a reseed_at of 20%
+	share("reseed_early_at", &l.ReseedEarlyAt, 10, l.ReseedAt*100)
+	l.ReseedEarlyAt = min(l.ReseedEarlyAt, l.ReseedAt)
 	known := map[string]bool{"engine": true, "model": true, "small_model": true, "auth": true, "oauth_token_command": true,
 		"api_key_command": true, "oauth_token": true, "api_key": true, "max_turns": true, "max_turn_usd": true, "daily_usd": true,
 		"restart_delay": true, "crash_limit": true, "crash_window": true, "route_backoff_max": true, "typing_timeout": true,
 		"command_timeout": true, "token_retry": true, "wake_retry": true,
 		"summary_max_chars": true, "summary_input_chars": true, "summary_quiet": true, "reseed_at": true, "reseed_quiet": true,
-		"reseed_quiet_at": true, "seed_messages": true, "seed_messages_chars": true, "seed_logbook_bytes": true, "precompact_timeout": true}
+		"reseed_quiet_at": true, "reseed_early_at": true, "seed_messages": true, "seed_messages_chars": true, "seed_logbook_bytes": true, "precompact_timeout": true}
 	for _, k := range laterKeys {
 		known[k] = true
 	}

@@ -54,6 +54,7 @@ summary_quiet = "3m"
 reseed_at = 40
 reseed_quiet = "15m"
 reseed_quiet_at = "10%"
+reseed_early_at = 30
 seed_messages = 2
 seed_messages_chars = 500
 seed_logbook_bytes = 1024
@@ -65,7 +66,7 @@ precompact_timeout = "6s"
 	}
 	want := Limits{MaxTurns: 7, MaxTurnUSD: 1, DailyUSD: 3.5, RestartDelay: 2 * time.Second, CrashLimit: 2, CrashWindow: time.Minute,
 		RouteBackoffMax: 4 * time.Second, TypingTimeout: 2 * time.Minute, CommandTimeout: 3 * time.Second, TokenRetry: 45 * time.Second, WakeRetry: time.Second,
-		SummaryMaxChars: 2000, SummaryInputChars: 9000, SummaryQuiet: 3 * time.Minute, ReseedAt: 0.4, ReseedQuiet: 15 * time.Minute,
+		SummaryMaxChars: 2000, SummaryInputChars: 9000, SummaryQuiet: 3 * time.Minute, ReseedAt: 0.4, ReseedEarlyAt: 0.3, ReseedQuiet: 15 * time.Minute,
 		ReseedQuietAt: 0.1, SeedMessages: 2, SeedMessagesChars: 500, SeedLogbookBytes: 1024, PrecompactTimeout: 6 * time.Second}
 	if c.Limits != want {
 		t.Fatalf("limits %+v, want %+v", c.Limits, want)
@@ -154,6 +155,36 @@ func TestOnce(t *testing.T) {
 }
 
 // The example file's [capcom] keys parse with no problem.
+// The Codex engine (A6): its default login is the user's own codex login; it takes an API key
+// too, and refuses the Claude OAuth token. The Claude engine refuses login. reseed_early_at
+// passes no reseed_at and follows a lower one down.
+func TestServiceConfigCodex(t *testing.T) {
+	c, problems, err := LoadServiceConfig(writeConfig(t, "[capcom]\nengine = \"codex\"\n"))
+	if err != nil || len(problems) != 0 || c.Engine != EngineCodex || c.Auth != AuthLogin || c.Limits.ReseedEarlyAt != 0.45 {
+		t.Fatal(err, problems, c)
+	}
+	c, _, _ = LoadServiceConfig(writeConfig(t, "[capcom]\nengine = \"codex\"\nauth = \"api_key\"\napi_key_command = [\"print-key\"]\n"))
+	if c.Auth != AuthAPIKey {
+		t.Fatal(c.Auth)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\nengine = \"codex\"\nauth = \"oauth_token\"\n"))
+	if c.Auth != AuthLogin || len(problems) != 1 || !strings.Contains(problems[0], "the codex engine takes") {
+		t.Fatal(c.Auth, problems)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\nengine = \"claude\"\nauth = \"login\"\n"))
+	if c.Auth != AuthOAuthToken || len(problems) != 1 {
+		t.Fatal(c.Auth, problems)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\nreseed_at = 30\nreseed_early_at = 35\n"))
+	if len(problems) != 1 || !strings.Contains(problems[0], "reseed_early_at") || c.Limits.ReseedEarlyAt != 0.3 {
+		t.Fatal(problems, c.Limits.ReseedEarlyAt)
+	}
+	c, problems, _ = LoadServiceConfig(writeConfig(t, "[capcom]\nreseed_early_at = \"5%\"\n"))
+	if len(problems) != 1 || c.Limits.ReseedEarlyAt != 0.45 {
+		t.Fatal(problems, c.Limits.ReseedEarlyAt)
+	}
+}
+
 func TestServiceConfigExample(t *testing.T) {
 	_, problems, err := LoadServiceConfig(filepath.Join("..", "..", "docs", "examples", "hab.toml"))
 	if err != nil || len(problems) != 0 {

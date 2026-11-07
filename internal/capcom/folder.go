@@ -127,7 +127,9 @@ func WriteFolder(dir, harness, exe string, scope ReadScope) error {
 }
 
 // WriteServiceFolder writes the Capcom service engine's folder (capcom-service.md 3.4): the
-// Claude files, with the service's manual (ServiceManual) as CLAUDE.md.
+// Claude files, with the service's manual (ServiceManual) as CLAUDE.md, and the same manual as
+// AGENTS.md, which the Codex engine's CLI reads. The Codex engine takes its MCP server from
+// .mcp.json.
 func WriteServiceFolder(dir, exe string, scope ReadScope) error {
 	files, err := Files(Claude, exe, scope)
 	if err != nil {
@@ -138,6 +140,7 @@ func WriteServiceFolder(dir, exe string, scope ReadScope) error {
 			files[i].Data = []byte(ServiceManual)
 		}
 	}
+	files = append(files, File{Path: "AGENTS.md", Data: []byte(ServiceManual)})
 	return writeFiles(dir, files)
 }
 
