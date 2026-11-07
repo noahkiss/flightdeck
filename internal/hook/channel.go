@@ -42,7 +42,7 @@ var ConfirmMethods = []string{"confirm.request", "confirm.get", "confirm.list"}
 // RoundMethods are the round methods the route takes (rounds.md 13): an agent's `gff-hab round`
 // from its pane. The pane's session is the caller: it fills created_by and target self.
 var RoundMethods = []string{"round.list", "round.get", "round.create", "round.update", "round.delete",
-	"round.pause", "round.unpause", "round.run", "round.runs"}
+	"round.pause", "round.unpause", "round.run", "round.runs", "round.watch_event"}
 
 // GroupMethods are the group methods the route takes (groups.md 15.2): the coordinator's and
 // the members' tools. The pane's session is the caller: the coordinator of a new group, the

@@ -21,6 +21,8 @@ type Rounds interface {
 	Get(ref api.RoundRef) (api.Round, error)
 	// Batch returns an event round's pending batch, nil when it has none (round.get with batch).
 	Batch(ref api.RoundRef) (*api.RoundBatch, error)
+	// Cursor is a watch round's watcher cursor, as a move carries it (rounds.md 9); "" for another round.
+	Cursor(ref api.RoundRef) (string, error)
 	// Create stores a new round. createdBy is the calling session when an agent creates it from
 	// its pane; the control connection passes "", a user.
 	Create(ctx context.Context, p api.RoundCreateParams, createdBy string) (api.RoundCreated, error)
@@ -77,6 +79,9 @@ func (c *conn) handleRounds(m message) {
 				res := api.RoundResult{Round: r}
 				if err == nil && p.Batch {
 					res.Batch, err = rs.Batch(p.RoundRef)
+					if err == nil {
+						res.Cursor, err = rs.Cursor(p.RoundRef)
+					}
 				}
 				res.Seq = now()
 				return res, err
