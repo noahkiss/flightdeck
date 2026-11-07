@@ -62,7 +62,10 @@ type LinkConfig struct {
 	OnStatus func(Status)
 	// OnError hears each error the engine reports (an auth refusal, the start check).
 	OnError func(kind, text string, exiting bool)
-	Logf    func(string, ...any)
+	// OnReady hears each ready; OnTurnEnded each turn's result.
+	OnReady     func()
+	OnTurnEnded func(result string)
+	Logf        func(string, ...any)
 }
 
 // Link is gff-hab's side of one engine: one connection at a time, the delivery of thread items,
@@ -285,6 +288,9 @@ func (l *Link) handle(c *conn, m Message) {
 		l.mu.Unlock()
 		l.changed()
 		l.wake()
+		if l.cfg.OnReady != nil {
+			l.cfg.OnReady()
+		}
 	case TSessionStarted:
 		if m.Session == "" {
 			return
@@ -365,6 +371,9 @@ func (l *Link) handle(c *conn, m Message) {
 				Text: "Capcom could not finish that turn; send the message again"})
 		}
 		l.changed()
+		if l.cfg.OnTurnEnded != nil {
+			l.cfg.OnTurnEnded(m.Result)
+		}
 	case TSummary:
 		l.cfg.Record.Update(func(r *Record) { r.Summary = m.Text })
 	case TCompacted:
