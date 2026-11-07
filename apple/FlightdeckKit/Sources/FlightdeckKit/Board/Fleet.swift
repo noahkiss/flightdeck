@@ -147,7 +147,10 @@ public final class Fleet {
                     lastCatalog = s.catalogChanges
                     if s.status == .online {
                         let id = conn.id, g = s.catalogGeneration
-                        Task { @MainActor [weak self] in await self?.capcom.catalogChanged(id, generation: g) }
+                        Task { @MainActor [weak self] in
+                            await self?.capcom.catalogChanged(id, generation: g)
+                            await self?.deviceContextHomeCheck()
+                        }
                     }
                 }
                 self?.approvals?.boardChanged()
@@ -195,37 +198,52 @@ public final class Fleet {
         Task { @MainActor [weak self] in
             await self?.settings?.connectionOnline(habID: id)
         }
-        // Where Capcom runs, for the Capcom view (app.md 4.10).
+        // Where Capcom runs, for the Capcom view (app.md 4.10); the home takes this device's
+        // context (capcom-service.md 8.1).
         Task { @MainActor [weak self] in
             await self?.capcom.habOnline(id)
-        }
-        // The Capcom home takes this device's context (capcom-service.md 8.1).
-        if w.capabilities.contains(DeviceContextReporter.capability) {
-            roundDefaults.set(w.host.id, forKey: Self.deviceContextHomeKey)
-            Task { @MainActor [weak self] in
-                await self?.capcom.deviceContext?.homeOnline()
-            }
+            await self?.deviceContextHomeCheck(online: id)
         }
     }
 
-    /// The host id of the last hab whose welcome listed `device-context`.
+    /// The host id of the Capcom home a put last reached: the background put's target.
     static let deviceContextHomeKey = "capcom.device_context.home"
     public var deviceContextHome: String? { roundDefaults.string(forKey: Self.deviceContextHomeKey) }
+    /// The home the reporter last sent its whole context to on coming online.
+    private var deviceContextHab: String?
 
-    /// Sends a `device.context.put` on the live connection of a hab whose welcome lists
-    /// `device-context`; false when none is online or the call failed. The hab never passes it
-    /// to a peer, so no other hab gets it.
+    /// The Capcom home that takes device context: the hab the catalogs name as home, online,
+    /// with `device-context` in its welcome. A hab that runs a Capcom engine without the mark
+    /// lists the capability too, so the capability alone is not enough.
+    func deviceContextConnection() async -> HabConnection? {
+        guard case .ready(let id) = capcom.entry, let c = connection(id),
+              await c.isWelcomed, await c.has(capability: DeviceContextReporter.capability) else { return nil }
+        return c
+    }
+
+    /// Sends the whole context when the home comes online or moves (capcom-service.md 8.1).
+    func deviceContextHomeCheck(online: String? = nil) async {
+        guard let r = capcom.deviceContext, let c = await deviceContextConnection() else { return }
+        guard c.id == online || c.id != deviceContextHab else { return }
+        deviceContextHab = c.id
+        await r.homeOnline()
+    }
+
+    /// Sends a `device.context.put` on the live connection of the Capcom home; false when it is
+    /// not online or the call failed. A hab that lost the mark meanwhile refuses it with
+    /// `unavailable`, which is no failure to show: the next home gets it. The hab never passes
+    /// it to a peer, so no other hab gets it.
     public func sendDeviceContextLive(_ p: DeviceContextPutParams) async -> Bool {
-        for c in connections {
-            guard await c.isWelcomed, await c.has(capability: DeviceContextReporter.capability) else { continue }
-            do {
-                _ = try await c.call(HabMethods.deviceContextPut, p)
-                return true
-            } catch {
-                return false
+        guard let c = await deviceContextConnection() else { return false }
+        do {
+            _ = try await c.call(HabMethods.deviceContextPut, p)
+            if let host = await c.state.welcome?.host.id {
+                roundDefaults.set(host, forKey: Self.deviceContextHomeKey)
             }
+            return true
+        } catch {
+            return false
         }
-        return false
     }
 
     /// Connects every hab (visible) or closes every connection (background).
