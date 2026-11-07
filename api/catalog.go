@@ -277,6 +277,8 @@ type CapcomOpened struct {
 	Dir     string `json:"dir" doc:"The session's folder on the home host."`
 	// Pending is field set 2: the context waiting for the session's next message (capcom.md 8.1).
 	Pending []CapcomContextItem `json:"pending,omitempty" doc:"Context attached to the session's next message, in delivery order. Absent when none waits."`
+	// Proposals is field set 3: the review list a new conversation opens (capcom-service.md 6.4).
+	Proposals int `json:"proposals,omitempty" doc:"The Capcom service's Logbook proposals that wait for review. With new set, the app opens the review list when it is above 0."`
 }
 
 type CapcomAssignParams struct {

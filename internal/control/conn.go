@@ -505,6 +505,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleLogbook(m)
 		return
 	}
+	if m.Method == "capcom.card.answer" {
+		c.handleCapcomCard(m)
+		return
+	}
 	if isConfirmMethod(m.Method) {
 		c.handleConfirm(m)
 		return

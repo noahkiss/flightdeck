@@ -24,8 +24,8 @@ type CapcomToolCall struct {
 
 // CapcomCard is a card item's content.
 type CapcomCard struct {
-	Type    string   `json:"type" doc:"approval, confirmation, handoff, calendar, reminder or proposal."`
-	Ref     string   `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it."`
+	Type    string   `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal or memory."`
+	Ref     string   `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review."`
 	Choices []string `json:"choices"`
 }
 
@@ -91,6 +91,19 @@ type CapcomServiceStatus struct {
 	Turn        string             `json:"turn,omitempty" doc:"The running turn. Absent: idle."`
 	Folder      string             `json:"folder" doc:"The engine's folder: a plain terminal resumes its SDK sessions from here."`
 	SDKSessions []CapcomSDKSession `json:"sdk_sessions"`
+}
+
+// CapcomCardAnswerParams answers a card of the Capcom thread (capcom-service.md 7.4).
+type CapcomCardAnswerParams struct {
+	Item   string `json:"item" doc:"The card's item id."`
+	Choice string `json:"choice" doc:"One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4)."`
+}
+
+// CapcomCardAnswered is a card's answer and what it did.
+type CapcomCardAnswered struct {
+	Seq
+	Item CapcomItem `json:"item" doc:"The card with its answer."`
+	Note string     `json:"note,omitempty" doc:"What the answer did, for the user to read: an undo of a record edited since it was noted deleted the edited record."`
 }
 
 // CapcomTyping is the data of capcom.typing.

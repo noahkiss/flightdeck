@@ -449,9 +449,9 @@ public struct CapcomAuthorKind: RawRepresentable, Codable, Sendable, Hashable {
 
 public struct CapcomCard: Codable, Sendable, Hashable {
     public var choices: [String]
-    /// approval: the request id, as approval.answer takes it.
+    /// approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review.
     public var ref: String?
-    /// approval, confirmation, handoff, calendar, reminder or proposal.
+    /// approval, confirmation, handoff, calendar, reminder, proposal or memory.
     public var type: String
 
     enum CodingKeys: String, CodingKey {
@@ -464,6 +464,44 @@ public struct CapcomCard: Codable, Sendable, Hashable {
         self.choices = choices
         self.ref = ref
         self.type = type
+    }
+}
+
+public struct CapcomCardAnswerParams: Codable, Sendable, Hashable {
+    /// One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4).
+    public var choice: String
+    /// The card's item id.
+    public var item: String
+
+    enum CodingKeys: String, CodingKey {
+        case choice = "choice"
+        case item = "item"
+    }
+
+    public init(choice: String, item: String) {
+        self.choice = choice
+        self.item = item
+    }
+}
+
+public struct CapcomCardAnswered: Codable, Sendable, Hashable {
+    /// The card with its answer.
+    public var item: CapcomItem
+    /// What the answer did, for the user to read: an undo of a record edited since it was noted deleted the edited record.
+    public var note: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case item = "item"
+        case note = "note"
+        case seq = "seq"
+    }
+
+    public init(item: CapcomItem, note: String? = nil, seq: UInt64) {
+        self.item = item
+        self.note = note
+        self.seq = seq
     }
 }
 
@@ -641,6 +679,8 @@ public struct CapcomOpened: Codable, Sendable, Hashable {
     public var pane: String
     /// Context attached to the session's next message, in delivery order. Absent when none waits.
     public var pending: [CapcomContextItem]?
+    /// The Capcom service's Logbook proposals that wait for review. With new set, the app opens the review list when it is above 0.
+    public var proposals: Int?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     public var session: String
@@ -651,15 +691,17 @@ public struct CapcomOpened: Codable, Sendable, Hashable {
         case dir = "dir"
         case pane = "pane"
         case pending = "pending"
+        case proposals = "proposals"
         case seq = "seq"
         case session = "session"
         case started = "started"
     }
 
-    public init(dir: String, pane: String, pending: [CapcomContextItem]? = nil, seq: UInt64, session: String, started: Bool? = nil) {
+    public init(dir: String, pane: String, pending: [CapcomContextItem]? = nil, proposals: Int? = nil, seq: UInt64, session: String, started: Bool? = nil) {
         self.dir = dir
         self.pane = pane
         self.pending = pending
+        self.proposals = proposals
         self.seq = seq
         self.session = session
         self.started = started
@@ -9108,6 +9150,8 @@ public enum HabMethods {
     public static let capcomPause = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.pause")
     /// Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.
     public static let capcomResume = HabMethod<CapcomServiceParams, CapcomServiceStatus>(name: "capcom.resume")
+    /// Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.
+    public static let capcomCardAnswer = HabMethod<CapcomCardAnswerParams, CapcomCardAnswered>(name: "capcom.card.answer")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
     /// Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.

@@ -954,6 +954,7 @@ func serve(args []string) error {
 			eng, err := newCapcomEngine(capcomEngineSetup{
 				state: dir, configPath: cpath, exe: exe, hookSocket: hpath, device: key.Fingerprint(),
 				installed: *sf.init != "" && *sf.init != "none", job: engineJob(sf, dir), store: store, agents: agents, svc: capcomSvc,
+				logbook: lbVerbs, host: *hostID,
 				approval: func() time.Duration {
 					if v := setRef.Load(); v != nil {
 						var m int
@@ -1693,7 +1694,7 @@ func serve(args []string) error {
 	if groupsSvc != nil {
 		hooks.SetGroups(groupHook(store, groupsSvc))
 	}
-	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote))
+	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote, capcomEng))
 	// One context handler: the Logbook habit and the context nudge, joined when both are due
 	// (harness-adapters.md, Context nudge).
 	hooks.SetContext(joinContext(habitSvc.Context, nudges.Context))

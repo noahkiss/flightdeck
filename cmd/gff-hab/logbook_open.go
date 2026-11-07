@@ -52,13 +52,25 @@ func startLogbookVerbs(ctx context.Context, st *logbook.Store, synced func(), pu
 // while approval reports true: logbook.approval is agents (9.1). It is read at each call, so a
 // change of the setting holds from the next write. wrote, when set, hears of each write that
 // went through: the recording habits count it (11.1).
-func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string, approval func() bool, wrote func(pane string)) hook.ChannelHandler {
+//
+// The Capcom service's guides are the one exception (capcom-service.md 6.4): a write on the
+// engine's route that only creates or edits capcom guides lands at once while logbook.approval
+// is off, and eng adds its "Noted" line, landed or proposed.
+func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string, approval func() bool, wrote func(pane string), eng *capcomEngine) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		pn := lbsvc.Pane{ID: pane, Host: host}
 		if s, ok := store.SessionByPane(pane); ok {
 			pn.Session, pn.SessionName = s.ID, s.Name
 			pn.Propose = s.Kind == api.SessionKindCapcom
 			pn.Project = logbookProject(ctx, svc, store, host, s.Project)
+		}
+		var guide *api.LogbookWriteParams
+		if eng != nil && pane == capcomRoute && pn.Propose && method == "logbook.write" {
+			var p api.LogbookWriteParams
+			if json.Unmarshal(params, &p) == nil && eng.memory.guideWrite(ctx, p.Changes) {
+				guide = &p
+				pn.Propose = p.Propose
+			}
 		}
 		if approval != nil && approval() {
 			pn.Propose = true
@@ -71,6 +83,9 @@ func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Sto
 		res, err := svc.Dispatch(ctx, lbsvc.PaneActor(pn), &pn, method, params)
 		if err == nil && wrote != nil && (method == "logbook.write" || method == "logbook.resolve") {
 			wrote(pane)
+		}
+		if w, ok := res.(api.LogbookWritten); err == nil && ok && guide != nil {
+			eng.noted(ctx, *guide, w)
 		}
 		return res, nil, err
 	}
