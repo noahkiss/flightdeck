@@ -132,6 +132,11 @@ var Methods = []Method{
 	{"capcom.detach", "Remove one item from the context waiting for a Capcom session's next message, and return what still waits; an item that does not wait answers not_found (capcom.md 8.4). Needs the capcom capability.", CapcomDetachParams{}, CapcomAttached{}},
 	{"capcom.pending", "Read the context waiting for a Capcom session's next message, in delivery order. Read-only: it starts, resumes and changes nothing (capcom.md 8.4). Needs the capcom capability.", CapcomPendingParams{}, CapcomAttached{}},
 	{"capcom.assign", "Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.", CapcomAssignParams{}, CapcomAssigned{}},
+	{"capcom.thread.page", "A page of the Capcom thread, newest first, folded: at most 200 items (capcom-service.md 7.4). Needs the capcom-thread capability.", CapcomThreadPageParams{}, CapcomThreadPage{}},
+	{"capcom.interrupt", "Stop the Capcom engine's current turn; messages it has not taken wait for the next turn. unavailable when the engine lacks interrupt or none is connected (capcom-service.md 7.4). Needs the capcom-thread capability.", CapcomServiceParams{}, Empty{}},
+	{"capcom.status", "The Capcom service on this hab: the engine job's state, the engine, and the SDK sessions with the engine's folder (capcom-service.md 3.4, 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
+	{"capcom.pause", "Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
+	{"capcom.resume", "Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.", CapcomServiceParams{}, CapcomServiceStatus{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
 	{"transcript.list", "Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.", TranscriptListParams{}, TranscriptSessions{}},
 	{"transcript.search", "Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.", TranscriptSearchParams{}, TranscriptHits{}},
@@ -205,6 +210,8 @@ var Events = []EventDef{
 	{"hab.woke", "The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.", HabWoke{}},
 	{"logbook.updated", "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.", LogbookUpdated{}},
 	{"logbook.conflict", "A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.", LogbookConflict{}},
+	{"capcom.item", "A Capcom thread item was added or changed: a message, a read mark, a card's answer, a tool call on a turn's line; the id is the item id (capcom-service.md 7.4). Host scope only. Ephemeral: clients read the thread with capcom.thread.page.", CapcomItem{}},
+	{"capcom.typing", "Capcom's typing mark changed; the id is the service session id (capcom-service.md 7.3). Host scope only. Ephemeral.", CapcomTyping{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }
 
@@ -297,6 +304,9 @@ var Enums = map[string][]string{
 	"LogbookDecision": {"approve", "reject"},
 	// Sets added for the heavy-run lock (groups.md 8.1).
 	"HeavyState": {"holding", "waiting"},
+	// Sets added for the Capcom thread (capcom-service.md 7.2); open, sent by the server.
+	"CapcomItemKind":   {"message", "tools", "agent", "round", "card", "note", "divider"},
+	"CapcomAuthorKind": {"user", "capcom", "agent", "flightdeck"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -344,5 +354,9 @@ var Translators = map[int]Translator{}
 // carries Session.round (rounds.md 13). "heavy" means heavy.take, heavy.release and
 // heavy.status work, and the catalog carries the heavy section (groups.md 8). "round-lock"
 // means the hab delivers a channel message with the round mark under the round lock and
-// expires it at its deadline; its catalog lists the word too (rounds.md 5.2).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock"}
+// expires it at its deadline; its catalog lists the word too (rounds.md 5.2). "capcom-thread"
+// means this hab runs the Capcom service: the capcom.thread.page, capcom.interrupt,
+// capcom.status, capcom.pause and capcom.resume methods and the capcom.item and capcom.typing
+// events work, and session.send to the service session goes to the thread
+// (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread"}

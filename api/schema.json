@@ -38,7 +38,8 @@
     "capcom",
     "rounds",
     "heavy",
-    "round-lock"
+    "round-lock",
+    "capcom-thread"
   ],
   "methods": [
     {
@@ -2422,6 +2423,97 @@
       }
     },
     {
+      "name": "capcom.thread.page",
+      "summary": "A page of the Capcom thread, newest first, folded: at most 200 items (capcom-service.md 7.4). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "before",
+          "description": "An item id: items older than it. Absent: the newest.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "At most this many, and never more than 200. 0: 200.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomThreadPage"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomThreadPageParams"
+      }
+    },
+    {
+      "name": "capcom.interrupt",
+      "summary": "Stop the Capcom engine's current turn; messages it has not taken wait for the next turn. unavailable when the engine lacks interrupt or none is connected (capcom-service.md 7.4). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.status",
+      "summary": "The Capcom service on this hab: the engine job's state, the engine, and the SDK sessions with the engine's folder (capcom-service.md 3.4, 11). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.pause",
+      "summary": "Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.resume",
+      "summary": "Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
       "name": "worktree.remove",
       "summary": "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).",
       "paramStructure": "by-name",
@@ -3960,6 +4052,20 @@
       }
     },
     {
+      "type": "capcom.item",
+      "summary": "A Capcom thread item was added or changed: a message, a read mark, a card's answer, a tool call on a turn's line; the id is the item id (capcom-service.md 7.4). Host scope only. Ephemeral: clients read the thread with capcom.thread.page.",
+      "data": {
+        "$ref": "#/components/schemas/CapcomItem"
+      }
+    },
+    {
+      "type": "capcom.typing",
+      "summary": "Capcom's typing mark changed; the id is the service session id (capcom-service.md 7.3). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/CapcomTyping"
+      }
+    },
+    {
       "type": "mesh.changed",
       "summary": "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.",
       "data": {
@@ -4358,6 +4464,27 @@
           "trust"
         ]
       },
+      "CapcomAnswer": {
+        "type": "object",
+        "properties": {
+          "by": {
+            "type": "string",
+            "description": "The device that answered."
+          },
+          "choice": {
+            "type": "string",
+            "description": "One of the card's choices, or expired."
+          },
+          "time": {
+            "type": "string",
+            "description": "RFC 3339."
+          }
+        },
+        "required": [
+          "choice",
+          "time"
+        ]
+      },
       "CapcomAssignParams": {
         "type": "object",
         "properties": {
@@ -4447,6 +4574,57 @@
           "pending"
         ]
       },
+      "CapcomAuthor": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "agent: the sender's channel address."
+          },
+          "device": {
+            "type": "string",
+            "description": "user: the device id that sent it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CapcomAuthorKind"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "CapcomAuthorKind": {
+        "type": "string",
+        "x-known-values": [
+          "user",
+          "capcom",
+          "agent",
+          "flightdeck"
+        ]
+      },
+      "CapcomCard": {
+        "type": "object",
+        "properties": {
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ref": {
+            "type": "string",
+            "description": "approval: the request id, as approval.answer takes it."
+          },
+          "type": {
+            "type": "string",
+            "description": "approval, confirmation, handoff, calendar, reminder or proposal."
+          }
+        },
+        "required": [
+          "type",
+          "choices"
+        ]
+      },
       "CapcomContextItem": {
         "type": "object",
         "properties": {
@@ -4528,6 +4706,88 @@
           "ref"
         ]
       },
+      "CapcomItem": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/CapcomAnswer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/CapcomAuthor"
+          },
+          "card": {
+            "$ref": "#/components/schemas/CapcomCard"
+          },
+          "context": {
+            "type": "array",
+            "description": "The attached context that went with a user message.",
+            "items": {
+              "$ref": "#/components/schemas/CapcomContextItem"
+            }
+          },
+          "event": {
+            "type": "boolean",
+            "description": "Written in an event turn: the app marks it wrote first."
+          },
+          "id": {
+            "type": "string",
+            "description": "Time ordered: a later item has a greater id."
+          },
+          "images": {
+            "type": "array",
+            "description": "Paths on the home hab.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CapcomItemKind"
+          },
+          "read": {
+            "type": "string",
+            "description": "user message: when the engine took it (RFC 3339). Absent: delivered, not read yet."
+          },
+          "summary": {
+            "type": "string",
+            "description": "divider: the summary the fresh SDK session opened with."
+          },
+          "text": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "tools": {
+            "type": "array",
+            "description": "tools: each call of the turn, in order.",
+            "items": {
+              "$ref": "#/components/schemas/CapcomToolCall"
+            }
+          },
+          "turn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "time",
+          "author"
+        ]
+      },
+      "CapcomItemKind": {
+        "type": "string",
+        "x-known-values": [
+          "message",
+          "tools",
+          "agent",
+          "round",
+          "card",
+          "note",
+          "divider"
+        ]
+      },
       "CapcomOpenParams": {
         "type": "object",
         "properties": {
@@ -4591,6 +4851,150 @@
         },
         "required": [
           "session"
+        ]
+      },
+      "CapcomSDKSession": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "type": "string",
+            "description": "RFC 3339. Absent: the current session."
+          },
+          "id": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "why": {
+            "type": "string",
+            "description": "first, restart, reseed or new."
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "why"
+        ]
+      },
+      "CapcomServiceParams": {
+        "type": "object"
+      },
+      "CapcomServiceStatus": {
+        "type": "object",
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "engine": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string",
+            "description": "The engine's folder: a plain terminal resumes its SDK sessions from here."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sdk_sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapcomSDKSession"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The service session's id."
+          },
+          "state": {
+            "type": "string",
+            "description": "off, running, paused or error."
+          },
+          "turn": {
+            "type": "string",
+            "description": "The running turn. Absent: idle."
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "connected",
+          "folder",
+          "sdk_sessions"
+        ]
+      },
+      "CapcomThreadPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapcomItem"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "Older items remain."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "items",
+          "more"
+        ]
+      },
+      "CapcomThreadPageParams": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "string",
+            "description": "An item id: items older than it. Absent: the newest."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most this many, and never more than 200. 0: 200."
+          }
+        }
+      },
+      "CapcomToolCall": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "summary"
+        ]
+      },
+      "CapcomTyping": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
         ]
       },
       "Catalog": {
