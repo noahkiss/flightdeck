@@ -620,7 +620,8 @@ func (a engineAgents) SendsContext(session string, keyed bool) bool {
 
 // engineJob picks the engine job for the init system (3.2): a transient unit of its own under
 // systemd, so a restart of gff-hab's unit never ends it; a plain process in its own process
-// group otherwise, which launchd's logic job leaves running.
+// group otherwise, which launchd's logic job leaves running (checked on macOS 27: a child in its
+// own process group outlives launchctl kickstart -k and bootout of the job that started it).
 func engineJob(sf *serviceFlags, state string) capcomengine.Job {
 	if *sf.init != string(service.Systemd) {
 		return nil
@@ -632,6 +633,47 @@ func engineJob(sf *serviceFlags, state string) capcomengine.Job {
 	if prefix == "" {
 		prefix = service.DefaultPrefix
 	}
+	return engineJobFor(service.Systemd, prefix, state)
+}
+
+// engineJobFor is the engine job of an install: init system, job prefix, state directory.
+func engineJobFor(in service.Init, prefix, state string) capcomengine.Job {
+	if in != service.Systemd {
+		return capcomengine.ProcessJob{PidFile: filepath.Join(state, capcomFolders, capcomengine.PidFile)}
+	}
 	return capcomengine.SystemdJob{Unit: prefix + "-gff-hab-capcom.service", EnvFile: filepath.Join(state, capcomFolders, capcomengine.EnvFile),
 		Keep: []string{"PATH", "HOME", "LANG", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"}}
+}
+
+// stopEngine ends the Capcom engine an install's gff-hab started, once the logic job is gone
+// (gff-hab uninstall): the engine outlives gff-hab by design (3.2), so nothing else would. A
+// plain process is ended only when its command line is the engine's, so a pid reused since the
+// pid file was written is left alone.
+func stopEngine(ctx context.Context, in service.Init, prefix, state string, out io.Writer) {
+	p, ok := engineJobFor(in, prefix, state).Adopt(ctx)
+	if !ok {
+		return
+	}
+	if in != service.Systemd && !engineCommand(p.Pid()) {
+		return
+	}
+	if err := p.Stop(10 * time.Second); err != nil {
+		fmt.Fprintf(out, "the Capcom engine (pid %d) did not stop: %v\n", p.Pid(), err)
+		return
+	}
+	fmt.Fprintf(out, "stopped the Capcom engine (pid %d)\n", p.Pid())
+}
+
+// engineCommand reports whether pid's command line names the Capcom engine: its file under
+// capcom-engine/ or libexec/capcom/, or $GFF_HAB_CAPCOM_ENGINE.
+func engineCommand(pid int) bool {
+	b, err := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	cmd := string(b)
+	if v := os.Getenv("GFF_HAB_CAPCOM_ENGINE"); v != "" && strings.Contains(cmd, v) {
+		return true
+	}
+	return strings.Contains(cmd, "capcom-engine") || strings.Contains(cmd, "/capcom/")
 }

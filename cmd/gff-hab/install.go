@@ -267,7 +267,12 @@ func uninstall(args []string, stdin io.Reader, stdout io.Writer) error {
 		a := strings.ToLower(strings.TrimSpace(line))
 		return a == "y" || a == "yes"
 	}
-	return service.Uninstall(context.Background(), c, service.Options{Out: stdout, Confirm: confirm})
+	ctx := context.Background()
+	if err := service.Uninstall(ctx, c, service.Options{Out: stdout, Confirm: confirm}); err != nil {
+		return err
+	}
+	stopEngine(ctx, c.Init, c.Prefix, c.StateDir, stdout)
+	return nil
 }
 
 func installConfig(sf *serviceFlags) (service.Config, error) {
