@@ -177,6 +177,10 @@ func whereOf(store *structure.Store, pane, session string) push.Where {
 				break
 			}
 		}
+		if !found {
+			// A route with no pane: the Capcom service's engine route (capcom-service.md 5.3).
+			ss, found = store.SessionByPane(pane)
+		}
 	} else {
 		ss, found = store.Session(session)
 	}

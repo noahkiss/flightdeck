@@ -943,7 +943,7 @@ func serve(args []string) error {
 		if svcCfg, _, _ := capcom.LoadServiceConfig(cpath); svcCfg.Engine != capcom.EngineNone {
 			eng, err := newCapcomEngine(capcomEngineSetup{
 				state: dir, configPath: cpath, exe: exe, hookSocket: hpath, device: key.Fingerprint(),
-				installed: *sf.init != "" && *sf.init != "none", job: engineJob(sf, dir), store: store, svc: capcomSvc,
+				installed: *sf.init != "" && *sf.init != "none", job: engineJob(sf, dir), store: store, agents: agents, svc: capcomSvc,
 				approval: func() time.Duration {
 					if v := setRef.Load(); v != nil {
 						var m int
@@ -991,6 +991,7 @@ func serve(args []string) error {
 				agentCalls = engineAgents{Agents: agentCalls, eng: eng}
 			}
 			capcomThreadCtl = eng
+			chat = engineChat{next: chat, eng: eng} // chat.page of the service session reads the thread (7.4)
 			caps = append(caps, capcom.ServiceCapability)
 		}
 		if agentCalls != nil {
