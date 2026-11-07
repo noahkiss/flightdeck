@@ -52,21 +52,26 @@ func (s *Service) Hold(ctx context.Context, sessionID string) (release func(), e
 }
 
 // Move gives every message that waits for the session with id from to the session with id to,
-// which now holds the name the messages were sent to; their order stays. It returns how many
-// moved. The caller holds from (Hold), so none is in a delivery attempt.
+// which now holds the name the messages were sent to; their order stays, after what waits for
+// to already (its seed). It returns how many moved. The caller holds from (Hold), so none is in
+// a delivery attempt.
 func (s *Service) Move(from, to string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n := 0
+	var kept, moved []*inItem
 	for _, it := range s.st.Inbox {
 		if it.SessionID == from && !it.busy {
 			it.SessionID = to
-			n++
+			moved = append(moved, it)
+		} else {
+			kept = append(kept, it)
 		}
 	}
+	n := len(moved)
 	if n == 0 {
 		return 0, nil
 	}
+	s.st.Inbox = append(kept, moved...)
 	if err := s.commitLocked(); err != nil {
 		return 0, err
 	}
