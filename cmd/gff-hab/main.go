@@ -1800,7 +1800,7 @@ func serve(args []string) error {
 	}
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	if groupsSvc != nil {
-		hooks.SetGroups(groupHook(store, groupsSvc, func(pane string) bool {
+		hooks.SetGroups(groupHook(store, groupsSvc, folders.folderOf, func(pane string) bool {
 			return capcomEng != nil && pane == capcomRoute && capcomEng.eventTurn()
 		}))
 	}

@@ -31,6 +31,11 @@ type Groups interface {
 	// hello (CallerPeer).
 	MemberAction(ctx context.Context, kind api.MemberActionKind, p api.MemberActionParams) (api.MemberAction, error)
 	MemberActionGet(ctx context.Context, id string) (api.MemberAction, error)
+	// Submit, Verdict and Message come with stage B7 (groups.md 6): each answers a peer hab
+	// only. A lead's and a reviewer's calls come through their panes.
+	Submit(ctx context.Context, p api.LaneSubmitParams) (api.LaneSubmitted, error)
+	Verdict(ctx context.Context, p api.ReviewVerdictParams) (api.ReviewVerdictTaken, error)
+	Message(ctx context.Context, p api.GroupMessageParams) error
 }
 
 // maxGroupTime bounds one group call: a create waits up to 120 s for its confirmation, and a
@@ -114,6 +119,21 @@ func (c *conn) handleGroups(m message) {
 				return api.MemberActionResult{Action: a}, err
 			}
 		}
+	case "lane.submit":
+		var p api.LaneSubmitParams
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(ctx context.Context) (any, error) { return gs.Submit(ctx, p) }
+		}
+	case "review.verdict":
+		var p api.ReviewVerdictParams
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(ctx context.Context) (any, error) { return gs.Verdict(ctx, p) }
+		}
+	case "group.message":
+		var p api.GroupMessageParams
+		if e = c.decodeUp(m, &p); e == nil {
+			call = func(ctx context.Context) (any, error) { return api.Empty{}, gs.Message(ctx, p) }
+		}
 	default:
 		e = appErr(api.ErrorKindNotFound, "no method %s", m.Method)
 	}
@@ -121,11 +141,14 @@ func (c *conn) handleGroups(m message) {
 		c.reply(m, seq, nil, e)
 		return
 	}
+	peer := c.peer
 	go func() {
 		ctx, cancel := context.WithTimeout(c.ctx, maxGroupTime)
 		defer cancel()
-		if c.peer != nil {
-			ctx = WithCallerPeer(ctx, *c.peer) // a sibling action forwarded by the asker's hab
+		if peer != nil {
+			// The service answers a peer's forward and never forwards it again; the lane and
+			// review calls are taken from the member's hab only (groups.md 5.5, 6).
+			ctx = WithCallerPeer(ctx, *peer)
 		}
 		res, err := call(ctx)
 		seq := c.currentSeq() // after the call: the events it caused come before its answer
@@ -159,10 +182,16 @@ func withSeq(res any, seq uint64) any {
 	case api.Empty:
 		r.Seq = s
 		return r
+	case api.LaneSubmitted:
+		r.Seq = s
+		return r
+	case api.ReviewVerdictTaken:
+		r.Seq = s
+		return r
 	}
 	return res
 }
 
 func isGroupMethod(m string) bool {
-	return strings.HasPrefix(m, "group.") || strings.HasPrefix(m, "member.")
+	return strings.HasPrefix(m, "group.") || strings.HasPrefix(m, "member.") || m == "lane.submit" || m == "review.verdict"
 }
