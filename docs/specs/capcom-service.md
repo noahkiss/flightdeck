@@ -1220,9 +1220,11 @@ first consumer.
   restart keeps them.
 - **Unpaced.** With no weekly window (no reading yet, or an API key with no `daily_usd`) Capcom
   is listed with basis `none` and every pace is `ok`; its tokens are counted.
-- **The engine.** It keeps the newest `pace`; with none, every turn runs. Before a new turn: at
-  `ok` the main model, at `small` the small model (`small_model`, else the alias `haiku`), set
-  with the SDK's `setModel`; at `wait` the items stay with the engine, untaken, until a new
+- **The engine.** Both engines apply the same rules (`contract.ts`: `admit`, `mayHand`). The
+  engine keeps the newest `pace`; with none, every turn runs. Before a new turn: at `ok` the main
+  model, at `small` the small model. Claude takes `small_model`, else the alias `haiku`, through
+  the SDK's `setModel`. Codex takes `small_model`, else the main model, by resuming the same
+  thread on it. At `wait` the items stay with the engine, untaken, until a new
   `pace`. Event batches, agent reports and round messages (sent as `agent`) wait at the event
   step, since no user typed them; the item's kind still gives the turn's origin. An item that
   waits at the event step does not hold a user message after it: the user turn takes both. Input

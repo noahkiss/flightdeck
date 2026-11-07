@@ -14,17 +14,22 @@ import type { CodexOptions, Input, ThreadEvent, ThreadItem, ThreadOptions, TurnO
 import { ENGINE_TOKEN_VAR, engineToken, parseHabAddr } from './addr.js';
 import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
 import {
+  admit,
   ContextAsks,
   type ContextMsg,
   type Credential,
   defaultSettings,
+  handCount,
   helloReseed,
   type Item,
   itemLines,
   newTurnId,
   originOf,
+  type Pace,
+  PACE_OK,
   parseContext,
   parseCredential,
+  parsePace,
   parseSettings,
   redactor,
   type Settings,
@@ -107,6 +112,9 @@ export class CodexEngine {
 
   private gen = 0;
   private thread?: CodexThreadLike;
+  private client?: CodexLike; // the session's Codex, which resumes the thread on another model
+  private threadModel = ''; // the model the thread runs on
+  private pace: Pace = PACE_OK; // the governor's answer (10.1)
   private sessionId = '';
   private sessionWhy = 'first';
   private rollout?: string;
@@ -206,9 +214,12 @@ export class CodexEngine {
       case 'context':
         this.onContext(m);
         break;
+      case 'pace':
+        this.pace = parsePace(m);
+        this.pump();
+        break;
       default:
-        // approval.answer: the engine opens no card. pace: the governor's stage. Unknown
-        // types are acked and ignored.
+        // approval.answer: the engine opens no card. Unknown types are acked and ignored.
         break;
     }
   }
@@ -221,14 +232,29 @@ export class CodexEngine {
     this.pump();
   }
 
-  // pump runs the next turn when the engine is idle: every item that waits goes into it, in
-  // arrival order. Codex takes no input during a turn; gff-hab holds new items until the turn
-  // ends (4.1), and any that arrive anyway wait here.
+  // pump runs the next turn when the engine is idle: the items that wait go into it, in
+  // arrival order, as the governor's pace lets them (10.1): none at wait, on the small model at
+  // small, and while user turns wait only up to the last send-now item. Codex takes no input
+  // during a turn; gff-hab holds new items until the turn ends (4.1), and any that arrive anyway
+  // wait here.
   private pump(): void {
     if (!this.ready || this.turn || this.reseedPending || this.reseeding || this.shuttingDown || this.exiting) return;
-    const items = this.pending.filter((i) => !this.handed.has(i.id));
-    this.pending = [];
-    if (items.length) void this.runTurn(items);
+    this.pending = this.pending.filter((i) => !this.handed.has(i.id));
+    const a = admit(this.pending, this.pace);
+    if (!a) return;
+    const items = this.pending.splice(0, handCount(this.pending, this.pace));
+    if (items.length) void this.runTurn(items, a.origin, a.small);
+  }
+
+  // useModel puts the thread on the turn's model: the same thread, resumed by id on the other
+  // model, or a thread that has not run yet started again on it.
+  private useModel(small: boolean): void {
+    const main = this.settings.model ?? CODEX_DEFAULT_MODEL;
+    const want = small ? (this.settings.small_model ?? main) : main;
+    if (want === this.threadModel || !this.client) return;
+    const id = this.thread?.id;
+    this.thread = id ? this.client.resumeThread(id, this.threadOptions(want)) : this.client.startThread(this.threadOptions(want));
+    this.threadModel = want;
   }
 
   private interrupt(): void {
@@ -450,6 +476,8 @@ export class CodexEngine {
       this.rollout = file;
       this.resumeUnproven = true;
       this.thread = codex.resumeThread(resume, this.threadOptions());
+      this.client = codex;
+      this.threadModel = this.settings.model ?? CODEX_DEFAULT_MODEL;
       this.sessionId = resume;
       this.sessionWhy = 'restart';
       this.seed = '';
@@ -459,6 +487,8 @@ export class CodexEngine {
       // once with no id: gff-hab ends the old session and adds the divider; the id follows at the
       // first turn (4.4).
       this.thread = codex.startThread(this.threadOptions());
+      this.client = codex;
+      this.threadModel = this.settings.model ?? CODEX_DEFAULT_MODEL;
       this.resumeUnproven = false;
       this.sessionId = '';
       this.sessionWhy = why;
@@ -493,12 +523,13 @@ export class CodexEngine {
     return images.length ? [{ type: 'text', text }, ...images] : text;
   }
 
-  private async runTurn(items: Item[]): Promise<void> {
+  private async runTurn(items: Item[], origin: 'user' | 'event' = originOf(items[0]!), small = false): Promise<void> {
+    this.useModel(small);
     const thread = this.thread!;
     for (const it of items) this.handed.add(it.id);
     const t: Turn = {
       id: newTurnId(),
-      origin: originOf(items[0]!),
+      origin,
       items: items.map((i) => i.id),
       part: 0,
       interrupted: false,
