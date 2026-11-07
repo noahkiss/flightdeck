@@ -1531,7 +1531,8 @@ changed`), then each online host whose build is superseded:
   as superseded until `gff-hab install` runs again.
 - **Holder.** A pane whose `holder_build` differs from its hab's welcome `build` runs on a holder
   gff-hab drains (`hab-holder.md` 4.3). One line per hab counts them: `two holder build
-  superseded: 2 panes`. It goes once those panes end.
+  superseded: 2 panes`. A pane whose session exited is not counted, so the line goes once those
+  programs end.
 
 **Usage row.** On by default (`[bar] usage = false` turns it off), under the tab bar, when the
 host has 8 rows or more. Readings come from `usage.list` when a host comes online and from
@@ -1571,7 +1572,7 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
 | `TestStatsRefreshRules` | No reading while the bars are hidden; at most one every 2 s; one at a time |
 | `TestUsageRowHeight` | The usage row shows from 8 rows |
 | `TestTabBarWarningsAndClock` | The warnings count (`1 warning`, `2 warnings`) and a configured clock layout |
-| `TestHostWarningsSuperseded` | A hab older than gff or than another online hab, a pre-release, dev builds and habs with no version never compared, an offline hab never raising the newest, panes on a holder of another build counted per hab |
+| `TestHostWarningsSuperseded` | A hab older than gff or than another online hab, a pre-release, dev builds and habs with no version never compared, an offline hab never raising the newest, panes on a holder of another build counted per hab, an exited session's pane not counted |
 | `TestInfoOfflineAndWidth` | An offline host's figures are labelled, dimmed and aged; the info takes at most half the row |
 | `TestStatsHost` | Over a fake hab: the figures' host is the focused pane's hab when it lists `host-stats`, else this machine |
 | `TestDiskFigures`, `TestInfoHidesUnknown` | Disk as df counts it; an absent CPU figure hides |

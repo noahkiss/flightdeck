@@ -283,6 +283,12 @@ func TestHostWarningsSuperseded(t *testing.T) {
 			[]string{"gone offline 2m"}},
 		{"holders", []hosts.Host{host("one", "1.2.0", "b1", "b0", "b1", "b0"), host("two", "1.2.0", "b1", "b0")}, "",
 			[]string{"one holder build superseded: 2 panes", "two holder build superseded: 1 pane"}},
+		{"exited sessions not counted", []hosts.Host{func() hosts.Host {
+			h := host("one", "", "b1", "b0", "b0")
+			h.Structure.Panes[0].Session, h.Structure.Panes[1].Session = "s1", "s2"
+			h.Structure.Sessions = []api.Session{{ID: "s1", State: api.SessionStateExited}, {ID: "s2", State: api.SessionStateRunning}}
+			return h
+		}()}, "", []string{"one holder build superseded: 1 pane"}},
 		{"empty builds", []hosts.Host{host("one", "", "", "b0"), host("two", "", "b1", "")}, "", nil},
 	} {
 		if got := hostWarnings(c.hs, c.own, now); !slices.Equal(got, c.want) {

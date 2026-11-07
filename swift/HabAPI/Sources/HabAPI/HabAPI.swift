@@ -7878,7 +7878,7 @@ public struct Welcome: Codable, Sendable, Hashable {
     public var seq: UInt64
     /// The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab.
     public var time: String?
-    /// gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.1). Optional, so a newer client accepts a welcome from an older revision 1 hab.
+    /// gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.3). Optional, so a newer client accepts a welcome from an older revision 1 hab.
     public var version: String?
 
     enum CodingKeys: String, CodingKey {
