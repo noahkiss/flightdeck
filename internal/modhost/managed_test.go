@@ -19,9 +19,25 @@ type fakeRunner struct {
 	errs   []error
 	calls  int
 	closed bool
+	// entered, when set, gets a send as each call starts; gate, when set, then holds the call
+	// until the test sends on it.
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (f *fakeRunner) queue(errs ...error) {
+	f.mu.Lock()
+	f.errs = append(f.errs, errs...)
+	f.mu.Unlock()
 }
 
 func (f *fakeRunner) next() error {
+	if f.entered != nil {
+		f.entered <- struct{}{}
+	}
+	if f.gate != nil {
+		<-f.gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -43,10 +59,22 @@ func (f *fakeRunner) Render(_ context.Context, c Call) ([]byte, error) {
 	if err := f.next(); err != nil {
 		return nil, err
 	}
-	return []byte(fmt.Sprintf(`{"type":"text","text":%q}`, c.Place)), nil
+	f.mu.Lock()
+	n := f.calls
+	f.mu.Unlock()
+	return []byte(fmt.Sprintf(`{"type":"text","text":"%s %d"}`, c.Place, n)), nil
 }
 func (f *fakeRunner) Act(context.Context, string, json.RawMessage, Call) error { return f.next() }
-func (f *fakeRunner) Close()                                                   { f.closed = true }
+func (f *fakeRunner) Close() {
+	f.mu.Lock()
+	f.closed = true
+	f.mu.Unlock()
+}
+func (f *fakeRunner) isClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
 
 // fakeLoader hands out fakeRunners, each with the errors queued for it, and records each load.
 type fakeLoader struct {
@@ -136,7 +164,7 @@ func TestManagedPause(t *testing.T) {
 		t.Errorf("a paused module ran %d calls", r.calls-calls)
 	}
 	m.Retry()
-	if s := m.Status(); s.Paused || s.Failures != 0 {
+	if s := m.Status(); s.Paused || s.Failures != 0 || s.Err != nil {
 		t.Fatalf("status after Retry = %+v", s)
 	}
 	if got, err := m.Render(ctx, boardCall); err != nil || got.Revision != 3 {
@@ -177,6 +205,7 @@ func TestManagedWhatCounts(t *testing.T) {
 		{"timeout", ctx, "refresh", &TimeoutError{Func: "refresh"}, true, false},
 		{"stuck after cancel", cancelled, "render", &TimeoutError{Func: "render", Stuck: true}, true, true},
 		{"memory", ctx, "refresh", &MemoryError{Func: "refresh"}, true, true},
+		{"memory after cancel", cancelled, "render", &MemoryError{Func: "render"}, true, true},
 		{"internal", ctx, "render", &InternalError{Func: "render"}, true, true},
 		{"stopped", ctx, "render", ErrStopped, true, true},
 		{"act script", ctx, "act", &ScriptError{Func: "act"}, false, false},
@@ -206,8 +235,8 @@ func TestManagedWhatCounts(t *testing.T) {
 			if n := m.Status().Failures; (n == 1) != tc.count {
 				t.Errorf("failures = %d, count = %v", n, tc.count)
 			}
-			if first.closed != tc.stops {
-				t.Errorf("closed = %v, want %v", first.closed, tc.stops)
+			if first.isClosed() != tc.stops {
+				t.Errorf("closed = %v, want %v", first.isClosed(), tc.stops)
 			}
 			// The next call runs on the same runner, or on a new one after a stop.
 			if _, err := m.Render(ctx, boardCall); err != nil {
@@ -334,7 +363,7 @@ func TestManagedReload(t *testing.T) {
 	if _, err := m.Render(ctx, boardCall); err != nil {
 		t.Fatal(err)
 	}
-	if !first.closed {
+	if !first.isClosed() {
 		t.Error("the old runner was not closed")
 	}
 	m.Close()
@@ -343,11 +372,138 @@ func TestManagedReload(t *testing.T) {
 	}
 }
 
+// TestManagedChangedCallsBack: Changed runs after the call's lock is released, so it may call
+// the Managed again (a redraw that renders), on a success and on a counted failure.
+func TestManagedChangedCallsBack(t *testing.T) {
+	ctx := context.Background()
+	r := &fakeRunner{}
+	var m *Managed
+	inner := 0
+	m = NewManaged((&fakeLoader{runners: []*fakeRunner{r}}).load, ManagedOptions{Changed: func() {
+		inner++
+		_ = m.Status()
+		_, _ = m.Tree(boardCall)
+		_ = m.Act(ctx, "x", nil, boardCall) // a good act changes nothing, so no Changed
+	}})
+	defer m.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = m.Render(ctx, boardCall) // good tree: Changed
+		r.queue(scriptErr("a"))
+		_ = m.Refresh(ctx, boardCall)   // a counted failure: Changed
+		_, _ = m.Render(ctx, boardCall) // the reset: Changed
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Changed calling back into the Managed deadlocked")
+	}
+	if inner < 3 {
+		t.Errorf("Changed ran %d times, want 3 or more", inner)
+	}
+}
+
+// TestManagedRenderOrder: concurrent renders store their trees in call order, so a higher
+// revision always holds a later render.
+func TestManagedRenderOrder(t *testing.T) {
+	ctx := context.Background()
+	m := NewManaged((&fakeLoader{}).load, ManagedOptions{})
+	defer m.Close()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	got := map[uint64]string{}
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tr, err := m.Render(ctx, boardCall)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			mu.Lock()
+			got[tr.Revision] = string(tr.JSON)
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	last, _ := m.Tree(boardCall)
+	if last.Revision != 50 || string(last.JSON) != `{"type":"text","text":"board 50"}` {
+		t.Fatalf("last tree = rev %d %s, want rev 50 from the 50th render", last.Revision, last.JSON)
+	}
+	for rev, j := range got {
+		if want := fmt.Sprintf(`{"type":"text","text":"board %d"}`, rev); j != want {
+			t.Errorf("rev %d holds %s", rev, j)
+		}
+	}
+}
+
+// TestManagedReloadDuringCall: a call of the old version that ends after Reload counts nothing
+// and keeps no tree, and the next call loads the new version.
+func TestManagedReloadDuringCall(t *testing.T) {
+	ctx := context.Background()
+	old := &fakeRunner{gate: make(chan struct{})}
+	fresh := &fakeRunner{}
+	m := NewManaged((&fakeLoader{runners: []*fakeRunner{old, fresh}}).load, ManagedOptions{PauseAfter: 1})
+	defer m.Close()
+	old.entered = make(chan struct{})
+	inFlight := func(f func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { defer close(done); f() }()
+		<-old.entered
+		m.Reload()
+		old.gate <- struct{}{}
+		<-done
+	}
+	// A good render first, so there is a tree to keep.
+	go func() { <-old.entered; old.gate <- struct{}{} }()
+	first, err := m.Render(ctx, boardCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A failing render in flight across Reload: no count, no pause (PauseAfter is 1).
+	old.queue(scriptErr("old"))
+	inFlight(func() { _, _ = m.Render(ctx, boardCall) })
+	if s := m.Status(); s.Failures != 0 || s.Paused || s.Err != nil {
+		t.Fatalf("after the old version's failure: %+v", s)
+	}
+	// The next call runs the new version.
+	if tr, err := m.Render(ctx, boardCall); err != nil || tr.Revision != 2 {
+		t.Fatalf("render after Reload = %+v, %v", tr, err)
+	}
+	if !old.isClosed() || fresh.calls != 1 {
+		t.Fatalf("old closed %v, new calls %d", old.isClosed(), fresh.calls)
+	}
+	_ = first
+}
+
+// TestManagedReloadDuringGoodRender: a good render of the old version that ends after Reload
+// keeps no tree.
+func TestManagedReloadDuringGoodRender(t *testing.T) {
+	ctx := context.Background()
+	old := &fakeRunner{gate: make(chan struct{}), entered: make(chan struct{})}
+	m := NewManaged((&fakeLoader{runners: []*fakeRunner{old}}).load, ManagedOptions{})
+	defer m.Close()
+	done := make(chan Tree)
+	go func() { tr, _ := m.Render(ctx, boardCall); done <- tr }()
+	<-old.entered
+	m.Reload()
+	old.gate <- struct{}{}
+	if tr := <-done; tr.Revision != 0 {
+		t.Fatalf("the old version's render kept rev %d", tr.Revision)
+	}
+	if _, ok := m.Tree(boardCall); ok {
+		t.Fatal("the old version's tree was kept")
+	}
+}
+
 // TestManagedHostCrash: through the module host, a module that crashes it counts one failure
 // as the culprit, its neighbour counts none, and the next good render resets the count.
 func TestManagedHostCrash(t *testing.T) {
 	skipViaProcess(t, "drives its own host")
-	h := testHost(t, HostOptions{BackoffMin: 100 * time.Millisecond})
+	h := testHost(t, HostOptions{BackoffMin: 2 * time.Second})
 	managed := func(id, js string, o Options) *Managed {
 		b := writeBundle(t, id, "", js)
 		m := NewManaged(func(_ context.Context, log func(string)) (Runner, error) {
@@ -372,7 +528,9 @@ func TestManagedHostCrash(t *testing.T) {
 	if n := crasher.Status().Failures; n != 1 {
 		t.Fatalf("crasher failures = %d, want 1", n)
 	}
-	_, _ = other.Render(ctx, boardCall) // during the backoff: no culprit
+	if _, err := other.Render(ctx, boardCall); !errors.Is(err, ErrHostDown) {
+		t.Fatalf("bystander during the backoff = %v, want ErrHostDown", err)
+	}
 	if n := other.Status().Failures; n != 0 {
 		t.Fatalf("bystander failures = %d, want 0", n)
 	}
