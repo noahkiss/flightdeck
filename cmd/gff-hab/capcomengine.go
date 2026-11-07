@@ -21,6 +21,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/push"
+	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -63,6 +64,7 @@ type capcomEngineSetup struct {
 	hookSocket string
 	device     string
 	installed  bool
+	job        capcomengine.Job // nil: a plain process (ProcessJob)
 	store      *structure.Store
 	svc        *capcomService
 	approval   func() time.Duration
@@ -121,8 +123,12 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		OnTurnEnded: func(result string) { e.sup.TurnEnded(result) },
 		Logf:        s.logf,
 	})
+	job := s.job
+	if job == nil {
+		job = capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile)}
+	}
 	e.sup = capcomengine.NewSupervisor(capcomengine.SupervisorConfig{
-		Dir: dir, Job: capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile)},
+		Dir: dir, Job: job,
 		Link: e.link, Record: rec, Config: config, Getenv: os.Getenv, Installed: s.installed,
 		RouteAddr:  func(token string) string { return hook.Addr(s.hookSocket, token) },
 		EngineArgv: engineArgv(s.exe),
@@ -531,4 +537,22 @@ func (a engineAgents) Answer(ctx context.Context, client string, p api.ApprovalA
 func (a engineAgents) SendsContext(session string, keyed bool) bool {
 	cs, ok := a.Agents.(control.ContextSender)
 	return ok && cs.SendsContext(session, keyed)
+}
+
+// engineJob picks the engine job for the init system (3.2): a transient unit of its own under
+// systemd, so a restart of gff-hab's unit never ends it; a plain process in its own process
+// group otherwise, which launchd's logic job leaves running.
+func engineJob(sf *serviceFlags, state string) capcomengine.Job {
+	if *sf.init != string(service.Systemd) {
+		return nil
+	}
+	prefix := *sf.prefix
+	if prefix == "" {
+		prefix = os.Getenv("GFF_SERVICE_PREFIX")
+	}
+	if prefix == "" {
+		prefix = service.DefaultPrefix
+	}
+	return capcomengine.SystemdJob{Unit: prefix + "-gff-hab-capcom.service", EnvFile: filepath.Join(state, capcomFolders, capcomengine.EnvFile),
+		Keep: []string{"PATH", "HOME", "LANG", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME"}}
 }

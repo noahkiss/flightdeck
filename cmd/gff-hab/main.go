@@ -943,7 +943,7 @@ func serve(args []string) error {
 		if svcCfg, _, _ := capcom.LoadServiceConfig(cpath); svcCfg.Engine != capcom.EngineNone {
 			eng, err := newCapcomEngine(capcomEngineSetup{
 				state: dir, configPath: cpath, exe: exe, hookSocket: hpath, device: key.Fingerprint(),
-				installed: *sf.init != "" && *sf.init != "none", store: store, svc: capcomSvc,
+				installed: *sf.init != "" && *sf.init != "none", job: engineJob(sf, dir), store: store, svc: capcomSvc,
 				approval: func() time.Duration {
 					if v := setRef.Load(); v != nil {
 						var m int
