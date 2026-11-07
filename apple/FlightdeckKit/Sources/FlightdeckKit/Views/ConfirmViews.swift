@@ -135,17 +135,17 @@ struct ConfirmCardView: View {
         if let b = g.plan.brief, !b.isEmpty {
             longText(b, label: "Brief")
         }
-        ForEach(ConfirmCardContent.groupItems(g, home: card.habLabel), id: \.id) { item in
+        ForEach(Array(ConfirmCardContent.groupItems(g, home: card.habLabel).enumerated()), id: \.offset) { _, item in
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title.isEmpty ? item.id : "\(item.id): \(item.title)")
                     .font(.callout.weight(.medium))
                     .lineLimit(2)
-                ForEach(item.notes, id: \.self) { n in
+                ForEach(Array(item.notes.enumerated()), id: \.offset) { _, n in
                     Text(n)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(item.members, id: \.self) { m in
+                ForEach(Array(item.members.enumerated()), id: \.offset) { _, m in
                     Text(m)
                         .font(.caption)
                         .lineLimit(1)
@@ -160,7 +160,7 @@ struct ConfirmCardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        ForEach(g.warnings ?? [], id: \.self) { w in
+        ForEach(Array((g.warnings ?? []).enumerated()), id: \.offset) { _, w in
             Label(w, systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(.orange)
@@ -169,7 +169,7 @@ struct ConfirmCardView: View {
 
     private func factGrid(_ facts: [ConfirmCardContent.Fact]) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-            ForEach(facts, id: \.label) { f in row(f.label, f.value, mono: f.mono) }
+            ForEach(Array(facts.enumerated()), id: \.offset) { _, f in row(f.label, f.value, mono: f.mono) }
         }
         .font(.callout)
     }
