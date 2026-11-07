@@ -960,7 +960,8 @@ Decision 5: a card with one "Add" tap, never silent.
   `location` (`lat`, `lon`, `accuracy`, `time`, `place`, `country`), `calendar` (`time`, `from`,
   `to`, `events`), and `location_off` or `calendar_off` (`off`, `no_permission`). A field left
   out keeps the held value; an `_off` reason drops the value that device sent. Refused over a
-  peer link. Each value carries the client's hello label as its device name. `country` is the
+  peer link, and `unavailable` on a hab that does not hold the Capcom mark. The app sends it
+  only to the catalog's home host. Each value carries the client's hello label as its device name. `country` is the
   reverse geocoder's ISO code, because WeatherKit alerts need one; with none, `weather` leaves
   alerts out.
 - **The tool line.** gff-hab rewrites `device_location`'s line to the place the store holds, and
