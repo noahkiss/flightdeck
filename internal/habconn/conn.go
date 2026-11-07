@@ -284,8 +284,11 @@ func (c *Conn) waitOnline(ctx context.Context) (*control.Client, error) {
 
 // session is one control connection that came online.
 type session struct {
-	cl       *control.Client
-	lastRead *atomic.Int64 // unix nanos of the last byte read
+	cl *control.Client
+	// lastRead is when the last byte was read, as nanos since base. base carries a monotonic
+	// reading, so a wall-clock step never counts as silence.
+	lastRead *atomic.Int64
+	base     time.Time
 	notes    []control.Notification
 	floor    uint64 // the subscribe response's seq: events at or below it are in the snapshot
 	lastSeq  uint64 // the last event seq seen on this connection
@@ -316,9 +319,8 @@ func (c *Conn) open(ctx context.Context) (*session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("habconn: dial: %w", err)
 	}
-	s := &session{lastRead: &atomic.Int64{}, endpoint: endpoint}
-	s.lastRead.Store(time.Now().UnixNano())
-	cl := control.NewClient(&stampRW{ReadWriteCloser: rw, last: s.lastRead})
+	s := &session{lastRead: &atomic.Int64{}, base: time.Now(), endpoint: endpoint}
+	cl := control.NewClient(&stampRW{ReadWriteCloser: rw, last: s.lastRead, base: s.base})
 	s.cl = cl
 	// Close ends the dial too: the hello and subscribe calls fail when cl closes.
 	opened := make(chan struct{})
@@ -627,7 +629,7 @@ func (c *Conn) serve(s *session) error {
 				return err
 			}
 		case <-tick.C:
-			if time.Since(time.Unix(0, s.lastRead.Load())) > c.cfg.DeadAfter {
+			if time.Since(s.base)-time.Duration(s.lastRead.Load()) > c.cfg.DeadAfter {
 				return errDead
 			}
 		case <-c.closed:
@@ -672,10 +674,11 @@ func (c *Conn) note(s *session, n control.Notification) error {
 	return nil
 }
 
-// stampRW records when the last read returned bytes.
+// stampRW records when the last read returned bytes, as nanos since base.
 type stampRW struct {
 	io.ReadWriteCloser
 	last *atomic.Int64
+	base time.Time
 }
 
 // SetWriteDeadline passes a write deadline through when the stream takes one; otherwise the
@@ -690,7 +693,7 @@ func (s *stampRW) SetWriteDeadline(t time.Time) error {
 func (s *stampRW) Read(p []byte) (int, error) {
 	n, err := s.ReadWriteCloser.Read(p)
 	if n > 0 {
-		s.last.Store(time.Now().UnixNano())
+		s.last.Store(int64(time.Since(s.base)))
 	}
 	return n, err
 }
