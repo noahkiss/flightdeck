@@ -65,7 +65,7 @@ func TestNormalizeRefused(t *testing.T) {
 		{"at on cron", func(r *Round) { r.Trigger.At = &future }, "trigger", "once trigger only"},
 		{"cron on manual", func(r *Round) { r.Trigger = Trigger{Kind: TriggerManual, Cron: "* * * * *"} }, "trigger", "cron trigger only"},
 		{"event with no name", func(r *Round) { r.Trigger = Trigger{Kind: TriggerEvent} }, "trigger", "event: required"},
-		{"debounce on cron", func(r *Round) { r.Debounce = Duration(time.Minute) }, "debounce", "event triggers only"},
+		{"debounce on cron", func(r *Round) { r.Debounce = Duration(time.Minute) }, "debounce", "event and watch triggers only"},
 		{"debounce too short", func(r *Round) {
 			r.Trigger = Trigger{Kind: TriggerEvent, Event: EventHabWoke}
 			r.Debounce = Duration(time.Second)

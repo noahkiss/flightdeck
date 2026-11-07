@@ -43,6 +43,8 @@ type RoundState struct {
 	Pending *Pending `json:"pending,omitempty"`
 	// LastEventStart is when the last event run started: the cooldown counts from it.
 	LastEventStart *time.Time `json:"last_event_start,omitempty"`
+	// Watch is a watch round's cursor and dedup keys (rounds.md 4.4), saved as Pending is.
+	Watch *WatchState `json:"watch,omitempty"`
 }
 
 // TargetSeen is a target session's harness and native session id, as last seen live. Session
@@ -412,8 +414,11 @@ func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 		}
 		e.State.NextSlot = nextSlot(sched, now)
 		e.State.Completed, e.State.CompletedReason = false, ""
-		if r.Trigger.Kind != TriggerEvent {
+		if !r.Trigger.Kind.Batches() {
 			e.State.Pending, e.State.LastEventStart = nil, nil
+		}
+		if r.Trigger.Kind != TriggerWatch {
+			e.State.Watch = nil
 		}
 	}
 	if err := s.commitLocked(); err != nil {
@@ -444,11 +449,13 @@ func (s *Store) SetState(id string, fn func(*RoundState)) (Entry, error) {
 	return cloneEntry(s.st.Rounds[id]), nil
 }
 
-// SetPending saves the pending batches of several rounds in one write. A round that is gone is
-// left out; a nil or empty batch clears the round's.
-func (s *Store) SetPending(p map[string]*Pending) ([]Entry, error) {
+// SetPending saves the pending batches of several rounds, and the watcher states of watch
+// rounds, in one write. A round that is gone is left out; a nil or empty batch or state clears
+// the round's.
+func (s *Store) SetPending(p map[string]*Pending, w map[string]*WatchState) ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	seen := map[string]bool{}
 	var ids []string
 	for id, b := range p {
 		e := s.st.Rounds[id]
@@ -461,7 +468,22 @@ func (s *Store) SetPending(p map[string]*Pending) ([]Entry, error) {
 			c := clonePending(b)
 			e.State.Pending = &c
 		}
+		seen[id] = true
 		ids = append(ids, id)
+	}
+	for id, ws := range w {
+		e := s.st.Rounds[id]
+		if e == nil {
+			continue
+		}
+		if ws.empty() || e.Round.Trigger.Kind != TriggerWatch {
+			e.State.Watch = nil
+		} else {
+			e.State.Watch = cloneWatchState(ws)
+		}
+		if !seen[id] {
+			ids = append(ids, id)
+		}
 	}
 	if len(ids) == 0 {
 		return nil, nil

@@ -117,6 +117,9 @@ type Round struct {
 	// Debounce and Cooldown time an event round's batches (rounds.md 4.5); zero for others.
 	Debounce Duration `json:"debounce,omitempty"`
 	Cooldown Duration `json:"cooldown,omitempty"`
+	// Secrets names a secret set of the hab's config, for a watch round's watcher (rounds.md
+	// 4.4). Never a value.
+	Secrets string `json:"secrets,omitempty"`
 	// MaxRuns completes the round after this many finished runs; 0 is no limit.
 	MaxRuns   int        `json:"max_runs,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -185,6 +188,15 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 	}
 	if t.Kind != TriggerOnce && t.At != nil {
 		return fieldErr("trigger", "at is for a once trigger only")
+	}
+	if t.Kind != TriggerWatch && t.Watch != nil {
+		return fieldErr("trigger", "watch is for a watch trigger only")
+	}
+	if r.Secrets != "" && t.Kind != TriggerWatch {
+		return fieldErr("secrets", "for watch triggers only")
+	}
+	if r.Secrets != "" && !nameRE.MatchString(r.Secrets) || len(r.Secrets) > MaxNameLen {
+		return fieldErr("secrets", "a secret set's name is up to %d letters, digits, - and _", MaxNameLen)
 	}
 
 	if len(r.Prompt) > MaxPromptBytes {
@@ -264,7 +276,7 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 	if r.Group != "" && r.Mode != ModeGroup {
 		return fieldErr("group", "for group rounds only")
 	}
-	if t.Kind == TriggerEvent {
+	if t.Kind.Batches() {
 		switch {
 		case r.Debounce == 0:
 			r.Debounce = Duration(DefaultDebounce)
@@ -278,7 +290,7 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 			return fieldErr("cooldown", "%s: want %s to %s", time.Duration(r.Cooldown), MinCooldown, MaxCooldown)
 		}
 	} else if r.Debounce != 0 || r.Cooldown != 0 {
-		return fieldErr("debounce", "debounce and cooldown are for event triggers only")
+		return fieldErr("debounce", "debounce and cooldown are for event and watch triggers only")
 	}
 
 	if r.MaxRuns < 0 {

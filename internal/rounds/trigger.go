@@ -29,12 +29,14 @@ type Trigger struct {
 	// Event and Filter are an event trigger's event name and filter (rounds.md 4.3).
 	Event  string       `json:"event,omitempty"`
 	Filter *EventFilter `json:"filter,omitempty"`
+	// Watch is a watch trigger's watcher (rounds.md 4.4).
+	Watch *Watch `json:"watch,omitempty"`
 }
 
 // Equal reports whether two triggers ask for the same slots.
 func (t Trigger) Equal(u Trigger) bool {
 	if t.Kind != u.Kind || t.Cron != u.Cron || t.Zone != u.Zone || (t.At == nil) != (u.At == nil) ||
-		t.Event != u.Event || !equalFilter(t.Filter, u.Filter) {
+		t.Event != u.Event || !equalFilter(t.Filter, u.Filter) || !equalWatch(t.Watch, u.Watch) {
 		return false
 	}
 	return t.At == nil || t.At.Equal(*u.At)
@@ -82,6 +84,11 @@ func (t Trigger) Schedule() (*Schedule, error) {
 		return &Schedule{kind: t.Kind}, nil
 	case TriggerEvent:
 		if err := checkFilter(t.Event, t.Filter); err != nil {
+			return nil, err
+		}
+		return &Schedule{kind: t.Kind}, nil
+	case TriggerWatch:
+		if err := checkWatch(t.Watch); err != nil {
 			return nil, err
 		}
 		return &Schedule{kind: t.Kind}, nil
@@ -209,6 +216,8 @@ func TriggerWords(kind, cron, zone, at, event string) string {
 		return "by hand"
 	case "event":
 		return "on " + event
+	case "watch":
+		return "a watcher"
 	}
 	return kind
 }
