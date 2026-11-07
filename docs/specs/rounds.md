@@ -1858,11 +1858,11 @@ modes (`internal/rounds/events.go`, `internal/rounds/batch.go`, `cmd/gff-hab/rou
   debounce from the create (refused on the pane route). A filter that names a session stays; a
   filter's project goes by remote, or as it is for `logbook.updated` (a Logbook project id is the
   same on every hab); a filter's project with no remote stays.
-- **The far sides.** The Capcom service (Part 14 A2) and the group record (Part 15 B3) do not
-  exist yet. This hab lists no `capcom-service` and publishes no groups, so a capcom round is
-  refused at creation and a group round finds no group. A build with the `testseam` tag stands
-  both in from files (`cmd/gff-hab/roundfake.go`: `$GFF_TEST_CAPCOM_SERVICE`,
-  `$GFF_TEST_GROUPS`), and the tests run the rounds side end to end against them.
+- **The far sides.** The capcom mode's far side is the Capcom service (`capcom-service.md`
+  9.5, built in Part 14 A7): a hab lists `capcom-service` while it holds the Capcom mark and
+  runs the service, and the tests run a capcom round against it with the stub engine. The
+  group record (Part 15 B3) is not published yet, so a group round finds no group; a build with
+  the `testseam` tag stands it in from a file (`cmd/gff-hab/roundfake.go`: `$GFF_TEST_GROUPS`).
 
 Built (stage 11): watchers (`internal/rounds/watch.go`,
 `internal/rounds/watchsched.go`, `cmd/gff-hab/roundwatch.go`, `cmd/gff-hab/watchpane.go`) and the

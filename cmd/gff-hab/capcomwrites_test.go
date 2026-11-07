@@ -55,6 +55,11 @@ func TestCapcomWritesFirst(t *testing.T) {
 	e := newServiceEnv(t, "\n[settings]\n\"capcom.quiet_hours\" = \"00:00-00:00\"\n\"capcom.events.batch_max\" = 1\n")
 	e.serve()
 	c := e.control()
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("stub log:\n%s", e.stubLog())
+		}
+	})
 	run(t, "capcom", "assign", "-socket", e.sock, "self")
 	waitUntil(t, "the engine connected", func() bool {
 		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
@@ -114,6 +119,13 @@ func TestCapcomWritesFirst(t *testing.T) {
 	mustRound(t, e.habEnv, "add", "cq", "-mode", "capcom", "-manual", "stay quiet")
 	mustRound(t, e.habEnv, "run", "cq")
 	waitRun(t, e.habEnv, c, "cq", api.RoundRunStateSucceeded)
+	t.Cleanup(func() {
+		if t.Failed() {
+			for _, r := range roundRuns(t, c, "cq") {
+				t.Logf("cq run %+v outcome %+v", r, r.Outcome)
+			}
+		}
+	})
 	waitUntil(t, "outcome quiet", func() bool {
 		runs := roundRuns(t, c, "cq")
 		return len(runs) == 1 && runs[0].Outcome != nil && runs[0].Outcome.Word == "quiet"

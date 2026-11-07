@@ -111,8 +111,8 @@ func (e *capcomEngine) observe(ev structure.Event) {
 		e.logf("capcom: store a notice event: %v", err)
 		return
 	}
-	if !added {
-		return
+	if !added && (!it.Read.IsZero() || e.events.Holds(it.ID)) {
+		return // a repeat; one a crash left out of the queue goes in now
 	}
 	if err := e.events.Add(capcomevents.Event{Item: it.ID, Urgent: n.Level == api.NoticeLevelTimeSensitive}); err != nil {
 		e.logf("capcom events: %v", err)
@@ -134,7 +134,15 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 		return api.ChannelStateRefused, "no Capcom service on this hab"
 	}
 	key := "round:" + m.ID
-	if _, held := e.thread.ByKey(key); held {
+	urgent := m.Round.Level == string(api.NoticeLevelTimeSensitive)
+	if it, held := e.thread.ByKey(key); held {
+		// A crash between the thread and the queue left it in neither batch nor turn: queue it
+		// now, so the retry is still seen.
+		if it.Read.IsZero() && !e.events.Holds(it.ID) {
+			if err := e.events.Add(capcomevents.Event{Item: it.ID, Urgent: urgent, Round: m.ID}); err != nil {
+				return api.ChannelStateRefused, "the Capcom event queue did not take it"
+			}
+		}
 		return api.ChannelStateDuplicate, ""
 	}
 	if !e.settingOn(settings.CapcomEventsRoundMessages) {
@@ -171,8 +179,10 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	if !added {
 		return api.ChannelStateDuplicate, ""
 	}
-	if err := e.events.Add(capcomevents.Event{Item: stored.ID, Urgent: r.Level == string(api.NoticeLevelTimeSensitive), Round: m.ID}); err != nil {
+	if err := e.events.Add(capcomevents.Event{Item: stored.ID, Urgent: urgent, Round: m.ID}); err != nil {
+		// The runner sends it again; the thread holds it, and the duplicate path queues it.
 		e.logf("capcom events: %v", err)
+		return api.ChannelStateRefused, "the Capcom event queue did not take it"
 	}
 	return api.ChannelStateAccepted, ""
 }

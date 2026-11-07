@@ -1266,9 +1266,20 @@ func serve(args []string) error {
 	chs.Store(chSvc)
 	if capcomEng != nil {
 		out := func(round, word string, at time.Time) {
-			if err := chSvc.Outcome(round, word, at); err != nil {
-				logger.Printf("capcom: outcome of round message %s: %v", round, err)
+			// A turn can end before the channels service records the accepted answer of a
+			// message this hab sent itself: a conflict is tried again for a while.
+			var err error
+			for i := 0; i < 50; i++ {
+				if err = chSvc.Outcome(round, word, at); err == nil {
+					return
+				}
+				var ce *control.Error
+				if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindConflict || strings.Contains(err.Error(), "has its outcome") {
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
 			}
+			logger.Printf("capcom: outcome of round message %s: %v", round, err)
 		}
 		capcomEng.outcome.Store(&out)
 	}

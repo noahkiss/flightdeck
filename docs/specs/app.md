@@ -3543,6 +3543,11 @@ picker never changes them.
 | `capcom.share_location` | Share location with Capcom | Capcom | bool | On; the first Capcom open asks for the system's location permission | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
 | `capcom.share_calendar` | Share calendar with Capcom, from the calendars picked | Capcom | bool, and a calendar list | On, every calendar | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
 | `capcom.calendar_days` | Days of calendar to share | Capcom | integer 1 to 31 | 7 | App | `capcom-service.md` 8.1, 19.1 |
+| `capcom.quiet_hours` | Quiet hours | Capcom | text `HH:MM-HH:MM`, 24-hour clock, in the time zone a device last shared; the same time twice: none | `22:00-07:00` | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
+| `capcom.events.notices`, `capcom.events.rounds`, `capcom.events.round_messages` | Capcom looks at notices; at round run ends; at round messages | Capcom | bool | On | Hab, the home hab | `capcom-service.md` 9.1, 19.1 |
+| `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 1 to 1000 | 20 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
+| `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
+| `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
 | `group.max_workers` | Workers per lead | Agents | integer 0 to 5 | 2 | Hab, every hab; copied into each member's envelope | `groups.md` 3.3 |
