@@ -173,7 +173,9 @@ func (w *Weather) prune(life time.Duration) {
 
 func round2(x float64) float64 { return math.Round(x*100) / 100 }
 
-func cacheKey(lat, lon float64, kind string) string { return fmt.Sprintf("%.2f,%.2f,%s", lat, lon, kind) }
+func cacheKey(lat, lon float64, kind string) string {
+	return fmt.Sprintf("%.2f,%.2f,%s", lat, lon, kind)
+}
 
 func (w *Weather) token(ctx context.Context) (string, error) {
 	key, err := w.key.key(ctx)
