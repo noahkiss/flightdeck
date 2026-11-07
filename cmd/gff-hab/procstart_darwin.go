@@ -6,6 +6,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// procfsRoot is empty: macOS has no procfs, so listProcs uses ps.
+const procfsRoot = ""
+
 // procStart reads a pid's start as Claude Code records it in its registry on macOS: ps's
 // lstart in UTC ("Mon Jan _2 15:04:05 2006").
 func procStart(pid int) (string, bool) {

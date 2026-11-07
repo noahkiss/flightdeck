@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -166,6 +167,76 @@ func TestAdoptReusedPid(t *testing.T) {
 	d.procs = func(context.Context) ([]outsideProc, error) { return []outsideProc{{43, "claude --resume c1"}}, nil }
 	if err := d.outsideLive(ctx, "claude", "c1"); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "pid 43") {
 		t.Fatalf("argv: %v", err)
+	}
+}
+
+// TestAdoptStartsDiffer: only two starts of one kind that both parse and differ free a
+// conversation; another locale, another clock or a local-time lstart never do.
+func TestAdoptStartsDiffer(t *testing.T) {
+	local := time.Date(2026, 11, 6, 5, 36, 59, 0, time.UTC).In(time.Local).Format(time.ANSIC)
+	for _, tc := range []struct {
+		recorded, now string
+		want          bool
+	}{
+		{"Fri Nov  6 05:36:59 2026", "Fri Nov  6 05:36:59 2026", false},
+		{"Fri Nov 6 05:36:59 2026", "Fri Nov  6 05:36:59 2026", false},
+		{"Fri Nov  6 05:36:59 2026", "Sat Nov  7 09:00:00 2026", true},
+		{local, "Fri Nov  6 05:36:59 2026", false},                     // recorded in local time
+		{"Fr  6 Nov 05:36:59 2026", "Sat Nov  7 09:00:00 2026", false}, // another locale
+		{"1793943420073", "Sat Nov  7 09:00:00 2026", false},           // epoch milliseconds
+		{"154671", "154671", false},
+		{"154671", "154672", true},
+		{"154671", "Sat Nov  7 09:00:00 2026", false},
+		{"Fri Nov  6 05:36:59 2026", "garbage", false},
+	} {
+		if got := startsDiffer(tc.recorded, tc.now); got != tc.want {
+			t.Errorf("startsDiffer(%q, %q) = %v, want %v", tc.recorded, tc.now, got, tc.want)
+		}
+	}
+}
+
+// TestAdoptFork: a fork of the conversation is no second writer; a resume is.
+func TestAdoptFork(t *testing.T) {
+	for _, tc := range []struct {
+		harness, args string
+		want          bool
+	}{
+		{"claude", "claude --resume c1 --fork-session", false},
+		{"claude", "claude --resume c1", true},
+		{"codex", "codex --no-daemon fork c1", false},
+		{"codex", "codex fork c1", false},
+		{"codex", "codex resume c1", true},
+		{"codex", "codex resume c1 fork", true},
+	} {
+		if got := runsConversation(tc.args, tc.harness, "c1"); got != tc.want {
+			t.Errorf("%q: %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
+// TestAdoptProcfs: the process list from a hand-made procfs: arguments joined, kernel threads
+// and other names skipped; an empty or missing root is an error, so ps is asked instead.
+func TestAdoptProcfs(t *testing.T) {
+	root := t.TempDir()
+	adoptWrite(t, filepath.Join(root, "42", "cmdline"), "node\x00/opt/claude/cli.js\x00--resume\x00c1\x00")
+	adoptWrite(t, filepath.Join(root, "2", "cmdline"), "") // a kernel thread
+	adoptWrite(t, filepath.Join(root, "self", "cmdline"), "x\x00")
+	adoptWrite(t, filepath.Join(root, "uptime"), "1 2")
+	got, err := readProcfs(context.Background(), root)
+	if err != nil || len(got) != 1 || got[0] != (outsideProc{42, "node /opt/claude/cli.js --resume c1"}) {
+		t.Fatalf("procfs: %+v %v", got, err)
+	}
+	if _, err := readProcfs(context.Background(), t.TempDir()); err == nil {
+		t.Fatal("an empty procfs read")
+	}
+	if _, err := readProcfs(context.Background(), filepath.Join(root, "none")); err == nil {
+		t.Fatal("a missing procfs read")
+	}
+	if runtime.GOOS == "linux" {
+		procs, err := listProcs(context.Background())
+		if err != nil || !slices.ContainsFunc(procs, func(p outsideProc) bool { return p.pid == os.Getpid() }) {
+			t.Fatalf("listProcs: %d procs, %v", len(procs), err)
+		}
 	}
 }
 
