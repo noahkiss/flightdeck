@@ -80,6 +80,9 @@ type Consumer struct {
 	// Account returns the usage account key whose weekly window paces the consumer; "" when it
 	// has none. Nil: none.
 	Account func() string
+	// OnChange hears each change of the consumer's answer, in order, with no lock held; it may
+	// call back into the governor. Nil: none.
+	OnChange func(Answer)
 }
 
 // Answer is the governor's answer for one consumer.
@@ -108,7 +111,8 @@ func (a Answer) same(b Answer) bool {
 type Config struct {
 	// Account returns a usage account by key. Nil: no account has readings.
 	Account func(key string) (api.UsageAccount, bool)
-	// OnChange hears each consumer whose answer changed, with no lock held. Nil: none.
+	// OnChange hears each consumer whose answer changed, after the consumer's own OnChange,
+	// with no lock held. Nil: none.
 	OnChange func(id string, a Answer)
 	// StatePath keeps today's counters across a restart. "": in memory only.
 	StatePath string
@@ -252,15 +256,12 @@ func (g *Governor) Register(c Consumer) Answer {
 	return a
 }
 
-// Unregister removes a consumer and its counters.
+// Unregister removes a consumer. Its counters stay for the rest of the local day, so a
+// consumer registered again the same day starts from what it spent.
 func (g *Governor) Unregister(id string) {
 	g.mu.Lock()
 	delete(g.consumers, id)
 	delete(g.answers, id)
-	if _, ok := g.counts[id]; ok {
-		delete(g.counts, id)
-		g.saveLocked()
-	}
 	g.mu.Unlock()
 	g.Recheck()
 }
@@ -343,9 +344,6 @@ func (g *Governor) Recheck() {
 // runs; a caller that finds another delivering leaves its changes to it. The caller holds g.mu;
 // it is released on return.
 func (g *Governor) deliverLocked() {
-	if g.cfg.OnChange == nil {
-		g.queue = nil
-	}
 	if g.delivering || len(g.queue) == 0 {
 		g.mu.Unlock()
 		return
@@ -354,8 +352,14 @@ func (g *Governor) deliverLocked() {
 	for len(g.queue) > 0 {
 		c := g.queue[0]
 		g.queue = g.queue[1:]
+		own := g.consumers[c.id].OnChange
 		g.mu.Unlock()
-		g.cfg.OnChange(c.id, c.a)
+		if own != nil {
+			own(c.a)
+		}
+		if g.cfg.OnChange != nil {
+			g.cfg.OnChange(c.id, c.a)
+		}
 		g.mu.Lock()
 	}
 	g.delivering = false
