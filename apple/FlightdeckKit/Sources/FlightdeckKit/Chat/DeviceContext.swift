@@ -193,9 +193,12 @@ public final class DeviceContextReporter {
         }
     }
 
-    /// Whether the first Capcom open should ask for the location permission.
+    /// Whether the first Capcom open should ask: a share is on and the system has not been
+    /// asked for its source yet. Calendar access is asked even when location was answered.
     public var shouldAsk: Bool {
-        !prefs.locationAsked && prefs.shareLocation && location.authorization == .notDetermined
+        guard !prefs.locationAsked else { return false }
+        return (prefs.shareLocation && location.authorization == .notDetermined)
+            || (prefs.shareCalendar && calendar.authorization == .notDetermined)
     }
 
     private func startLocation() {

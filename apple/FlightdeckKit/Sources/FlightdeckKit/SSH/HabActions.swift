@@ -173,6 +173,8 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             await notify("Not added", why)
         case .writeFailed(let why):
             await notify("Not added", "\(why) Open Flightdeck to retry.")
+        case .unconfirmed:
+            await notify("Not added", "The hab did not confirm. Open Flightdeck to check the card.")
         }
     }
 
