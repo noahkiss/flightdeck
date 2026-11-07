@@ -48,7 +48,8 @@ type Loader func(ctx context.Context, log func(line string)) (Runner, error)
 type ManagedOptions struct {
 	PauseAfter int // 3
 	LogLines   int // 200
-	// Log, when set, also receives each line of the tail as it is added.
+	// Log, when set, also receives each line of the tail as it is added. It may run during a
+	// call, so it must not call the Managed's Refresh, Render, Act or Close.
 	Log func(line string)
 	// Changed is called after the status or a tree changed, outside the Managed's locks.
 	Changed func()
@@ -104,7 +105,8 @@ type Managed struct {
 	logs     []string // a ring of o.LogLines
 	logAt    int      // the next slot once the ring is full
 	closed   bool
-	reload   bool // drop the runner before the next call
+	reload   bool   // drop the runner before the next call
+	gen      uint64 // rises at each Retry and Reload
 }
 
 type treeKey struct {
@@ -174,7 +176,8 @@ func (m *Managed) Retry() {
 		m.mu.Unlock()
 		return
 	}
-	m.paused, m.failures = false, 0
+	m.paused, m.failures, m.last = false, 0, nil
+	m.gen++
 	m.mu.Unlock()
 	m.Log("gff-hab: retry after the pause")
 	m.changed()
@@ -182,12 +185,14 @@ func (m *Managed) Retry() {
 
 // Reload drops the loaded module, so the next call loads it again: a new version, or changed
 // settings in the Loader's options. It ends a pause and sets the count to zero; the trees and
-// the log tail stay.
+// the log tail stay. A call already running when Reload is called counts nothing and keeps no
+// tree: it ran the old version.
 func (m *Managed) Reload() {
 	m.mu.Lock()
 	m.reload = true
-	changed := m.paused || m.failures > 0
-	m.paused, m.failures = false, 0
+	m.gen++
+	changed := m.paused || m.failures > 0 || m.last != nil
+	m.paused, m.failures, m.last = false, 0, nil
 	m.mu.Unlock()
 	if changed {
 		m.changed()
@@ -206,50 +211,50 @@ func (m *Managed) Close() {
 
 // Refresh runs the module's refresh.
 func (m *Managed) Refresh(ctx context.Context, c Call) error {
-	return m.call(ctx, "refresh", func(r Runner) error { return r.Refresh(ctx, c) })
+	_, err := m.call(ctx, "refresh", c, func(r Runner) ([]byte, error) { return nil, r.Refresh(ctx, c) })
+	return err
 }
 
 // Render runs render and keeps the tree. On a failure it returns the last good tree for the
 // call's place and vocabulary, if there is one, beside the error: the client shows it with the
 // error mark (modules.md 8.3).
 func (m *Managed) Render(ctx context.Context, c Call) (Tree, error) {
-	var tree []byte
-	err := m.call(ctx, "render", func(r Runner) error {
-		var err error
-		tree, err = r.Render(ctx, c)
-		return err
-	})
-	m.mu.Lock()
-	k := keyOf(c)
-	if err == nil {
-		m.rev++
-		m.trees[k] = Tree{JSON: tree, Made: m.o.Now(), Revision: m.rev}
-	}
-	t := m.trees[k]
-	m.mu.Unlock()
-	if err == nil {
+	return m.call(ctx, "render", c, func(r Runner) ([]byte, error) { return r.Render(ctx, c) })
+}
+
+// Act runs act(name, args, ctx).
+func (m *Managed) Act(ctx context.Context, name string, args json.RawMessage, c Call) error {
+	_, err := m.call(ctx, "act", c, func(r Runner) ([]byte, error) { return nil, r.Act(ctx, name, args, c) })
+	return err
+}
+
+// call runs f under m.run and calls Changed once m.run is released, so Changed may call the
+// Managed again. A render's tree is stored under m.run, so trees take revisions in call order.
+func (m *Managed) call(ctx context.Context, fn string, c Call, f func(Runner) ([]byte, error)) (Tree, error) {
+	m.run.Lock()
+	t, changed, err := m.runLocked(ctx, fn, c, f)
+	m.run.Unlock()
+	if changed {
 		m.changed()
 	}
 	return t, err
 }
 
-// Act runs act(name, args, ctx).
-func (m *Managed) Act(ctx context.Context, name string, args json.RawMessage, c Call) error {
-	return m.call(ctx, "act", func(r Runner) error { return r.Act(ctx, name, args, c) })
-}
-
-func (m *Managed) call(ctx context.Context, fn string, f func(Runner) error) error {
-	m.run.Lock()
-	defer m.run.Unlock()
+func (m *Managed) runLocked(ctx context.Context, fn string, c Call, f func(Runner) ([]byte, error)) (Tree, bool, error) {
+	k := keyOf(c)
 	m.mu.Lock()
-	closed, paused, n, last, reload := m.closed, m.paused, m.failures, m.last, m.reload
-	m.reload = false
+	closed, paused, n, last, gen := m.closed, m.paused, m.failures, m.last, m.gen
+	reload := m.reload && !closed && !paused
+	if reload {
+		m.reload = false
+	}
+	prev := m.trees[k]
 	m.mu.Unlock()
 	if closed {
-		return ErrHostClosed
+		return prev, false, ErrHostClosed
 	}
 	if paused {
-		return &PausedError{Failures: n, Last: last}
+		return prev, false, &PausedError{Failures: n, Last: last}
 	}
 	if reload {
 		m.drop()
@@ -257,23 +262,33 @@ func (m *Managed) call(ctx context.Context, fn string, f func(Runner) error) err
 	if m.r == nil {
 		r, err := m.load(ctx, m.Log)
 		if err != nil {
-			m.fail(ctx, fn, err, true)
-			return err
+			return prev, m.fail(ctx, fn, gen, err, true), err
 		}
 		m.r = r
 	}
-	err := f(m.r)
+	tree, err := f(m.r)
 	if stops(err) {
 		m.drop()
 	}
-	if err == nil {
-		if fn != "act" {
-			m.succeed()
-		}
-		return nil
+	if err != nil {
+		return prev, m.fail(ctx, fn, gen, err, false), err
 	}
-	m.fail(ctx, fn, err, false)
-	return err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.gen != gen {
+		return m.trees[k], false, nil // a Retry or Reload came during the call
+	}
+	changed := false
+	if fn == "render" {
+		m.rev++
+		m.trees[k] = Tree{JSON: tree, Made: m.o.Now(), Revision: m.rev}
+		changed = true
+	}
+	if fn != "act" && (m.failures > 0 || m.last != nil) {
+		m.failures, m.last = 0, nil
+		changed = true
+	}
+	return m.trees[k], changed, nil
 }
 
 // drop closes the loaded module, so its id is free for the next load. m.run is held.
@@ -284,22 +299,17 @@ func (m *Managed) drop() {
 	m.r = nil
 }
 
-func (m *Managed) succeed() {
-	m.mu.Lock()
-	changed := m.failures > 0 || m.last != nil
-	m.failures, m.last = 0, nil
-	m.mu.Unlock()
-	if changed {
-		m.changed()
-	}
-}
-
-// fail counts err when it is the module's failure. load is a failure of the Loader.
-func (m *Managed) fail(ctx context.Context, fn string, err error, load bool) {
+// fail counts err when it is the module's failure, and reports whether the status changed.
+// load is a failure of the Loader; gen is the generation the call started in. m.run is held.
+func (m *Managed) fail(ctx context.Context, fn string, gen uint64, err error, load bool) bool {
 	if !counts(ctx, fn, err, load) {
-		return
+		return false
 	}
 	m.mu.Lock()
+	if m.gen != gen {
+		m.mu.Unlock()
+		return false // a Retry or Reload came during the call
+	}
 	m.failures++
 	m.last = err
 	n := m.failures
@@ -312,7 +322,7 @@ func (m *Managed) fail(ctx context.Context, fn string, err error, load bool) {
 	if pause {
 		m.Log(fmt.Sprintf("gff-hab: paused after %d failures in a row", n))
 	}
-	m.changed()
+	return true
 }
 
 func (m *Managed) changed() {
@@ -348,6 +358,8 @@ func counts(ctx context.Context, fn string, err error, load bool) bool {
 		return false
 	case errors.As(err, &he):
 		return he.Culprit
+	case stops(err):
+		return true // the module is stopped, whoever ended the call
 	case ctx.Err() != nil && !errors.As(err, &te):
 		return false // the caller's own cancel
 	case load:

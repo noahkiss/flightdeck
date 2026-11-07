@@ -749,7 +749,8 @@ changed settings).
 - **What counts.** A `refresh` or `render` error counts one failure, except `ErrHeapPressure`
   (another module holds the memory), `ClientTooOld` (the client's), a `HostError` with no
   `Culprit` (the host was down for another reason), `ErrHostClosed` and the caller's own cancel.
-  A failed load counts. An `act` counts only an error that stops the module (`MemoryError`,
+  A failed load counts. An error that stops the module counts even when the caller cancelled,
+  so a module that stops on every call still pauses. An `act` counts only an error that stops the module (`MemoryError`,
   `InternalError`, a stuck `TimeoutError`), a culprit `HostError` and a failed load. Design call:
   an act's own exception or timeout goes back to the tap ("Did not finish", 8.1), and the
   refresh after the act counts. A good act does not reset the count either.
@@ -759,7 +760,13 @@ changed settings).
 - **Last good tree.** `Render` keeps each good tree by place and vocabulary, with the time it
   was made by the hab's clock and a revision that rises with each good tree of the module. A
   failed or paused render returns the last good tree for its place and vocabulary beside the
-  error.
+  error. Calls run one at a time and a tree is kept before the next call starts, so a higher
+  revision always holds a later render.
+- **Reload and Retry during a call.** A call that started before a `Reload` or `Retry` and ends
+  after it counts nothing and keeps no tree: it ran the old version, or the failure the person
+  just cleared. Both clear the last failure too.
+- **Changed.** The owner's `Changed` runs after the call's lock is released, so it may call the
+  `Managed` again (a redraw that renders).
 - **Log tail.** The loader gets the tail's log function for `Options.Log`, so `fd.log` lines
   land in it. The tail also gets one line per counted failure, per pause and per retry,
   prefixed `gff-hab:`. It lives in memory and survives `Reload`; it is lost when gff-hab stops.
