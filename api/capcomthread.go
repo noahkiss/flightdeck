@@ -38,20 +38,22 @@ type CapcomAnswer struct {
 
 // CapcomItem is one thread item, folded.
 type CapcomItem struct {
-	ID      string              `json:"id" doc:"Time ordered: a later item has a greater id."`
-	Kind    CapcomItemKind      `json:"kind"`
-	Time    string              `json:"time" doc:"RFC 3339."`
-	Author  CapcomAuthor        `json:"author"`
-	Text    string              `json:"text,omitempty"`
-	Images  []string            `json:"images,omitempty" doc:"Paths on the home hab."`
-	Context []CapcomContextItem `json:"context,omitempty" doc:"The attached context that went with a user message."`
-	Turn    string              `json:"turn,omitempty"`
-	Event   bool                `json:"event,omitempty" doc:"Written in an event turn: the app marks it wrote first."`
-	Tools   []CapcomToolCall    `json:"tools,omitempty" doc:"tools: each call of the turn, in order."`
-	Card    *CapcomCard         `json:"card,omitempty"`
-	Answer  *CapcomAnswer       `json:"answer,omitempty"`
-	Summary string              `json:"summary,omitempty" doc:"divider: the summary the fresh SDK session opened with."`
-	Read    string              `json:"read,omitempty" doc:"user message: when the engine took it (RFC 3339). Absent: delivered, not read yet."`
+	ID     string         `json:"id" doc:"Time ordered: a later item has a greater id."`
+	Kind   CapcomItemKind `json:"kind"`
+	Time   string         `json:"time" doc:"RFC 3339."`
+	Author CapcomAuthor   `json:"author"`
+	Text   string         `json:"text,omitempty"`
+	Images []string       `json:"images,omitempty" doc:"Paths on the home hab."`
+	// Attachments name the same files for attachment.get (thumbnails, app.md 4.4).
+	Attachments []string            `json:"attachments,omitempty" doc:"The attachment ids of images, in order: attachment.get reads their thumbnails."`
+	Context     []CapcomContextItem `json:"context,omitempty" doc:"The attached context that went with a user message."`
+	Turn        string              `json:"turn,omitempty"`
+	Event       bool                `json:"event,omitempty" doc:"Written in an event turn: the app marks it wrote first."`
+	Tools       []CapcomToolCall    `json:"tools,omitempty" doc:"tools: each call of the turn, in order."`
+	Card        *CapcomCard         `json:"card,omitempty"`
+	Answer      *CapcomAnswer       `json:"answer,omitempty"`
+	Summary     string              `json:"summary,omitempty" doc:"divider: the summary the fresh SDK session opened with."`
+	Read        string              `json:"read,omitempty" doc:"user message: when the engine took it (RFC 3339). Absent: delivered, not read yet."`
 }
 
 // CapcomThreadPageParams asks for a page of the thread.

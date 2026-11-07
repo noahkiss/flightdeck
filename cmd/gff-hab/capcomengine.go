@@ -535,7 +535,7 @@ func (e *capcomEngine) Send(client string, p api.SessionSendParams) error {
 		device = client
 	}
 	_, _, err := e.thread.Add(capcomthread.Item{Kind: capcomthread.KindMessage, Author: capcomthread.Author{Kind: capcomthread.AuthorUser, Device: device},
-		Text: p.Text, Images: images, Key: key})
+		Text: p.Text, Images: images, Attachments: p.Attachments, Key: key})
 	if err != nil {
 		return control.Errorf(api.ErrorKindUnavailable, "capcom thread: %v", err)
 	}
@@ -647,7 +647,7 @@ var _ control.CapcomThread = (*capcomEngine)(nil)
 func apiItem(it capcomthread.Item) api.CapcomItem {
 	out := api.CapcomItem{ID: it.ID, Kind: api.CapcomItemKind(it.Kind), Time: it.Time.UTC().Format(time.RFC3339Nano),
 		Author: api.CapcomAuthor{Kind: api.CapcomAuthorKind(it.Author.Kind), Device: it.Author.Device, Address: it.Author.Address},
-		Text:   it.Text, Images: it.Images, Turn: it.Turn, Event: it.Event, Summary: it.Summary}
+		Text:   it.Text, Images: it.Images, Attachments: it.Attachments, Turn: it.Turn, Event: it.Event, Summary: it.Summary}
 	for _, c := range it.Context {
 		out.Context = append(out.Context, api.CapcomContextItem{Kind: api.CapcomContextKind(c.Kind), Title: c.Title})
 	}

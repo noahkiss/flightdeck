@@ -587,6 +587,8 @@ public struct CapcomDetachParams: Codable, Sendable, Hashable {
 
 public struct CapcomItem: Codable, Sendable, Hashable {
     public var answer: CapcomAnswer?
+    /// The attachment ids of images, in order: attachment.get reads their thumbnails.
+    public var attachments: [String]?
     public var author: CapcomAuthor
     public var card: CapcomCard?
     /// The attached context that went with a user message.
@@ -611,6 +613,7 @@ public struct CapcomItem: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case answer = "answer"
+        case attachments = "attachments"
         case author = "author"
         case card = "card"
         case context = "context"
@@ -626,8 +629,9 @@ public struct CapcomItem: Codable, Sendable, Hashable {
         case turn = "turn"
     }
 
-    public init(answer: CapcomAnswer? = nil, author: CapcomAuthor, card: CapcomCard? = nil, context: [CapcomContextItem]? = nil, event: Bool? = nil, id: String, images: [String]? = nil, kind: CapcomItemKind, read: String? = nil, summary: String? = nil, text: String? = nil, time: String, tools: [CapcomToolCall]? = nil, turn: String? = nil) {
+    public init(answer: CapcomAnswer? = nil, attachments: [String]? = nil, author: CapcomAuthor, card: CapcomCard? = nil, context: [CapcomContextItem]? = nil, event: Bool? = nil, id: String, images: [String]? = nil, kind: CapcomItemKind, read: String? = nil, summary: String? = nil, text: String? = nil, time: String, tools: [CapcomToolCall]? = nil, turn: String? = nil) {
         self.answer = answer
+        self.attachments = attachments
         self.author = author
         self.card = card
         self.context = context

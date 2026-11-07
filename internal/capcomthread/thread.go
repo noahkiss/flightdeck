@@ -69,14 +69,16 @@ type ToolCall struct {
 
 // Item is one entry of the thread, folded.
 type Item struct {
-	ID      string    `json:"id"`
-	Kind    string    `json:"kind"`
-	Time    time.Time `json:"time"`
-	Author  Author    `json:"author"`
-	Text    string    `json:"text,omitempty"`
-	Images  []string  `json:"images,omitempty"`
-	Context []Context `json:"context,omitempty"`
-	TZ      string    `json:"tz,omitempty"` // the sending device's time zone (6.5)
+	ID     string    `json:"id"`
+	Kind   string    `json:"kind"`
+	Time   time.Time `json:"time"`
+	Author Author    `json:"author"`
+	Text   string    `json:"text,omitempty"`
+	Images []string  `json:"images,omitempty"`
+	// Attachments are the attachment ids of Images, in order, for clients' thumbnails.
+	Attachments []string  `json:"attachments,omitempty"`
+	Context     []Context `json:"context,omitempty"`
+	TZ          string    `json:"tz,omitempty"` // the sending device's time zone (6.5)
 	// Key is a user message's idempotency key: a repeat with the same key is the same item.
 	Key string `json:"key,omitempty"`
 	// Turn and Part place a Capcom reply or a tools line in its turn (4.3: a repeated reply is
@@ -565,6 +567,7 @@ func slicesFilter(in []string, keep func(string) bool) []string {
 func clone(it *Item) Item {
 	c := *it
 	c.Images = append([]string(nil), it.Images...)
+	c.Attachments = append([]string(nil), it.Attachments...)
 	c.Context = append([]Context(nil), it.Context...)
 	c.Tools = append([]ToolCall(nil), it.Tools...)
 	if it.Card != nil {

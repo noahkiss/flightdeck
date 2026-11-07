@@ -277,7 +277,7 @@ func testServiceRest(t *testing.T, e *serviceEnv, c *control.Client, st api.Capc
 	}
 	waitUntil(t, "the photo message", func() bool {
 		for _, it := range threadText(t, c) {
-			if it.Text == "what is on this flyer" && len(it.Images) == 1 && it.Images[0] == put.Path {
+			if it.Text == "what is on this flyer" && len(it.Images) == 1 && it.Images[0] == put.Path && len(it.Attachments) == 1 && it.Attachments[0] == put.ID {
 				return true
 			}
 		}
