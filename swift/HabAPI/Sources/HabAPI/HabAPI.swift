@@ -3872,6 +3872,8 @@ public struct GroupFinding: Codable, Sendable, Hashable {
 
 public struct GroupItem: Codable, Sendable, Hashable {
     public var after: String?
+    /// The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run.
+    public var attempts: [GroupLaneAttempt]?
     /// group/<group>/<item>.
     public var branch: String?
     public var id: String
@@ -3879,8 +3881,12 @@ public struct GroupItem: Codable, Sendable, Hashable {
     public var idleSince: String?
     /// The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes.
     public var land: String?
+    /// The commit on the target once the item landed: the rebased head.
+    public var landed: String?
     /// Its lead's session name.
     public var lead: String?
+    /// The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI.
+    public var noCi: Bool?
     /// Why it is stalled or waits.
     public var reason: String?
     public var review: String?
@@ -3908,11 +3914,14 @@ public struct GroupItem: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case after = "after"
+        case attempts = "attempts"
         case branch = "branch"
         case id = "id"
         case idleSince = "idle_since"
         case land = "land"
+        case landed = "landed"
         case lead = "lead"
+        case noCi = "no_ci"
         case reason = "reason"
         case review = "review"
         case reviewBranch = "review_branch"
@@ -3928,13 +3937,16 @@ public struct GroupItem: Codable, Sendable, Hashable {
         case verdict = "verdict"
     }
 
-    public init(after: String? = nil, branch: String? = nil, id: String, idleSince: String? = nil, land: String? = nil, lead: String? = nil, reason: String? = nil, review: String? = nil, reviewBranch: String? = nil, reviewSince: String? = nil, reviewer: String? = nil, sameHarness: Bool? = nil, state: String, stuck: String? = nil, submits: Int? = nil, submitted: String? = nil, task: String? = nil, title: String, verdict: GroupVerdict? = nil) {
+    public init(after: String? = nil, attempts: [GroupLaneAttempt]? = nil, branch: String? = nil, id: String, idleSince: String? = nil, land: String? = nil, landed: String? = nil, lead: String? = nil, noCi: Bool? = nil, reason: String? = nil, review: String? = nil, reviewBranch: String? = nil, reviewSince: String? = nil, reviewer: String? = nil, sameHarness: Bool? = nil, state: String, stuck: String? = nil, submits: Int? = nil, submitted: String? = nil, task: String? = nil, title: String, verdict: GroupVerdict? = nil) {
         self.after = after
+        self.attempts = attempts
         self.branch = branch
         self.id = id
         self.idleSince = idleSince
         self.land = land
+        self.landed = landed
         self.lead = lead
+        self.noCi = noCi
         self.reason = reason
         self.review = review
         self.reviewBranch = reviewBranch
@@ -3968,18 +3980,59 @@ public struct GroupLane: Codable, Sendable, Hashable {
     }
 }
 
+public struct GroupLaneAttempt: Codable, Sendable, Hashable {
+    /// RFC 3339 time the try ended or saved its push.
+    public var at: String
+    /// pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later).
+    public var outcome: String
+    /// The rebased head pushed to the item's branch.
+    public var rebased: String?
+    /// Where it stopped: fetch, rebase, checks, push, ci, land or moving.
+    public var step: String?
+    /// The target commit the item was rebased on.
+    public var target: String?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case outcome = "outcome"
+        case rebased = "rebased"
+        case step = "step"
+        case target = "target"
+    }
+
+    public init(at: String, outcome: String, rebased: String? = nil, step: String? = nil, target: String? = nil) {
+        self.at = at
+        self.outcome = outcome
+        self.rebased = rebased
+        self.step = step
+        self.target = target
+    }
+}
+
 public struct GroupLaneState: Codable, Sendable, Hashable {
     public var landing: String?
+    /// The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI.
+    public var noCi: Bool?
     public var queue: [String]
+    /// Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again.
+    public var stopped: String?
+    /// Why the lane waits: no remote, a fetch that failed. It tries again each minute.
+    public var waits: String?
 
     enum CodingKeys: String, CodingKey {
         case landing = "landing"
+        case noCi = "no_ci"
         case queue = "queue"
+        case stopped = "stopped"
+        case waits = "waits"
     }
 
-    public init(landing: String? = nil, queue: [String]) {
+    public init(landing: String? = nil, noCi: Bool? = nil, queue: [String], stopped: String? = nil, waits: String? = nil) {
         self.landing = landing
+        self.noCi = noCi
         self.queue = queue
+        self.stopped = stopped
+        self.waits = waits
     }
 }
 
@@ -4040,6 +4093,8 @@ public struct GroupMember: Codable, Sendable, Hashable {
     public var session: String?
     /// planned, starting, running, exited or failed.
     public var state: String
+    /// The hab removed its worktree: its session ended and the worktree had no uncommitted changes.
+    public var worktreeRemoved: Bool?
 
     enum CodingKeys: String, CodingKey {
         case agent = "agent"
@@ -4059,9 +4114,10 @@ public struct GroupMember: Codable, Sendable, Hashable {
         case role = "role"
         case session = "session"
         case state = "state"
+        case worktreeRemoved = "worktree_removed"
     }
 
-    public init(agent: AgentStatus? = nil, agentAge: String? = nil, attempts: Int? = nil, compacts: Int? = nil, contextPct: Int? = nil, device: String? = nil, folder: String? = nil, harness: String, host: String, item: String, model: String? = nil, name: String, reason: String? = nil, replaced: String? = nil, role: GroupRole, session: String? = nil, state: String) {
+    public init(agent: AgentStatus? = nil, agentAge: String? = nil, attempts: Int? = nil, compacts: Int? = nil, contextPct: Int? = nil, device: String? = nil, folder: String? = nil, harness: String, host: String, item: String, model: String? = nil, name: String, reason: String? = nil, replaced: String? = nil, role: GroupRole, session: String? = nil, state: String, worktreeRemoved: Bool? = nil) {
         self.agent = agent
         self.agentAge = agentAge
         self.attempts = attempts
@@ -4079,6 +4135,7 @@ public struct GroupMember: Codable, Sendable, Hashable {
         self.role = role
         self.session = session
         self.state = state
+        self.worktreeRemoved = worktreeRemoved
     }
 }
 
@@ -4327,16 +4384,20 @@ public struct GroupResult: Codable, Sendable, Hashable {
 
 public struct GroupRetryParams: Codable, Sendable, Hashable {
     public var group: String
-    /// A failed member's name.
+    /// Start the group's stopped lane again (groups.md 7.4), instead of a member.
+    public var lane: Bool?
+    /// A failed member's name. Empty with lane.
     public var member: String
 
     enum CodingKeys: String, CodingKey {
         case group = "group"
+        case lane = "lane"
         case member = "member"
     }
 
-    public init(group: String, member: String) {
+    public init(group: String, lane: Bool? = nil, member: String) {
         self.group = group
+        self.lane = lane
         self.member = member
     }
 }
@@ -9381,10 +9442,12 @@ public struct Worktree: Codable, Sendable, Hashable {
 }
 
 public struct WorktreeCreateParams: Codable, Sendable, Hashable {
-    /// Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.
+    /// Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch.
     public var base: String?
     /// Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/<word>-<word>-<hex>.
     public var branch: String?
+    /// When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes.
+    public var fetch: Bool?
     /// Absolute folder for the worktree; it must not exist. Default: <worktree root>/<repository folder>/<branch slug>.
     public var path: String?
     /// Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.
@@ -9397,15 +9460,17 @@ public struct WorktreeCreateParams: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case base = "base"
         case branch = "branch"
+        case fetch = "fetch"
         case path = "path"
         case project = "project"
         case projectDir = "project_dir"
         case setup = "setup"
     }
 
-    public init(base: String? = nil, branch: String? = nil, path: String? = nil, project: String? = nil, projectDir: String? = nil, setup: SetupMode? = nil) {
+    public init(base: String? = nil, branch: String? = nil, fetch: Bool? = nil, path: String? = nil, project: String? = nil, projectDir: String? = nil, setup: SetupMode? = nil) {
         self.base = base
         self.branch = branch
+        self.fetch = fetch
         self.path = path
         self.project = project
         self.projectDir = projectDir

@@ -80,7 +80,11 @@ func New(id string, plan api.GroupPlan, project, home string, coord api.GroupCoo
 // its change the same way.
 func AddPlan(g *api.Group, p api.GroupPlan) {
 	for _, it := range p.Items {
-		g.Items = append(g.Items, api.GroupItem{ID: it.ID, Title: it.Title, Branch: Branch(g.ID, it.ID), After: it.After,
+		after := it.After
+		if after == "" {
+			after = StackOn(g.Items, g.Plan.Items, it)
+		}
+		g.Items = append(g.Items, api.GroupItem{ID: it.ID, Title: it.Title, Branch: Branch(g.ID, it.ID), After: after,
 			Review: it.Review, State: ItemQueued})
 	}
 	for _, m := range p.Members {
@@ -116,6 +120,45 @@ func AddPlan(g *api.Group, p api.GroupPlan) {
 		}
 		it.SameHarness = it.Reviewer != "" && lead != "" && lead == rev
 	}
+}
+
+// StackOn returns the item a plan item with no after stacks on (groups.md 7.2): the last item
+// already in the record whose id it touches, or whose paths overlap its own (one path is the
+// other or a folder above it). "" when none does. plan holds the touches of the earlier items.
+func StackOn(earlier []api.GroupItem, plan []api.GroupPlanItem, it api.GroupPlanItem) string {
+	touches := func(id string) []string {
+		for _, p := range plan {
+			if p.ID == id {
+				return p.Touches
+			}
+		}
+		return nil
+	}
+	for i := len(earlier) - 1; i >= 0; i-- {
+		e := earlier[i]
+		if e.ID == it.ID {
+			continue
+		}
+		for _, t := range it.Touches {
+			if t == e.ID {
+				return e.ID
+			}
+			for _, u := range touches(e.ID) {
+				if overlaps(t, u) {
+					return e.ID
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func overlaps(a, b string) bool {
+	a, b = strings.Trim(a, "/"), strings.Trim(b, "/")
+	if a == "" || b == "" {
+		return false
+	}
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
 // ItemIndex returns the index of an item, or -1.
