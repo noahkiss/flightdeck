@@ -421,13 +421,13 @@ type googlePlace struct {
 		Lat float64 `json:"latitude"`
 		Lon float64 `json:"longitude"`
 	} `json:"location"`
-	Rating   float64 `json:"rating"`
-	Ratings  int     `json:"userRatingCount"`
-	Type     string  `json:"primaryType"`
-	MapsURI  string  `json:"googleMapsUri"`
-	Website  string  `json:"websiteUri"`
-	Phone    string  `json:"internationalPhoneNumber"`
-	OpenNow  *struct {
+	Rating  float64 `json:"rating"`
+	Ratings int     `json:"userRatingCount"`
+	Type    string  `json:"primaryType"`
+	MapsURI string  `json:"googleMapsUri"`
+	Website string  `json:"websiteUri"`
+	Phone   string  `json:"internationalPhoneNumber"`
+	OpenNow *struct {
 		OpenNow *bool `json:"openNow"`
 	} `json:"currentOpeningHours"`
 	Regular *struct {
