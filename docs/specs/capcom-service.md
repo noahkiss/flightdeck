@@ -320,6 +320,7 @@ From gff-hab to the engine:
 | `input` | One thread item for the model: a user message (text, image refs, attached context blocks), an agent's channel message, an event batch (9), or a Flightdeck note (a card answered, a confirmation outcome). Each has the item id |
 | `interrupt` | Stop the current turn |
 | `reseed` | Re-seed now, with a reason (`new`, `limit`, `quiet`, `restart_failed`) |
+| `context` | The context manager's material (6): the summary at hand, the thread items since it, and for a re-seed the seed's parts. The answer to `context.request`, or a quiet summary update on its own (6.1) |
 | `pace` | The governor's answer for the next turn: `ok`, `small` or `wait` with a time (10.1) |
 | `approval.answer` | The answer to an `approval.request` |
 | `shutdown` | Finish the turn, then exit |
@@ -337,6 +338,7 @@ From the engine to gff-hab:
 | `approval.request` | Request id, tool, input, reason (5.3) |
 | `turn.ended` | Turn id, result kind (`success`, `interrupted`, `limit`, `error`), tokens, cost, context use |
 | `summary` | The new summary text and the last item id it covers (6.1) |
+| `context.request` | Ask for `context`, for a re-seed or a compaction (6.2, 6.3) |
 | `compacted` | The SDK compacted (6.3) |
 | `usage` | A usage reading (10.1) |
 | `error` | Text, and whether the engine is about to exit |
@@ -375,13 +377,14 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 
 | Type (hab to engine) | Fields |
 |---|---|
-| `hello` | `credential {kind: "oauth_token"\|"api_key", value}`, `device`, `last_item`, `sdk_session` (the session to resume, or empty), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms}` |
+| `hello` | `credential {kind: "oauth_token"\|"api_key", value}`, `device`, `last_item`, `sdk_session` (the session to resume, or empty), `settings {model, small_model, max_turns, max_turn_usd, wake_retry_ms, route_backoff_max_ms, summary_max_chars, precompact_timeout_ms}` |
 | `input` | `item {id, kind: "message"\|"agent"\|"note", author, time, tz, text, images: [path], context: [{kind, title, text}]}` |
 | `interrupt` | none |
 | `reseed` | `reason` |
 | `pace` | `pace: "ok"\|"small"\|"wait"`, `until` |
 | `approval.answer` | `request`, `allow` (bool), `message` |
 | `shutdown` | none |
+| `context` | `request` (the `context.request` it answers; absent for a quiet update), `for` (`reseed`, `compact`, `quiet`), `summary`, `through` (the newest item `recent` holds, else the summary's), `recent: [{id, kind, author, time, text}]`, and for `reseed` `seed {logbook, messages: [{id, kind, author, time, text}], open: [line]}` |
 
 | Type (engine to hab) | Fields |
 |---|---|
@@ -395,6 +398,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | `turn.ended` | `turn`, `result` (`success`, `interrupted`, `limit`, `error`), `input_tokens`, `output_tokens`, `cost_usd`, `context_used` (0 to 1) |
 | `summary` | `text`, `through` (item id) |
 | `compacted` | none |
+| `context.request` | `request` (an id), `for` (`reseed`, `compact`) |
 | `usage` | `reading` (object, 10.1) |
 | `error` | `text`, `kind` (`auth` for a refused credential, `start` for the start check, else empty), `exiting` (bool) |
 
@@ -517,7 +521,16 @@ context fit; the user sees one thread.
   re-seed, and before a compaction (6.3). Each update covers the items since the last one.
 - **How.** One model call with the small model (10.1): the old summary and the new items in,
   the new summary out. The engine sends `summary`; gff-hab stores it with the last item id it
-  covers, in `<state>/capcom/summary.json`.
+  covers, cut to `summary_max_chars`, in `engine.json` (`summary`, `summary_through`).
+- **As built (A4).** gff-hab hands the engine the material in a `context` message (4.4): the
+  summary at hand and the messages, reports and model notes since its last item, the newest
+  kept within `summary_input_chars` (64,000 characters; 19.2). The quiet update is a `context`
+  gff-hab sends on its own after `summary_quiet`; the engine runs it only between turns. The
+  call is an SDK query of its own: no project files, no tools, no MCP server, nothing saved
+  (`persistSession: false`), one turn, the small model (`small_model`, else `model`). The
+  engine cuts its answer to `summary_max_chars` and turns anything that reads as coordinates
+  into "[a location]". A failed call, or one past its bound, leaves the old summary; the
+  summary before a re-seed has the same bound as before a compaction, `precompact_timeout`.
 - **Seen by the user.** Tapping a divider shows the summary it opened with (7.2).
 
 Decision: update on quiet, not after each turn (the study's 2.2). Reason: a model call per turn
@@ -549,6 +562,19 @@ The engine ends the SDK session and starts a fresh one.
   "New conversation" for 7.5. One divider per re-seed. The divider item stores the summary text
   the fresh session opened with, so a tap shows that text, not a later one.
 - The old SDK session stays on disk, listed in the session record, resumable in a terminal (11).
+- **As built (A4).** gff-hab owns the triggers and the material; the engine owns the summary
+  call, the fresh session and the seed's text. At a `turn.ended` whose `context_used` passes
+  `reseed_at`, gff-hab sends `reseed {limit}` once, and again only after the fresh session's
+  `session.started`. After a turn it arms `reseed_quiet`; a turn that starts stops it. The
+  engine holds a `reseed` until the turn ends and no approval is open, then asks
+  `context.request {for: reseed}`, sends `summary`, and starts the fresh session. gff-hab
+  builds the seed's parts within their caps: the Logbook part within `seed_logbook_bytes`, whole
+  lines only; the last `seed_messages` messages, the oldest dropped while they pass
+  `seed_messages_chars` and the last one cut to it; each open card with its id and choices. The
+  seed goes in after the start check as a message with no model call of its own, so it joins
+  the first real message. It opens with the line `[flightdeck seed]`, which is no item marker,
+  and every line from outside is neutralised as an input's are (4.4). A new conversation's seed
+  has no summary and no earlier messages.
 
 ### 6.3 Compaction as a safety net
 
@@ -560,6 +586,9 @@ The engine ends the SDK session and starts a fresh one.
 - On `compact_boundary` the engine sends `compacted`, and gff-hab adds a divider, "Earlier
   messages summarised", with the summary at that moment.
 - A compaction ends no SDK session, so it starts no re-seed. The next turn end checks 6.2 again.
+- **As built (A4).** The hook asks `context.request {for: compact}` and runs the summary call;
+  both share `precompact_timeout`. The SDK's own hook bound is 5 s past it, so the engine's
+  bound decides.
 
 ### 6.4 Memory in Logbook
 
@@ -591,6 +620,20 @@ The engine ends the SDK session and starts a fresh one.
   list itself.
 - **Ranking.** The manual tells Capcom to rank picks (places, times) by the `capcom` guides it
   holds, and to name the preference it used.
+- **As built (A4).** The exception holds only for a `logbook.write` on the engine's route
+  whose every change is one of: a create of a `guide` with no project, the tag `capcom` and no
+  links; a `set` of `title` or `body`, a note, a tag added, or a tag other than `capcom` removed,
+  on such a guide. A write that asks `propose` stays a proposal. The pane Capcom keeps its
+  proposals. The "Noted" line is a `note` item with a card of type `memory`: `ref` is the record
+  (or the proposal at Safe), the one choice is `undo`, and the card keeps the record's revision.
+  `capcom.card.answer {item, choice: undo}` (7.4) acts as a person from the answering device:
+  it deletes the record, or rejects the proposal, then answers the card; a second answer gets
+  `conflict`. When the revision moved, the answer's `note` and a thread note say the edited
+  record was deleted. A repeated write (the same idempotency key) adds no second line. The
+  Logbook part reads as the Capcom session does: the `capcom` guides with their ids, the general
+  brief, then the tasks the session filed that are open, doing or blocked. `capcom.open {new}`
+  returns `proposals`, the count that waits, so the app opens the review list when it is above
+  0.
 
 ### 6.5 What the model always sees
 
@@ -658,8 +701,8 @@ Added under the API revision rules (`hab-logic-api.md` 3.3), capability `capcom-
 | `session.send` to the Capcom session | The user's message, with attachments, pending context (`capcom.md` 8.4) and an idempotency key. Never refused as busy |
 | `capcom.thread.page {before?, limit}` | Items, newest first, at most 200 per page (a fixed ceiling, 19.3), folded |
 | `capcom.interrupt` | Stop the current turn. `unavailable` when the engine lacks `interrupt` |
-| `capcom.open {new?, context?}` | As built (`capcom.md` 8.3). Returns the Capcom session. `new: true` now means 7.5 |
-| `capcom.card.answer {item, choice}` | Answer a calendar or reminder card: `added` or `dismissed`. First answer wins; the second gets `conflict` |
+| `capcom.open {new?, context?}` | As built (`capcom.md` 8.3). Returns the Capcom session. `new: true` now means 7.5, and the result's `proposals` counts the proposals that wait (6.4) |
+| `capcom.card.answer {item, choice}` | Answer a calendar or reminder card: `added` or `dismissed`; or a memory line's `undo` (6.4, built in A4). First answer wins; the second gets `conflict` |
 | `device.context.put {…}` | The app's device context (8.1) |
 | event `capcom.item` | A new or changed item, to clients subscribed to the home host |
 | event `capcom.typing {on}` | Typing changed |
@@ -1348,9 +1391,10 @@ One app preference (`app.md` 20.4), since the app decides what it sends:
 | `crash_limit`, `crash_window` | 5 crashes in 10 minutes | 1 to 100; 1 minute to 24 hours | 3.2 |
 | `route_backoff_max` | 30 s | 1 s to 10 minutes; the backoff starts at 1 s | 3.2 |
 | `summary_max_chars` | 6,000 | 1,000 to 50,000 | 6.1 |
+| `summary_input_chars` | 64,000 | 8,000 to 400,000; the newest items since the summary are kept (A4) | 6.1 |
 | `summary_quiet` | 10 minutes | 1 minute to 24 hours | 6.1 |
-| `reseed_at` | 60% | 20% to 90% | 6.2 |
-| `reseed_quiet`, `reseed_quiet_at` | 60 minutes, 25% | 10 minutes to 24 hours; 0% to `reseed_at` | 6.2 |
+| `reseed_at` | 60% | 20% to 90%, written `60` or `"60%"` | 6.2 |
+| `reseed_quiet`, `reseed_quiet_at` | 60 minutes, 25% | 10 minutes to 24 hours; 0% to `reseed_at` (the default follows a lower `reseed_at` down) | 6.2 |
 | `seed_messages`, `seed_messages_chars` | 6 messages, 8,000 characters | 0 to 50; 0 to 64,000 | 6.2 |
 | `seed_logbook_bytes` | 8 KB | 0 to 64 KB | 6.4 |
 | `precompact_timeout` | 30 s | 5 s to 5 minutes | 6.3 |

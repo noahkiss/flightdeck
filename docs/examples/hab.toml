@@ -102,6 +102,17 @@ harness = "claude"
 # command_timeout = "30s"     # 1s to 5m for oauth_token_command and api_key_command
 # token_retry = "5m"          # 30s to 24h before a refused credential is read again
 # wake_retry = "10s"          # 1s to 5m before a model call that failed at wake is retried
+# The context manager (docs/specs/capcom-service.md 6):
+# summary_max_chars = 6000    # 1,000 to 50,000 characters of summary
+# summary_input_chars = 64000 # 8,000 to 400,000 characters of new items a summary call reads
+# summary_quiet = "10m"       # 1m to 24h quiet after a turn before the summary updates
+# reseed_at = 60              # 20 to 90 percent of the window at a turn's end starts a re-seed
+# reseed_quiet = "60m"        # 10m to 24h quiet before a re-seed above reseed_quiet_at
+# reseed_quiet_at = 25        # 0 to reseed_at percent
+# seed_messages = 6           # 0 to 50 messages in a seed
+# seed_messages_chars = 8000  # 0 to 64,000 characters for those messages; the oldest go first
+# seed_logbook_bytes = 8192   # 0 to 65,536 bytes of Logbook in a seed
+# precompact_timeout = "30s"  # 5s to 5m for the summary before a compaction or a re-seed
 
 # The [settings] table: hab-side settings this host locks (docs/specs/app.md 20.5). A setting
 # named here is set by this file: the hab enforces the value and refuses writes from the app,
