@@ -141,6 +141,8 @@ public final class ConfirmCenter {
     @ObservationIgnored public var isCapcom: @MainActor (_ habID: String, _ session: String) -> Bool = { _, _ in false }
 
     private var drafts: [String: ConfirmDraft] = [:]
+    /// The owner's changes on a group's plan card, by card id (groups.md 3.2).
+    private var groupDrafts: [String: GroupPlanDraft] = [:]
     private var sending: Set<String> = []
     private var failures: [String: String] = [:]
     private var conflicts: Set<String> = []
@@ -253,6 +255,7 @@ public final class ConfirmCenter {
         if dismissed.contains(where: { !known.contains($0) }) { dismissed = dismissed.filter(known.contains) }
         let keep = { (id: String) in open.contains(id) || self.sending.contains(id) }
         if drafts.keys.contains(where: { !keep($0) }) { drafts = drafts.filter { keep($0.key) } }
+        if groupDrafts.keys.contains(where: { !keep($0) }) { groupDrafts = groupDrafts.filter { keep($0.key) } }
         if failures.keys.contains(where: { !keep($0) }) { failures = failures.filter { keep($0.key) } }
         if conflicts.contains(where: { !keep($0) }) { conflicts = conflicts.filter(keep) }
     }
@@ -342,13 +345,26 @@ public final class ConfirmCenter {
         failures[card.id] = nil
     }
 
+    /// The plan card's draft: the owner's changes, else the plan as it came.
+    public func groupDraft(_ card: ConfirmCard) -> GroupPlanDraft? {
+        guard let g = card.confirmation.group else { return nil }
+        return groupDrafts[card.id] ?? GroupPlanDraft(g.plan)
+    }
+
+    public func setGroupDraft(_ d: GroupPlanDraft, for card: ConfirmCard) {
+        groupDrafts[card.id] = d
+        failures[card.id] = nil
+    }
+
     /// Drops the owner's changes.
     public func resetDraft(_ card: ConfirmCard) {
         drafts[card.id] = nil
+        groupDrafts[card.id] = nil
     }
 
     /// Whether the owner changed anything on the card.
     public func isEdited(_ card: ConfirmCard) -> Bool {
+        if let g = card.confirmation.group, let d = groupDrafts[card.id] { return d.edits(against: g.plan) != nil }
         guard let s = card.confirmation.start, let d = drafts[card.id] else { return false }
         return d.edits(against: s) != nil
     }
@@ -370,6 +386,13 @@ public final class ConfirmCenter {
             }
             edits = d.edits(against: s)
         }
+        if let g = card.confirmation.group, let d = groupDrafts[card.id] {
+            if let p = d.problem {
+                failures[card.id] = p
+                return
+            }
+            edits = d.edits(against: g.plan).map { ConfirmEdits(plan: $0) }
+        }
         await answer(card, ConfirmAnswerParams(choice: .confirm, edits: edits, id: card.confirmation.id))
     }
 
@@ -389,6 +412,7 @@ public final class ConfirmCenter {
         do {
             let r = try await answerer(card.habID, p)
             drafts[card.id] = nil
+            groupDrafts[card.id] = nil
             if p.choice == .confirm, r.confirmation.state == .failed || r.confirmation.state == .unknown {
                 var c = card
                 c.confirmation = r.confirmation
