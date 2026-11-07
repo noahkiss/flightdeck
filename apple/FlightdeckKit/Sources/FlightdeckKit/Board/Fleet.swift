@@ -55,6 +55,11 @@ public final class Fleet {
         board: board, defaults: roundDefaults,
         connection: { [weak self] id in self?.connections.first { $0.id == id } },
         alwaysOn: { [weak self] in self?.capcom.alwaysOn ?? [] })
+    /// Agent groups on every hab (groups.md 5.4).
+    public private(set) lazy var groups = GroupCenter(
+        board: board,
+        connection: { [weak self] id in self?.connections.first { $0.id == id } },
+        device: { [weak self] d in self?.habID(device: d) })
     /// Where the rounds center keeps the board filter; tests set their own before first use.
     public var roundDefaults: UserDefaults = .standard
 

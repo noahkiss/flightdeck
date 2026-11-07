@@ -92,6 +92,10 @@ public struct HabState: Sendable, Equatable {
     /// Runs from `round.run_updated` since the last snapshot, by run id, at
     /// most `RoundRuns.keep` of them, for the round page.
     public var roundRuns: [String: RoundRun] = [:]
+    /// The groups this hab is the home of, by id (groups.md 5.1, 15.1): from the host
+    /// snapshot, then `group.updated` by revision. Kept while offline; empty from a hab
+    /// without the `groups` capability.
+    public var groups: [String: Group] = [:]
     /// How many `catalog.updated` events named the hab's own catalog, over all connections.
     public var catalogChanges = 0
     /// The generation the last of those events carried.
@@ -504,6 +508,7 @@ public actor HabConnection {
         state.settings = Dictionary((snap.settings ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         state.rounds = Dictionary((snap.rounds ?? []).filter { $0.deleted != true }.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         state.roundRuns = [:]
+        state.groups = Dictionary((snap.groups ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         let confirm = state.welcome?.capabilities.contains(ConfirmBook.capability) ?? false
         state.confirmations.reset(snap.confirmations, enabled: confirm, newEpoch: confirmEpochChanged)
         confirmEpochChanged = false
@@ -612,6 +617,10 @@ public actor HabConnection {
             if !capcomTaps.isEmpty, let ty = try? e.data.decode(CapcomTyping.self) {
                 for (_, t) in capcomTaps { t.yield(.typing(session: e.id, on: ty.on, generation: generation)) }
             }
+            return
+        }
+        if e.type == GroupEvents.updated {
+            if GroupEvents.apply(e, to: &state) { publish() }
             return
         }
         if e.type == "content.updated", !contentTaps.isEmpty, let it = try? e.data.decode(ContentItem.self) {
