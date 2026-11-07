@@ -293,7 +293,7 @@ declares what it lacks, and gff-hab adapts.
 | `mid_turn_input` | Yes | Messages that arrive during a turn wait for the next turn |
 | `approval_callback` | Yes (`canUseTool`) | The engine must not expose any tool that 5.3 would send to a card. Web fetch is off |
 | `compaction_events` | Yes | The context manager re-seeds earlier (6.2), and no compaction divider shows |
-| `usage_events` | To verify (A2) | The governor paces by the engine's own token counts (10.1) |
+| `usage_events` | Yes: the SDK's `rate_limit_event` comes once per turn (verified in A2) | The governor paces by the engine's own token counts (10.1) |
 | `resume_by_id` | Yes | A restart is a re-seed |
 
 ### 4.2 Messages
@@ -394,6 +394,24 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 - **Markers.** Each input the engine hands to the SDK starts with the line
   `[flightdeck item <id>]`. At start, before it takes any input, the engine reads the resumed
   SDK session's transcript for these lines and keeps their ids as handed.
+- **SDK facts the engine builds on** (SDK 0.3.319, verified in A2 against the bundled binary
+  and a fake Messages API):
+  - The SDK sends its `init` message only when the first user message arrives. For the start
+    check (5.1), the engine first streams one message with `shouldQuery: false`, the line
+    `[flightdeck start check]`: it gives `init` and a result with no model call. Its text joins
+    the next real message in the transcript.
+  - A deny list alone leaves other built-in tools in `init`. The engine also passes the SDK's
+    `tools` option, `["WebSearch", "WebFetch"]`, which limits the built-in set; the deny list
+    stays as a second guard.
+  - The SDK echoes a streamed user message only with the CLI flag `--replay-user-messages`,
+    which the engine passes. The echo comes at the start of the model call that takes the
+    message; the engine sends `input.taken` then.
+  - The transcript is at `<CLAUDE_CONFIG_DIR>/projects/<real path of the folder, each
+    character that is not a letter or digit as ->/<session id>.jsonl`. The real path matters
+    on macOS, where the temporary folder is a link.
+  - A refused credential gives a result with `api_error_status` 401. The engine sends
+    `turn.ended` with `error`, then `error {kind: auth, exiting: true}`, and exits 1.
+  - The folder's `.mcp.json` loads under `settingSources: ["project"]` with no prompt.
 - **Credential.** The engine keeps `credential.value` in memory only and passes it to the SDK's
   bundled binary through the SDK's `env` option, as `CLAUDE_CODE_OAUTH_TOKEN` or
   `ANTHROPIC_API_KEY`. It never logs it.
@@ -420,6 +438,8 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 - **Start check.** The engine reads the tool list in the SDK's `init` message. A tool outside
   5.1 makes it exit with an error naming the tool, before it takes any input. The session row
   shows the error. A new SDK version pin must add the new name to the deny list.
+- The SDK's `tools` option limits the built-in set to `WebSearch` and `WebFetch` (4.4); the
+  deny list stays as a second guard.
 - Allow rules: `mcp__flightdeck__*` and `WebSearch`. `WebFetch` is never a bare-name allow
   entry, since that would skip the callback.
 - A `PreToolUse` hook applies 5.3's URL rule to every `WebFetch` call, so a call the SDK
@@ -1223,6 +1243,16 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 
 None open. The owner settled Q1 to Q3 on 2026-11-06 (plan-xagejg31 (q)); they are decisions E19
 to E22 in 15.
+
+Found in A2 (to settle before A8):
+
+- **Q4. The credential in the MCP child's environment.** The bundled binary starts `gff-hab mcp`
+  with its own environment, so the token reaches that process's environment (memory, never a
+  file). Options: accept it (the child is gff-hab itself), or have `gff-hab mcp` clear
+  `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from its own environment at start.
+- **Q5. MCP resource tools.** A live `flightdeck` server may add `ListMcpResourcesTool` and
+  `ReadMcpResourceTool` to `init`. The start check refuses any tool outside 5.1. Either add them
+  to 5.1 (they read only what the server offers) or keep refusing them.
 
 ---
 

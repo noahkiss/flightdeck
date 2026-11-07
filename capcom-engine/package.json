@@ -1,0 +1,28 @@
+{
+  "name": "gff-hab-capcom",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Capcom engine: an agent loop on the Claude Agent SDK that gff-hab drives over a line-JSON route.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.14.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.319",
+    "@anthropic-ai/sdk": "1.6.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

@@ -79,7 +79,13 @@ type actions struct {
 	// listedPeer reports whether a device is a labelled peer in this hab's peer list, so a
 	// report to it can go. nil: none is.
 	listedPeer func(device string) bool
+	// reserved reports a name only the Capcom service may hold: capcom and capcom-<anything>
+	// while the service runs (capcom-service.md 2.4). nil: none.
+	reserved func(name string) bool
 }
+
+// isReserved reports whether name is kept for the Capcom service.
+func (a *actions) isReserved(name string) bool { return a.reserved != nil && a.reserved(name) }
 
 var _ control.Resumer = (*actions)(nil)
 
@@ -214,6 +220,8 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		name = a.freeName(base)
 	} else if !channels.ValidName(name) {
 		return "", "", control.Errorf(api.ErrorKindInvalid, "session name %q: use %s", name, channels.NameRule)
+	} else if a.isReserved(name) {
+		return "", "", control.Errorf(api.ErrorKindInvalid, "session name %q is kept for the Capcom service; capcom and names that start with capcom- are not free", name)
 	} else if _, taken := a.store.SessionByName(name); taken {
 		return "", "", control.Errorf(api.ErrorKindConflict, "a session named %q exists", name)
 	} else if label := a.onPeer(name); label != "" {
@@ -516,6 +524,9 @@ func (a *actions) RenameSession(session, name string) error {
 	if !channels.ValidName(name) {
 		return control.Errorf(api.ErrorKindInvalid, "session name %q: use %s", name, channels.NameRule)
 	}
+	if a.isReserved(name) {
+		return control.Errorf(api.ErrorKindInvalid, "session name %q is kept for the Capcom service; capcom and names that start with capcom- are not free", name)
+	}
 	if label := a.onPeer(name); label != "" {
 		return control.Errorf(api.ErrorKindConflict, "name %q in use on %s", name, label)
 	}
@@ -566,12 +577,12 @@ func (a *actions) freeName(base string) string {
 	if len(base) > 56 {
 		base = base[:56]
 	}
-	if base == "" || base == "." || base == ".." || strings.Trim(base, "-") == "" {
+	if base == "" || base == "." || base == ".." || strings.Trim(base, "-") == "" || a.isReserved(base) {
 		base = "session"
 	}
 	name := base
 	for i := 2; ; i++ {
-		if _, taken := a.store.SessionByName(name); !taken && a.onPeer(name) == "" {
+		if _, taken := a.store.SessionByName(name); !taken && a.onPeer(name) == "" && !a.isReserved(name) {
 			return name
 		}
 		name = fmt.Sprintf("%s-%d", base, i)
