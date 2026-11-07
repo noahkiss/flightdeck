@@ -198,6 +198,12 @@ Later starts inside the envelope ask nothing:
 A start outside the envelope that is not an amend follows the normal start rules
 (`confirm.start_elsewhere`) and is not a member.
 
+Built (B3): only a start from a member, inside the envelope, skips the card. A member's start
+outside the envelope is refused with the reason, and the coordinator amends. A start that names
+a group but comes from a session that is not one of its members is not refused: it follows the
+normal start rules, asks while `confirm.group_plan` is on, and gets the trust cover of 12.6 as
+B2 built it.
+
 ---
 
 ## 4. Starting members
@@ -513,6 +519,43 @@ point, with a generation number in the catalog. Reason: the mesh has one writer 
 election. The record is live in exactly one place at every step: on the old home until its
 tombstone, on the new home after the commit. The generation lets every hab and client pick that
 copy from the catalog with no extra protocol.
+
+### 5.8 Built choices (stage B3, task-nz4aglbr)
+
+`internal/groups` holds the plan checks, the record and its store; gff-hab's group service runs
+it on the home hab.
+
+- **One confirmation per plan** is a confirmation of kind `group` in the confirm service: the
+  same cards, first answer wins, expiry by `group.confirm_max_age`, and notes. An edit on the
+  card is a whole edited plan, checked again. With `confirm.group_plan` off a plan runs at once
+  and the record names confirmation `none`; with it off, `confirm.start_elsewhere` on and a
+  member on another host, the plan asks once.
+- **The record** is `<state>/groups/<id>.json`, written by a synced rename; a file that does not
+  parse is set aside. `[groups] keep_ended` removes an ended or dropped record at a start. A
+  restart drops a group still confirming and tells the coordinator; a group starting goes back
+  to planned.
+- **Logbook.** The home hab files the plan and one task per item as the actor kind `hab`, so
+  they land under `logbook.approval = agents` (13 Q5). It claims an item's task for its lead.
+- **The envelope** lives on each member's session record, so a member's hab decides a later
+  start while the home hab sleeps.
+- **Members.** The home hab sees members through the catalog copies (an agent's `group` field)
+  every 5 s, also workers a lead started. A local lead that closes stalls its item, and the
+  coordinator hears it.
+- **Reports.** A report goes to a running coordinator as a Flightdeck note, else to the inbox
+  (`[groups] inbox_max`, `inbox_days`). Another hab forwards a report over the link to the home
+  hab once, never twice. The inbox goes in as one message once the resumed coordinator's pane
+  reports an agent state.
+- **A pause** holds channel messages into members and new member starts; members read it from
+  the catalog copy, so it can reach them up to one catalog pull late.
+- **The CLI** is `gff-hab group ls|show|pause|resume|close`. The agent kit has `group_create`,
+  `group_status`, `group_amend`, `group_close`, `group_retry`, `group_report` and `group_note`.
+- **Not built in B3.** The envelope is not pushed to running members after an amend, so a host
+  an amend adds is not in older members' envelopes. A pause reaches members through the catalog
+  only, not at once over member links (5.6). The usage pause has its call but no governor
+  (Part 14 G). Reviewers and plan workers stay planned (B7). The scheduler does not wait for a
+  started worktree setup or fetch first (B4). Stall detection covers local leads only, and
+  `group.close` closes local members only. The app's group card and gff's board section come
+  later.
 
 ---
 
@@ -1040,7 +1083,8 @@ to 3.6.
 | `review_verdict` | Reviewer | The verdict |
 | `member_compact`, `member_handoff` | Any member, the coordinator | Sibling actions |
 
-CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`.
+CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`. Built in B3 as
+`gff-hab group ls|show|pause|resume|close`; `move` comes with B9.
 
 ### 15.3 Settings
 
@@ -1104,8 +1148,8 @@ setting, with its earlier fixed value as the default. Two homes, by who tunes it
 
 **Changes to other specs.** Each stage edits `app.md` 20.3 to 20.5 as it builds a row. Stage
 B2 built the hab's `confirm.group_plan` row (its group starts need the off case) and added it
-to `app.md` 20.3, and built `[groups] trust_hold`; the app's row comes with B3. Stage B3 adds the rows `group.confirm_max_age`, `group.max_leads`, `group.max_workers` and
-`group.close_members`; B5 adds the `heavy.*` rows; B6 adds `group.compact_at`,
+to `app.md` 20.3, and built `[groups] trust_hold`; the app's row is not built yet. Stage B3 built the hab rows `group.confirm_max_age`, `group.max_leads`, `group.max_workers` and
+`group.close_members` and the keys `[groups] keep_ended`, `inbox_max` and `inbox_days`; B5 adds the `heavy.*` rows; B6 adds `group.compact_at`,
 `group.fresh_after_compacts`, `group.fresh_transcript_mb` and `group.handoff_at`. Each stage that
 reads a `[groups]` or `[heavy]` key adds it to `docs/examples/hab.toml`.
 
