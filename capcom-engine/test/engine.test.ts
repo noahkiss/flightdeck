@@ -60,7 +60,7 @@ test('hello gets ready, and the SDK gets exactly the 5.1 surface', async () => {
     const o = r.sdk.calls[0]!;
     assert.deepEqual(o.disallowedTools, ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Agent', 'Skill', 'ToolSearch', 'AskUserQuestion', 'TaskCreate', 'TaskUpdate', 'NotebookEdit']);
     assert.deepEqual(o.disallowedTools, [...DENY_TOOLS]);
-    assert.deepEqual(o.allowedTools, ['mcp__flightdeck__*', 'WebSearch']);
+    assert.deepEqual(o.allowedTools, ['mcp__flightdeck__*', 'WebSearch', 'ListMcpResourcesTool', 'ReadMcpResourceTool']);
     assert.deepEqual(o.allowedTools, [...ALLOW_TOOLS]);
     assert.ok(!o.allowedTools!.includes('WebFetch'));
     assert.deepEqual(o.tools, ['WebSearch', 'WebFetch']);
@@ -299,6 +299,27 @@ test('the start check refuses an init that lists Bash', async () => {
     await sleep(100);
     assert.equal(r.sdk.last.texts().length, 0);
     assert.equal(r.hab.of('session.started').length, 0);
+  });
+});
+
+test('the start check accepts the MCP resource tools while flightdeck is the only MCP server', async () => {
+  const tools = ['WebFetch', 'WebSearch', 'mcp__flightdeck__hosts', 'ListMcpResourcesTool', 'ReadMcpResourceTool'];
+  await withRig({ setup: ({ sdk }) => void (sdk.initTools = tools) }, async (r) => {
+    await started(r);
+    assert.equal(r.hab.of('error').length, 0);
+    assert.equal(r.hab.of('session.started').length, 1);
+  });
+});
+
+test('the start check refuses the MCP resource tools when another MCP server is listed', async () => {
+  const tools = ['WebFetch', 'WebSearch', 'mcp__flightdeck__hosts', 'ListMcpResourcesTool'];
+  const servers = [{ name: 'flightdeck', status: 'connected' }, { name: 'other', status: 'connected' }];
+  await withRig({ setup: ({ sdk }) => void ((sdk.initTools = tools), (sdk.initServers = servers)) }, async (r) => {
+    await r.hab.wait('ready');
+    const err = await r.hab.wait('error');
+    assert.equal(err.kind, 'start');
+    assert.match(err.text, /ListMcpResourcesTool/);
+    await until(() => r.exitCode() !== undefined);
   });
 });
 

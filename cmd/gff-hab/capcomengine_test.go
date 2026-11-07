@@ -73,3 +73,26 @@ func TestUninstallStopsEngine(t *testing.T) {
 		t.Fatalf("the engine was not stopped: %q", out.String())
 	}
 }
+
+// gff-hab mcp clears the engine's credential from its environment at start (capcom-service.md
+// 16, Q4), so no program it runs gets it.
+func TestMCPClearsCredential(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "planted-oauth-mcp")
+	t.Setenv("ANTHROPIC_API_KEY", "planted-key-mcp")
+	if err := mcpCmd([]string{"--skill"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := os.LookupEnv("CLAUDE_CODE_OAUTH_TOKEN"); ok {
+		t.Fatal("CLAUDE_CODE_OAUTH_TOKEN is still set")
+	}
+	if _, ok := os.LookupEnv("ANTHROPIC_API_KEY"); ok {
+		t.Fatal("ANTHROPIC_API_KEY is still set")
+	}
+	out, err := exec.Command("/usr/bin/env").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "planted-") {
+		t.Fatal("a child's environment holds the credential")
+	}
+}

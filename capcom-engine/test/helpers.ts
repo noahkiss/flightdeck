@@ -49,6 +49,7 @@ export class FakeSdk {
   calls: Options[] = [];
   queries: FakeQuery[] = [];
   initTools = ['WebFetch', 'WebSearch', 'mcp__flightdeck__hosts'];
+  initServers: { name: string; status: string }[] = [{ name: 'flightdeck', status: 'connected' }];
   script: Script = echo;
   query = (p: { prompt: AsyncIterable<SDKUserMessage>; options: Options }): QueryHandle => {
     this.calls.push(p.options);
@@ -92,7 +93,7 @@ export class FakeQuery implements QueryHandle {
   private emitInit(): void {
     if (this.initSent) return;
     this.initSent = true;
-    this.emit({ type: 'system', subtype: 'init', tools: this.sdk.initTools, cwd: this.options.cwd });
+    this.emit({ type: 'system', subtype: 'init', tools: this.sdk.initTools, mcp_servers: this.sdk.initServers, cwd: this.options.cwd });
   }
 
   private replay(m: SDKUserMessage): void {
