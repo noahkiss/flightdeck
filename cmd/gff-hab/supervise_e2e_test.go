@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/groups"
 )
 
 // fakeSupervisedBody follows the trust prelude: a Claude Code stand-in that runs the real hook
@@ -231,7 +232,14 @@ func TestGroupSupervision(t *testing.T) {
 		}
 		return false
 	})
-	if g := getGroup(t, e, gid); len(g.Members) != 1 {
-		t.Fatalf("members %+v", g.Members)
+	// One lead for the item; the record also lists the item's reviewer (stage B7).
+	leads := 0
+	for _, m := range getGroup(t, e, gid).Members {
+		if m.Role == groups.RoleLead {
+			leads++
+		}
+	}
+	if leads != 1 {
+		t.Fatalf("members %+v", getGroup(t, e, gid).Members)
 	}
 }
