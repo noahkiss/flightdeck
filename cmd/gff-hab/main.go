@@ -1353,6 +1353,10 @@ func serve(args []string) error {
 				return err
 			},
 			setting: setSvc.Value,
+			ready: func(pane string) bool {
+				st, ok := agents.Get(pane)
+				return ok && st.Revision > 0 && st.State != api.AgentStatusNone && st.State != api.AgentStatusExited
+			},
 			publish: func(e structure.Event) {
 				if s := srv.Load(); s != nil {
 					s.Publish(e)

@@ -53,6 +53,8 @@ type groupsConfig struct {
 	// note sends a message from Flightdeck to a session on this hab, by id.
 	note    func(session, text string) error
 	setting func(id string) json.RawMessage
+	// ready reports whether a pane's agent takes a message now. Nil: once it runs.
+	ready func(pane string) bool
 	publish func(structure.Event)
 	poke    func() // the catalog's groups section changed
 	now     func() time.Time
@@ -1251,6 +1253,35 @@ func (s *groupsService) Retry(ctx context.Context, p api.GroupRetryParams) (api.
 // Resumed delivers the inbox to a coordinator that was resumed, as one message, oldest first
 // (groups.md 5.5).
 func (s *groupsService) Resumed(session string) {
+	s.mu.Lock()
+	closed := s.closed
+	if !closed {
+		s.wg.Add(1)
+	}
+	s.mu.Unlock()
+	if closed {
+		return
+	}
+	go func() {
+		defer s.wg.Done()
+		// The resumed session's record names its new pane a moment after the call: the
+		// message goes once it runs, so channels do not refuse it as exited.
+		for i := 0; i < 600; i++ {
+			if ss, ok := s.cfg.store.Session(session); ok && ss.State == "running" && ss.Pane != "" && (s.cfg.ready == nil || s.cfg.ready(ss.Pane)) {
+				s.deliverInbox(session)
+				return
+			}
+			select {
+			case <-s.stop:
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		s.cfg.logf("groups: session %s never ran after its resume; its inbox waits", session)
+	}()
+}
+
+func (s *groupsService) deliverInbox(session string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range s.order {

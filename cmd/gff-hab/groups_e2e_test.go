@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,7 +173,7 @@ func TestGroupPlanOnPeer(t *testing.T) {
 	for _, pid := range []string{apiPid, uiPid} {
 		waitUntil(t, "the seed in member "+pid, func() bool { return strings.Contains(readIn(work, "in."+pid), "agent group "+gid) })
 	}
-	if got := pastedAll(work, "trusted"); strings.Count(got, "\n") != 2 {
+	if got := pastedAll(work, "trusted"); strings.Count(got, "/group-"+gid+"-") != 2 {
 		t.Fatalf("trust answers %q: want both leads' dialogs answered by their habs", got)
 	}
 	g := getGroup(t, m.a, gid)
@@ -246,6 +247,154 @@ func TestGroupPlanOnPeer(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// fakeCoordinator is fakeSpawner that also saves its pid, so the test can end it.
+const fakeCoordinator = `
+printf '%s' "$GFF_HAB" > "$DIR/addr.tmp" && mv "$DIR/addr.tmp" "$DIR/addr"
+echo $$ > "$DIR/alice-pid"
+stty raw -echo
+printf '\033]7501;state=idle:app=claude\033\\'
+exec cat > "$DIR/alice-in"
+`
+
+// TestGroupLifecycle (groups.md 16.2 B3) on one hab: with confirm.group_plan off a plan starts
+// at once and the cover names no confirmation; a user pause holds a channel message into a
+// member until the resume; with the setting on an amend asks once for its change; reports to an
+// exited coordinator wait and arrive at its resume; a restart during confirming drops the group
+// and tells the coordinator, and the running group survives it.
+func TestGroupLifecycle(t *testing.T) {
+	needGit(t)
+	fakes, work := groupFakes(t)
+	e := newHolderEnv(t, 0)
+	e.env = []string{"PATH=" + fakes + ":/usr/bin:/bin", "GFF_HAB_BIN=" + bin, "GFF_HAB_WORKTREES=" + filepath.Join(shortDir(t), "wt"),
+		"CLAUDE_CONFIG_DIR=" + filepath.Join(work, "claude"), noRaceExitSleep}
+	e.serve()
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(150*time.Second))
+	defer cancel()
+	set := func(id, v string) {
+		t.Helper()
+		var cur api.SettingsResult
+		call(t, e.control(), "settings.get", api.SettingsGetParams{IDs: []string{id}}, &cur)
+		if err := e.control().Call(ctx, "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{
+			{ID: id, Value: json.RawMessage(v), Revision: cur.Settings[0].Revision}}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := gitRepo(t, e.work, "shop")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	alice := createSession(t, e.sock, api.SessionCreateParams{Name: "alice", Argv: []string{"/bin/sh", "-c", fakeCoordinator}, ProjectDir: repo,
+		Cols: 80, Rows: 24, Env: []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "DIR=" + work}})
+	waitUntil(t, "alice's GFF_HAB", func() bool { return readIn(work, "addr") != "" })
+	addr := readIn(work, "addr")
+	waitCatalogProject(t, e, "shop", 1)
+
+	// Off: the plan starts at once, with no question.
+	set("confirm.group_plan", "false")
+	plan := api.GroupPlan{Title: "Fix cart", Project: "shop", Items: []api.GroupPlanItem{{ID: "a", Title: "Round once"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "a", Harness: "claude", Name: "lead-a"}}}
+	pj, _ := json.Marshal(plan)
+	tl, _ := findIn(actionTools, "group_create")
+	res, text, err := tl.run(ctx, hookCaller{addr}, toolArgs{"plan": string(pj)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc := res.(api.GroupCreated)
+	if gc.Confirmation == nil || !gc.Confirmation.Record || !strings.Contains(text, "no confirmation asked") {
+		t.Fatalf("setting off: %+v\n%s", gc.Confirmation, text)
+	}
+	gid := gc.Group.ID
+	aPid := memberIn(t, work, "-a")
+	waitUntil(t, "the lead's seed", func() bool { return strings.Contains(readIn(work, "in."+aPid), "agent group "+gid) })
+	if g := getGroup(t, e, gid); g.Confirmation.ID != "none" || g.Envelope == nil || g.Envelope.Confirmation != "none" {
+		t.Fatalf("record %+v", g)
+	}
+
+	// A user pause holds a message into the member until the resume.
+	call(t, e.control(), "group.pause", api.GroupRef{Group: gid}, &api.GroupResult{})
+	waitUntil(t, "the pause in the catalog", func() bool {
+		var l api.CatalogList
+		call(t, e.control(), "catalog.list", api.CatalogListParams{}, &l)
+		g, ok := groupOf(l, gid)
+		return ok && g.Pause != nil
+	})
+	if err := (hookCaller{addr}).Call(ctx, "channel.send", api.ChannelSendParams{To: "lead-a", Text: "status?"}, &api.ChannelSent{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+	if strings.Contains(readIn(work, "in."+aPid), "status?") {
+		t.Fatal("a message went into a member of a paused group")
+	}
+	call(t, e.control(), "group.resume", api.GroupRef{Group: gid}, &api.GroupResult{})
+	waitUntil(t, "the held message after the resume", func() bool { return strings.Contains(readIn(work, "in."+aPid), "status?") })
+
+	// On: an amend asks once for its change.
+	set("confirm.group_plan", "true")
+	change, _ := json.Marshal(api.GroupPlan{Items: []api.GroupPlanItem{{ID: "b", Title: "Tests"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "b", Harness: "claude", Name: "lead-b"}}})
+	at, _ := findIn(actionTools, "group_amend")
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := at.run(ctx, hookCaller{addr}, toolArgs{"group": gid, "change": string(change)})
+		done <- err
+	}()
+	var open []api.Confirmation
+	waitUntil(t, "the amend's confirmation", func() bool { open = openConfirmations(t, e); return len(open) == 1 })
+	if !open[0].Group.Amend || len(open[0].Group.Plan.Items) != 1 {
+		t.Fatalf("amend card %+v", open[0].Group)
+	}
+	call(t, e.control(), "confirm.answer", api.ConfirmAnswerParams{ID: open[0].ID, Choice: "confirm"}, &api.ConfirmationResult{})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	bPid := memberIn(t, work, "-b")
+	waitUntil(t, "the new lead's seed", func() bool { return strings.Contains(readIn(work, "in."+bPid), "item b") })
+
+	// The coordinator exits: a report waits, and arrives at its resume.
+	if err := exec.Command("kill", strings.TrimSpace(readIn(work, "alice-pid"))).Run(); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "alice exited", func() bool {
+		var ss api.StructureResult
+		call(t, e.control(), "structure.get", api.StructureGetParams{}, &ss)
+		for _, s := range ss.Sessions {
+			if s.ID == alice.Session {
+				return s.State == "exited"
+			}
+		}
+		return false
+	})
+	rt, _ := findIn(actionTools, "group_report")
+	if _, text, err := rt.run(ctx, hookCaller{readIn(work, "addr."+aPid)}, toolArgs{"group": gid, "text": "rounded once"}); err != nil || !strings.Contains(text, "waits") {
+		t.Fatalf("report to an exited coordinator: %v %s", err, text)
+	}
+	call(t, e.control(), "session.resume", api.SessionRef{Session: alice.Session}, &api.SessionCreated{})
+	waitUntil(t, "the inbox at the resume", func() bool {
+		in := readIn(work, "alice-in")
+		return strings.Contains(in, "reports came while you were away") && strings.Contains(in, "lead-a: rounded once")
+	})
+	if g := getGroup(t, e, gid); len(g.Inbox) != 0 {
+		t.Fatalf("inbox after delivery: %+v", g.Inbox)
+	}
+
+	// A restart while a plan waits for its answer drops the group and tells the coordinator.
+	var waiting api.GroupCreated
+	p := api.GroupPlan{Title: "Later", Project: "shop", Items: []api.GroupPlanItem{{ID: "c", Title: "C"}},
+		Members: []api.GroupPlanMember{{Role: "lead", Item: "c", Harness: "claude", Name: "lead-c"}}}
+	call(t, e.control(), "group.create", api.GroupCreateParams{Plan: p, Coordinator: "alice"}, &waiting)
+	if waiting.Group.State != "confirming" {
+		t.Fatalf("waiting %+v", waiting.Group)
+	}
+	e.restart(false)
+	if g := getGroup(t, e, waiting.Group.ID); g.State != "dropped" {
+		t.Fatalf("after the restart: %s", g.State)
+	}
+	waitUntil(t, "the drop message", func() bool {
+		return strings.Contains(readIn(work, "alice-in"), "the hab restarted before you answered")
+	})
+	if g := getGroup(t, e, gid); g.State != "running" || len(g.Members) != 2 {
+		t.Fatalf("the running group after the restart: %+v", g)
+	}
 }
 
 func (s *trustShows) total() int {
