@@ -1179,6 +1179,43 @@ func (s *Store) Envelope(id string) (api.GroupEnvelope, bool) {
 	return *copyEnvelope(ss.Envelope), true
 }
 
+// SetGroupEnvelope replaces the envelope of each member of env's group whose envelope comes
+// from env's home hab: the home hab's push after an amend (groups.md 3.3). It returns how many
+// changed. The envelope stays out of the API, so no event goes out.
+func (s *Store) SetGroupEnvelope(env api.GroupEnvelope) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, ss := range s.sessions {
+		if ss.Group == nil || ss.Group.ID != env.Group || ss.Envelope == nil || ss.Envelope.Home != env.Home {
+			continue
+		}
+		if e := ss.Envelope; e.Confirmation == env.Confirmation && e.Project == env.Project && e.MaxWorkers == env.MaxWorkers &&
+			slices.Equal(e.Hosts, env.Hosts) && slices.Equal(e.Harnesses, env.Harnesses) {
+			continue
+		}
+		ss.Envelope = copyEnvelope(&env)
+		n++
+	}
+	if n > 0 {
+		s.commit(nil)
+	}
+	return n
+}
+
+// GroupHome reports whether a session on this hab is a member of the group with an envelope
+// from home.
+func (s *Store) GroupHome(group, home string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ss := range s.sessions {
+		if ss.Group != nil && ss.Group.ID == group && ss.Envelope != nil && ss.Envelope.Home == home {
+			return true
+		}
+	}
+	return false
+}
+
 func copyRound(r *api.SessionRound) *api.SessionRound {
 	if r == nil {
 		return nil

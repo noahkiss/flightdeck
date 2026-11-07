@@ -4614,6 +4614,52 @@
       "x-params": {
         "$ref": "#/components/schemas/GroupMessageParams"
       }
+    },
+    {
+      "name": "group.sync",
+      "summary": "A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "envelope",
+          "description": "The envelope as amended. Its home is the sending hab.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupEnvelope"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pause",
+          "description": "The pause reasons, while paused; absent when the group runs.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupPause"
+          }
+        },
+        {
+          "name": "revision",
+          "description": "The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupSyncParams"
+      }
     }
   ],
   "x-notifications": [
@@ -6349,6 +6395,11 @@
           "pause": {
             "$ref": "#/components/schemas/GroupPause",
             "description": "The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The group record's revision when this copy was made."
           },
           "state": {
             "type": "string",
@@ -9941,6 +9992,31 @@
           "lead",
           "worker",
           "reviewer"
+        ]
+      },
+      "GroupSyncParams": {
+        "type": "object",
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "The envelope as amended. Its home is the sending hab."
+          },
+          "group": {
+            "type": "string"
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause",
+            "description": "The pause reasons, while paused; absent when the group runs."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's."
+          }
+        },
+        "required": [
+          "group",
+          "revision"
         ]
       },
       "GroupVerdict": {
