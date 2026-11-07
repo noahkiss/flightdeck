@@ -203,6 +203,15 @@ cache = "0s"
 		t.Fatalf("a second answer: %v", err)
 	}
 	waitUntil(t, "the added note reaches the engine", func() bool { return strings.Contains(e.stubLog(), "The user added") })
+	// The note's own turn ends before the next message, so its reply is not taken for that one's.
+	waitUntil(t, "the reply to the added note", func() bool {
+		for _, it := range threadText(t, c) {
+			if it.Kind == "message" && it.Author.Kind == "capcom" && strings.HasPrefix(it.Text, "echo: The user added") {
+				return true
+			}
+		}
+		return false
+	})
 
 	// A card whose event has ended: Add is refused.
 	past := time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
