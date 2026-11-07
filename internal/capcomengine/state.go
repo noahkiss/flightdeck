@@ -33,8 +33,10 @@ type Record struct {
 	Crashes []time.Time `json:"crashes,omitempty"`
 	// Build names the engine build last started (3.2: an install drains the old build).
 	Build string `json:"build,omitempty"`
-	// Summary is the summary at hand (6.1, filled from A4), shown by a divider.
-	Summary string `json:"summary,omitempty"`
+	// Summary is the summary at hand (6.1), shown by a divider, and SummaryThrough the last
+	// thread item it covers: the next update covers the items after it.
+	Summary        string `json:"summary,omitempty"`
+	SummaryThrough string `json:"summary_through,omitempty"`
 }
 
 // Current is the SDK session to resume, or "".

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +31,7 @@ const (
 // (capcom-service.md 7.4).
 const ServiceCapability = "capcom-thread"
 
-// Limits are the [capcom] limit keys of capcom-service.md 19.2 that A2 reads, with their
+// Limits are the [capcom] limit keys of capcom-service.md 19.2 that A2 and A4 read, with their
 // defaults applied.
 type Limits struct {
 	MaxTurns        int
@@ -44,6 +45,18 @@ type Limits struct {
 	CommandTimeout  time.Duration
 	TokenRetry      time.Duration
 	WakeRetry       time.Duration
+
+	// The context manager's keys (A4, 6).
+	SummaryMaxChars   int
+	SummaryInputChars int
+	SummaryQuiet      time.Duration
+	ReseedAt          float64 // a share of the model's window, 0 to 1
+	ReseedQuiet       time.Duration
+	ReseedQuietAt     float64
+	SeedMessages      int
+	SeedMessagesChars int
+	SeedLogbookBytes  int
+	PrecompactTimeout time.Duration
 }
 
 // DefaultLimits are 19.2's defaults.
@@ -58,6 +71,17 @@ var DefaultLimits = Limits{
 	CommandTimeout:  30 * time.Second,
 	TokenRetry:      5 * time.Minute,
 	WakeRetry:       10 * time.Second,
+
+	SummaryMaxChars:   6000,
+	SummaryInputChars: 64000,
+	SummaryQuiet:      10 * time.Minute,
+	ReseedAt:          0.60,
+	ReseedQuiet:       60 * time.Minute,
+	ReseedQuietAt:     0.25,
+	SeedMessages:      6,
+	SeedMessagesChars: 8000,
+	SeedLogbookBytes:  8 << 10,
+	PrecompactTimeout: 30 * time.Second,
 }
 
 // ServiceConfig is the service half of the [capcom] section (capcom-service.md 3.5, 19.2).
@@ -74,8 +98,7 @@ type ServiceConfig struct {
 
 // laterKeys are [capcom] keys later stages read (19.2, 8). They are known, so they are not
 // logged as unknown.
-var laterKeys = []string{"harness", "summary_max_chars", "summary_quiet", "reseed_at", "reseed_quiet", "reseed_quiet_at",
-	"seed_messages", "seed_messages_chars", "seed_logbook_bytes", "precompact_timeout", "location_stale",
+var laterKeys = []string{"harness", "location_stale",
 	"pace_daily_share", "pace_event_stop", "pace_small_at", "pace_wait_at", "weather", "maps", "places"}
 
 type durRange struct {
@@ -184,6 +207,11 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	for _, r := range []intRange{
 		{"max_turns", &l.MaxTurns, 1, 500},
 		{"crash_limit", &l.CrashLimit, 1, 100},
+		{"summary_max_chars", &l.SummaryMaxChars, 1000, 50000},
+		{"summary_input_chars", &l.SummaryInputChars, 8000, 400000},
+		{"seed_messages", &l.SeedMessages, 0, 50},
+		{"seed_messages_chars", &l.SeedMessagesChars, 0, 64000},
+		{"seed_logbook_bytes", &l.SeedLogbookBytes, 0, 64 << 10},
 	} {
 		v, ok := sec[r.key]
 		if !ok {
@@ -204,6 +232,9 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 		{"command_timeout", &l.CommandTimeout, time.Second, 5 * time.Minute},
 		{"token_retry", &l.TokenRetry, 30 * time.Second, 24 * time.Hour},
 		{"wake_retry", &l.WakeRetry, time.Second, 5 * time.Minute},
+		{"summary_quiet", &l.SummaryQuiet, time.Minute, 24 * time.Hour},
+		{"reseed_quiet", &l.ReseedQuiet, 10 * time.Minute, 24 * time.Hour},
+		{"precompact_timeout", &l.PrecompactTimeout, 5 * time.Second, 5 * time.Minute},
 	} {
 		v, ok := sec[r.key]
 		if !ok {
@@ -241,10 +272,41 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 		}
 		*k.dst = x
 	}
+	// The two shares of the model's window (6.2): a percent, as 60 or "60%". reseed_quiet_at
+	// may not pass reseed_at.
+	share := func(key string, dst *float64, lo, hi float64) {
+		v, ok := sec[key]
+		if !ok {
+			return
+		}
+		x := math.NaN()
+		switch n := v.(type) {
+		case int64:
+			x = float64(n)
+		case float64:
+			x = n
+		case string:
+			if t, cut := strings.CutSuffix(strings.TrimSpace(n), "%"); cut {
+				if f, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
+					x = f
+				}
+			}
+		}
+		if !(x >= lo && x <= hi) {
+			bad("%s %v: want a percent from %g to %g, such as %g or \"%g%%\"; using %g%%", key, v, lo, hi, *dst*100, *dst*100, *dst*100)
+			return
+		}
+		*dst = x / 100
+	}
+	share("reseed_at", &l.ReseedAt, 20, 90)
+	share("reseed_quiet_at", &l.ReseedQuietAt, 0, l.ReseedAt*100)
+	l.ReseedQuietAt = min(l.ReseedQuietAt, l.ReseedAt) // the default 25% under a reseed_at of 20%
 	known := map[string]bool{"engine": true, "model": true, "small_model": true, "auth": true, "oauth_token_command": true,
 		"api_key_command": true, "oauth_token": true, "api_key": true, "max_turns": true, "max_turn_usd": true, "daily_usd": true,
 		"restart_delay": true, "crash_limit": true, "crash_window": true, "route_backoff_max": true, "typing_timeout": true,
-		"command_timeout": true, "token_retry": true, "wake_retry": true}
+		"command_timeout": true, "token_retry": true, "wake_retry": true,
+		"summary_max_chars": true, "summary_input_chars": true, "summary_quiet": true, "reseed_at": true, "reseed_quiet": true,
+		"reseed_quiet_at": true, "seed_messages": true, "seed_messages_chars": true, "seed_logbook_bytes": true, "precompact_timeout": true}
 	for _, k := range laterKeys {
 		known[k] = true
 	}

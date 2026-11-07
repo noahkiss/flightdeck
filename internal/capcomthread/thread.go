@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,10 +98,21 @@ type Item struct {
 
 // Card is a card item's content: what kind of card, and the choices it offers.
 type Card struct {
-	Type    string   `json:"type"` // approval, confirmation, handoff, calendar, reminder, proposal
+	Type    string   `json:"type"` // approval, confirmation, handoff, calendar, reminder, proposal, memory
 	Ref     string   `json:"ref,omitempty"`
 	Choices []string `json:"choices,omitempty"`
+	// A memory card (6.4) names a capcom guide: Rev is the record's revision when it was noted,
+	// so an Undo after an edit elsewhere says so; Proposal marks a guide that waits for review,
+	// whose Undo rejects the proposal Ref names.
+	Rev      int  `json:"rev,omitempty"`
+	Proposal bool `json:"proposal,omitempty"`
 }
+
+// CardMemory is the card type of a "Noted" line (6.4), and ChoiceUndo its one choice.
+const (
+	CardMemory = "memory"
+	ChoiceUndo = "undo"
+)
 
 // Answer is a card's answer: the first wins.
 type Answer struct {
@@ -517,6 +529,20 @@ func (s *Store) After(id string, keep func(Item) bool) []Item {
 			out = append(out, clone(s.items[i]))
 		}
 	}
+	return out
+}
+
+// Tail returns the newest n items that match keep, oldest first.
+func (s *Store) Tail(n int, keep func(Item) bool) []Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Item
+	for i := len(s.items) - 1; i >= 0 && len(out) < n; i-- {
+		if keep == nil || keep(*s.items[i]) {
+			out = append(out, clone(s.items[i]))
+		}
+	}
+	slices.Reverse(out)
 	return out
 }
 
