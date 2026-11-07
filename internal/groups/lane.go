@@ -72,6 +72,37 @@ func Upstream(g api.Group, it api.GroupItem) string {
 	return g.Items[b].Submitted
 }
 
+// Upstreams lists every head the item it stacks on has had, newest first: its land head, the
+// commit it landed as, the reviewer's fixed head, its submitted head and the heads the lane
+// pushed for it. The lane rebases from the newest one the item holds. nil for none.
+func Upstreams(g api.Group, it api.GroupItem) []string {
+	if it.After == "" {
+		return nil
+	}
+	b := ItemIndex(g, it.After)
+	if b < 0 {
+		return nil
+	}
+	base := g.Items[b]
+	var out []string
+	add := func(h string) {
+		if h != "" && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	add(base.Land)
+	add(base.Landed)
+	if base.Verdict != nil {
+		add(base.Verdict.FixedHead)
+		add(base.Verdict.Head)
+	}
+	add(base.Submitted)
+	for _, h := range Prior(base) {
+		add(h)
+	}
+	return out
+}
+
 // Prior lists the rebased heads the lane pushed for an item since its last submit.
 func Prior(it api.GroupItem) []string {
 	var out []string
