@@ -19,6 +19,10 @@
 // event_stop. A wait lasts until the first window day whose allowance takes the level under the
 // step, else until the window resets; under the dollar cap, until the next local midnight.
 //
+// The governor keeps each account's last weekly window in its state file, so a restart paces from
+// it until a new reading comes. Its recheck timer runs at most maxRecheck at a time and each fire
+// compares wall time, so a sleep (which a monotonic timer does not count) ends no wait late.
+//
 // Pure Go; the clock and timers are injected, so tests run on a fake clock.
 package governor
 
@@ -56,6 +60,10 @@ const (
 	BasisUSD  Basis = "usd"  // result cost against a daily dollar cap
 	BasisNone Basis = "none" // unpaced: tokens counted
 )
+
+// maxRecheck is the longest the recheck timer runs: a timer does not count a sleep, so each fire
+// compares wall time and a wait ends at most this long after its time.
+const maxRecheck = 5 * time.Minute
 
 // Window is the name of the window the governor paces by: the plan's weekly window.
 const Window = "7d"
@@ -117,7 +125,8 @@ type Config struct {
 	OnChange func(id string, a Answer)
 	// OnSpent hears each Spent, with no lock held: the counters in Section moved. Nil: none.
 	OnSpent func(id string)
-	// StatePath keeps today's counters across a restart. "": in memory only.
+	// StatePath keeps today's counters and each account's last weekly window across a restart.
+	// "": in memory only.
 	StatePath string
 	Now       func() time.Time
 	// After runs f after d; the returned stop cancels it. Nil: time.AfterFunc.
@@ -136,6 +145,7 @@ type Governor struct {
 	answers   map[string]Answer
 	day       string // the counters' local day, 2006-01-02
 	counts    map[string]*count
+	windows   map[string]api.UsageWindow // each account's last weekly window, by account key
 	stop      func() bool
 	closed    bool
 	// queue holds changes for OnChange in the order they were found; one caller at a time
@@ -159,6 +169,8 @@ type count struct {
 type stateFile struct {
 	Day       string            `json:"day"`
 	Consumers map[string]*count `json:"consumers"`
+	// Windows is each account's last weekly window: the pace after a restart, before a reading.
+	Windows map[string]api.UsageWindow `json:"windows,omitempty"`
 }
 
 // New returns a governor with no consumers. It reads today's counters from StatePath.
@@ -178,7 +190,8 @@ func New(cfg Config) *Governor {
 	if cfg.Account == nil {
 		cfg.Account = func(string) (api.UsageAccount, bool) { return api.UsageAccount{}, false }
 	}
-	g := &Governor{cfg: cfg, consumers: map[string]Consumer{}, answers: map[string]Answer{}, counts: map[string]*count{}}
+	g := &Governor{cfg: cfg, consumers: map[string]Consumer{}, answers: map[string]Answer{}, counts: map[string]*count{},
+		windows: map[string]api.UsageWindow{}}
 	g.load()
 	return g
 }
@@ -198,6 +211,11 @@ func (g *Governor) load() {
 	if err := json.Unmarshal(b, &f); err != nil {
 		g.cfg.Logf("governor: %s is not readable; today's counters start at 0: %v", g.cfg.StatePath, err)
 		return
+	}
+	for key, w := range f.Windows {
+		if w.Name == Window {
+			g.windows[key] = w
+		}
 	}
 	if f.Day != g.today() {
 		return
@@ -219,7 +237,7 @@ func (g *Governor) saveLocked() {
 	if g.cfg.StatePath == "" {
 		return
 	}
-	b, _ := json.Marshal(stateFile{Day: g.day, Consumers: g.counts})
+	b, _ := json.Marshal(stateFile{Day: g.day, Consumers: g.counts, Windows: g.windows})
 	dir := filepath.Dir(g.cfg.StatePath)
 	tmp, err := os.CreateTemp(dir, ".governor-*")
 	if err == nil {
@@ -316,21 +334,45 @@ func (g *Governor) Spent(id string, input, output int64, usd float64) {
 // changed answer goes to OnChange; the next recheck is set for the next time an answer can
 // change on its own (a window day, a reset, a local midnight).
 func (g *Governor) Recheck() {
+	// Each consumer's settings are read once, with no lock held: they may read a file.
+	g.mu.Lock()
+	cs := make([]Consumer, 0, len(g.consumers))
+	for _, c := range g.consumers {
+		cs = append(cs, c)
+	}
+	g.mu.Unlock()
+	sort.Slice(cs, func(i, j int) bool { return cs[i].ID < cs[j].ID })
+	type setting struct {
+		pol Policy
+		key string
+	}
+	set := make([]setting, len(cs))
+	for i, c := range cs {
+		set[i].pol = DefaultPolicy
+		if c.Policy != nil {
+			set[i].pol = c.Policy()
+		}
+		if c.Account != nil {
+			set[i].key = c.Account()
+		}
+	}
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
 		return
 	}
-	now := g.cfg.Now()
+	// Wall time: a fire after a sleep compares the clock, not the time the timer counted.
+	now := g.cfg.Now().Round(0)
 	g.rollLocked()
 	next := g.nextMidnight(now)
-	ids := make([]string, 0, len(g.consumers))
-	for id := range g.consumers {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		a, at := g.answer(g.consumers[id], now)
+	changed := false
+	for i, c := range cs {
+		id := c.ID
+		if _, ok := g.consumers[id]; !ok {
+			continue // unregistered while its settings were read
+		}
+		a, at, moved := g.answer(id, set[i].pol, set[i].key, now)
+		changed = changed || moved
 		if !at.IsZero() && at.Before(next) {
 			next = at
 		}
@@ -347,12 +389,18 @@ func (g *Governor) Recheck() {
 			g.queue = append(g.queue, change{id: id, a: a, first: true})
 		}
 	}
+	if changed {
+		g.saveLocked()
+	}
 	if g.stop != nil {
 		g.stop()
 	}
 	d := next.Sub(now)
 	if d < time.Second {
 		d = time.Second
+	}
+	if d > maxRecheck {
+		d = maxRecheck
 	}
 	g.stop = g.cfg.After(d, g.Recheck)
 	g.deliverLocked()
@@ -390,15 +438,12 @@ func (g *Governor) nextMidnight(now time.Time) time.Time {
 	return time.Date(y, m, d+1, 0, 0, 0, 0, g.cfg.Location)
 }
 
-// answer computes one consumer's answer, and the time it can next change on its own (zero:
-// only at a new reading). The caller holds g.mu.
-func (g *Governor) answer(c Consumer, now time.Time) (Answer, time.Time) {
-	p := DefaultPolicy
-	if c.Policy != nil {
-		p = c.Policy()
-	}
-	a := Answer{Pace: Ok, EventPace: Ok, Basis: BasisNone}
-	if n := g.counts[c.ID]; n != nil {
+// answer computes one consumer's answer from its policy and account key, and the time it can
+// next change on its own (zero: only at a new reading). moved reports a new weekly window kept
+// for the account. The caller holds g.mu.
+func (g *Governor) answer(id string, p Policy, key string, now time.Time) (a Answer, next time.Time, moved bool) {
+	a = Answer{Pace: Ok, EventPace: Ok, Basis: BasisNone}
+	if n := g.counts[id]; n != nil {
 		a.SpentUSD, a.InputTok, a.OutputTok = n.USD, n.Input, n.Output
 	}
 	if p.DailyUSD > 0 {
@@ -414,29 +459,30 @@ func (g *Governor) answer(c Consumer, now time.Time) (Answer, time.Time) {
 		if a.EventPace == Wait {
 			a.EventUntil = mid
 		}
-		return a, time.Time{} // midnight is always a recheck
-	}
-	key := ""
-	if c.Account != nil {
-		key = c.Account()
+		return a, time.Time{}, false // midnight is always a recheck
 	}
 	if key == "" {
-		return a, time.Time{}
+		return a, time.Time{}, false
 	}
-	acct, ok := g.cfg.Account(key)
+	// The account's weekly window: the store's, kept for a restart; else the one kept.
+	w, ok := g.windows[key]
+	if acct, have := g.cfg.Account(key); have {
+		if i := slices.IndexFunc(acct.Windows, func(w api.UsageWindow) bool { return w.Name == Window }); i >= 0 {
+			if acct.Windows[i] != w {
+				moved = true
+			}
+			w, ok = acct.Windows[i], true
+			g.windows[key] = w
+		}
+	}
 	if !ok {
-		return a, time.Time{}
+		return a, time.Time{}, moved
 	}
-	i := slices.IndexFunc(acct.Windows, func(w api.UsageWindow) bool { return w.Name == Window })
-	if i < 0 {
-		return a, time.Time{}
-	}
-	w := acct.Windows[i]
 	start, err1 := time.Parse(time.RFC3339, w.StartsAt)
 	reset, err2 := time.Parse(time.RFC3339, w.ResetsAt)
 	length := time.Duration(w.LengthS) * time.Second
 	if err1 != nil || err2 != nil || length < 24*time.Hour || !reset.After(start) {
-		return a, time.Time{}
+		return a, time.Time{}, moved
 	}
 	used := float64(w.UsedPct)
 	// A window that reset with no reading since starts again at 0.
@@ -468,11 +514,11 @@ func (g *Governor) answer(c Consumer, now time.Time) (Answer, time.Time) {
 	if a.EventPace == Wait {
 		a.EventUntil = until(p.EventStop)
 	}
-	next := reset
+	next = reset
 	if day+1 < days {
 		next = start.Add(time.Duration(day+1) * 24 * time.Hour)
 	}
-	return a, next
+	return a, next, moved
 }
 
 // steps turns a level (percent of the share) into the user and event paces.
