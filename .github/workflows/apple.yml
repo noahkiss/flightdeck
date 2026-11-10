@@ -53,4 +53,4 @@ jobs:
       xcodebuild-args: -onlyUsePackageVersionsFromResolvedFile
       spm-cache-key-file: apple/FlightdeckKit/Package.resolved
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
-      timeout-minutes: 60
+      timeout-minutes: 90
