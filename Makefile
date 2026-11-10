@@ -203,7 +203,8 @@ check-gen: gen check-notices
 
 # What .github/workflows/ci.yml runs after go-ci's gofmt and generate checks (docs/specs/ci-release.md
 # 3.2): the full set on a pull request or a direct push, the fast set on the push that merges a
-# pull request whose own run passed. Run one before pushing.
+# pull request whose own run passed. Run one before pushing. ci.yml runs the full set per shard:
+# `make ci-full GO_TEST_SHARD=0/4` on one job, `make test race GO_TEST_SHARD=i/4` on the other four.
 ci-full: check-pure vet test race
 
 ci-fast: check-pure build
