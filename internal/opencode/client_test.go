@@ -51,7 +51,7 @@ func (f *fake) requests() []string {
 }
 
 func TestNewRefusesOtherHosts(t *testing.T) {
-	for _, u := range []string{"https://127.0.0.1:1", "http://example.com:80", "http://10.1.2.3:4", "http://127.0.0.1:5/api", "not a url", "http://127.0.0.1:5?x=1"} {
+	for _, u := range []string{"https://127.0.0.1:1", "http://example.com:80", "http://192.0.2.1:4", "http://127.0.0.1:5/api", "not a url", "http://127.0.0.1:5?x=1"} {
 		if _, err := New(u, "pw"); err == nil {
 			t.Errorf("New(%q) accepted", u)
 		}
