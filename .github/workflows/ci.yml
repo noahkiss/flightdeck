@@ -89,8 +89,7 @@ jobs:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     permissions:
       contents: read
-    # go-ci-concurrency-key until noahkiss/workflows#19 (the concurrency-key input) merges; then @main.
-    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-concurrency-key
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
     with:
       fmt: ${{ matrix.shard == '0/4' || matrix.shard == 'all' }}
       generate-check: ${{ matrix.shard == '0/4' || matrix.shard == 'all' }}
