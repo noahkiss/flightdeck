@@ -23,7 +23,7 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `scripts/release-smoke.sh` | The smoke test of a release archive on its own platform: each binary's version, the ghostty tag, what each binary links (the glibc 2.31 floor on Linux, macOS 13.0 on darwin), and a holder and gff-hab that start and answer `hab.hello`. Spec: `docs/specs/ci-release.md` 7.4 |
 | `internal/pathfilter/` | GitHub Actions `paths` filter matching (globs in order, last match wins) and a small command over it; `release.yml` uses it to ask whether a commit range changed anything `ci.yml` tests. Pure Go. Spec: `docs/specs/ci-release.md` 7.4 |
 | `internal/notices/` | The third-party notice generator: reads `third_party/notices.toml`, the texts under `third_party/licenses/`, `go.mod` with the module cache (`go list -deps` per release binary and platform, then `go mod download`) and `apple/FlightdeckKit/Package.resolved`, and writes `NOTICE` and `apple/App/Acknowledgements.txt`; `make notices` and `make check-notices` run its command. Pure Go. Spec: `docs/specs/ci-release.md` 7.8 |
-| `third_party/` | `notices.toml` (the components that are not Go modules or Swift packages, and one entry per pinned Swift package) and `licenses/` (their licence texts, copied at the pinned versions; `licenses/swift/<identity>/` per Swift package) |
+| `third_party/` | `ghostty/patches/` (our patches to the pinned Ghostty commit, applied by `make libghostty`), `notices.toml` (the components that are not Go modules or Swift packages, and one entry per pinned Swift package) and `licenses/` (their licence texts, copied at the pinned versions; `licenses/swift/<identity>/` per Swift package) |
 | `NOTICE` | Generated: the third-party notices of the release archives and the helper bundles. `make notices` writes it |
 | `internal/version/` | The `version`, `-version` and `--version` request the three binaries share; each sets its version at link time. Pure Go |
 | `.github/fastlane/` | The pinned fastlane (`Gemfile`, `Gemfile.lock`) for the release jobs' signing steps |
@@ -135,7 +135,14 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
 
 - **Pinned, not vendored.** `go.mod` pins the Go bindings, `go.mitchellh.com/libghostty`, to one
   commit. The Makefile pins the Ghostty commit those bindings were built against
-  (`GHOSTTY_COMMIT`). Bump both together. No Ghostty source is committed here.
+  (`GHOSTTY_COMMIT`). Bump both together. No Ghostty source is committed here, only our own
+  patches to that commit in `third_party/ghostty/patches/`.
+- **Our patches.** `make libghostty` applies each `.patch` there, in name order, to the fetched
+  commit before it builds. `0001` restores a snapshot's bottom page with room for more rows, so
+  each gff-hab restart does not leave one more mostly empty 400 KiB page in every pane's
+  scrollback. The patches' id is in the stamp file and in CI's cache key (`make ghostty-id`), so a
+  changed patch rebuilds the library. On a `GHOSTTY_COMMIT` bump, drop a patch the new commit
+  makes unneeded; `make libghostty` stops when one no longer applies.
 - **Zig 0.17.0** builds libghostty-vt (pinned in `mise.toml`; the Ghostty commit's
   `minimum_zig_version`). `make libghostty` fetches the pinned commit into `build/ghostty-src` and
   runs `zig build -Demit-lib-vt` into `build/libghostty-vt`. The first build takes a few minutes;

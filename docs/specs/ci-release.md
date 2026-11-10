@@ -143,8 +143,9 @@ the generated Swift package must fail the Go gate.
 Two jobs.
 
 1. **`plan`** (ubuntu, inline, a few seconds). Decides `full` or `fast` (3.3). Reads
-   `GHOSTTY_COMMIT` from the Makefile and the zig version from `mise.toml`. Outputs: `full`, and
-   `ghostty_key`, `libghostty-<GHOSTTY_COMMIT>-zig<version>`. The `go` job's make commands pass
+   `make ghostty-id` (`GHOSTTY_COMMIT` and the id of our Ghostty patches) and the zig version
+   from `mise.toml`. Outputs: `full`, and `ghostty_key`,
+   `libghostty-<GHOSTTY_COMMIT>-<patch id>-zig<version>`. The `go` job's make commands pass
    the platform's release `GHOSTTY_ZIGFLAGS` (7.3), so the cached library is the one a release
    links.
 2. **`go`** calls `go-ci.yml` with the extensions of section 11 (`mise`, `cache-path`,
@@ -307,7 +308,7 @@ build.
 | Cache | Key | Where | Note |
 |---|---|---|---|
 | Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | go-ci saves it on every run |
-| libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins, not on a hash of the whole Makefile, which changes often. A pin change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
+| libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-<patch id>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins and the id of `third_party/ghostty/patches/` (`make ghostty-id`), not on a hash of the whole Makefile, which changes often. A pin or patch change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
 | SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, so a graph that drifts from the pins fails instead of floating |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |

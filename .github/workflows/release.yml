@@ -87,7 +87,7 @@ jobs:
             echo "::error::The checkout is not the commit $TAG names. Delete and push the tag again."
             exit 1
           fi
-          commit=$(sed -n 's/^GHOSTTY_COMMIT := //p' Makefile)
+          commit=$(make -s ghostty-id) # the pinned commit and the patch id
           zig=$(sed -n 's/^zig = "\(.*\)"$/\1/p' mise.toml)
           [ -n "$commit" ] && [ -n "$zig" ] || { echo "::error::Cannot read GHOSTTY_COMMIT from the Makefile or the zig pin from mise.toml."; exit 1; }
           {
