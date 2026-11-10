@@ -123,17 +123,17 @@ stream="$tmp/stream"
 #   L<n>                 the next text line's number
 #   T<text>              one line to scan
 scan() {
+	# gawk keeps one compiled regex per `~` in the program text and compiles again whenever the
+	# string there changes, so one `~` in a loop over the rules compiles every rule on every line.
+	# Each private rule gets its own `~` instead: the generated text holds only rule numbers.
+	pmatch='' i=0
+	while [ "$i" -lt "$n" ]; do
+		i=$((i + 1))
+		pmatch="$pmatch	if (s ~ pre[$i]) out = out \" \" pname[$i]
+"
+	done
 	LC_ALL=C "$AWK" '
 	BEGIN {
-		nb = 0
-		builtin[++nb] = "private-ipv4"
-		re[nb] = "(^|[^0-9.])(10\\.[0-9]+\\.[0-9]+\\.[0-9]+|192\\.168\\.[0-9]+\\.[0-9]+|172\\.(1[6-9]|2[0-9]|3[01])\\.[0-9]+\\.[0-9]+)([^0-9]|$)"
-		builtin[++nb] = "cgnat-ipv4"
-		re[nb] = "(^|[^0-9.])100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.[0-9]+\\.[0-9]+([^0-9]|$)"
-		builtin[++nb] = "tailnet-ipv6"
-		re[nb] = "(^|[^0-9A-Fa-f:])[Ff][Dd]7[Aa]:115[Cc]:[Aa]1[Ee]0:"
-		builtin[++nb] = "tailnet-name"
-		re[nb] = "[A-Za-z0-9-]+\\.ts\\.net([^A-Za-z0-9-]|$)"
 		np = split(ENVIRON["GFF_HYGIENE_RULES"], lines, "\n")
 		n = 0
 		for (i = 1; i <= np; i++) {
@@ -169,13 +169,30 @@ scan() {
 		}
 		return 0
 	}
-	# Every rule that matches s, one per line, separated by spaces.
-	function rules_on(s,    i, out) {
+	# The built-in rules that match s, each after a space, as regex literals compiled once.
+	function builtins_on(s,    out) {
 		out = ""
-		for (i = 1; i <= nb; i++) if (s ~ re[i] && !allowed_hit(builtin[i], 1)) out = out " " builtin[i]
-		if (homepath(s) && !allowed_hit("home-path", 1)) out = out " home-path"
-		for (i = 1; i <= np; i++) if (s ~ pre[i]) out = out " " pname[i]
+		if (s ~ /(^|[^0-9.])(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+)([^0-9]|$)/) out = out " private-ipv4"
+		if (s ~ /(^|[^0-9.])100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+([^0-9]|$)/) out = out " cgnat-ipv4"
+		if (s ~ /(^|[^0-9A-Fa-f:])[Ff][Dd]7[Aa]:115[Cc]:[Aa]1[Ee]0:/) out = out " tailnet-ipv6"
+		if (s ~ /[A-Za-z0-9-]+\.ts\.net([^A-Za-z0-9-]|$)/) out = out " tailnet-name"
+		if (homepath(s)) out = out " home-path"
 		return out
+	}
+	# The private rules that match s, each after a space.
+	function private_on(s,    out) {
+		out = ""
+'"$pmatch"'		return out
+	}
+	# Every rule that matches s, each after a space.
+	function rules_on(s,    b, k, r, i, out) {
+		out = ""
+		b = builtins_on(s)
+		if (b != "") {
+			k = split(substr(b, 2), r, " ")
+			for (i = 1; i <= k; i++) if (!allowed_hit(r[i], 1)) out = out " " r[i]
+		}
+		return out private_on(s)
 	}
 	{ kind = substr($0, 1, 1); $0 = substr($0, 2) }
 	kind == "F" { where = $0; key = $0; lineno = 0; next }
@@ -196,9 +213,18 @@ scan() {
 	kind == "L" { lineno = $0 - 1; next }
 	{
 		lineno++
-		for (i = 1; i <= nb; i++) if ($0 ~ re[i]) hit(builtin[i], 1)
-		if (homepath($0)) hit("home-path", 1)
-		for (i = 1; i <= np; i++) if ($0 ~ pre[i]) hit(pname[i], 0)
+		found = builtins_on($0)
+		if (found != "") {
+			k = split(substr(found, 2), r, " ")
+			for (i = 1; i <= k; i++) hit(r[i], 1)
+		}
+		if (np) {
+			found = private_on($0)
+			if (found != "") {
+				k = split(substr(found, 2), r, " ")
+				for (i = 1; i <= k; i++) hit(r[i], 0)
+			}
+		}
 	}
 	END { exit hits > 0 ? 1 : 0 }
 	' "$stream"
