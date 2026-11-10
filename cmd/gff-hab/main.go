@@ -525,6 +525,10 @@ func serve(args []string) error {
 	var pushes *pushService // set before anything publishes an agent state
 	// Harness runs of rounds follow their agents' states (roundharness.go); set once rounds run.
 	var roundsRef atomic.Pointer[roundsService]
+	// Capcom outcomes that arrive before rounds run wait for them: channels pull from peers at
+	// once, and the record of an outcome taken is saved, so a dropped one never comes again.
+	var earlyMu sync.Mutex
+	var early [][3]string
 	var heavyRef atomic.Pointer[heavy.Lock] // set once the lock runs; the catalog reads its section
 	var groupsRef groupRunnerRef            // set once the group service runs (groups.md 5)
 	supRef := &supervisorRef{}              // set once context supervision runs (groups.md 9)
@@ -1247,9 +1251,17 @@ func serve(args []string) error {
 			}
 		},
 		Outcome: func(id, word, at string) {
-			if rs := roundsRef.Load(); rs != nil {
-				rs.outcome(id, word, at)
+			earlyMu.Lock()
+			rs := roundsRef.Load()
+			if rs == nil {
+				if len(early) < 256 {
+					early = append(early, [3]string{id, word, at})
+				}
+				earlyMu.Unlock()
+				return
 			}
+			earlyMu.Unlock()
+			rs.outcome(id, word, at)
 		},
 		Capcom: capcomRounds,
 		Wake: func(device string) bool {
@@ -1652,6 +1664,13 @@ func serve(args []string) error {
 		}
 		defer roundsSvc.Close()
 		roundsRef.Store(roundsSvc)
+		earlyMu.Lock()
+		waiting := early
+		early = nil
+		earlyMu.Unlock()
+		for _, o := range waiting {
+			roundsSvc.outcome(o[0], o[1], o[2])
+		}
 		cs.Poke() // the catalog's rounds section
 		roundsCtl = roundsSvc
 		acts = roundActions{actions: sa, rounds: roundsSvc}
