@@ -1006,9 +1006,9 @@ Decision 5: a card with one "Add" tap, never silent.
   (the Maps Server API), and a WeatherKit service id. The app needs no WeatherKit entitlement,
   since gff-hab calls the REST API. The Mac app runs with the hardened runtime: location and
   calendar access there need the `com.apple.security.personal-information.location` and
-  `com.apple.security.personal-information.calendars` entitlements, which the signing setup does
-  not hold yet. Until they are added, the Mac shares neither and its card says to add from the
-  phone.
+  `com.apple.security.personal-information.calendars` entitlements. `calendars` also covers
+  reminders; the hardened runtime has no separate reminders key. `apple/App/macOS/App.entitlements`
+  claims both. A build without them shares neither, and its card says to add from the phone.
 
 ---
 

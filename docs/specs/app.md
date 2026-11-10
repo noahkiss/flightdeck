@@ -2025,7 +2025,8 @@ The first app stage: the connection to every hab and the status board. Code in
   `socket`) or `ssh` (`host`, optional `command` and `options`). No file means the local hab
   only. Pairing replaces this list on the phone later.
 - **No sandbox.** The Mac app drops the App Sandbox (owner decision: Developer ID, unsandboxed),
-  so it can reach the local socket and run `ssh`. Its entitlements file is empty.
+  so it can reach the local socket and run `ssh`. Its entitlements file holds only
+  hardened-runtime keys: audio input, location and calendars (`macos-identity.md`).
 - **One connection actor per hab.** It sends `hab.hello` with the reconnect token, then
   `events.subscribe` with scope `host`. Events that arrive before the subscribe response wait;
   the snapshot applies first, then only events with a seq above its seq. A seq gap, or a
