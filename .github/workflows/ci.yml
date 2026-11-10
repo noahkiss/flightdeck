@@ -90,4 +90,4 @@ jobs:
       commands: >-
         GFF_TEST_TIMEOUT_SCALE=3 make ${{ needs.plan.outputs.full == 'true' && 'ci-full' || 'ci-fast' }}
         GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
-      timeout-minutes: 45
+      timeout-minutes: 75

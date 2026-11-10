@@ -165,7 +165,7 @@ Two jobs.
 **`GHOSTTY_ZIGFLAGS` sits inline in every command that can build libghostty.** go-ci has no `env`
 input. Without the flags, a cache miss would build a native-CPU libghostty and save it under the
 `-baseline` key, and every later run and release would restore the wrong build.
-| `timeout-minutes` | `30` |
+| `timeout-minutes` | `75`. The full set ran about 40 minutes by 2026-11; a train of several stages passed 45 |
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
 binaries. `make race` runs the race list three times. Both run with `GFF_TEST_TIMEOUT_SCALE=3`
@@ -226,7 +226,7 @@ steps from its inputs:
     are uploaded as an artifact on failure.
 
 Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves them. No signing, no
-secrets. Timeout 60 minutes. The live tests (`LiveTests`, `ssh-live-check.sh`) do
+secrets. Timeout 90 minutes: a branch with several app stages ran past 60 by 2026-11. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 ### 3.5 `macos-go.yml`: Go on macOS (owner decision, Q2)
