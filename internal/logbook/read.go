@@ -1,6 +1,7 @@
 package logbook
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -316,6 +317,16 @@ func (s *Store) OpsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 
 // opsAfter is OpsAfter that also returns, per origin in the page, the last seq it holds: a
 // page is a gap-free run per origin from have, so the caller holds up to it once it lands.
+//
+// A redacted op never travels without a forget that names it (5.7). Otherwise a replica that
+// lacks the op could store the redacted bytes while the forget is cut off by the page bound, a
+// lost answer or a dead disk, and a replica that already holds the op's text is never sent it
+// again: the text would stay there for good. So when the caller holds no forget of a redacted op
+// by have, the op goes in the page with one forget this replica holds and the ops of that
+// forget's origin up to it, so every origin's run in the page stays gap-free (forgetDeps). The
+// group goes whole into a page or waits for the next; in an empty page it may pass the limits
+// asked for, never PageOps or PageBytes. Only where no such group exists (the forget lies past a
+// gap here, or the group is larger than a page) does the op travel alone, as before.
 func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int) ([][]byte, Vector, bool, error) {
 	mine, err := s.Vector(ctx)
 	if err != nil {
@@ -323,6 +334,7 @@ func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 	}
 	var out [][]byte
 	last := Vector{}
+	inPage := map[OpID]bool{}
 	size := 0
 	for _, origin := range sortedKeys(mine) {
 		if mine[origin] <= have[origin] {
@@ -340,13 +352,32 @@ func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 				rows.Close()
 				return nil, nil, false, err
 			}
-			if len(out) > 0 && ((maxOps > 0 && len(out) >= maxOps) || (maxBytes > 0 && size+len(raw) > maxBytes)) {
+			id := OpID{Origin: origin, Seq: seq}
+			if inPage[id] {
+				continue // sent already, in a redacted op's group
+			}
+			group, err := s.forgetDeps(ctx, sentOp{id, raw}, have, last, inPage, mine)
+			if err != nil {
+				rows.Close()
+				return nil, nil, false, err
+			}
+			need := 0
+			for _, g := range group {
+				need += len(g.raw)
+			}
+			if len(out) == 0 && len(group) > 1 && (len(group) > PageOps || need > PageBytes) {
+				group, need = group[:1], len(raw) // larger than any page: the op alone
+			}
+			if len(out) > 0 && ((maxOps > 0 && len(out)+len(group) > maxOps) || (maxBytes > 0 && size+need > maxBytes)) {
 				rows.Close()
 				return out, last, true, nil
 			}
-			out = append(out, raw)
-			last[origin] = seq
-			size += len(raw)
+			for _, g := range group {
+				out = append(out, g.raw)
+				inPage[g.id] = true
+				last[g.id.Origin] = max(last[g.id.Origin], g.id.Seq)
+			}
+			size += need
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -354,6 +385,91 @@ func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 		}
 	}
 	return out, last, false, nil
+}
+
+type sentOp struct {
+	id  OpID
+	raw []byte
+}
+
+// forgetDeps returns op first, then what must travel with it so that no redacted op in the group
+// reaches a caller with vector have that would hold no forget of it: for each such op, a forget
+// this replica holds in its gap-free run, and the ops of the forget's origin from where the
+// caller and the page (last, inPage) leave off up to it, each checked the same way. A redacted
+// op whose forgets all lie past a gap here gets none; a group over PageOps ops stops growing.
+func (s *Store) forgetDeps(ctx context.Context, op sentOp, have, last Vector, inPage map[OpID]bool, mine Vector) ([]sentOp, error) {
+	group := []sentOp{op}
+	if !bytes.Contains(op.raw, []byte(forgottenPrefix)) {
+		return group, nil
+	}
+	in := map[OpID]bool{op.id: true}
+	upTo := Vector{} // per origin, the last seq the group holds from a forget's run
+	covered := func(o string) uint64 { return max(have[o], last[o], upTo[o]) }
+	for i := 0; i < len(group) && len(group) <= PageOps; i++ {
+		g := group[i]
+		if !bytes.Contains(g.raw, []byte(forgottenPrefix)) {
+			continue
+		}
+		fs, err := s.forgetsOf(ctx, g.id)
+		if err != nil {
+			return nil, err
+		}
+		var pick *OpID
+		for _, f := range fs {
+			if f.Seq <= covered(f.Origin) || inPage[f] || in[f] {
+				pick = nil
+				break // the caller holds one, or gets one with this page
+			}
+			if pick == nil && f.Seq <= mine[f.Origin] {
+				pick = &f
+			}
+		}
+		if pick == nil {
+			continue
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT seq, raw FROM ops WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq`,
+			pick.Origin, covered(pick.Origin), pick.Seq)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var seq uint64
+			var raw []byte
+			if err := rows.Scan(&seq, &raw); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			id := OpID{Origin: pick.Origin, Seq: seq}
+			if !in[id] && !inPage[id] {
+				in[id] = true
+				group = append(group, sentOp{id, raw})
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		upTo[pick.Origin] = max(upTo[pick.Origin], pick.Seq)
+	}
+	return group, nil
+}
+
+// forgetsOf lists the forgets this replica holds that name id, by origin and seq.
+func (s *Store) forgetsOf(ctx context.Context, id OpID) ([]OpID, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT origin, seq FROM ops WHERE target = ? ORDER BY origin, seq`, id.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OpID
+	for rows.Next() {
+		var f OpID
+		if err := rows.Scan(&f.Origin, &f.Seq); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
 
 // Changes returns, sorted, the ids of records whose ops arrived after cursor, by any writer of
