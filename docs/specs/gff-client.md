@@ -16,9 +16,8 @@ Owner rules this spec works within:
 - SSH first. A tailnet is only a network underneath, never a product transport. No mosh.
 - No hub. `gff` connects to each hab itself.
 - The hab owns structure. `gff` owns its own presentation: tabs, splits, focus, theme.
-- `gff` replaces the owner's current terminal workspace. It does not run beside it, read its files
-  or depend on any of the owner's tools. That workspace retires once `gff` passes the parity
-  checklist (12).
+- `gff` replaces a long-lived terminal multiplexer workspace (1.6). It does not run beside one,
+  read its files or depend on other tools. Section 12 is the parity checklist.
 
 Each section ends with edge cases and its sources. Facts marked *(gk)* come from general knowledge
 of the named project, not from a page opened for this spec. A stage that builds on them confirms
@@ -98,7 +97,7 @@ the UDP mode (owner rule: no mosh).
 
 What we take: per-tab state markers. What we leave: screen dumps (`hab-logic-api.md` 1.3).
 
-### 1.6 The owner's current terminal setup
+### 1.6 A reference zellij workspace
 
 Studied as a behaviour reference only. It is one long-lived zellij session per machine with:
 
@@ -177,7 +176,7 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
 - **Composed view (default).** `gff` keeps one terminal parser per visible pane. It draws each
   pane's cells into its rectangle, then draws the bars, and writes only the changed cells to the
   host terminal. **Parser: libghostty through `internal/vt`, the same parser as gff-hab**
-  (coordinator ruling 2026-11-01, task-g1uwtlsb, in place of a `/consensus` run). It builds
+ . It builds
   with the `ghostty` tag; pure builds use `vt.Fake`, which keeps text only. So gff's release
   builds need the libghostty build (`make libghostty`), as gff-hab's do.
 - **Pass-through view.** In full-screen mode with one pane, `gff` may write the pane's bytes
@@ -203,15 +202,14 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
 | Pass-through and a host resize | `gff` leaves pass-through, composes once, and may re-enter |
 | A pane prints a terminal query | The hab already answered and removed it (`hab-logic-api.md` 5.6). `gff` never answers a query from a stream, and keeps the ones the hab leaves to clients away from the host terminal (3.4) |
 
-Sources: zellij layout and frames (1.1); the owner's setup (1.6); `hab-logic-api.md` 5.5, 5.6, Q6;
+Sources: zellij layout and frames (1.1); the reference workspace (1.6); `hab-logic-api.md` 5.5, 5.6, Q6;
 r1-sessions section 2 (pass-through for one pane, a parser per pane for splits).
 
-### 3.4 Built choices (task-g1uwtlsb, `internal/gffclient`, `cmd/gff`)
+### 3.4 Built choices (`internal/gffclient`, `cmd/gff`)
 
 The client core shows one or more panes of one hab in the terminal `gff` runs in. This is the
 single-hab view; the workspace with several habs, tabs, the sidebar and the status board is in
-4.3. The keymap with modes is in 8.4. The prefix keys below were the client core's default; since
-task-y62yb3nb they ship as the one-prefix sample (`docs/examples/gff-keys-prefix.toml`), and the
+4.3. The keymap with modes is in 8.4. The prefix keys below were the client core's default; now they ship as the one-prefix sample (`docs/examples/gff-keys-prefix.toml`), and the
 default keymap is modes with Ctrl leaders (8.4).
 
 **Parser.** libghostty through `internal/vt` (3.2, 15.1). `vt.Terminal.ReadScreen` gives the
@@ -313,7 +311,7 @@ makes the size, take and redraw calls in order, and a size still waiting is repl
 one for the same pane. On a new epoch every size is asked again. Observer views ask for nothing.
 gff never takes a pane on its own: typing moves ownership through the hab's debounce (10.1).
 
-Decided (implementer, 2026-11-01): `gff` waits until the layout has held still for 300 ms
+Decided: `gff` waits until the layout has held still for 300 ms
 (`Config.SizeDebounce`), and 10.1 now says so. A window drag then costs one resize of the program,
 not one per 50 ms. The hab's own 50 ms trailing throttle (hab-logic-api.md 6.8) still bounds any
 client that sends more often.
@@ -405,7 +403,7 @@ request, and a debounce timer the test fires.
 Sources: herdr sidebar (1.2) *(gk)*; `app.md` 3.1 and 3.2 (ranks, offline rows, unfiled panes);
 `hab-logic-api.md` 2.2, 7.9.
 
-### 4.3 Built choices (task-98qp7he5: sidebar, tabs, hosts, status board)
+### 4.3 Built choices (sidebar, tabs, hosts, status board)
 
 `gff` with no pane and no `-new` opens the workspace: every configured host at once, tabs, the
 sidebar and the status board. `gff` with panes or `-new` is the single-hab view of 3.4,
@@ -419,7 +417,7 @@ unchanged. Packages: `internal/hosts` (the hosts), `internal/board` (rows and ra
   only this client's name for it. Two labels that reach one hab (the same device id in the
   welcome) show its rows once, under the first online label, else the first label.
 - The list comes from a `Source`. This stage reads gff's own config file and flags (`Static`).
-  The mesh peer list (Part 3, task-phkmrjaw) plugs in as another `Source`; `Set.Reload` starts
+  The mesh peer list (Part 3) plugs in as another `Source`; `Set.Reload` starts
   new hosts and closes removed ones.
 - The config file is `-config`, else `$GFF_CONFIG`, else `gff/config.toml` under the user
   config directory on macOS and under `$XDG_CONFIG_HOME` or `~/.config` elsewhere. It holds
@@ -429,7 +427,7 @@ unchanged. Packages: `internal/hosts` (the hosts), `internal/board` (rows and ra
   all, the hab of `-socket`, `-via` or `-ssh` (else the local socket) is the only host.
 - An endpoint is written as an absolute socket path, `cmd:<command>` (run under `/bin/sh -c`,
   as `-via`), or an SSH destination (anything `ssh` takes, an alias included). Decided
-  (implementer): the peer file stage may pick another spelling; the parser is one function.
+ : the peer file stage may pick another spelling; the parser is one function.
 - Each host is one `habconn.Conn` from `habconn.Start`: it returns at once, offline, and tries
   the first connection at once, then with the reconnect backoff. A hab that is down is a host
   that is `connecting` (never online yet) or `offline`, never an error, and it comes online
@@ -605,13 +603,13 @@ the hab reaching a state.
 | A new pane on a host that is offline | Refused with "<host> is offline" |
 | A pane's program uses the alternate screen | Wheel scrolling sends arrow keys or mouse events, as the program's mouse mode asks, not local scrollback |
 
-Sources: zellij tabs, stacks and modes (1.1); the owner's setup (1.6); `hab-logic-api.md` 2.2 and
+Sources: zellij tabs, stacks and modes (1.1); the reference workspace (1.6); `hab-logic-api.md` 2.2 and
 5.1; Rex windows (1.3).
 
-### 5.4 Built choices (task-qbvi6tos: new panes, splits and stacks)
+### 5.4 Built choices (new panes, splits and stacks)
 
-zellij is the reference for the layout; the owner's zellij keys for pane mode are the
-reference for the keys (1.6, the parity review).
+zellij is the reference for the layout; the reference workspace's zellij keys for pane
+mode are the reference for the keys (1.6, the parity review).
 
 **The layout tree.** A tab holds a tree (`layout.go`): a view, a split of children side by side
 (columns, a separator column between them) or top to bottom (rows), or a stack of views. A
@@ -654,7 +652,7 @@ and no `project_dir`, the pane starts in that pane's working folder: the folder 
 in (the shell's, read from `/proc/<pid>/cwd` on Linux and with `lsof` on macOS), else the folder
 its shell last reported with OSC 7, else the folder its session started in, else the default.
 The new session is filed in that pane's project unless the call names one. Decided
-(implementer): zellij takes the focused pane's process folder; OSC 7 and the session's folder
+zellij takes the focused pane's process folder; OSC 7 and the session's folder
 are fallbacks for a program whose folder cannot be read.
 
 **Focus.** Alt+h, Alt+j, Alt+k and Alt+l move focus to the nearest view on that side, by where
@@ -675,10 +673,10 @@ shows the new view zoomed. Pane mode's `p` and Tab go to the next view in tree o
 | `TestNewPaneInFolder` | Real holder and gff-hab: a pane whose program is in a folder; `n` starts the shell there (`pwd -P` in the new pane) |
 | `cmd/gff-hab` `TestCreateCwdOf`, `TestLsofName` | `cwd_of` starts in the other pane's program's folder, `cwd` wins over it, an unknown pane gives the default; the `lsof` reader |
 
-### 5.5 Built choices (task-55uk35vg: tab actions and the workspace name)
+### 5.5 Built choices (tab actions and the workspace name)
 
 zellij is the reference: tab mode's `r` renames the tab, `x` closes it, Tab toggles to the tab
-shown before; the owner's tab bar shows the session's name.
+shown before; the reference workspace's tab bar shows the session's name.
 
 | Key (tab mode) | Action | What it does |
 |---|---|---|
@@ -693,7 +691,7 @@ shown before; the owner's tab bar shows the session's name.
   dots, dashes and underscores, not starting with a dot (it names the workspace's state file,
   5.1). The tab bar shows it beside the clock: `… · 2/2 hosts · default · 14:05`. A bad name
   or an unknown key in `[workspace]` is a problem on its line, and the rest loads.
-- Decided (implementer): the workspace's name is gff's own word, not the host's name: one
+- Decided: the workspace's name is gff's own word, not the host's name: one
   machine may keep several workspaces, as zellij keeps several sessions.
 
 **Tests.**
@@ -704,7 +702,7 @@ shown before; the owner's tab bar shows the session's name.
 | `TestWorkspaceConfig` | `[workspace] name`, a bad name and an unknown key as problems on their lines, the name rule |
 | `TestDefaultKeymap` | Tab mode's bar with the new keys |
 
-### 5.6 Built choices (task-iijjqm8r: the saved workspace and startup tabs)
+### 5.6 Built choices (the saved workspace and startup tabs)
 
 zellij is the reference: a session keeps its tabs and panes, and every new window lands in it
 (1.6). gff has no server, so it keeps the workspace in a file and restores it at start.
@@ -746,7 +744,7 @@ command = "make watch" # under /bin/sh -c; default the hab's shell
 Each tab with a `dir` or a `command` starts its program as soon as its host is online, in that
 tab, at that tab's size; the first view to arrive in the shown tab takes the keys. A tab on a
 host gff does not have says so on the bottom row. A relative `dir` or an unknown key is a
-problem on its tab, and that tab is left out. Decided (implementer): `dir` is absolute, since
+problem on its tab, and that tab is left out. Decided: `dir` is absolute, since
 gff cannot expand `~` on another host.
 
 **Tests.**
@@ -759,7 +757,7 @@ gff cannot expand `~` on another host.
 | `TestWorkspaceFile` | The file's path per system and with `$GFF_WORKSPACE_DIR`, a bad name; a file that does not parse set aside; a view of a host no longer configured left out and its split giving way |
 | `TestStartupTabsConfig` | `[[workspace.tabs]]` and its problems |
 
-### 5.7 Built choices (task-1sbbnaa4: scrollback and the mouse)
+### 5.7 Built choices (scrollback and the mouse)
 
 zellij is the reference: the wheel scrolls a pane's own scrollback with no scroll mode, goes
 to a program that asked for the mouse, and is arrow keys on an alternate screen; typing while
@@ -783,7 +781,7 @@ scrolled keeps the view where it is.
   one) shows the live screen.
 - **Keys.** In normal mode, while the panes have the keys and the view is composed, Shift+PageUp
   and Shift+PageDown scroll the focused view a page (its rows less one), and Shift+End goes to
-  the bottom. They never reach the program. Decided (implementer): fixed keys, not keymap
+  the bottom. They never reach the program. Decided: fixed keys, not keymap
   actions, since the keymap's normal mode takes only Ctrl and Alt keys (8.4); they are the keys
   most terminals scroll with.
 - **The wheel over the sidebar or the board** moves the selection. A click on a view focuses
@@ -816,7 +814,7 @@ scrolled keeps the view where it is.
 - **Starting work.** "New session" asks for a host and a project directory, then has that hab start
   the harness or a shell (14).
 - **A running agent stays on its host.** `gff` never moves a session between hosts (owner
-  decision, master plan).
+  decision).
 - **Clean environment.** A pane the hab starts takes the hab's own environment, never the
   environment of the `gff` process that asked. An agent's identity variables cannot leak into
   unrelated panes.
@@ -839,9 +837,9 @@ scrolled keeps the view where it is.
 | A host is in the config but has no hab installed | The row says "no hab on <host>" with the install hint |
 
 Sources: Rex hosts and endpoints (1.3, `r1b`); `transport.md` 4.1, 6.4; `hab-logic-api.md` 7.9;
-master plan owner decisions (a running agent stays on its host).
+the owner decision that a running agent stays on its host.
 
-### 6.4 Built choices (task-4i9uv0ai: resume)
+### 6.4 Built choices (resume)
 
 zellij is the reference: after a session is resurrected, each command pane shows its command
 with "Press ENTER to run" and runs nothing until then. gff does the same per session.
@@ -895,9 +893,9 @@ Resume of a session that is not Capcom's:
 5. It runs in the session's folder (the content service's record), released old pane first,
    as a round's resume does. No folder known: `unavailable`.
 
-Decided (implementer): the harness seen wins over the command the session was created with,
-so a shell in which the owner ran Claude Code resumes Claude Code. That is what the owner's
-current setup restores after a reboot (1.6, 12 row 26). Decided (implementer): Enter, not a new
+Decided: the harness seen wins over the command the session was created with,
+so a shell in which the user ran Claude Code resumes Claude Code. That is what the reference
+workspace restores after a reboot (1.6, 12 row 26). Decided: Enter, not a new
 key, as zellij's "Press ENTER to run".
 
 **Tests.**
@@ -910,7 +908,7 @@ key, as zellij's "Press ENTER to run".
 | `cmd/gff-hab` `TestResumeStart`, `TestResumeBook` | The start for each harness, with and without a transcript, the model rule, a shell, nothing known; the book kept across a reopen, an id kept, a harness replaced, a detection id with no adapter ignored, a forgotten session, a bad file set aside |
 | `cmd/gff-hab` `TestSessionResumeAfterHolderLoss` | A Claude Code session and a shell; the holder dies for good, gff-hab restarts; nothing starts on its own; resume refuses a running session, starts Claude Code with `--session-id` while it has no transcript and `--resume` once it has one, and the shell again in its folder |
 
-### 6.5 Built choices (task-ip98o12o: adopt)
+### 6.5 Built choices (adopt)
 
 Paseo is the reference (`landscape.md` idea 4.10): an owner moving in keeps the conversations
 they started in a plain terminal. Adopt brings one into a gff-hab pane by its resume id. It
@@ -975,9 +973,9 @@ left out of the list; adopt takes them by id.
 adopts and prints the session, pane, harness and folder. `gff-hab adopt -list [-harness h]
 [-limit n] [-json]` prints the list, one conversation per line.
 
-Decided (implementer): the verb is a new method, not a `session.create` field, because adopt
+Decided: the verb is a new method, not a `session.create` field, because adopt
 checks for a live conversation and reads the folder from the transcript; `session.create`
-checks neither. Decided (implementer): no gff sidebar entry yet; the CLI and the API come
+checks neither. Decided: no gff sidebar entry yet; the CLI and the API come
 first.
 
 **Tests.**
@@ -1036,7 +1034,7 @@ first.
 Sources: `app.md` 3 and 7 (ranks, row content, approval flow, answered elsewhere);
 `harness-adapters.md` (Rule 2, Permission answers); `hab-logic-api.md` 6.4.
 
-### 7.5 Built choices: rounds (task-cpazgcsj)
+### 7.5 Built choices: rounds
 
 The terminal side of rounds (`rounds.md` 10.3), matched to the app's (`app.md` 21). Code:
 `internal/board/rounds.go` (the rows, the stale rule, the order), `internal/gffclient/rounds.go`
@@ -1121,7 +1119,7 @@ peer's copy while that host is online; a host whose hab is down loses its line u
 newer copy shows it. Lines are not selectable. Tests: `TestBoardHeavy` (two fake habs: the line for a
 busy, low host and none for an idle one) and `TestKeepHeavy`.
 
-### 7.6 Built choices: module cards (task-kgr80lau)
+### 7.6 Built choices: module cards
 
 Modules placed on the `board` (`modules.md` 5) show on the status board as cards. The drawing is
 `internal/modview` (`modules.md` 6.6); the place, the keys and the calls are
@@ -1235,10 +1233,10 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
 | A key combination the host terminal cannot send | It is not offered as a default binding |
 | A mode is entered and no key follows | The mode stays until Esc; no timeout |
 
-Sources: zellij modes and status bar (1.1); the owner's setup (1.6: hints from the live keymap,
+Sources: zellij modes and status bar (1.1); the reference workspace (1.6: hints from the live keymap,
 trims that free program keys, tolerant config); `hab-logic-api.md` 3.8 (one input call per paste).
 
-### 8.4 Built choices (task-8qy9nrvj: the keymap and the shortcut bar)
+### 8.4 Built choices (the keymap and the shortcut bar)
 
 Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
 
@@ -1256,7 +1254,7 @@ Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
 from normal (and the sidebar, where the workspace may start). A reached mode with no way back
 gets the default one, over what that key had, and a problem says so: Ctrl+G unlocks locked
 mode; Esc goes back in pane, tab, sidebar and board mode. A keymap where no reached mode binds
-`detach` is a problem too: gff cannot be left from the keyboard. Decided (implementer): the
+`detach` is a problem too: gff cannot be left from the keyboard. Decided: the
 check and repair, rather than "Esc and Enter always leave pane and tab mode, whatever they are
 bound to". The check also covers locked mode, the sidebar and the board, which an Esc rule
 does not. It keeps Esc and Enter bindable in pane and tab mode while another key goes back.
@@ -1265,15 +1263,14 @@ The fallback for an unbound Esc or Enter stays.
 **Commands end pane and tab mode.** As in zellij, a command in pane or tab mode returns to
 normal: zoom, split, close view, new tab, a tab number. Focus moves (`focus-next`, `focus-left`,
 `focus-right`, `focus-up`, `focus-down`) and tab moves (`next-tab`, `prev-tab`, `move-tab-left`,
-`move-tab-right`) keep the mode, so `l l l` walks the tabs. Decided (implementer,
-task-y62yb3nb): a fixed rule per action, not a per-binding choice as zellij's `SwitchToMode`.
+`move-tab-right`) keep the mode, so `l l l` walks the tabs. Decided: a fixed rule per action, not a per-binding choice as zellij's `SwitchToMode`.
 It gives zellij's defaults with no extra config syntax.
 
 **Sending a leader.** In a command mode (session, pane, tab), the key that entered the mode,
 pressed again, sends itself to the pane when the mode does not bind it, and gff is back in
 normal mode. So Ctrl+P twice sends Ctrl+P, a moved leader sends the new key and not the old
 one, and the one-prefix sample's prefix sends itself the same way. A `send` binding sends its
-own key from any command mode. Decided (implementer, task-y62yb3nb): zellij goes back to
+own key from any command mode. Decided: zellij goes back to
 normal on the leader pressed again and has no way to send it but locked mode. gff keeps the
 send, since the default leaders are keys shells and harnesses use (Ctrl+P is readline's
 previous line). Esc and Enter still leave; `[keys.pane] "ctrl-p" = "back"` gives zellij's
@@ -1298,8 +1295,8 @@ tab or locked mode the focused frame row names the mode and its key back: `pane 
 back`, `locked · Ctrl+G unlock`. A pane alone is composed under its frame row while the mode
 lasts, then passes through again.
 
-**Default keymap.** Modes with Ctrl leaders, as zellij's (15.5, A). The leaders follow the
-owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
+**Default keymap.** Modes with Ctrl leaders, as zellij's (15.5, A). The leaders follow
+zellij's mode keys, mapped to gff's actions; no zellij file is read.
 
 | Mode | Keys |
 |---|---|
@@ -1318,7 +1315,7 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
   tab mode's `n`, `h` `j` `k` `l` and the arrows, and `1` to `9` are zellij's own. zellij's
   session mode (Ctrl+O) holds detach (`d`) and the session manager (`w`, here the sidebar);
   the board, bars and warnings join it. Ctrl+S, Ctrl+B and Ctrl+Q stay with programs, as in the
-  owner's trims (1.6).
+  reference workspace's trims (1.6).
 - **Alt keys, as zellij's globals.** Alt+h and Alt+l are zellij's MoveFocusOrTab: focus moves
   to the view on that side (5.4), and with none there to the previous or next tab, wrapping as
   `prev-tab` and `next-tab` do. Alt+j and Alt+k are MoveFocus: the view below or above,
@@ -1332,18 +1329,17 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
   shell. In a command mode (session, pane, tab), ESC and a printable character in one read are
   always one key, `alt-<c>`, as the kitty form of the same key is: unbound, it goes nowhere in
   pane and tab mode and cancels session mode, and the letter is never typed. ESC alone at the
-  end of a read is Esc. Decided (coordinator, task-y62yb3nb review). The reader records only
+  end of a read is Esc. The reader records only
   kitty and modifyOtherKeys presses for dropping their release: a legacy Alt key sends no
   release, so recording it would drop a later release of the plain letter.
 - **Behind the sidebar, board or a prompt** the Alt keys do nothing: focus and tab moves act only
   while the panes have the keys, so nothing changes out of sight.
 - **Gaps against zellij.** zellij's own MoveTab wraps at the edge; gff's stops there. Decided
-  (implementer, task-y62yb3nb). Before nested splits (5.4) a tab was one row or column, and a
+ . Before nested splits (5.4) a tab was one row or column, and a
   direction across it had no view.
 - **Not taken.** zellij's resize (Ctrl+N), move (Ctrl+H) and scroll (Ctrl+S) modes have no gff
   mode yet, so their keys go to programs. Ctrl+H is Backspace in the legacy encoding as well.
-- **Redraw, nudge and fit** live in session mode, not in pane mode. Decided (implementer,
-  task-y62yb3nb, confirmed by the coordinator): they repair a view rather than shape the layout, and pane mode keeps `n`,
+- **Redraw, nudge and fit** live in session mode, not in pane mode. Decided: they repair a view rather than shape the layout, and pane mode keeps `n`,
   `r`, `d` and `h` `j` `k` `l` free for new panes and splits (5.2), which zellij binds there.
 
 Decided (owner, 2026-11-01): A is the default, configurable as zellij's is, and not designed
@@ -1408,7 +1404,7 @@ d = "none"                # unbind
   new key in those modes gives way, with a problem for one in normal mode; session mode keeps
   only a `send` on it, so the leader pressed twice sends itself.
 - `[keys] defaults = false`, the earlier spelling, still clears the keymap, with a problem that
-  says to write `clear-defaults = true`. Decided (coordinator, task-y62yb3nb review).
+  says to write `clear-defaults = true`.
 - The `[keys.prefix]` alias problem and an unknown mode name the line of the table's header.
 - The host reader (`internal/hosts`) warns about keys it does not know; `cmd/gff` drops those
   warnings for the `keys` and `bar` tables, which `gffclient.LoadSettings` reads and checks.
@@ -1487,10 +1483,10 @@ replaces the row.
 | The hab does not offer host stats (an older hab) | `gff` shows local figures, unlabelled |
 | Figures refresh | At most every 2 s; hidden bars do not refresh |
 
-Sources: the owner's setup (1.6: system info on the bottom bar, clock and badges on the tab bar,
+Sources: the reference workspace (1.6: system info on the bottom bar, clock and badges on the tab bar,
 usage row); `hab-logic-api.md` 3.4 (capabilities for features a host may lack).
 
-### 9.3 Built choices (task-8qy9nrvj: system info, the usage row, the warnings)
+### 9.3 Built choices (system info, the usage row, the warnings)
 
 Packages: `internal/gffclient` (`bars.go`, `sysinfo.go`, `usage.go`) and the shared `internal/hoststats` reader.
 
@@ -1502,7 +1498,7 @@ width; the hints get the rest.
 
 - **Whose figures.** When the focused pane's host listed `host-stats` in its welcome, gff calls
   `hab.stats` and labels the figures with the host label. Otherwise gff reads this machine's
-  own, unlabelled. Decided (implementer): a local hab that serves stats is labelled too; gff
+  own, unlabelled. Decided: a local hab that serves stats is labelled too; gff
   does not guess whether a hab is this machine.
 - **Refresh.** On the workspace's one-second tick, at most every 2 s, never while the bars are
   hidden, one reading at a time, off the loop.
@@ -1583,7 +1579,7 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
 | `TestUsageBookNewestWins` | An older reading of one account from another host does not replace a newer one |
 | `TestInfoText` | The figures' text; the battery item hides with no battery; this machine's reader returns a reading |
 
-`hab.stats` now ships with `host-stats` (task-bw97v7dk). gff labels the focused hab's figures;
+`hab.stats` now ships with `host-stats`. gff labels the focused hab's figures;
 older habs keep the local fallback. Usage window length/start, degraded usage, hab time and the
 welcome's `version` for superseded builds also ship. No gap remains in the API for the bars.
 
@@ -1715,13 +1711,13 @@ no Ctrl+L); herdr observers (`hab-logic-api.md` 1.2).
 Sources: `hab-logic-api.md` 3, 4, 5; `transport.md` 4, 5, 7; tssh (1.4) *(gk)*; `app.md` 10.2
 (backoff, endpoints).
 
-### 11.7 Built choices (task-f6djzhu1, `internal/habconn`)
+### 11.7 Built choices (`internal/habconn`)
 
 The shared connection library is `internal/habconn`. It owns exactly one hab connection.
 
-**Boundary with the multi-host merge (Part 3, task-kbvoirca).**
+**Boundary with the multi-host merge (Part 3).**
 
-| `internal/habconn` (this stage) | The merge layer on top (task-kbvoirca) |
+| `internal/habconn` (this stage) | The merge layer on top |
 |---|---|
 | One control connection to one hab: hello, revision range, epoch, capabilities, reconnect token, liveness, reconnect with backoff | Which habs to connect to, endpoints tried in order (11.1), online and offline per host in the UI |
 | The structure copy of that hab, kept by the seq and revision rules; a new epoch replaces it | Merging the copies by host id (`hab-logic-api.md` 7.9); never comparing seq across hosts |
@@ -1729,7 +1725,7 @@ The shared connection library is `internal/habconn`. It owns exactly one hab con
 | Pinning the device id for the life of one `Conn`, refusing a change | Storing pins across runs and the "accept the new id" flow (11.4) |
 | `Retry` to cut a backoff short | Detecting a wake or a network change and calling `Retry` on every hab (11.5) |
 
-Built since (task-98qp7he5, 4.3): `internal/hosts` is the connecting half of that layer: one
+Built since (4.3): `internal/hosts` is the connecting half of that layer: one
 `Conn` per configured host, online and offline per host, and a `Source` seam for the peer
 list. Endpoints in order, stored pins and the wake check are still open (4.3, limits).
 
@@ -1820,7 +1816,7 @@ transport, if process count or sleep handling demands it.
   frame was applied: its credit is returned once 16 KiB is owed. Credit starts afresh on each data
   connection.
 - `Frames` delivers the same frames on a channel, for a client that selects over many panes (the
-  gff client core, task-g1uwtlsb). A goroutine per stream calls `Next`; taking a frame from the
+  gff client core). A goroutine per stream calls `Next`; taking a frame from the
   channel returns its credit. The channel closes when the stream ends, and `Err` says why. A
   client uses `Frames` or `Next`, never both.
 - A ctx that ends while `Next` reads closes the data connection, so the next call takes a new
@@ -1881,14 +1877,14 @@ when key-based ssh with `BatchMode=yes` does not work.
 
 ## 12. Parity checklist
 
-Each row is a behaviour the owner relies on in the current terminal workspace. The parity review
+Each row is a behaviour of the reference workspace (1.6). The parity review
 (Part 5 stage 8) passes a row when its test passes. Tests follow `docs/testing.md`: the lowest
 layer that proves the behaviour. "Screen test" means `gff` runs against a fake hab and its output is
 read back through a terminal parser.
 
 Results of the review, with a mark and evidence per row and the ranked gaps: `gff-parity.md`.
 
-| Behaviour | How the owner uses it today | gff equivalent | Test that proves it |
+| Behaviour | How the reference workspace behaves | gff equivalent | Test that proves it |
 |---|---|---|---|
 | Workspace opens on launch | Every new terminal window lands in the same long-lived workspace, already holding its tabs | `gff` opens the default workspace and restores its tabs (5.1) | Screen test: start, add a tab, quit, start; the tab is back with the same panes |
 | Startup tabs | A new workspace starts with two named tabs in the projects directory | Startup tabs from config (5.1) | Screen test: a new workspace shows the configured tabs with their directories |
@@ -1927,7 +1923,7 @@ Results of the review, with a mark and evidence per row and the ranked gaps: `gf
 
 ## 13. Plugins and add-ons to confirm with the owner
 
-Each item is loaded by the current workspace config. The owner accepted every recommendation
+Each item is loaded by the reference workspace config (1.6). The owner accepted every recommendation
 below on 2026-10-31, except that usage is first-class: on by default in `gff`, and in the app,
 alerts and widgets (15.6).
 
@@ -1977,19 +1973,19 @@ their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 Each question has options and a recommendation, and ends with its decision. One question, 15.4,
 waits for the owner because it changes what a user sees and the right answer is unclear.
 
-### 15.1 The parser for the composed view. **Decision: libghostty (coordinator)**
+### 15.1 The parser for the composed view. **Decision: libghostty**
 
 This spec needs only: input from `snapshot-vt` and raw bytes, a cell grid with styles,
 scrollback, the program's modes (keyboard protocol, mouse, bracketed paste, alternate screen) and
 the title.
 
-Decided 2026-11-01 (coordinator ruling, task-g1uwtlsb): libghostty through `internal/vt`, the
+Decided 2026-11-01: libghostty through `internal/vt`, the
 same parser as gff-hab, with `vt.Fake` in pure builds and tests. The interface and the build
 already existed, and libghostty is the common choice (`landscape.md`). gff's release builds need
 the libghostty build. Built in 3.4.
 
 Decision: libghostty through `internal/vt`, the parser gff-hab uses; `vt.Fake` in pure builds
-(coordinator, 2026-11-01, in place of the `/consensus` run). herdr and Rex use libghostty too
+. herdr and Rex use libghostty too
 (`landscape.md` 3). gff release builds need the libghostty build.
 
 ### 15.2 The shared library and the app's SSH
@@ -2006,10 +2002,10 @@ put the app's SSH on `swift-nio-ssh` with a Secure Enclave key, which Go cannot 
 Recommendation: **A.** The library owns hello, seq, events, tickets, offsets, credit and reconnect.
 It asks its host for "a new control stream" and "a new data stream" to a hab.
 
-Decision: A (coordinator, 2026-11-01). Built: `internal/habconn` has a `Transport` seam with Unix,
+Decision: A. Built: `internal/habconn` has a `Transport` seam with Unix,
 command and system-ssh transports (11.7); the app supplies its Swift SSH through the same seam.
 
-### 15.3 In-process SSH or the system `ssh`. **Decision: B (coordinator)**
+### 15.3 In-process SSH or the system `ssh`. **Decision: B**
 
 | Option | For | Against |
 |---|---|---|
@@ -2023,7 +2019,7 @@ Built: **B**, the system `ssh`, behind the transport seam, with connection shari
 and a checked control directory (11.7). Reasons: every OpenSSH feature and the user's own setup
 with no new dependency, and tests that swap the command. A stays possible as one more transport.
 
-**Decision: B (coordinator), A later as a transport if needed.** herdr also runs the system `ssh`
+**Decision: B, A later as a transport if needed.** herdr also runs the system `ssh`
 with connection sharing. No new dependency, the user's own ssh config, and keys never touch our
 code. gff turns connection sharing on by default, with a short socket directory so the socket
 path stays under macOS's 104-byte limit. The app supplies its own SSH (swift-nio-ssh) through the
@@ -2031,7 +2027,7 @@ same seam.
 
 ### 15.4 Several windows on one workspace
 
-The owner's current setup mirrors one workspace into every terminal window: same tabs, same focus.
+The reference workspace mirrors one workspace into every terminal window: same tabs, same focus.
 
 | Option | For | Against |
 |---|---|---|
@@ -2039,7 +2035,7 @@ The owner's current setup mirrors one workspace into every terminal window: same
 | B. Windows that open the same workspace share it: tab and split changes sync through the local state file, focus stays per window | Familiar; no server | Needs file watching and merge rules |
 | C. Full mirror, focus included | Exactly today's behaviour | Two windows can never show different panes |
 
-Recommendation: **B.** Tabs follow the owner; each window keeps its own focus. A "follow" key makes
+Recommendation: **B.** Tabs follow the user; each window keeps its own focus. A "follow" key makes
 one window mirror another's focus while held.
 
 Decision: B (owner, 2026-11-01). Windows share tabs and splits; each keeps its own focus, and a follow key mirrors another window.
@@ -2048,18 +2044,18 @@ Decision: B (owner, 2026-11-01). Windows share tabs and splits; each keeps its o
 
 | Option | For | Against |
 |---|---|---|
-| A. Modes with leaders, close to the owner's current keys | No relearning for the owner | Leaders take a few Ctrl keys |
+| A. Modes with leaders, close to zellij's keys | No relearning for zellij users | Leaders take a few Ctrl keys |
 | B. One prefix key, tmux style | Takes one key only | Two strokes for everything |
 
 Recommendation: **A** as the default, with B as a shipped alternative keymap.
 
-Decision: A as the default, B shipped as an alternative (coordinator, 2026-11-01). Both ship, and
+Decision: A as the default, B shipped as an alternative. Both ship, and
 the keymap lives in `gff`'s config file, so a user picks either.
 
-Decided (owner, 2026-11-01): A, modes like zellij, with defaults that follow the owner's zellij
+Decided (owner, 2026-11-01): A, modes like zellij, with defaults that follow zellij's
 mode keys, configurable as zellij's is. Not designed for running inside zellij.
 
-Built (task-y62yb3nb): A is the default (8.4); B ships as `docs/examples/gff-keys-prefix.toml`.
+Built: A is the default (8.4); B ships as `docs/examples/gff-keys-prefix.toml`.
 
 ### 15.6 Agent usage budgets
 
@@ -2071,7 +2067,7 @@ its account's usage windows through a documented interface of that harness (for 
 harness passes to its status line or hooks). gff-hab keeps the latest reading per account and host
 and serves it to clients, which show it in the usage row, alerts and widgets.
 
-Built (task-6189lsjb): gff-hab serves `usage.list` and `usage.updated` (capability `usage`) from
+Built: gff-hab serves `usage.list` and `usage.updated` (capability `usage`) from
 Claude Code's status-line input and Codex's rollout `token_count` events; opencode reports none.
 The source per harness and its version caveat are in `harness-adapters.md`, Usage.
 
@@ -2082,15 +2078,14 @@ Hidden panes have no data stream. Marks need events.
 Recommendation: add `pane.output` (throttled, at most once per second per pane) and `pane.bell`
 to the hab API (14). Agent state already arrives as events.
 
-Decision: add both events, as recommended (coordinator, 2026-11-01). Built in task-98qp7he5
-(4.3): gff-hab sends them, and gff marks hidden tabs.
+Decision: add both events, as recommended. Built (4.3): gff-hab sends them, and gff marks hidden tabs.
 
 ### 15.8 Desktop notifications from gff
 
 Recommendation: off by default. When on, OSC 9 or OSC 777 through the host terminal, only for
 needs-you sessions not on screen. Push stays the app's job.
 
-Decision: as recommended (coordinator, 2026-11-01). herdr also notifies through the outer terminal
+Decision: as recommended. herdr also notifies through the outer terminal
 (`landscape.md` 2.9).
 
 ### 15.9 Floating panes
@@ -2102,7 +2097,7 @@ Decision: as recommended (coordinator, 2026-11-01). herdr also notifies through 
 
 Recommendation: **B** for the first build, **A** after the parity review if the owner misses it.
 
-Decision: B first; the parity review (task-s47wjpc1) decides on A (coordinator, 2026-11-01).
+Decision: B first; the parity review decides on A.
 
 ### 15.10 Agents driving the workspace
 
@@ -2119,7 +2114,7 @@ Recommendation: **C**, with the MCP in the plan part that owns agent tooling (Pa
 on output needs a hab call ("wait for a line, for quiet, for exit, for a state change") so no
 client polls the screen.
 
-Decision: C (coordinator, 2026-11-01). Not user-visible; hab methods first keep each layer small.
+Decision: C. Not user-visible; hab methods first keep each layer small.
 
 ### 15.11 Which plugins carry over (owner)
 
@@ -2139,13 +2134,13 @@ Opened while writing this spec, 2026-10-31.
   https://zellij.dev/documentation
 - The project's research notes on sessions, streaming, telemetry and PTY size (sections 2 to 4),
   and on Rex's local install. None of their private detail is reproduced here.
-- The owner's current terminal configuration, layouts and plugin list, read as behaviour only.
+- A reference zellij configuration, layouts and plugin list, read as behaviour only.
   No path, host or tool name from it is reproduced here.
 
 Not opened: the herdr, tssh and earlier GFF sources. Facts marked *(gk)* need a check when the
 stage that relies on them starts.
 
-### Window titles (task-g08plxf6)
+### Window titles
 
 `[workspace] title` sets the host window title template. The default is
 `{host} · {workspace} | {title}`. Empty disables host title updates. Tokens expand once;

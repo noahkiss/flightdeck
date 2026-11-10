@@ -619,7 +619,7 @@ grows with the hab API, one judged read at a time.
 ### 7.4 The module host process
 
 `modhost.Host` runs the modules in a child process, the module host, and supervises it
-(task-349z6rqz). The child is `gff-hab module-host`; it runs `modhost.ServeChild` on its stdin
+. The child is `gff-hab module-host`; it runs `modhost.ServeChild` on its stdin
 and stdout. `Host.New(bundle, options)` returns a `Remote` with the calls and errors of
 `modhost.Module`; both satisfy `modhost.Runner`.
 
@@ -1049,13 +1049,13 @@ Evidence:
 | O1 | Build later, as decided? | Yes: modules after the first release, with no drop. The block vocabulary (stage 2) may come earlier, so first-party cards can use it from the start (owner, 2026-11-01) |
 | O2 | What may a module do on its host? | Declared powers `exec`, `fetch` and `act`, shown at install and on every update that changes them, as herdr and Paseo allow (owner, 2026-11-01; section 7.2) |
 
-### For the coordinator (plan changes this spec implies)
+### Plan changes this spec implies
 
 - Stage 3 becomes "goja runtime and bridge in the hab's module host". Stage 5 becomes "module
   host process, limits and failures" instead of a JavaScriptCore runtime.
-- The `/consensus` on who fetches sources is settled by section 4: the hab runs modules, so the
-  hab fetches. Running modules in the hab rather than the clients is itself a key decision with
-  no ground truth; it is a fair candidate for `/consensus` before stage 3.
+- Who fetches sources is settled by section 4: the hab runs modules, so the hab fetches.
+  Running modules in the hab rather than the clients is itself a key decision with no ground
+  truth; settle it before stage 3.
 - First-module candidates for stage 8 that use only hab data: a host card from the machine
   catalog (OS, tools, projects, load), or a board card summarising agents that wait, per project.
 

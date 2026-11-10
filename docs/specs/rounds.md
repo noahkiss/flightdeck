@@ -13,7 +13,7 @@ the lock that keeps a run out of a session you are using, catch-up after sleep, 
 failure and notification behaviour, and the build stages. It
 describes behaviour in our own words and copies no code from the reference tools.
 
-Rules this spec works within (owner decisions in the master plan):
+Rules this spec works within (project decisions):
 
 - Rounds are a product feature (Part 13), built after core.
 - Each run is a visible session. Nothing runs headless and out of sight.
@@ -617,7 +617,7 @@ the prompt, or type into a session the owner uses.
 
 ### 4.7 Watcher and batch limits
 
-Owner, 2026-11-06 (plan-xagejg31 (r)): every cap is configurable. Each limit of 4.4, 4.5 and 5.2
+Owner, 2026-11-06: every cap is configurable. Each limit of 4.4, 4.5 and 5.2
 is a key of `[rounds]` in the hab's config file, as `max_running` and `wake_settle` are (13),
 with its earlier fixed value as the default. They are tuning with no row in the app. A value
 outside its range, or of the wrong type, is logged once and the default runs. The runner hab's
@@ -993,7 +993,7 @@ running it where the user can see it.
   (`pane.close`). Once the program has exited, the hab removes the session record. The run log
   keeps the run: its state, result and session id. The transcript stays where the harness wrote
   it, so a plain terminal can still resume the conversation (`claude --resume <id>`).
-  Decision (task-qy0gn4a1): the record goes at once, not at retention. An every-minute round
+  Decision: the record goes at once, not at retention. An every-minute round
   otherwise leaves an exited session per run (`tick`, `tick-2`, `tick-3`, ...) in every sidebar
   and board until retention, about 33 hours at the 2,000-run cap. Hiding them behind the
   run-session filter was the other choice, but it leaves the records, the name suffixes and the
@@ -1180,7 +1180,7 @@ lose runs for reasons the user never sees. A restart is treated like a short sle
   the project checked out (`fresh`) or hold the target session (`resume`, `fork`).
 - **Choose a runner.** At creation the user may pick any peer that has the project
   (`gff round add --host <label>`). The round is created on that hab through its API. To get a
-  project onto another host first, use project set-up (task-j600w23a).
+  project onto another host first, use project set-up.
 - **Move a round.** `gff round move <name> --host <label>` creates the round on the new runner
   and deletes it on the old one, after the user confirms. A `resume` or `fork` round cannot move,
   because its target lives on one host. A completed round cannot move either: its counts stay
@@ -1328,9 +1328,9 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 ## 12. Settled questions
 
 The study left three user-visible questions open. The owner asked for them to be settled with
-defaults under the power-user rule (master plan, 2026-11-01): default to no extra confirmation,
+defaults under the power-user rule: default to no extra confirmation,
 drop a confirmation when the harness already asks, and add a setting only where people really
-differ. These are the coordinator's calls on that rule, not owner decisions.
+differ. These apply that rule; they are not separate owner decisions.
 
 | Question | Decision | Reason |
 |---|---|---|
@@ -1338,14 +1338,14 @@ differ. These are the coordinator's calls on that rule, not owner decisions.
 | Q2. Does a successful fresh or fork run close its pane? | Yes: `on_finish = close` by default. Failed, timed-out, blocked and taken-over runs stay open | Matches Paseo; daily rounds would leave idle harnesses. The session record and transcript stay, so the chat view shows the run and resume is one tap |
 | Q3. Does a successful run notify? | No: `notify = failures` by default, `always` per round | Success shows on the status board and in the history; the `done` banner is off by default too (`app.md` 8.2) |
 
-**Owner decisions on watchers** (2026-11-06, plan-xagejg31 (q); W4 and the W2 budget rule from (r)). These were W1 to W3 of the
+**Owner decisions on watchers** (2026-11-06; W4 and the W2 budget rule from (r)). These were W1 to W3 of the
 watcher study; the owner answered them.
 
 | # | Question | Decision | Where |
 |---|---|---|---|
 | W1 | Should Capcom report back what it did with a round's message, so the round's history shows it? | Yes (owner, 2026-11-06). Capcom answers each round message a second time, `told` or `quiet` (and `acted` or `unseen`), recorded on the run | 5.2; `capcom-service.md` 9.5 |
-| W2 | May an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes (owner, 2026-11-06). Such a round message runs at once in quiet hours. It does not bypass Capcom's daily turn budget (plan-xagejg31 (r)). Rounds pass the level either way | `capcom-service.md` 9.2, 9.3 |
-| W4 | Are the watcher and batch limits settings? | Yes (plan-xagejg31 (r)): every cap is a setting with its earlier value as the default | 4.7 |
+| W2 | May an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes (owner, 2026-11-06). Such a round message runs at once in quiet hours. It does not bypass Capcom's daily turn budget. Rounds pass the level either way | `capcom-service.md` 9.2, 9.3 |
+| W4 | Are the watcher and batch limits settings? | Yes: every cap is a setting with its earlier value as the default | 4.7 |
 | W3 | Are module watchers worth a stage of their own? | Yes (owner, 2026-11-06): stage 12 | 4.4, 14, 14.1 |
 
 The study's options and recommendations for Q1 to Q3 follow, for the record.
@@ -1462,7 +1462,7 @@ Export and apply carry the new fields: `[rounds.trigger]` holds `on` and its `wh
 grants `actions` is a person's write only, as `round.update` is (3). A group named by id cannot move between meshes; apply refuses a `group`
 that no catalog copy lists (`groups.md` 5.1).
 
-Built (stage 3, task-ams092is). Where this spec left a choice open:
+Built (stage 3). Where this spec left a choice open:
 
 - **Shapes.** `round.create` and `round.update` take a `RoundSpec`: the definition fields, with
   durations as `timeout_ms` and `wait_ms`, times as RFC 3339, and a trigger of `kind`, `cron`,
@@ -1520,7 +1520,7 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
 - **Config.** `[rounds]` in the hab's config file: `max_running` (from 1) and `wake_settle` (a
   duration; `"0s"` for none). gff-hab runs rounds only with the holder link.
 
-Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
+Built (stage 4): `fresh` runs with a harness and a prompt
 (`cmd/gff-hab/roundharness.go`). Where this spec left a choice open:
 
 - **Start.** The run's `session.create` names the harness, the model and `argv` = the harness's
@@ -1602,7 +1602,7 @@ Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
   no run ends. Runs stay live on disk for the next gff-hab.
 - **Tests.** `$GFF_TEST_ROUND_READY` (testseam builds only) shortens the readiness limit.
 
-Built (stage 5, task-21rifvi9): `resume` and `fork` runs (`cmd/gff-hab/roundlock.go`). Where
+Built (stage 5): `resume` and `fork` runs (`cmd/gff-hab/roundlock.go`). Where
 this spec left a choice open:
 
 - **In use (6.1).** gff-hab looks at a waiting run's target every 250 ms. The agent: `working`
@@ -1691,7 +1691,7 @@ this spec left a choice open:
     finds no envelope at adoption: the run waits for the lock again and can send its prompt a
     second time. The window is small.
 
-Built (stage 6, task-00cqxbrf): notifications, the catalog `rounds` section, and rounds on
+Built (stage 6): notifications, the catalog `rounds` section, and rounds on
 other hosts (`cmd/gff-hab/roundhosts.go`, `internal/push/round.go`). Where this spec left a
 choice open:
 
@@ -1789,13 +1789,13 @@ choice open:
 - **Not yet.** The always-on suggestion at creation (9) and the status board's list (10.3) are
   app and client stages (7, 8).
 
-Built (stage 7, task-xhpsgzkr): rounds in the Flightdeck app, with no hab change. The app's
+Built (stage 7): rounds in the Flightdeck app, with no hab change. The app's
 choices are in `app.md` 21: the Rounds list per hab and its order, the round page, the form
 and the always-on line, the badge and the filter, Open on a round banner, and the app-side
 filter that keeps focus reports, mouse motion and the wheel out of a live run's pane. The
 catalog's other hosts are not listed yet (`app.md` 21.1); the `gff` client is stage 8.
 
-Built (stage 8, task-cpazgcsj): rounds in the `gff` client, with no hab change. The client's
+Built (stage 8): rounds in the `gff` client, with no hab change. The client's
 structure copy (`internal/habconn`) keeps the snapshot's rounds and follows `round.updated`
 and `round.run_updated`. Run sessions carry `↻`, and `R` (session mode, sidebar, board) hides
 those that do not need the owner. The board lists every host's rounds in one list in
@@ -1804,7 +1804,7 @@ shows its last rounds, stale: its last snapshot's, or a newer copy from another 
 `catalog.list`. The trigger words moved to `rounds.TriggerWords`, so the catalog section, `ls
 -all` and the board share them. The calls are in `gff-client.md` 7.5.
 
-Built (stage 9, task-awkgh5h1): event triggers, event batches, and the `capcom` and `group`
+Built (stage 9): event triggers, event batches, and the `capcom` and `group`
 modes (`internal/rounds/events.go`, `internal/rounds/batch.go`, `cmd/gff-hab/roundevents.go`,
 `cmd/gff-hab/roundmsg.go`, `internal/channels/rounds.go`). Where this spec left a choice open:
 
@@ -1864,7 +1864,7 @@ modes (`internal/rounds/events.go`, `internal/rounds/batch.go`, `cmd/gff-hab/rou
   both in from files (`cmd/gff-hab/roundfake.go`: `$GFF_TEST_CAPCOM_SERVICE`,
   `$GFF_TEST_GROUPS`), and the tests run the rounds side end to end against them.
 
-Built (stage 11, task-qhdhg0x2): watchers (`internal/rounds/watch.go`,
+Built (stage 11): watchers (`internal/rounds/watch.go`,
 `internal/rounds/watchsched.go`, `cmd/gff-hab/roundwatch.go`, `cmd/gff-hab/watchpane.go`) and the
 mail watcher example (`docs/examples/mailwatch`). Where this spec left a choice open:
 
@@ -1915,34 +1915,33 @@ mail watcher example (`docs/examples/mailwatch`). Where this spec left a choice 
 
 ## 14. Build stages
 
-The study proposed eight build stages. The plan splits the scheduler core in three, so each
-stage is one outcome a single helper can build and test. Each stage is a task in the Part 13
-plan; the task holds the work and the acceptance checks. Core stages (2, 3 and 5) get a
+The study proposed eight build stages. The scheduler core is split in three, so each
+stage is one outcome a single helper can build and test. Core stages (2, 3 and 5) get a
 fresh-eyes reviewer before they close.
 
-| # | Stage | Builds | Task |
-|---|---|---|---|
-| 1 | Definition and store | Round and run types and checks; cron, presets, zones and the DST rules; the rounds store and the run log seam (7.7); retention | task-e22g2ajs |
-| 2 | Scheduler | The wall-clock tick and wake detection; catch-up once and skip; restarts and clock jumps; one run per round; the host limit; the wake settle; failure and skip counts, pause and completion. Fake-clock tests | task-tt1ysbq2 |
-| 3 | API, CLI and command runs | `round.*` methods and events, `Session.round`, the `rounds` capability; `gff-hab round`, export and apply; `fresh` runs with `command` in a real pane; re-adopting a live run after a gff-hab restart | task-ams092is |
-| 4 | Harness fresh runs | `fresh` with a harness and a prompt; end on `turn_end`; timeout by interrupt; blocked runs; take over; `on_finish` | task-kt363fw0 |
-| 5 | Resume and fork under the lock | The four in-use signals; wait then skip; the envelope; exited targets; `fork` for Claude Code and Codex; target gone | task-21rifvi9 |
-| 6 | Notifications, catalog, other hosts | Push kind `round` and the rows in 10.2; the catalog `rounds` section; `--host`, `move` and `ls --all` | task-00cqxbrf |
-| 7 | App | Rounds list, round page, history, badges, actions, round notifications (Swift; the app lead) | task-xhpsgzkr |
-| 8 | gff client | Badges, the filter and the board's Rounds list | task-cpazgcsj |
-| 9 | Event triggers, `capcom` and `group` modes (the swarm study's D2) | The six events in 4.3 with their filters, `hab.woke`, the event batch (4.5), no self-loops; the `capcom` and `group` modes (5.2); the channel `round` mark and the lock on the receiving hab | task-awkgh5h1 |
-| 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere`. Built (13, The agent kit) | task-ybb4c3ed |
-| 11 | Watchers (the swarm study's D3) | The `watch` trigger: `gff-hab watch-pane`, supervision, backoff, the exit pause, restart at wake, event lines, the cursor, dedup keys, secret sets; `--watch`, export and apply; the watcher's state on the round; a mail watcher example | task-qhdhg0x2 |
-| 12 | Module watchers (owner, 2026-11-06, W3) | `watch.module`, `every`, `args`; the manifest's `watch = true` (a new bridge version) and its install line; the `watch(ctx)` export and `ctx.call` in the module runtime and the module host's call loop; the `modules.md` changes of the 5.2 interface table; `act` refused in `watch`; the cursor, events, failures, pause, wake and removal rules of 4.4; the round page's call log; `--watch-module`, export, apply and `move` | task-3yn2kc07 |
-| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12) | Planned when Logbook is built |
+| # | Stage | Builds |
+|---|---|---|
+| 1 | Definition and store | Round and run types and checks; cron, presets, zones and the DST rules; the rounds store and the run log seam (7.7); retention |
+| 2 | Scheduler | The wall-clock tick and wake detection; catch-up once and skip; restarts and clock jumps; one run per round; the host limit; the wake settle; failure and skip counts, pause and completion. Fake-clock tests |
+| 3 | API, CLI and command runs | `round.*` methods and events, `Session.round`, the `rounds` capability; `gff-hab round`, export and apply; `fresh` runs with `command` in a real pane; re-adopting a live run after a gff-hab restart |
+| 4 | Harness fresh runs | `fresh` with a harness and a prompt; end on `turn_end`; timeout by interrupt; blocked runs; take over; `on_finish` |
+| 5 | Resume and fork under the lock | The four in-use signals; wait then skip; the envelope; exited targets; `fork` for Claude Code and Codex; target gone |
+| 6 | Notifications, catalog, other hosts | Push kind `round` and the rows in 10.2; the catalog `rounds` section; `--host`, `move` and `ls --all` |
+| 7 | App | Rounds list, round page, history, badges, actions, round notifications (Swift; the app lead) |
+| 8 | gff client | Badges, the filter and the board's Rounds list |
+| 9 | Event triggers, `capcom` and `group` modes (the swarm study's D2) | The six events in 4.3 with their filters, `hab.woke`, the event batch (4.5), no self-loops; the `capcom` and `group` modes (5.2); the channel `round` mark and the lock on the receiving hab |
+| 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere`. Built (13, The agent kit) |
+| 11 | Watchers (the swarm study's D3) | The `watch` trigger: `gff-hab watch-pane`, supervision, backoff, the exit pause, restart at wake, event lines, the cursor, dedup keys, secret sets; `--watch`, export and apply; the watcher's state on the round; a mail watcher example |
+| 12 | Module watchers (W3) | `watch.module`, `every`, `args`; the manifest's `watch = true` (a new bridge version) and its install line; the `watch(ctx)` export and `ctx.call` in the module runtime and the module host's call loop; the `modules.md` changes of the 5.2 interface table; `act` refused in `watch`; the cursor, events, failures, pause, wake and removal rules of 4.4; the round page's call log; `--watch-module`, export, apply and `move` |
+| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12). Planned when Logbook is built |
 
 Stages 1 to 3 run in order. Stages 4 and 6 can run side by side after 3; 5 follows 4. Stages 7
 and 8 need 3 and 6. Stage 9 waits for 5 and 6; stage 10 waits for the agent kit and Capcom's
-confirmation cards. Stage 9 waits for this spec (watchers, task-pt6pnli6); its `capcom` mode
-needs the Capcom service (Part 14 A2, task-vz6mxa3f) and its `group` mode the group record (Part
-15 B3, task-nz4aglbr). Each mode answers `unavailable` until its other side exists, so the rest
+confirmation cards. Stage 9 waits for this spec (watchers); its `capcom` mode
+needs the Capcom service (Part 14 A2) and its `group` mode the group record (Part
+15 B3). Each mode answers `unavailable` until its other side exists, so the rest
 of stage 9 can land first. Stage 11 follows stage 9. Stage 12 follows stage 11 and the module runtime and host (Part 7
-stages 3 and 5, task-349z6rqz); modules come after the first release (`modules.md` 14, O1), so
+stages 3 and 5); modules come after the first release (`modules.md` 14, O1), so
 stage 12 does too. Stage 9 also builds `RoundRun.outcome` (5.2) against a fake service; Part 14 A7
 sends it. The `actions` field is built by Part 14 A9, which touches the rounds store, API and CLI.
 
@@ -2012,7 +2011,7 @@ Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher p
 - The mail watcher example against a local fake IMAP server (no real mail service): one new mail
   from a listed sender makes one event line; a mail from another sender makes none; a restart with
   the cursor reports a mail that came while it was stopped, once.
-- Live check, after Part 14 A7 (task-hj8cnr5v): a mail reaches Capcom's thread as one round
+- Live check, after Part 14 A7: a mail reaches Capcom's thread as one round
   message.
 
 Stage 12, with `go test -race` over a real gff-hab, its module host and hand-written module

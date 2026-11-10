@@ -48,7 +48,7 @@ These are decided. This spec states them; it does not reopen them.
   (`apple/App/iOS/Info.plist`). The Mac app ships outside the App Store and needs no answer.
 - **macOS runners run only when they are needed.** That means when `apple/` changes, when the API
   schema changes (the Swift package is generated from it), or on a tag. They also run when holder
-  packages change, plus one nightly macOS end-to-end run: that is the owner's test strategy
+  packages change, plus one nightly macOS end-to-end run: that is the test strategy
   decision of 2026-10-31 (section 14, Q2). Section 3 lists the exact paths.
 - **The hygiene scan** has generic checks built in (private IPv4, the CGNAT range `100.64/10`,
   `/Users/<name>` and `/home/<name>` paths). Real patterns come from a repo secret, or from a
@@ -58,8 +58,8 @@ These are decided. This spec states them; it does not reopen them.
   uses `@main`. Each extension in section 11 is a pull request there, backward compatible.
 - **Release builds sign on a macOS CI runner, once** (`macos-identity.md` 5.1). No user's Mac
   signs anything.
-- **Tags:** `v*` releases the Go binaries; `app-v*` releases the app (coordinator decision,
-  section 14, Q1).
+- **Tags:** `v*` releases the Go binaries; `app-v*` releases the app (section 14,
+  Q1).
 - **Homebrew:** the formula is `gff`. A `flightdeck` cask ships the Mac app from its first
   release. No Sparkle for now (section 14, Q3 to Q5).
 
@@ -79,8 +79,8 @@ One workflow file per concern. Each row is one file in `.github/workflows/`.
 | `release.yml` (Go binaries) | `push` of a `v*` tag; `workflow_dispatch` with a `tag` input | None (path filters never apply to tags) | Group per tag; never cancels |
 | `app-release.yml` (iOS and Mac app) | `push` of an `app-v*` tag, dry-run tags included (7.6); `workflow_dispatch` with `tag` and `dry_run` inputs | None | Group per tag; never cancels |
 
-The caller block for `ci.yml` and `apple.yml` follows the shared one
-(`saving-ci-minutes.md`, "Caller block"):
+The caller block for `ci.yml` and `apple.yml` follows the shared workflows'
+caller block:
 
 ```yaml
 concurrency:
@@ -329,9 +329,8 @@ cold entry costs a few minutes and a warm one nothing, so a release starts warm.
 
 ## 6. Secrets and variables
 
-Every value lives first in the maintainer's password manager (1Password). CI copies it with
-`gh secret set`, piped, never through a file or an argument. The repo and its docs never name
-the vault or the item. 1Password references written to any pushed file use ids only.
+The maintainer sets each value with `gh secret set` (or `gh variable set`), piped, never through a
+file or an argument. The repo and its docs never name where a value is stored outside GitHub.
 
 ### 6.1 The `release` environment
 
@@ -355,14 +354,14 @@ gh api repos/<owner>/<repo>/environments/release/deployment-branch-policies --jq
 
 The last command must print exactly `tag v*` and `tag app-v*`.
 
-| Name | Kind | Value lives in | Used by |
+| Name | Kind | What it is | Used by |
 |---|---|---|---|
-| `MATCH_PASSWORD` | Secret | 1Password, the signing store item, its match password field | Every signing job: decrypts the store |
-| `MATCH_DEPLOY_KEY` | Secret | 1Password, the signing store item, its read-only deploy key section | Every signing job: clones the store over SSH |
-| `MATCH_GIT_URL` | **Secret** | 1Password, the signing store item, its repo field | Every signing job |
-| `UPLOAD_KEY_P8` | Secret | 1Password, the App Store Connect API key item (Developer role), the key file | Upload, notarize |
-| `UPLOAD_KEY_ID` | Secret | Same item, the key id field | Upload, notarize |
-| `ASC_ISSUER_ID` | Secret | Same item, the issuer id field | Upload, notarize |
+| `MATCH_PASSWORD` | Secret | The password that decrypts the fastlane match signing store | Every signing job: decrypts the store |
+| `MATCH_DEPLOY_KEY` | Secret | A read-only SSH deploy key for the signing store repository | Every signing job: clones the store over SSH |
+| `MATCH_GIT_URL` | **Secret** | The signing store repository's URL | Every signing job |
+| `UPLOAD_KEY_P8` | Secret | An App Store Connect API key (Developer role), the `.p8` file | Upload, notarize |
+| `UPLOAD_KEY_ID` | Secret | That key's id | Upload, notarize |
+| `ASC_ISSUER_ID` | Secret | That key's issuer id | Upload, notarize |
 | `APPLE_TEAM_ID` | Variable | The Apple Developer account's team id | `scripts/macos-bundle.sh` (`GFF_TEAM_ID`), the signing xcconfig, the export plist |
 
 `MATCH_GIT_URL` is a secret here, not a variable as in the reference workflow. Actions prints a
@@ -374,22 +373,13 @@ is public once a release ships. It still stays out of the repo, as `macos-identi
 
 ### 6.2 Repo secrets
 
-| Name | Kind | Value lives in | Used by |
+| Name | Kind | What it is | Used by |
 |---|---|---|---|
-| `HOMEBREW_TAP_TOKEN` | Secret | 1Password, the GitHub account item, its fine-grained tap publisher token field. A fine-grained PAT with access to `noahkiss/homebrew-tap` only, with the Actions permission read and write (what `dispatch-and-wait.yml` needs to start and watch the run), and nothing else | `release.yml` and `app-release.yml` tap bumps |
-| `HYGIENE_PATTERNS` | Secret | 1Password, the hygiene patterns item (a note field) | `hygiene.yml` |
+| `HOMEBREW_TAP_TOKEN` | Secret | A fine-grained PAT with access to `noahkiss/homebrew-tap` only, with the Actions permission read and write (what `dispatch-and-wait.yml` needs to start and watch the run), and nothing else | `release.yml` and `app-release.yml` tap bumps |
+| `HYGIENE_PATTERNS` | Secret | The private hygiene rules, one `<name><TAB><regex>` per line (9) | `hygiene.yml` |
 
-**1Password references.** A reference in a pushed file uses ids only,
-`op://<vault-uuid>/<item-uuid>/<field-id>`, never a vault or item name. Known today:
-
-| Secret | Reference |
-|---|---|
-| `HOMEBREW_TAP_TOKEN` | `op://ha5nenhhlvb7jinwatoxqgxeue/4e3rdqgo7fathngevdrilb34zq/ctrd5d2bhqyzk7kdekdorrx5ji` |
-
-The ids of the other items (the signing store, the App Store Connect key, the hygiene patterns)
-live in the release environment's setup notes, outside the repo. Each row is added here once its
-id is at hand. Set a secret by piping the read into `gh secret set <NAME> -R noahkiss/flightdeck`
-(add `--env release` for 6.1).
+Set a secret by piping its value into `gh secret set <NAME> -R <owner>/<repo>` (add
+`--env release` for 6.1).
 
 `HOMEBREW_TAP_TOKEN` is a repo secret, not an environment secret. A job that calls a reusable
 workflow cannot name an environment, and `dispatch-and-wait.yml` is a reusable workflow. The
@@ -414,9 +404,9 @@ token's narrow scope makes that acceptable. A pull request from a fork never rec
 
 ## 7. Release
 
-### 7.1 Tags (coordinator decision, Q1)
+### 7.1 Tags (Q1)
 
-**Decision: two lines** (coordinator, 2026-11-01; section 14, Q1).
+**Decision: two lines** (2026-11-01; section 14, Q1).
 
 | Line | Tag | Ships | Workflow |
 |---|---|---|---|
@@ -980,7 +970,7 @@ value:
 | `tailnet` | The tailnet's own name (the label in its `ts.net` domain) |
 | `user-name` | The maintainer's login names, where they appear outside a home path (`name@host`, `~name`) |
 | `public-ip` | Public addresses of the home and offsite networks, which the private ranges miss |
-| `vault` | Credential-store vault and item names (references by id are allowed, 6.2) |
+| `vault` | Credential-store vault and item names (references by id are allowed) |
 | `private-name` | Names of private repositories, projects and default session names |
 
 Each rule is a POSIX extended regex, anchored at word edges with `(^|[^A-Za-z0-9])...([^A-Za-z0-9]|$)`
@@ -989,8 +979,8 @@ where a short name could match inside a longer word. The same file serves local 
 
 ### 9.5 Allowed hits
 
-Some fixtures need a private address on purpose: today, `internal/grants/grants_test.go`
-(a gateway address and the CGNAT edge cases) and `internal/opencode/client_test.go`. An entry
+Some fixtures need a private address on purpose: today, the tests that check how private and
+CGNAT addresses are classified (`internal/grants`, `internal/pairing`, `internal/summary`). An entry
 covers a whole file, so it is kept for test fixtures only; prose, such as this spec, writes ranges
 in prefix form instead. The script's own regexes and its tests hold no dotted quad (the tests
 build theirs from parts), so they need no entry. The file `.github/hygiene-allow` lists
@@ -1256,7 +1246,7 @@ stand-in fastlane. All eight are approved (section 14).
 
 ## 12. Saving CI minutes: each rule
 
-From `saving-ci-minutes.md` in the shared-workflows guide.
+The CI-minute rules the shared workflows follow, and how this repo applies each.
 
 | # | Rule | Status | How, or why not |
 |---|---|---|---|
@@ -1273,7 +1263,7 @@ From `saving-ci-minutes.md` in the shared-workflows guide.
 | 11 | Fold tiny jobs into the job before them | Applied, with stated exceptions | The tap bump uses `dispatch-and-wait` as its own job: the reusable workflow cannot be a step. `plan` and `verify` are separate because their outputs gate the matrix. On a public repo the whole-minute rounding costs nothing; the reason is wall time, and each of these adds seconds |
 | 12 | Agents batch pushes | Applied | Agents push once per finished change, after local checks. A push to `main` here builds no deploy, but each still runs the full Go set |
 | 13 | Pick the runner by visibility and load | Applied | Public repo: GitHub-hosted runners only, arm64 natively on `ubuntu-24.04-arm`, never QEMU. No self-hosted runner |
-| 14 | Listener URL from the repo secret | Not applicable | Nothing here deploys through Komodo. The principle behind it applies: no private URL in a variable or a log, which is why `MATCH_GIT_URL` is a secret (6.1) |
+| 14 | Listener URL from the repo secret | Not applicable | Nothing here deploys to a server. The principle behind it applies: no private URL in a variable or a log, which is why `MATCH_GIT_URL` is a secret (6.1) |
 
 ---
 
@@ -1322,7 +1312,7 @@ reusable workflow cannot name one.
 **What this spec changes from it.**
 
 - The Mac app is a native macOS target, not Catalyst. No Metal toolchain step (no shaders).
-- No Sparkle and no appcast for now. The coordinator decided against in-app updates for now (Q5).
+- No Sparkle and no appcast for now. In-app updates are out for now (Q5).
 - `MATCH_GIT_URL` becomes a secret (6.1).
 - The build number is the UTC minute, not the run number (10.3).
 - The tap token is a repo secret, so the bump uses the shared `dispatch-and-wait.yml` (6.2).
@@ -1333,29 +1323,27 @@ reusable workflow cannot name one.
 
 All five questions are decided. Each keeps its number, because other sections cite it.
 
-**Q1. Tag scheme. Decision: two lines, `v*` and `app-v*` (coordinator, 2026-11-01).** `v*` tags
+**Q1. Tag scheme. Decision: two lines, `v*` and `app-v*`.** `v*` tags
 release gff, gff-hab and gff-hab-holder. `app-v*` tags release the app (7.1). The other option was
-one `v*` line. No `/consensus` run was needed.
+one `v*` line.
 
 **Q2. macOS Go jobs. Decision: run on holder package changes, plus a nightly macOS end-to-end run
-(owner, 2026-10-31).** This was not a conflict. The owner settled it in the test strategy decision
-of the master plan (2026-10-31), and that decision overrides the broader "macOS only on `apple/`,
-the API schema or tags" line in the Part 10 plan text. `AGENTS.md` (Build and test) and
+(owner, 2026-10-31).** The test strategy (2026-10-31) settled it, and it overrides a broader "macOS only on `apple/`,
+the API schema or tags" rule. `AGENTS.md` (Build and test) and
 `docs/testing.md` (Layers) already say the same. `macos-go.yml` (3.5) and extension E4 stay. The
 macOS minutes are free on a public repo, and the holder is where macOS differs from Linux.
 
-**Q3. The Mac app cask. Decision: publish a `flightdeck` cask at the first Mac release
-(coordinator, 2026-11-01).** The tap and its bump workflow already exist (8.1).
+**Q3. The Mac app cask. Decision: publish a `flightdeck` cask at the first Mac release.** The tap and its bump workflow already exist (8.1).
 
-**Q4. Formula name. Decision: `gff` (coordinator, 2026-11-01).** `brew install noahkiss/tap/gff`
+**Q4. Formula name. Decision: `gff`.** `brew install noahkiss/tap/gff`
 installs the terminal client and the hab. `flightdeck` stays the cask name, for the app.
 
-**Q5. In-app updates for the Mac app. Decision: no Sparkle for now (coordinator, 2026-11-01).**
+**Q5. In-app updates for the Mac app. Decision: no Sparkle for now.**
 The cask updates the app.
 
-**Extensions E1 to E8 (11.2). Decision: approved (coordinator, 2026-11-01).** Each must stay
+**Extensions E1 to E8 (11.2). Decision: approved.** Each must stay
 backward compatible, with defaults that keep current callers unchanged. Before pushing a change to
-a shared workflow, check it against one existing caller of that workflow (`noahkiss/heraldo` for
+a shared workflow, check it against one existing caller of that workflow (another Go repo for
 `go-ci.yml`; a cask and a single-url formula for the tap's `bump.yml`).
 
 Design calls this spec makes (not owner questions): a native runner per release target (7.3);
@@ -1382,7 +1370,7 @@ Read while writing this spec, 2026-11-01.
 - `noahkiss/workflows`: `go-ci.yml`, `dispatch-and-wait.yml`, the README's "Saving CI minutes
   and time".
 - `noahkiss/homebrew-tap`: `.github/workflows/bump.yml` and its per-producer bump workflows.
-- `noahkiss/heraldo`: `.github/workflows/ci.yml` (a go-ci, ghcr-build-push and
+- An existing Go caller's `.github/workflows/ci.yml` (a go-ci, ghcr-build-push and
   dispatch-and-wait caller).
 - The archived rootshell FlightDeck repo: `.github/workflows/release.yml` (described in 13, not
   copied).

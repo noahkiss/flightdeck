@@ -1,4 +1,4 @@
-// Package governor is the usage governor (capcom-service.md 10.1, groups.md 10; task-k0ydtgae):
+// Package governor is the usage governor (capcom-service.md 10.1, groups.md 10):
 // it paces consumers of a plan's usage, the Capcom service and later each agent group, from the
 // usage readings. Each consumer has a policy: a daily share of the plan's weekly window,
 // cumulative, and three steps measured against that share. The governor answers, for each

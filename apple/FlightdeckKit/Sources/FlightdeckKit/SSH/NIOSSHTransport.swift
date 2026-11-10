@@ -355,7 +355,7 @@ final class DialRace: @unchecked Sendable {
 }
 
 /// The time from process start to the first byte any hab sent, logged once
-/// per process (task-iv89iwd8: cold start to first hab reply).
+/// per process (cold start to first hab reply).
 public enum ColdStart {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var value: Duration?

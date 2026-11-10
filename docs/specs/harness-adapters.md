@@ -675,7 +675,7 @@ Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
 - **Start.** `session.create` with `harness: codex` runs `argv`, else `codex`, with
   `--no-daemon` inserted after the program name when `argv` lacks it, and adds
   `AGENT_KIND=codex` to the pane's environment. `harness: claude` starts `claude` (argv when
-  given) with `AGENT_KIND=claude`, and `harness: opencode` its wrapper (task-ph00sdci). Any other
+  given) with `AGENT_KIND=claude`, and `harness: opencode` its wrapper. Any other
   `harness` answers `unavailable`.
 - **State.** Codex's OSC 7501 reports and hooks go through the same store and rules as Claude
   Code's (see Claude Code, built choices). gff-hab answers the `?` query for every pane; whether
@@ -1219,9 +1219,9 @@ gff agent compact with a follow-up that points at it."
 ## Spawn
 
 Any agent can start a teammate or sub-agent for its own work, in another harness, on any host,
-with one call (task-6iwat66b). The owner can say "run a codex reviewer" or "a gpt reviewer" and
+with one call. The owner can say "run a codex reviewer" or "a gpt reviewer" and
 get the right harness and model. Groups (`groups.md` 4.1, 12.3) start their members through the
-same verb; stage B2 adds the group fields and the trust cover (built, task-7kzvfcna).
+same verb; stage B2 adds the group fields and the trust cover (built).
 
 ### The verb
 
@@ -1474,8 +1474,7 @@ Recommendation: **A now, C as a later spike.** A keeps every process under the h
 pattern (hooks + transcript + PTY), so it needs no new protocol code. B breaks two of our rules
 at once: tools escape the holder, and a Codex update can stop work in every pane. C has B's
 benefits without those costs, but depends on undocumented multi-client behaviour. A short
-spike with two clients on one private app-server would settle it. A `/consensus` run can
-inform the choice.
+spike with two clients on one private app-server would settle it.
 
 ### Claude: blocking `PermissionRequest` hook
 

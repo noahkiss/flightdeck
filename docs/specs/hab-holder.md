@@ -310,7 +310,7 @@ checkpoints and hands over. Past 15 s it logs one line and exits with status 1.
 Every row above is saved at change time, so an earlier warning has nothing left to save. They
 stay out until a state appears that is costly to write at each change.
 
-**Built (task-2ldmxmy7).** The resume book's flush first on SIGTERM and the 15 s deadline in
+**Built.** The resume book's flush first on SIGTERM and the 15 s deadline in
 gff-hab. Tests: `TestLogoutCheckpoint` sends SIGTERM to a real holder and gff-hab together, holder
 first and gff-hab first, right after a rename and a new native id; after a new holder and gff-hab
 start, the name is current, both sessions show exited, nothing started on its own, and
@@ -492,7 +492,7 @@ end its children. gff-hab therefore asks the init system to start each holder as
   into both units and both plists. gff-hab builds each pane's environment from its own, then the
   request's entries on top. Its own is changed first: `TERM=xterm-256color` and
   `COLORTERM=truecolor` always, in every init mode including `-init none`, because the pane's
-  terminal is gff-hab's emulator, not the terminal gff-hab started in (coordinator ruling); a
+  terminal is gff-hab's emulator, not the terminal gff-hab started in; a
   `session.create` env that sets `TERM` still wins. Then a UTF-8 `LANG` when no `LANG`,
   `LC_ALL` or `LC_CTYPE` is set (`C.UTF-8` on Linux, `en_US.UTF-8` on macOS), and the job's own variables are dropped
   (`XPC_SERVICE_NAME`, `INVOCATION_ID`, `JOURNAL_STREAM`, `SYSTEMD_EXEC_PID`).
@@ -527,7 +527,7 @@ consequences:
 - Drain runs two holder builds at once, from two paths. If TCC keys the holder by path, every
   holder build re-asks for every grant (1.3). See the decision below.
 
-**Decision: option 1, signed helper bundles (coordinator), pending Mac proof P3 — how the holder
+**Decision: option 1, signed helper bundles, pending Mac proof P3 — how the holder
 keeps one TCC identity across builds.**
 
 | Option | How | For | Against |
@@ -757,7 +757,7 @@ logic process holds a lock in the state directory, so this happens only by accid
 
 ## 7. Open questions
 
-### Q1. Who finds the OSC 133 prompt marks? **Decision: option 2, coordinator ruling**
+### Q1. Who finds the OSC 133 prompt marks? **Decision: option 2**
 
 The four marks (prompt start, command start, output start, command end with exit status) let the
 console show each command as a card. The design doc says the holder can record them; "parses
@@ -773,25 +773,25 @@ covered: gff-hab replays the ring from its checkpoint on return and finds the sa
 the same condition as rebuilding the screen. Both options lose command output that has left the
 ring, so long-term card output needs storage in gff-hab either way.
 
-Ruling (coordinator, not an owner decision): option 2. gff-hab finds the marks; libghostty tracks
+Decision: option 2. gff-hab finds the marks; libghostty tracks
 them. The holder only serves replay with an upper bound. Stage 7 moves its detection and command
 list into gff-hab (Part 2), and the holder protocol has no mark frames.
 
-### Q2. TCC identity for holder builds on macOS. **Decision: option 1 (coordinator), pending Mac proof P3**
+### Q2. TCC identity for holder builds on macOS. **Decision: option 1, pending Mac proof P3**
 
 See 5.3 and `macos-identity.md`: signed helper bundles with fixed bundle ids.
 
-### Q3. Should the holder restart a crashed gff-hab? **Decision: no (coordinator)**
+### Q3. Should the holder restart a crashed gff-hab? **Decision: no**
 
 herdr-core's holder does. Recommendation: no; the init system restarts gff-hab. With drain,
 several holders run at once, and only one supervisor should start gff-hab. The init system already
 has backoff and logging. The holder's grace period would only matter where no init system runs,
 which we do not support.
 
-Ruling (coordinator, not an owner decision): the init system supervises gff-hab; the holder does
+Decision: the init system supervises gff-hab; the holder does
 not start or restart it. See 2.1 (fixed choices) and 2.9.
 
-### Q4. Who ends processes that escaped a pane? **Decision: gff-hab, by pane token (coordinator, 2026-11-01)**
+### Q4. Who ends processes that escaped a pane? **Decision: gff-hab, by pane token**
 
 herdr-core's holder sweeps every process carrying a pane's scope token when the program exits.
 Recommendation: gff-hab owns this policy. The holder sets nothing beyond what spawn gives it;
@@ -799,10 +799,10 @@ gff-hab adds a pane token to the environment, and sweeps on release by reading p
 environments from the OS. Keeping it out of the holder keeps policy out of the process that must
 not change.
 
-Ruling (coordinator, 2026-11-01): take the recommendation. hc sweeps by a scope token too
+Ruling: take the recommendation. hc sweeps by a scope token too
 (`landscape.md` 2.1); we keep the same behaviour but run it in gff-hab.
 
-Built (task-54so77hs): after an observed successful holder release, gff-hab queues a process sweep outside the
+Built: after an observed successful holder release, gff-hab queues a process sweep outside the
 link's event loop. This includes release from a draining holder. A lost holder connection or
 an ordinary program exit starts no sweep. Neither replacement nor replay errors start a sweep. The existing `GFF_HAB` environment carries the pane's
 stable token; the socket path may change without changing its match.
@@ -822,7 +822,7 @@ logs an unavailable scan rather than starting another stuck reader. Tokens never
 logs. The scan is best effort, not a security boundary: fork or exec can race inspection,
 and neither OS offers an atomic signal-if-environment-matches operation.
 
-### Q5. A Mac without a graphical login. **Decision: refuse by default; a flagged `Background` holder later, by explicit option (coordinator, 2026-11-01)**
+### Q5. A Mac without a graphical login. **Decision: refuse by default; a flagged `Background` holder later, by explicit option**
 
 Recommendation in 5.3: refuse by default, allow a flagged `Background` holder by explicit option.
 
@@ -833,11 +833,11 @@ its server in the GUI domain (`landscape.md` 2.16), so the refusal matches the b
 
 ## 8. Stage map
 
-| Stage | Task | Sections it builds from |
-|---|---|---|
-| 2. Wire protocol | task-n7roe6ye | 3.1, 3.2, 2.6 |
-| 3. Holder core | task-bqffgxz8 | 2.2 to 2.5, 2.7, 2.8, 2.10, 6.1 to 6.4 |
-| 4. Handover and crash recovery | task-fuqwlsop | 2.6, 2.4, 6.5, 6.8 (Q3 decided: no supervision) |
-| 5. Upgrade by drain | task-sm3zgmxm | 4.1 to 4.4, 6.7 |
-| 6. Service install | task-6xtx0tqr | 5.1 to 5.5, 6.6; Q2, Q5 |
-| 7. OSC 133 marks | task-m845kpi9 | Q1, 3.1 (replay with upper bound) |
+| Stage | Sections it builds from |
+|---|---|
+| 2. Wire protocol | 3.1, 3.2, 2.6 |
+| 3. Holder core | 2.2 to 2.5, 2.7, 2.8, 2.10, 6.1 to 6.4 |
+| 4. Handover and crash recovery | 2.6, 2.4, 6.5, 6.8 (Q3 decided: no supervision) |
+| 5. Upgrade by drain | 4.1 to 4.4, 6.7 |
+| 6. Service install | 5.1 to 5.5, 6.6; Q2, Q5 |
+| 7. OSC 133 marks | Q1, 3.1 (replay with upper bound) |

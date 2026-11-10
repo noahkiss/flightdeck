@@ -780,7 +780,7 @@ beyond the paper spec:
 ## 8. Proof steps on a Mac
 
 These extend the three steps of `hab-holder.md` 5.3. Each needs a Mac with Xcode. Column
-"Needs" names what the coordinator must approve: **DevID** means signing with the owner's
+"Needs" names what a maintainer must approve: **DevID** means signing with the project's
 Developer ID (in CI or locally); **TCC** means granting, denying or resetting a privacy entry on
 that Mac (`tccutil reset` included); **Account** means creating a fresh macOS user account.
 
@@ -1022,7 +1022,7 @@ unregister every proof copy, the source builds included.
 
 ## 9. Open questions
 
-Q2 to Q5 are decided by the coordinator. Q1 and Q6 widen what the holder can reach, so the
+Q2 to Q5 are decided. Q1 and Q6 widen what the holder can reach, so the
 owner decided them (2026-11-01).
 
 ### Q1. Holder Full Disk Access by default. **Decision: yes, FDA by default (owner, 2026-11-01)**
@@ -1033,21 +1033,21 @@ for the same reason, and per-folder grants leave a silent permanent denial waiti
 nobody has opened yet (1.1). A user who declines can set `macos.grants` to drop it; `--check` then
 checks the listed folders instead.
 
-### Q2. Local Network as a required grant. **Decision: required for the holder; for gff-hab only with a peer hab (coordinator)**
+### Q2. Local Network as a required grant. **Decision: required for the holder; for gff-hab only with a peer hab**
 
 TN3179 says launch agents are not exempt. If P6 confirms it, every pane `ssh` to a LAN host fails
 until the holder holds the grant. Recommendation: required for the holder; required for gff-hab
 only when a peer hab is configured. `--check` cannot verify it without a connection, so the walk
 makes one.
 
-### Q3. `SMAppService` for the Mac app. **Decision: no `SMAppService` for now (coordinator)**
+### Q3. `SMAppService` for the Mac app. **Decision: no `SMAppService` for now**
 
 Recommendation: no, for now. Drain needs a label per holder instance and a copy per build, and the
 hab installs without the app. Revisit if macOS starts to treat LaunchAgents plists outside
 `SMAppService` as second-class (Login Items attribution already needs
 `AssociatedBundleIdentifiers`).
 
-### Q4. How the probe calls the C checks. **Decision: option A, `purego` (coordinator)**
+### Q4. How the probe calls the C checks. **Decision: option A, `purego`**
 
 | Option | For | Against |
 |---|---|---|
@@ -1057,7 +1057,7 @@ hab installs without the app. Revisit if macOS starts to treat LaunchAgents plis
 
 Recommendation: A.
 
-### Q5. A Developer ID signature for local dev builds. **Decision: no (coordinator)**
+### Q5. A Developer ID signature for local dev builds. **Decision: no**
 
 Recommendation: no. Release builds sign in CI only; dev builds use `.dev` ids and may opt in to a
 local identity through `GFF_DEV_SIGN_IDENTITY` (3.5). This matches what the zellij fork learned:

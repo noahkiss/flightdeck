@@ -7,7 +7,7 @@ the hab-to-hab link, the catalog, channels (agent messages), suggestions, the op
 host and transcripts. The later Part 3 stages build from it. It describes behaviour in our own
 words and copies no code from the reference projects.
 
-Rules this spec works within (owner decisions in the master plan):
+Rules this spec works within (project decisions):
 
 - No hub, no relay, no leader election. One machine alone is a mesh of one.
 - Peers come from Flightdeck's own config, written by the user. No default names a real machine.
@@ -251,7 +251,7 @@ send and receive, and a pull model needs no inbound path to it.
 
 `gff-hab peers` lists label, state, the endpoint in use, the short device id and last seen.
 
-### 4.4 Built choices (task-phkmrjaw)
+### 4.4 Built choices
 
 Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` and
 `gff-hab peers accept <label>`. Example file: `docs/examples/peers.toml`.
@@ -342,7 +342,7 @@ Limits, at the bar of herdr, Rex and Paseo:
   the owner, as in herdr, hc and Rex. When the embedded SSH server admits paired hab keys that
   are not the owner's (4.1), client kind `hab` needs an allowlist of methods first.
 
-### 4.5 Built choices: the client merge (task-kbvoirca)
+### 4.5 Built choices: the client merge
 
 Package `internal/merge`, on top of `internal/hosts` (one `habconn.Conn` per hab, each with its
 own seq, epoch, resync and backoff). Pure Go, so the app's Go library and gff share it. This is
@@ -404,7 +404,7 @@ Limits, at the bar of herdr, Rex and Paseo:
 - The event queue is unbounded: `pane.output` and `pane.activity` pile up while a client stops
   reading. Coalescing them per key is not done yet.
 
-Left for the project-identity `/consensus` (`logbook.md` 3), not decided here:
+Left for the project-identity key call (`logbook.md` 3), not decided here:
 
 - **Fork workflow.** A fork's clone (origin is the owner's fork, upstream is the original) and a
   clone of the original (origin is the original) get different keys, since the hab picks origin
@@ -480,10 +480,10 @@ need for a handful of machines.
 
 - **Clients** read `catalog.list` from any hab to show hosts, projects with their locations, and
   hosts they could add. Each host's live state still comes from the client's own connection to it.
-- **Agents** read it through the agent kit (Part 4, task-6ho9972u): `gff hosts`, `gff hosts
+- **Agents** read it through the agent kit (Part 4): `gff hosts`, `gff hosts
   <label>`, `gff projects`, the same as MCP tools, and the printed skill (7).
 
-### 5.4 Built choices (task-dyagzrw0)
+### 5.4 Built choices
 
 Package `internal/catalog`, wired into `gff-hab serve`. Capability `catalog`. Methods
 `catalog.get`, `catalog.put` and `catalog.list`; event `catalog.updated`. Example config:
@@ -585,7 +585,7 @@ Not built in this stage:
 - The `mesh.changed` wake-up for the catalog (4.2; mail has it, 6.5). The dialer pulls every
   15 s instead of 60 s, so a catalog change on the dialed hab reaches it in at most 15 s; a
   change on the dialer goes out at once.
-- The agent kit's `gff hosts` and `gff projects` (task-6ho9972u, Part 4). The read tools serve the
+- The agent kit's `gff hosts` and `gff projects` (Part 4). The read tools serve the
   same facts now: `gff-hab read hosts`, `projects`, `agents` and the MCP server `gff-hab mcp`
   (`capcom.md` 5.5).
 - GPU models, battery state, Xcode simulators, attached devices, whether hooks are set up, and
@@ -706,13 +706,13 @@ only in a way the plan already asked for.
   from a pane, 6.5).
 - It is a hab call, so no client polls a screen (`gff-client.md` 15.10).
 
-### 6.5 Built choices (task-z5pysi5t, wake-up task-x0m0pyc8)
+### 6.5 Built choices (wake-up)
 
 Package `internal/channels`, wired into `gff-hab serve`. Capability `channels`. Methods
 `channel.send`, `channel.status`, `channel.wait`, `mail.push` and `mail.pull`; event
 `channel.message`; `mesh.changed` with reason `mail`, sent to a peer link that dialed this hab
 (the wake-up below). Commands: `gff-hab send` and `gff-hab wait`. Channels own deliver-when-idle;
-the agent kit (task-6ho9972u) calls the same service and may give the commands other names.
+the agent kit calls the same service and may give the commands other names.
 Where this section and 6.1 to 6.4 differ, this section is what is built: it overrides the
 resolution order of 6.1, the expiry of control items in 6.3, and the `--for exit` word of 6.4.
 
@@ -975,7 +975,7 @@ Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
 - Each save writes the whole state. The bounds above keep it to a few MiB in normal use and
   about 20 MiB at worst; an append-only log is the next step if that proves slow.
 
-### 6.6 Built choices: the MCP tools and a wait on a peer's agent (task-dokhx3sg, task-mz98sb7l)
+### 6.6 Built choices: the MCP tools and a wait on a peer's agent
 
 **A wait on a peer's agent.** `channel.wait` with `agent` takes the same addresses as a send
 (6.5), with one difference for a bare name.
@@ -1037,7 +1037,7 @@ wait on a peer ends when the link drops, rather than waiting for it to come back
 - **The printed skill tells agents how to use it:** when a task needs something this host lacks
   (Xcode on a Linux box, a GPU, a project not checked out here), name the hosts that fit, say why
   in one line each, and ask the user before acting.
-- **Acting needs the user's yes.** Setting up a project on another host (task-j600w23a) and
+- **Acting needs the user's yes.** Setting up a project on another host and
   starting a session there (`session.create` on that hab) are separate agent kit actions. Each
   raises a Flightdeck confirmation card before it runs: the same card, expiry and
   first-answer-wins rules as Capcom's (`capcom.md` 6.1). The harness's own tool-permission prompt
@@ -1050,7 +1050,7 @@ wait on a peer ends when the link drops, rather than waiting for it to come back
   last) and gives every reason; it scores nothing, and the agent still proposes and the user
   still decides.
 - **A running agent stays on its host.** Nothing moves a session.
-- **Set up elsewhere** (task-j600w23a): the target hab clones or fetches by the project's remote,
+- **Set up elsewhere**: the target hab clones or fetches by the project's remote,
   checks out a ref, runs the project's declared bootstrap, and its catalog then shows the project
   at that folder. Credentials come from the target host's own git setup.
 
@@ -1160,8 +1160,8 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
   action runs at once and the card shows as a record.
 - The level picker sets it: on at Safe, off at Balanced and Bypass permissions (`app.md` 20.3;
   owner, 2026-11-01, a later ruling that supersedes default on).
-- Built: gff-hab stores and serves the setting (task-yfmrj6yc); confirmations read it
-  (task-ph00sdci, `capcom.md` 6.4).
+- Built: gff-hab stores and serves the setting; confirmations read it
+  (`capcom.md` 6.4).
 - Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 
 ---
@@ -1171,28 +1171,28 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
 All are additive under `hab-logic-api.md` 3.3. Each answers `unavailable` until its stage builds
 it.
 
-| Item | Kind | Purpose | Stage |
-|---|---|---|---|
-| `client.kind` `hab` | Word | A peer link | task-phkmrjaw |
-| hello `peer` | Optional field | The dialer's device id and host id | task-phkmrjaw |
-| `mesh` | Capability | The hab supports peer links | task-phkmrjaw |
-| `peers.list` | Method | Peers with label, state, endpoint in use, device id, last seen, and peers known to each (3.1) | task-phkmrjaw |
-| `peers.accept` | Method | Accept a changed device id (the CLI's `peers accept`) | task-phkmrjaw |
-| `peer.updated` | Event | A peer's state changed | task-phkmrjaw |
-| `catalog.get` | Method | This hab's own catalog since a generation | task-dyagzrw0 |
-| `catalog.put` | Method | The dialer pushes its own catalog sections | task-dyagzrw0 |
-| `catalog.list` | Method | The merged view: own catalog plus direct peers' copies, with age and stale marks | task-dyagzrw0 |
-| `catalog.updated` | Event | A copy or the own catalog changed (generation and device id only) | task-dyagzrw0 |
-| `mesh.changed` | Event | To a peer link: catalog, mail or Logbook ops waiting (4.2); `reasons` `mail` built (6.5), `logbook` built (`logbook.md` 7.6) | task-dyagzrw0; mail task-x0m0pyc8; logbook task-82f5stqr |
-| `mail.push` | Method | Hand over messages and control items; returns accepted ids | task-z5pysi5t |
-| `mail.pull` | Method | Take items waiting for the caller's device id | task-z5pysi5t |
-| `channel.send` | Method | An agent's send through its own hab; returns id and state | task-z5pysi5t |
-| `channel.status` | Method | A message's state | task-z5pysi5t |
-| `channel.wait` | Method | Wait for a message to the caller or an agent state change (6.4) | task-z5pysi5t |
-| `channel.message` | Event | A message state changed (sender side) | task-z5pysi5t |
-| `logbook.pull` | Method | A peer link takes one page of the Logbook ops its hab lacks, by version vector (`logbook.md` 7.6) | task-82f5stqr |
-| `logbook.push` | Method | A peer link hands over one page of Logbook ops; returns the callee's version vector | task-82f5stqr |
-| `transcript.index` | Method | A page of this hab's transcript index | task-syy38i23 |
+| Item | Kind | Purpose |
+|---|---|---|
+| `client.kind` `hab` | Word | A peer link |
+| hello `peer` | Optional field | The dialer's device id and host id |
+| `mesh` | Capability | The hab supports peer links |
+| `peers.list` | Method | Peers with label, state, endpoint in use, device id, last seen, and peers known to each (3.1) |
+| `peers.accept` | Method | Accept a changed device id (the CLI's `peers accept`) |
+| `peer.updated` | Event | A peer's state changed |
+| `catalog.get` | Method | This hab's own catalog since a generation |
+| `catalog.put` | Method | The dialer pushes its own catalog sections |
+| `catalog.list` | Method | The merged view: own catalog plus direct peers' copies, with age and stale marks |
+| `catalog.updated` | Event | A copy or the own catalog changed (generation and device id only) |
+| `mesh.changed` | Event | To a peer link: catalog, mail or Logbook ops waiting (4.2); `reasons` `mail` built (6.5), `logbook` built (`logbook.md` 7.6) |
+| `mail.push` | Method | Hand over messages and control items; returns accepted ids |
+| `mail.pull` | Method | Take items waiting for the caller's device id |
+| `channel.send` | Method | An agent's send through its own hab; returns id and state |
+| `channel.status` | Method | A message's state |
+| `channel.wait` | Method | Wait for a message to the caller or an agent state change (6.4) |
+| `channel.message` | Event | A message state changed (sender side) |
+| `logbook.pull` | Method | A peer link takes one page of the Logbook ops its hab lacks, by version vector (`logbook.md` 7.6) |
+| `logbook.push` | Method | A peer link hands over one page of Logbook ops; returns the callee's version vector |
+| `transcript.index` | Method | A page of this hab's transcript index |
 
 ---
 

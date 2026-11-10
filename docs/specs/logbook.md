@@ -8,7 +8,7 @@ This spec says what a record is, how writes merge across hosts, how agents and p
 how the later Part 12 stages are built and checked. It describes behaviour in our own words and
 copies no code.
 
-Rules this spec works within (owner decisions in the master plan):
+Rules this spec works within (project decisions):
 
 - Logbook lives in `gff-hab`. No sidecar, no hub, no Docker service.
 - Every hab keeps a full local replica: SQLite plus an op log. A write always lands locally first.
@@ -35,8 +35,8 @@ Logbook builds on other parts. This spec names their pieces and does not define 
 | Which tests we keep | `docs/testing.md` |
 
 Sections that settle a question end with a **Decision** line and its reason. Items marked
-**/consensus** are key calls with no ground truth; the coordinator runs `/consensus` on them before
-the stage that builds them. The owner decides only user-visible questions; those are in
+**key call** are decisions with no ground truth, settled before the stage that builds them.
+The owner decides only user-visible questions; those are in
 [section 15](#15-open-questions-for-the-owner).
 
 ## Contents
@@ -257,7 +257,7 @@ seq and storage, and it is not always reachable for sync. The hab it talks to is
 
 ## 3. Projects
 
-**/consensus** (project identity), as the plan asks. The client merge adds two items to it
+**Key call** (project identity). The client merge adds two items to it
 (`mesh.md` 4.5): the fork workflow and identity frozen at creation.
 
 ### 3.1 Identity
@@ -373,8 +373,8 @@ HLC, written in one transaction. A batch is applied all or nothing on every repl
   waits up to 5 s. gff-hab notices ops it did not write (a WAL change) and emits events for them.
 - **Nothing else writes the file.** A peer's ops arrive through gff-hab's sync.
 
-Decision: the CLI opens the file directly when the hab is down. Reason: the plan's consensus asked
-for memory that works while gff-hab restarts; SQLite's lock makes two writers on one host safe.
+Decision: the CLI opens the file directly when the hab is down. Reason: memory must work while
+gff-hab restarts; SQLite's lock makes two writers on one host safe.
 
 ### 4.4 Format changes
 
@@ -388,7 +388,7 @@ and it lets an older hab carry a newer hab's ops without losing them.
 
 ### 4.5 Built (stage 2)
 
-`internal/logbook` (task-5v03ztrf). The driver is `modernc.org/sqlite`, pure Go, with FTS5 built
+`internal/logbook`. The driver is `modernc.org/sqlite`, pure Go, with FTS5 built
 in. The file opens with a 5 s busy timeout, WAL, `synchronous=FULL`, `secure_delete` and `BEGIN
 IMMEDIATE` for every write. FULL, because in WAL mode NORMAL can lose a commit after a power loss,
 and the next write would then reuse a seq that peers already hold. `secure_delete` zeroes freed
@@ -623,7 +623,7 @@ its next link.
 ### 7.6 Built (stage 3)
 
 `internal/logbook` (`sync.go`: `Store.Sync`, `ServePull`, `ServePush`) and `internal/lbsync`,
-wired into `gff-hab serve` (task-82f5stqr). Capability `logbook`. Methods `logbook.pull` and
+wired into `gff-hab serve`. Capability `logbook`. Methods `logbook.pull` and
 `logbook.push`; `mesh.changed` gains the reason `logbook`. Until stage 4, `logbook` names the
 peer methods only; the client methods of 10.3 come with stage 4.
 
@@ -698,7 +698,7 @@ general case with no peers.
   proposal records here. One switch replaces the per-harness switches (`app.md` 20.3).
 - It is a levelled setting: `agents` at Safe, `off` at Balanced and Bypass permissions
   (`app.md` 20.3). The app writes it through `settings.set` (`app.md` 20.5).
-- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). Stage 7
+- Built: gff-hab stores and serves the setting, and the app writes it. Stage 7
   reads it at each write on a pane's route (9.4). Harness memory is not covered yet: the Part 8
   hook that files memory proposals is not built.
 - Capcom files proposals by its own rule (`capcom.md` 6.2), whatever this setting says. See open
@@ -978,7 +978,7 @@ Where this spec was silent, stage 6 decided. Each is a default the owner may rev
 
 ## 12. Other projects: what agents see and how they work together
 
-**/consensus** (how agents see and interoperate with other projects), as the plan asks.
+**Key call** (how agents see and interoperate with other projects).
 
 ### 12.1 Seeing
 
@@ -1105,11 +1105,11 @@ Recommendation: **A.**
 
 Stage 5 builds A, the default, until the owner decides otherwise (3.3).
 
-### 15.4 One-off import of the owner's existing records
+### 15.4 Import from other record stores
 
-The product ships `gff lb import` for a generic JSONL file (13.1). Converting the owner's own
-records into it is a one-off owner step outside the repo. Confirm the owner wants that step planned
-(and when: at Logbook's first release, or later).
+The product ships `gff lb import` for a generic JSONL file (13.1). Converting records from another
+tool into that file is a one-off step outside the repo; Flightdeck ships no converter for any
+particular tool.
 
 ---
 
@@ -1120,7 +1120,7 @@ records into it is a one-off owner step outside the repo. Confirm the owner want
 | D1 | Six record types: finding, task, plan, guide, issue, proposal | Usage shows four carry the load; issue and proposal are owner and Part 8 needs |
 | D2 | Random ids `<type>-<8>`, never changed; imports keep ids | Coordination-free minting; ids quoted elsewhere keep resolving |
 | D3 | Origins are habs only; clients write through a hab | A phone cannot be a reliable sync peer |
-| D4 | Projects are records with an identity set, matched by git remote, then root commit, then folder (/consensus) | Worktrees and clones join; renames do not orphan records; same identity as the catalog |
+| D4 | Projects are records with an identity set, matched by git remote, then root commit, then folder (key call) | Worktrees and clones join; renames do not orphan records; same identity as the catalog |
 | D5 | One package, `logbook.db` per hab, op log as the only truth, folded tables rebuildable | Pure fold makes convergence testable; no migrations |
 | D6 | The CLI writes the file directly when gff-hab is down | Memory works through hab restarts |
 | D7 | Scalar fields last writer wins by HLC; conflict means neither saw the other, by `prev` | The owner's rule, with a precise flag that avoids false alarms |
@@ -1134,7 +1134,7 @@ records into it is a one-off owner step outside the repo. Confirm the owner want
 | D15 | Approval setting `off` by default, `agents` to hold agent writes | Owner decision |
 | D16 | CLI `gff lb` is the main agent door; four MCP tools in `gff-hab mcp serve` | Agents use the CLI; small MCP surface; no clash with Part 8's `mcp` subcommands |
 | D17 | Habits in the hook endpoint with one setting each; injections shown in flight rules | Every harness gets them; nothing invisible |
-| D18 | Agents read every project by default, view the current one, hand over by filing a task (/consensus) | Replicas hold everything; filing needs no running agent |
+| D18 | Agents read every project by default, view the current one, hand over by filing a task (key call) | Replicas hold everything; filing needs no running agent |
 | D19 | Always-on extras by explicit config; backup on every marked hab | An export or index must have one writer |
 | D20 | A pane write limit of 60 a minute | A cheap guard against a looping agent |
 

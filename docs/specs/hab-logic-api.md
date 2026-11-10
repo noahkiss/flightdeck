@@ -460,7 +460,7 @@ of the range, the answer starts later and says so. The holder protocol does not 
 
 Decision: proposed (this stage). Calls and the event: 3.9.
 
-#### Built choices (task-m845kpi9)
+#### Built choices
 
 - **Where.** `internal/cmdmarks` holds the scanner and the per-pane tracker (pure Go). The holder
   link feeds each pane's tracker from one call in its byte path, after the parser, with live and
@@ -517,7 +517,7 @@ Decision: proposed (this stage). Calls and the event: 3.9.
   landing inside an output range before `D` is fixed later in the console snippet (for example,
   send `D` first thing in `precmd`), not in the tracker.
 
-#### Built choices: the working directory (task-3x22hva9)
+#### Built choices: the working directory
 
 - **OSC 7.** The scanner also keeps `ESC ] 7 ; <url>` reports, under the same payload cap and
   rules as a mark. The tracker keeps the last good report's path; a command takes it at its `C`
@@ -822,50 +822,50 @@ names the stage, and an event is defined but never sent.
 |---|---|---|
 | `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
-| `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes (task-98qp7he5) |
-| `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes (task-98qp7he5) |
-| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (task-aqw4iowl, `capcom.md` 7.6); every other session (task-4i9uv0ai, `gff-client.md` 6.2) |
-| `session.adopt` | Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; `conflict` while it runs elsewhere | Yes (task-ip98o12o, `gff-client.md` 6.5) |
-| `session.outside` | List recent conversations on the host that no session holds, newest first | Yes (task-ip98o12o, `gff-client.md` 6.5) |
+| `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes |
+| `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes |
+| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (`capcom.md` 7.6); every other session (`gff-client.md` 6.2) |
+| `session.adopt` | Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; `conflict` while it runs elsewhere | Yes (`gff-client.md` 6.5) |
+| `session.outside` | List recent conversations on the host that no session holds, newest first | Yes (`gff-client.md` 6.5) |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |
-| `trust.answer` | Answer a harness's folder trust prompt, `trust` or `exit`, from the dialog on screen (capability `trust`; `app.md` 7.10) | Yes, Claude Code (task-8svbwckn) |
+| `trust.answer` | Answer a harness's folder trust prompt, `trust` or `exit`, from the dialog on screen (capability `trust`; `app.md` 7.10) | Yes, Claude Code |
 | `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
-| `attachment.put` | Start an upload of a file for a session (capability `attachments`; `app.md` 4.4) | Yes (task-mthck7r4) |
-| `attachment.write` | Send the next run of an upload's bytes; the last run checks the hash (capability `attachments`; API addition) | Yes (task-mthck7r4) |
-| `attachment.get` | Fetch a run of an attachment's bytes, or its thumbnail (capability `attachments`) | Yes (task-mthck7r4) |
-| `content.show` | Store a reference to a file on the hab's host for a session to show (capability `content`; `app.md` 4.7) | Yes (task-btkd1ekc) |
-| `content.list` | A session's shown files, images from tool calls and changed files (capability `content`) | Yes (task-btkd1ekc) |
-| `content.read` | A run of one listed file's bytes, in bounded chunks (capability `content`) | Yes (task-btkd1ekc) |
-| `content.diff` | A listed file's diff in unified format (capability `content`) | Yes (task-btkd1ekc) |
-| `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Yes (task-oe7ioczy) |
-| `push.register` | Store an APNs device token with the kinds the device wants (capability `push`) | Yes (task-oe7ioczy) |
-| `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Yes (task-oe7ioczy) |
-| `push.unregister` | Drop a token (capability `push`) | Yes (task-oe7ioczy) |
-| `notice.raise` | Raise a Flightdeck notification from a hab event or a local script: a `notice.raised` event, and a push where push is set up | Yes (task-oe7ioczy) |
-| `usage.list` | The latest usage reading of each harness account (capability `usage`) | Yes (task-6189lsjb) |
+| `attachment.put` | Start an upload of a file for a session (capability `attachments`; `app.md` 4.4) | Yes |
+| `attachment.write` | Send the next run of an upload's bytes; the last run checks the hash (capability `attachments`; API addition) | Yes |
+| `attachment.get` | Fetch a run of an attachment's bytes, or its thumbnail (capability `attachments`) | Yes |
+| `content.show` | Store a reference to a file on the hab's host for a session to show (capability `content`; `app.md` 4.7) | Yes |
+| `content.list` | A session's shown files, images from tool calls and changed files (capability `content`) | Yes |
+| `content.read` | A run of one listed file's bytes, in bounded chunks (capability `content`) | Yes |
+| `content.diff` | A listed file's diff in unified format (capability `content`) | Yes |
+| `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Yes |
+| `push.register` | Store an APNs device token with the kinds the device wants (capability `push`) | Yes |
+| `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Yes |
+| `push.unregister` | Drop a token (capability `push`) | Yes |
+| `notice.raise` | Raise a Flightdeck notification from a hab event or a local script: a `notice.raised` event, and a push where push is set up | Yes |
+| `usage.list` | The latest usage reading of each harness account (capability `usage`) | Yes |
 | `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Built |
-| `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
-| `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
-| `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes (task-bgjbr5rn) |
-| `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes (task-wvbuz085) |
-| `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
-| `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
-| `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes (task-yfmrj6yc) |
-| `capcom.open`, `capcom.assign` | Return or start the standing Capcom session; make a host the Capcom home host (capability `capcom`; `capcom.md` 7, 8.3) | Yes (task-aqw4iowl) |
-| `capcom.attach`, `capcom.detach`, `capcom.pending`, `capcom.open`'s `context` | Attach a notification, session, file, console command or Logbook record to a Capcom session's next message, remove one, or read what waits (read-only); the next `session.send` delivers it as blocks before the user's text, or alone when the send has no text (capability `capcom`; `capcom.md` 8.1, 8.4) | Yes (task-ilse43i7) |
+| `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes |
+| `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes |
+| `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes |
+| `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes |
+| `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes |
+| `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes |
+| `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes |
+| `capcom.open`, `capcom.assign` | Return or start the standing Capcom session; make a host the Capcom home host (capability `capcom`; `capcom.md` 7, 8.3) | Yes |
+| `capcom.attach`, `capcom.detach`, `capcom.pending`, `capcom.open`'s `context` | Attach a notification, session, file, console command or Logbook record to a Capcom session's next message, remove one, or read what waits (read-only); the next `session.send` delivers it as blocks before the user's text, or alone when the send has no text (capability `capcom`; `capcom.md` 8.1, 8.4) | Yes |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
-| `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Yes (task-98qp7he5) |
-| `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Yes (task-98qp7he5) |
+| `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Yes |
+| `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Yes |
 | `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 (built for Claude Code) |
 | `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
-| `usage.updated` | An account's usage reading changed | Account key | Yes (task-6189lsjb) |
-| `command.updated` | A pane's command started or ended (2.5) | Pane | Yes (task-m845kpi9) |
-| `notice.raised` | A notice was raised (`notice.raise`) | Notice | Yes (task-oe7ioczy) |
-| `content.updated` | A session showed a file (`content.show`) | Content item | Yes (task-btkd1ekc) |
+| `usage.updated` | An account's usage reading changed | Account key | Yes |
+| `command.updated` | A pane's command started or ended (2.5) | Pane | Yes |
+| `notice.raised` | A notice was raised (`notice.raise`) | Notice | Yes |
+| `content.updated` | A session showed a file (`content.show`) | Content item | Yes |
 
 All eight events are ephemeral (3.5): they carry no revision, and a client applies them in seq
 order. A chat message lives in the transcript, not in gff-hab, so it has no stored revision
@@ -884,7 +884,7 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 - **`session.create`** takes `name`, `project` or `project_dir`, `harness`, `argv`, `cwd`, `env`,
   `cols` and `rows`, all optional, and returns the `session` and `pane` ids. The objects arrive as
   events. Defaults: the hab's `$SHELL` (else `/bin/sh`); `cwd` is `project_dir`, else, with
-  `project`, the project's most recently used folder that still exists (task-3x22hva9: a console
+  `project`, the project's most recently used folder that still exists (a console
   beside a project's session starts there), else the hab's home; 80x24; the name is the
   program's base name, then `-2`, `-3` and so on. A name is 1 to 64 of `A-Z a-z 0-9 . _ -`
   (`mesh.md` 6.5): another name is `invalid` at create and rename, and a picked name has every
@@ -894,7 +894,7 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   else the first), else its root commit, and creates the project, named after the repository
   folder, when it is new. `project` and `project_dir` together are `invalid`. `harness` needs
   the adapter: `claude`, `codex` and `opencode` are built (`harness-adapters.md`, Codex, built
-  choices; `claude` starts `claude`, task-ph00sdci); any other value
+  choices; `claude` starts `claude`); any other value
   answers `unavailable`. Every input is checked first, the name
   rules and clashes (local and peer) among them. Then the hab files the session, and only then
   spawns, so the pane's `GFF_HAB` token names the session from the program's first byte: a
@@ -955,8 +955,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   project unless `project` is given (`gff-client.md` 5.4).
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
   session keeps its id and gets a new pane; it must be exited (else `conflict`). A Capcom
-  session resumes through Capcom (task-aqw4iowl, `capcom.md` 7.6). Any other session resumes
-  from gff-hab's resume book (task-4i9uv0ai, `gff-client.md` 6.2): the harness last seen in it
+  session resumes through Capcom (`capcom.md` 7.6). Any other session resumes
+  from gff-hab's resume book (`gff-client.md` 6.2): the harness last seen in it
   with its native session id (`claude --resume <id>`, or `--session-id <id>` while Claude Code
   has no transcript; `codex resume <id>`; `opencode --session <id>`), else the start
   `session.create` was asked for, in the session's folder. A session the book knows nothing of,
@@ -1124,7 +1124,7 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   `app.md` 17 rows were already in place: chat kind `plan`, `approval.answer` field `via`, and
   push kind `usage`.
 
-**Idempotency keys** (task-uu40arhs; `internal/control/idem.go`; `landscape.md` idea 4.2,
+**Idempotency keys** (`internal/control/idem.go`; `landscape.md` idea 4.2,
 after Paseo). A phone that loses its connection mid-call cannot tell whether the call ran. With
 a key it sends the same call again, and the hab runs it at most once. Built choices:
 
@@ -1169,7 +1169,7 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
 - **Not built here.** The app and `gff` do not send keys yet; each client adds them with its
   retry path.
 
-**Push** (task-oe7ioczy; `internal/push`, `cmd/gff-hab/push.go`). Built choices:
+**Push** (`internal/push`, `cmd/gff-hab/push.go`). Built choices:
 
 - **Config.** `-push-config`, else `<state>/push.json`, with `GFF_HAB_PUSH_KEY_COMMAND` (a
   JSON array), `GFF_HAB_PUSH_KEY_ID`, `GFF_HAB_PUSH_TEAM_ID`, `GFF_HAB_PUSH_TOPIC` and
@@ -1180,7 +1180,7 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   not set up. Set but wrong: gff-hab logs why and runs without push. Either way it leaves
   `push` out of the capabilities, and the `push.*` methods answer `unavailable` with a hint
   that names `docs/push.md`. `session.focus` and `notice.raise` work without push.
-- **Key command** (task-sle59fdq). gff-hab runs it in the background after start, never
+- **Key command**. gff-hab runs it in the background after start, never
   waiting for it: gff-hab's environment, stdin from `/dev/null`, its own process group, 30 s
   timeout (the group is killed), 16 KiB stdout cap. Stdout must parse as a PKCS #8 P-256 PEM
   key. The key stays in memory, is never logged and never written to disk; the stdout buffer is
@@ -1289,7 +1289,7 @@ an unknown pane answers `not_found`. The client confirms with the owner before i
 
 Parallel agents on one repository each want their own folder and branch. gff-hab makes, lists
 and removes git worktrees for a project, and runs a project's setup and teardown scripts
-(task-wvbuz085; `landscape.md` 2.13 and idea 4.5). Code: `internal/worktree` (git, files),
+(`landscape.md` 2.13 and idea 4.5). Code: `internal/worktree` (git, files),
 `cmd/gff-hab/worktrees.go` (the methods and `gff-hab worktree`).
 
 **What the reference tools do.**
@@ -1579,7 +1579,7 @@ holder link off, a data hello gets a reject frame (`unavailable`).
   it carries one text message per JSON-RPC message on the control connection and one binary
   message per data frame on a data connection.
 
-Decision: settled (`transport.md`, /consensus 3/3).
+Decision: settled (`transport.md`).
 
 ---
 
@@ -1982,7 +1982,7 @@ Each question has options, a recommendation and the reason. Each now ends with i
 
 ### Q1. The interim path (blocks stage 9)
 
-Run with the Part 1 holder decision; the two answers must agree. The plan calls for `/consensus`.
+Run with the Part 1 holder decision; the two answers must agree.
 
 | Option | For | Against |
 |---|---|---|
@@ -1995,8 +1995,8 @@ data streams, and the terminal view attaches a real zellij client, as the interi
 found. The earlier GFF server keeps running unchanged until gff-hab replaces it. The design doc's
 "first version" (option A) predates the finding that GFF's server is TypeScript, not Go.
 
-Decision: C, no interim; the holder came first (owner). Stage 9 is dropped. The earlier GFF stays
-the owner's daily driver until Flightdeck is stable.
+Decision: C, no interim; the holder came first (owner). Stage 9 is dropped. Flightdeck does not
+run beside or bridge to the earlier GFF.
 
 ### Q2. Data connections over SSH stdio (stage 1 of the plan)
 
@@ -2005,7 +2005,7 @@ because gff-hab keeps one connection model and the bridge stays dumb. Fallback: 
 
 Built: A (4.2), pending the owner's decision.
 
-Decision: A, one SSH channel per data connection (owner, with the SSH-everywhere consensus: one SSH connection per host, one channel per visible pane).
+Decision: A, one SSH channel per data connection (owner, with the SSH-everywhere decision: one SSH connection per host, one channel per visible pane).
 
 ### Q3. Control messages in the data stream
 
@@ -2021,7 +2021,7 @@ ignores it" still applies and passes by construction.
 Built: A (5.8), pending the owner's decision. `TestDataFakeFrames` in `cmd/gff-hab` prints frame
 headers and a JSON-RPC `closing` from a program; the client gets them as output.
 
-Decision: A, frames on every transport (coordinator ruling): a program cannot forge a frame, offsets stay explicit, and one framing works on every transport.
+Decision: A, frames on every transport: a program cannot forge a frame, offsets stay explicit, and one framing works on every transport.
 
 ### Q4. The revision floor
 
@@ -2034,7 +2034,7 @@ Decision: A, frames on every transport (coordinator ruling): a program cannot fo
 Recommendation: **B**, with a minimum of two revisions. The app on TestFlight is the oldest client
 in practice, and days fit that better than counts.
 
-Decision: B, 90 days and at least two revisions (coordinator, 2026-11-01). Not user-visible; the
+Decision: B, 90 days and at least two revisions. Not user-visible; the
 compat test already enforces translators down to `MinRevision`.
 
 ### Q5. Event replay on reconnect
@@ -2047,7 +2047,7 @@ compat test already enforces translators down to `MinRevision`.
 Recommendation: **A** for the first release. Structure is small; a re-read is cheap. Revisit if the
 phone's reconnect traffic measures high.
 
-Decision: A, no replay (coordinator, 2026-11-01). Rex and herdr-core re-read state too
+Decision: A, no replay. Rex and herdr-core re-read state too
 (`landscape.md` 2.18); none was built.
 
 ### Q6. Snapshot encoding baseline
@@ -2060,7 +2060,7 @@ Decision: A, no replay (coordinator, 2026-11-01). Rex and herdr-core re-read sta
 Recommendation: **A.** The Go client's single-pane view passes bytes to the host terminal, and the
 CLI should not need libghostty. The app can ask for the Ghostty format.
 
-Decision: A (coordinator, 2026-11-01). Built: gff-hab advertises `snapshot-vt` with data streams.
+Decision: A. Built: gff-hab advertises `snapshot-vt` with data streams.
 
 ### Q7. Terminal queries while gff-hab is down
 
@@ -2073,7 +2073,7 @@ Recommendation: **A.** gff-hab restarts take seconds. Most programs query with a
 a supported harness hangs. Align with the holder spec's OSC 133 decision, which faces the same
 "scan or not" question.
 
-Decision: A, nobody answers (coordinator, 2026-11-01). The holder stays a byte pump, as it does for
+Decision: A, nobody answers. The holder stays a byte pump, as it does for
 OSC 133 (`hab-holder.md` Q1).
 
 ### Q8. Reconnect grace period
@@ -2085,7 +2085,7 @@ Built (stage 8): size ownership uses the reconnect grace (`control.DefaultReconn
 so a client keeps its sizes and its claim to restore exactly as long as its token. Not yet a
 flag.
 
-Decision: 60 s, configurable later (coordinator, 2026-11-01). Built as `control.DefaultReconnectGrace`.
+Decision: 60 s, configurable later. Built as `control.DefaultReconnectGrace`.
 
 ---
 

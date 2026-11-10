@@ -6,8 +6,8 @@ import UserNotifications
 
 /// Notification actions that reach a hab from the background: iOS wakes the
 /// app, the action connects over the app's transport, sends one call and
-/// disconnects (task-iv89iwd8). It answers approvals from push banners
-/// (Approve, Deny, Reply; task-oe7ioczy) and keeps the "Ping hab" test action.
+/// disconnects. It answers approvals from push banners
+/// (Approve, Deny, Reply) and keeps the "Ping hab" test action.
 ///
 /// Approve and Deny ask for unlock on the phone's lock screen: an Allow can
 /// run a command (app.md 7.6). The device key signs once the device has been

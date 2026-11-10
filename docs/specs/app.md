@@ -54,7 +54,7 @@ of Apple platforms, not from a page opened for this spec. A device test must con
 18. [Open questions](#18-open-questions)
 19. [Sources](#19-sources)
 20. [Settings and levels](#20-settings-and-levels)
-21. [Rounds (built, task-xhpsgzkr)](#21-rounds-built-task-xhpsgzkr)
+21. [Rounds (built)](#21-rounds-built)
 
 ---
 
@@ -429,7 +429,7 @@ whiteboard, a log file.
 | The hab's disk is full | The hab refuses the upload with a clear error; nothing partial stays |
 | A file type the app cannot preview (an archive, a binary) | It sends as a file chip with name and size |
 
-Built choices (task-mthck7r4):
+Built choices:
 
 - **Upload.** `attachment.put`, then `attachment.write` runs in order, as `content.read`
   serves bytes; the last run checks the SHA-256 (`hab-logic-api.md`, `attachment.*`). A run is
@@ -535,7 +535,7 @@ a plan checklist in chat); `harness-adapters.md` (Conversation, Input delivery);
 `transcripts` capability in `hab-logic-api.md`.
 
 
-### 4.6 Built choices (task-6aflfy2k)
+### 4.6 Built choices
 
 The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.swift`,
 `Views/SessionViews.swift`).
@@ -626,7 +626,7 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   the message reached the TUI, the user record and the reply came back as events, and
   `claude --resume` from a plain terminal recalled the turn.
 
-### 4.7 Rich content (task-btkd1ekc)
+### 4.7 Rich content
 
 The agent shows the owner something instead of describing it: a screenshot, a rendered
 document, the files it changed.
@@ -798,7 +798,7 @@ rows, not as tool cards. Code: `Chat/CapcomCards.swift` (parsing), `Views/Capcom
 - **Snapshot.** `internal/transcript/testdata/claude-handoff.jsonl` is a hand-written Claude Code
   transcript with each case; its rows are in `Snapshots/claude-handoff.txt`.
 
-### 4.9 Capcom context chips (task-ilse43i7, app side)
+### 4.9 Capcom context chips (app side)
 
 The app side of the entry API (`capcom.md` 8.1, 8.4). Code: `Chat/CapcomChips.swift` (the
 model's chip calls), `Chat/CapcomCenter.swift` (opening Capcom with context from outside its
@@ -819,20 +819,20 @@ gets the chips, in the Capcom view (4.10).
   the next send as an attachment. The model keeps the bytes of the files it attached, so "New
   conversation" (8.8) can attach them again. A file the hab refuses (8 items wait, too large,
   a failed upload) goes back to the draft, with the hab's reason under the composer.
-  Coordinator call (2026-11-02): files in a Capcom composer are chips.
+  Decided: files in a Capcom composer are chips.
 - **Commands.** A console command card's context menu has "Attach to Capcom": `capcom.open`
   with `{kind: command, ref: "<pane>:<command id>"}` on the console's hab, then the board opens
   the Capcom session. A hab that is not the Capcom home answers `unavailable` naming the home;
   the alert shows that text. Design call: the action is offered on every console; the hab's
   answer says when it cannot work, which costs one tap and no capability check in the app.
-  Coordinator call (2026-11-02): the action is on every console.
+  Decided: the action is on every console.
 - **Remove.** `capcom.detach` with the chip's kind and ref, and its host label when it came from
   another hab. `not_found` means the hab no longer holds it, so the chip goes too.
 - **What already waits.** When a Capcom chat view starts, when its hab comes back online, and
   after a send that carried chips, the model reads the list with `capcom.pending {session}`.
   That call starts, resumes and changes nothing, so viewing any Capcom session, running or
   exited, standing or older, never resumes one. The model never refreshes with `capcom.open`
-  (coordinator, 2026-11-02). A hab from before `capcom.pending` answers kind `invalid` (method
+ . A hab from before `capcom.pending` answers kind `invalid` (method
   not found, code -32601). The model ignores any error from this read, so the chips stay as the
   app last saw them.
 - **Transcript records.** A user record to Capcom starts with the hab's context blocks. The
@@ -1018,7 +1018,7 @@ Limits, at the bar of herdr, Rex and Paseo:
 Sources: rootshell README (keyboard bar, sticky modifiers); Heeler README (tools keyboard);
 `hab-logic-api.md` 5 and 6.
 
-### 5.3 Built choices (task-29y4k1ih)
+### 5.3 Built choices
 
 The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Terminal`.
 
@@ -1137,7 +1137,7 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
 Sources: rootshell README (long-running command cards, unread when finished unseen); the Part 1
 plan (the hab finds prompt marks); OSC 133 marks as documented by terminal emulators.
 
-### 6.3 Built choices (task-3x22hva9)
+### 6.3 Built choices
 
 Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
 
@@ -1443,7 +1443,7 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
 - **Not built.** No push or Live Activity for a confirmation. The set-up card shows its
   fields; the hab refuses set-ups until the mesh stage builds them.
 
-### 7.10 Folder trust card (task-8svbwckn)
+### 7.10 Folder trust card
 
 A harness may ask whether to trust a folder before it starts work there. Until now the owner
 had to open the terminal view and pick an option with the arrow keys. The trust card answers it
@@ -1564,7 +1564,7 @@ is the trust answer for the group's worktrees. The member's own hab answers its 
 with the reason that names the dialog. The owner may answer it from the card; that is not a
 take over.
 
-**Start message (task-8svbwckn).** A started session's first message waits in the channels inbox
+**Start message.** A started session's first message waits in the channels inbox
 until the agent can take it. `blocked:trust` holds it as busy, with no time limit, so it goes in
 after the owner trusts the folder and the agent reaches `idle`. Before this, a pane with no
 agent state held it only 30 s, then refused it. With `exit` it is refused at once, with the
@@ -1645,7 +1645,7 @@ service.
 | The app is a TestFlight build signed by another team | The user's key cannot push to it (1.5). See 18.3 |
 | A sandbox build and a production build | Each token is tagged with its environment. The hab uses the matching APNs host |
 
-### 8.6 Built choices (task-oe7ioczy, hab side)
+### 8.6 Built choices (hab side)
 
 The hab half is built: `internal/push` and `cmd/gff-hab/push.go`. The setup guide is
 `docs/push.md`; the full list is in `hab-logic-api.md` 3.9, Push. Settled behaviour the app
@@ -1664,7 +1664,7 @@ relies on:
   (Open Flightdeck). The app registers all three. Question banners use `open` until answering a
   question through `approval.answer` is built. A permission request with no request id uses
   `open`: no answer can name it.
-- **Ask an agent** (task-3687ti3z, hab half; `capcom.md` 8.2, 8.5). While some host runs Capcom,
+- **Ask an agent** (hab half; `capcom.md` 8.2, 8.5). While some host runs Capcom,
   each banner adds Ask last for a device whose `push.register` lists the `ask` feature:
   categories `approval-ask`, `approval-deny-ask`, `open-ask`, and `ask` for notices and `done`
   banners, which had no actions. Other devices keep the categories of before. The `flightdeck` object carries
@@ -1684,7 +1684,7 @@ relies on:
   the widget, push-to-start, and showing "push broken" (the hab logs it; no API field yet).
   8.7 covers what the app half built.
 
-### 8.7 Built choices (task-oe7ioczy, app side)
+### 8.7 Built choices (app side)
 
 Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Push`, the shared module
 `FlightdeckShared` (push payload, expiry text, Live Activity attributes, request links), and
@@ -1779,7 +1779,7 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   after a restart, or while the hab has only an earlier build's key, it sends nothing: the app
   posts "Unlock iPhone to answer" and raises the request in the foreground. This holds for Deny
   too, and for banner actions (16.4). The setting "Approve from the lock screen without
-  unlocking" is gone (20.6, task-yfmrj6yc): with the key class of the time it changed nothing,
+  unlocking" is gone (20.6): with the key class of the time it changed nothing,
   and Allow always uses the authenticated intent.
   Push-to-start and the "hab offline" end are not built.
 - **Mac.** The Mac app answers banners and reports focus, but asks for no APNs token: its
@@ -1792,7 +1792,7 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   live connection, the hab book, plan text). `LiveTests.testLivePushRegister` runs
   against a real gff-hab with push config (`FLIGHTDECK_LIVE_SOCKET`, `FLIGHTDECK_LIVE_PUSH=1`).
 
-### 8.8 Built choices (task-3687ti3z, app side): Ask an agent
+### 8.8 Built choices (app side): Ask an agent
 
 The app half of "Ask an agent" (`capcom.md` 8.2, 8.5). Code: `Push/ApprovalAnswers.swift`
 (categories, the `ask` intent, the feature list), `SSH/HabActions.swift`, `Chat/CapcomCenter.swift`,
@@ -1823,14 +1823,14 @@ ids). Tests: `CapcomAskTests`; the chips themselves are 4.9.
 - **Opening.** The board opens the Capcom session once its row exists. A request the board has
   not shown after 20 s lapses, so the session never opens much later, and the model the center
   held for the view is let go.
-- **Title.** Coordinator call (2026-11-02): the action reads "Ask an agent".
+- **Title.** Decided: the action reads "Ask an agent".
 - **Failures.** One alert, "Could not open Capcom", with: "The hab that runs Capcom is not in this
   app." (no hab with that device id), "This notification names no Capcom host." (no context in
   the payload), "Could not reach <hab> to ask an agent." (not online in time, or the connection
   dropped), or the hab's own text for a refusal (`unavailable` naming the new home after a
   re-assignment, `not_found` for a notice the home cannot read).
 - **New conversation.** A button in the Capcom view's toolbar (4.10); it first sat beside the
-  chips as a text button (coordinator calls, 2026-11-02). It calls
+  chips as a text button. It calls
   `capcom.open {new: true}` with the chips that can move (a file chip cannot: its ref names the
   old session's attachment), opens the new one with the typed draft in its composer, uploads and
   attaches the moved files again there, and only then detaches from the old conversation what
@@ -2004,14 +2004,14 @@ request; Citadel source (OpenSSH key reader with bcrypt and AES-CTR); Moshi stor
 the Keychain behind Face ID); OpenSSH key format and `ssh-keygen` defaults *(gk)*; `transport.md`
 1.8, 4.3, 7.3.
 
-### 10.5 Built choices (task-46vch3ag)
+### 10.5 Built choices
 
 The first app stage: the connection to every hab and the status board. Code in
 `apple/FlightdeckKit`.
 
 - **Transport.** `Transport.open(kind)` returns one byte stream; `kind` is `control` or `data`, so
   a data stream per pane opens on the same carrier later (`hab-logic-api.md` 4.2, option A). The
-  iOS SSH carrier (task-iv89iwd8) implements the same protocol. `reset()` drops a shared
+  iOS SSH carrier implements the same protocol. `reset()` drops a shared
   connection; the in-app SSH carrier shares one (10.6).
 - **Mac carriers.** The local Unix socket uses gff-hab's default path rule (`$GFF_HAB_SOCKET`,
   else `gff/hab.sock` under Application Support). The ssh carrier runs the system `ssh -T -o
@@ -2091,7 +2091,7 @@ The first app stage: the connection to every hab and the status board. Code in
   demo mode. `-FlightdeckDemo YES` loads two invented hosts with sessions in every rank and
   replays a short script.
 
-### 10.6 Built choices: the iOS SSH transport (task-iv89iwd8)
+### 10.6 Built choices: the iOS SSH transport
 
 The in-app SSH carrier, the device key, hab entries, pairing codes and the background action.
 Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
@@ -2149,7 +2149,7 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
 - **Pairing codes.** `PairingCode` parses the `flightdeck://pair` link (`transport.md` 6.1) from
   the camera, pasted text or an opened link (the iOS app registers the `flightdeck` URL scheme).
   `PairingCode(offer:)` builds the link from a `devices.pair` result for the hab side later.
-- **QR pairing** (18.8, task-3th1o91q). `Pairing` in `SSH/Pairing.swift` runs the exchange and
+- **QR pairing** (18.8). `Pairing` in `SSH/Pairing.swift` runs the exchange and
   `PairingView` shows it. Built choices:
   - The SSH user at the window is `flightdeck`; the window takes any.
   - Only one key is offered at the window: the first the key source gives. During a key move
@@ -2178,7 +2178,7 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   deadline that holds even during a stuck TCP connect, no retry) and posts the result or "could
   not reach" (18.7). With a Face ID key it fails at once with "Open Flightdeck to retry", since a
   background action cannot prompt. `SSHSetup.perform` is the
-  call site `approval.answer` reuses. Push replaces the local notification later (task-oe7ioczy).
+  call site `approval.answer` reuses. Push replaces the local notification later.
 - **Cold start.** `ColdStart` logs the time from process start (from the kernel) to the first byte
   any hab sent, once per process; Settings › SSH shows it.
 - **Tests.** `SSHTransportTests` run the carrier against an in-process `swift-nio-ssh` server on
@@ -2194,7 +2194,7 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   `apple/scripts/ssh-live-check.sh`; `LivePairTests` pair with a real `gff-hab pair` window
   through `apple/scripts/pair-live-check.sh`.
 
-### 10.7 Built choices: imported SSH keys (task-1csglxtc)
+### 10.7 Built choices: imported SSH keys
 
 Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/KeyImportViews.swift`.
 
@@ -2495,7 +2495,7 @@ on-device only); Moshi App Store screens (dictation strip in the terminal) and s
 (voice to terminal with on-device recognition); voice modes of the Claude and ChatGPT apps,
 general behaviour *(gk)*. Model and provider choices: `voice.md`.
 
-### 13.7 Built choices (task-h011ghy9, app side)
+### 13.7 Built choices (app side)
 
 Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
 `FlightdeckParakeet` library, which only the iOS app links.
@@ -2722,7 +2722,7 @@ The owner sees each harness account's usage limits before hitting them.
 | The harness changes its format | The adapter marks usage degraded when no window reads, or a window it knows fails to parse. The footer, the card and the widget say "Usage unavailable", never a wrong number; the card adds the hab's one-line reason. Drift in a key the adapter does not know is logged only while the known windows read (`harness-adapters.md`, Usage) |
 | A hab too old to send `length_s`, `starts_at` or its `time` | The app reads the length from the window name and applies no clock offset |
 
-### 14.6 Built choices (task-dj1wa3dx)
+### 14.6 Built choices
 
 Code: `apple/FlightdeckKit/Sources/FlightdeckShared/Usage.swift` (readings, window math, the
 widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/Widgets/UsageWidget.swift`.
@@ -2860,7 +2860,7 @@ never from private files).
 | The widget's account no longer reports | It shows the last reading greyed and "no recent reading" |
 | The system throttles reloads | The widget may lag. Countdown text still ticks |
 
-### 15.3 Built choices (task-dj1wa3dx)
+### 15.3 Built choices
 
 - **Usage widget only.** The Needs-you widgets and the rectangular Lock Screen widget are not
   built yet. The usage widget lives in the iOS widget extension beside the Live Activity: small,
@@ -2947,7 +2947,7 @@ Budgets are maximums. The hab counts words and characters; it keeps to both.
 | A language with long words | Character budgets win over word budgets |
 | The phone is locked when the Watch answers | The answer goes through. Before the first unlock after a restart, for a hab that does not have the device's new key yet, or with a key that needs Face ID, the phone posts "Unlock iPhone to answer" and sends nothing (16.4) |
 
-### 16.4 Built choices (task-46oedzhy)
+### 16.4 Built choices
 
 No Watch target: every notification is a mirrored iPhone banner. Code: `internal/push/banner.go`
 (hab text), `internal/harness/input.go` (the plan key) and `Push/ApprovalCenter.swift` (the
@@ -2970,7 +2970,7 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
   as the title (8 words, 50 characters), with "(+1 more)" when more questions follow. Its options
   are numbered by their place in the body ("1 Clerk · 2 Auth.js"); an option with no label is left
   out. The category is `open`: Deny would read as a refusal to answer.
-- **Limit: no options as actions.** The bm task asks for a question's options as banner actions.
+- **Limit: no options as actions.** The request asks for a question's options as banner actions.
   The hab refuses `approval.answer` with `answer` until the Claude adapter answers questions, so
   no option can be sent from a banner. Options become actions once the hab takes choice answers.
 - **Other tools.** An MCP tool reads in words, "Allow github create issue?", never
@@ -2999,7 +2999,7 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
   the action now reads "Open Flightdeck" on iOS: on the Watch the only Flightdeck is the phone's.
   "Could not reach" says "Open Flightdeck to retry." on every platform; the Mac keeps "Open".
 - **Hidden details.** With "Show details in notifications" off, a plan, a question and a URL are
-  hidden too. A question banner then reads "Question waiting". Coordinator call (2026-11-02): the
+  hidden too. A question banner then reads "Question waiting". Decided: the
   setting was "Show commands in notifications". The label changed, but the id
   `notify.show_commands` and `hide_commands` on `push.register` stay, so saved values carry over.
 - **Locked phone.** iOS mirrors a banner to the Watch only while the phone is locked. The device
@@ -3019,7 +3019,7 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
   before this, a locked answer failed at the signature and posted a misleading "Could not
   reach".
 - **Action order.** Deny first, then Approve, as 8.7 registers them; 16.2 listed them the other way
-  round. Coordinator call (2026-11-02): the first action sits nearest the text on the Watch, and
+  round. Decided: the first action sits nearest the text on the Watch, and
   the safer answer goes there.
 
 Sources: owner decision 2026-10-31 (no Watch app; notifications designed for the Watch); Moshi App
@@ -3027,7 +3027,7 @@ Store screens (Watch approval: project and model under the title, the command, A
 Moshi docs, apple-watch and notifications; mirrored notifications and their actions on watchOS
 *(gk)*.
 
-### 16.5 Model-written summaries (task-r0ft8d03)
+### 16.5 Model-written summaries
 
 Owner idea, 2026-11-02: "Allowed: if" says nothing. A hab can ask a small model for a short line
 that says what the agent wants to do. The model writes words only. It never changes which actions
@@ -3202,7 +3202,7 @@ Each question has options and a recommendation, and ends with its decision.
 
 Recommendation: **A.** It works without a hub and matches the best reference.
 
-Decision: A (coordinator, 2026-11-01). It matches Moshi and needs no hub.
+Decision: A. It matches Moshi and needs no hub.
 
 ### 18.2 Face ID and the device key
 
@@ -3213,10 +3213,10 @@ Recommendation: the key needs the device unlocked (this device only, never in ba
 need biometrics. The Face ID setting, when on, gates the app and in-app answers. Lock-screen actions
 always need unlock.
 
-Decision: as recommended (coordinator, following the owner's Face ID decision). `transport.md`
+Decision: as recommended (following the Face ID decision). `transport.md`
 4.3, 7.2 and 7.3 now say the key is usable only while the device is unlocked.
 
-Later (2026-11-02, owner, task-pfggputn): the key signs once the device has been unlocked after it
+Later (2026-11-02, owner): the key signs once the device has been unlocked after it
 starts, so a Watch banner can answer while the phone is locked (`transport.md` 7.2).
 
 Later (2026-11-01, settings levels): the one Face ID setting is "Require Face ID for SSH keys"
@@ -3245,15 +3245,15 @@ Recommendation: hold the banner when any client has the session in focus in an a
 within the last 60 s. Never hold an approval when the focus report is older than that. Moshi's
 equivalent is off by default; ours is on because it keys on the session, not the whole machine.
 
-Decision: as recommended (coordinator, 2026-11-01). Paseo also sends nothing to a client focused on the agent
-(`landscape.md` 2.9); its in-app tier is idea 4.1 (task-oe7ioczy).
+Decision: as recommended. Paseo also sends nothing to a client focused on the agent
+(`landscape.md` 2.9); its in-app tier is idea 4.1.
 
 ### 18.5 A banner for `done`
 
 Recommendation: off by default. The Live Activity shows it. A per-device setting turns it on, as a
 passive banner.
 
-Decision: as recommended (coordinator, 2026-11-01). A per-device setting, so a user who wants it turns it on.
+Decision: as recommended. A per-device setting, so a user who wants it turns it on.
 
 ### 18.6 How "answered elsewhere" withdraws a banner
 
@@ -3264,14 +3264,14 @@ Decision: as recommended (coordinator, 2026-11-01). A per-device setting, so a u
 
 Recommendation: **A**, plus B where iOS allows. Confirm against the owner's Moshi screens (7).
 
-Decision: A, plus B where iOS allows (coordinator, 2026-11-01). A works while the app is suspended.
+Decision: A, plus B where iOS allows. A works while the app is suspended.
 
 ### 18.7 A lock-screen answer when the hab is unreachable
 
 Recommendation: fail fast, post a local "could not reach" notice, never retry on its own. A stale
 retry could approve a command the owner no longer wants.
 
-Decision: as recommended (coordinator, 2026-11-01). Failing fast costs nothing to build.
+Decision: as recommended. Failing fast costs nothing to build.
 
 ### 18.8 Connecting before the embedded SSH server exists
 
@@ -3279,7 +3279,7 @@ Recommendation: support the fallback in Part 6 stage 4. The app shows its public
 adds it to the host's authorized keys by hand. This needs no new listener, and it is the path
 `transport.md` 4.1 already opens. QR pairing replaces it once the embedded server is enabled.
 
-Decision: as recommended (coordinator, 2026-11-01). It is the same path as the owner's decision to import an
+Decision: as recommended. It is the same path as the owner's decision to import an
 existing SSH key (10.4).
 
 Update (owner decisions, 2026-11-02): QR pairing comes first, through the system sshd, with no
@@ -3316,16 +3316,16 @@ What the app builds for QR pairing:
 The hidden password setup (`transport.md` 6.1.6) sits under Add a hab by address as "Set up with
 a password", a small button at the end of the form.
 
-Built (task-3th1o91q, 2026-11-06): every step above, on iPhone, iPad and the Mac (the Mac reads
+Built (2026-11-06): every step above, on iPhone, iPad and the Mac (the Mac reads
 the code by paste or link; it has no scanner). Built choices are in 10.6.
 
 ### 18.9 Sealed push payloads
 
-The plan already calls a `/consensus` on this. Recommendation for the first release: plain short
+Recommendation for the first release: plain short
 text through APNs, the "show details in notifications" setting, and a payload shape that leaves
 room for a sealed body later.
 
-Decision: as recommended for the first release (coordinator, 2026-11-01), in place of the `/consensus` run. Paseo
+Decision: as recommended for the first release. Paseo
 sends a clear-text preview (`landscape.md` 2.9); a sealed body stays a later step.
 
 ### 18.10 Apple Watch
@@ -3343,7 +3343,7 @@ banner, written for the Watch first (16).
 Recommendation: **A**, ending after 10 minutes with no speech and no turn running. It is the one
 exception to 12.1, and it lasts only while the owner chose voice mode.
 
-Decision: A (coordinator, 2026-11-01). The owner asked for voice mode like the Claude and ChatGPT apps, which keep
+Decision: A. The owner asked for voice mode like the Claude and ChatGPT apps, which keep
 running with the screen locked.
 
 ### 18.12 Where attachments live
@@ -3357,7 +3357,7 @@ Recommendation: **A**, as 4.4 says. The hab writes a local, untracked ignore rul
 tracked file, and clears old files after 30 days. As built: `.flightdeck/.gitignore` holding
 `*`, not the repository's `info/exclude` (4.4, built choices).
 
-Decision: A (coordinator, 2026-11-01). Not a question a user sees; harnesses read the file with no prompt.
+Decision: A. Not a question a user sees; harnesses read the file with no prompt.
 
 ### 18.13 Reading imported OpenSSH keys
 
@@ -3373,8 +3373,8 @@ Recommendation: **A.** The format is short and documented. Test it against keys 
 writes (each type, with and without a passphrase, each round count) and against OpenSSH's own
 key-derivation test vectors.
 
-Decision: A (coordinator, 2026-11-01). It covers every key type the owner may import, ECDSA included.
-Built in task-1csglxtc (10.7).
+Decision: A. It covers every key type the owner may import, ECDSA included.
+Built (10.7).
 
 ---
 
@@ -3410,7 +3410,7 @@ notifications. None of their private detail is reproduced here.
 Owner decisions, 2026-11-01. Flightdeck is a power-user system: it adds few confirmations, and
 few of its choices are settings. One level picker sets the few levelled settings at once. This
 section is the registry; the sections it links hold each setting's behaviour. Built
-(task-yfmrj6yc): the hab-side settings and their API (20.5), the registry, the level picker, the
+: the hab-side settings and their API (20.5), the registry, the level picker, the
 queue, the new-hab check and the Settings page. What is not built is listed in 20.8.
 
 `ssh.require_face_id` is the app-level Face ID check of 10.7: one check before each dial, over
@@ -3627,11 +3627,11 @@ with the build stage:
 - **A hab without `settings`** keeps the values from its config and flags, and the app shows its
   rows read-only.
 
-Built choices on the hab (task-yfmrj6yc, `internal/settings`):
+Built choices on the hab (`internal/settings`):
 
 - **What each setting drives.** `hab.permission_wait` sets the blocking hook's wait for the next
   hook; a hook already waiting keeps its wait. `confirm.start_elsewhere` decides whether a start
-  asks for a confirmation (`capcom.md` 6.4, task-ph00sdci). The other two are stored and served
+  asks for a confirmation (`capcom.md` 6.4). The other two are stored and served
   only: their consumers are not built (`approval.max_age` waits for the request expiry of 7.4,
   `logbook.approval` for Logbook).
 - **The heavy-run lock** (`groups.md` 8, stage B5) reads `heavy.slots`, `heavy.disk_min_free`
@@ -3702,7 +3702,7 @@ Each candidate below is a fixed behaviour now.
 - **Today's pages** (Settings › Notifications, › Voice, › SSH and the usage warnings) become
   groups of this page. Their sections keep the wording of each row.
 
-### 20.8 Built choices in the app (task-yfmrj6yc)
+### 20.8 Built choices in the app
 
 `FlightdeckKit/Settings/`: the registry (`SettingsRegistry`), the level rule (`LevelMatcher`),
 the writes and the queue (`SettingsWrites`, `SettingsQueue`) and their glue (`SettingsCenter`).
@@ -3757,7 +3757,7 @@ The page is `Views/SettingsViews.swift`.
 
 ---
 
-## 21. Rounds (built, task-xhpsgzkr)
+## 21. Rounds (built)
 
 The app side of rounds (`rounds.md` 10.2, 10.3, 13). Code: `Rounds/RoundCenter.swift` (the
 lists, the actions, the session to open, live run panes), `Rounds/RoundEvents.swift` (round

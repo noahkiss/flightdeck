@@ -389,8 +389,8 @@ per harness; the registry makes the difference visible, not forbidden.
 
 ### 8.3 Claude's `~/.claude.json`
 
-The plan reserves one choice for `/consensus`: patch the key directly, or drive Claude's CLI.
-Facts for that run:
+One choice stays open: patch the key directly, or drive Claude's CLI.
+Facts for that choice:
 
 - `claude mcp add-json --scope user` and `claude mcp remove --scope user` write the same key and
   keep the rest of the file. They run Claude's own writer, which already copes with a running
@@ -581,16 +581,16 @@ client asks for it. Every client may ask, the phone included: a tap on a row sho
 
 ### 11.2 Per harness
 
-- **Claude Code** (stage `task-tqx5onyc`). Build entries from the transcript attachments in
+- **Claude Code**. Build entries from the transcript attachments in
   section 10. Attribution is `recorded`. When the user installed Flightdeck's hook config,
   `InstructionsLoaded` events add the load reason and the parent of each import; the transcript
   stays the primary source because it holds the text. Unknown attachment types become placeholder
   entries with a warning.
-- **Codex** (stage `task-7mv5spek`). Run Codex's discovery for the session's cwd (global file,
+- **Codex**. Run Codex's discovery for the session's cwd (global file,
   then root to cwd) and digest each file: `computed`. Then look for each file's text inside the
   recorded `agents_md` text: found is `matched`, not found is `unknown`. Rendered files match by
   digest. Hook context is `unknown` except Flightdeck's own hooks, which send nothing.
-- **opencode** (stage `task-7mv5spek`). Run opencode's discovery (global, upward, `instructions`
+- **opencode**. Run opencode's discovery (global, upward, `instructions`
   entries) and digest each file: `computed`. Read MCP and skill lists from the server API.
   Plugin text is `unknown`.
 - **pi** (later, with its adapter). Discovery as above, `computed`; `custom_message` entries are
@@ -684,7 +684,7 @@ Internal calls, recorded with the reason. Each can be revisited in its stage.
 | D12 | Claude memory proposals use a `PreToolUse` deny hook, not `autoMemoryDirectory` | Reads stay native; nothing lands before approval. Used only when the user turns on "Require approval for memories" (section 15) |
 | D13 | Codex memories are not intercepted; listed in the ledger only | No hook on a background write; matches the bar (nobody intercepts) |
 | D14 | opencode stale instructions need no restart; pi uses `/reload` | Both harnesses reload by themselves; a restart would cost the user for nothing |
-| D15 | Recommend the CLI over a direct patch for `~/.claude.json`, as input to the planned `/consensus` | Claude's own writer handles a running Claude |
+| D15 | Recommend the CLI over a direct patch for `~/.claude.json`, as input to the open choice (8.3) | Claude's own writer handles a running Claude |
 
 ## 15. Owner decisions
 

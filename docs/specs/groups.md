@@ -1,6 +1,6 @@
 # Agent groups: behaviour spec
 
-Status: draft for the owner. Part 15, stage B1 (task-5ntfv32q). Written 2026-11-06; the owner's
+Status: draft for the owner. Part 15, stage B1. Written 2026-11-06; the owner's
 answers applied the same day (13).
 
 An agent group is one task worked by several agents at once: a coordinator, leads, workers and a
@@ -12,8 +12,8 @@ build stages. It describes behaviour in our own words and copies no code from ot
 
 Rules this spec works within:
 
-- **Groups are first-class and optional** (master plan decision (o), 2026-11-06). The model is the
-  coordinator workflow that builds Flightdeck, productised.
+- **Groups are first-class and optional** (decided 2026-11-06). The model is a
+  coordinator session that splits work across agents, made a product feature.
 - **One confirmation per group plan; an app setting turns it off** (owner decision 6, (p),
   `swarm-study.md` 8).
 - **The merge lane lands straight on main once review and CI pass** (owner decision 7). This
@@ -210,7 +210,7 @@ B2 built it.
 
 ### 4.1 The spawn verb
 
-Members start through the spawn verb (task-6iwat66b, extended by stage B2). This spec needs from
+Members start through the spawn verb (extended by stage B2). This spec needs from
 it, and does not define its internals (12.3):
 
 - **Arguments:** host, harness alias or harness, model, folder, name, seed, and the group fields
@@ -257,7 +257,7 @@ worktrees, so most starts would show the prompt.
   every worktree of the repository, someone else's code too, which is wider than the rule above.
   So a Codex member's prompt shows the card, as today; the hab never answers it.
 
-**Built choices (stage B2, task-7kzvfcna).**
+**Built choices (stage B2).**
 
 - Until stage B3 brings the one plan card, each group start is its own confirmation: a spawn
   with `group` asks while `confirm.group_plan` is on, on any host, and the cover names that
@@ -520,7 +520,7 @@ election. The record is live in exactly one place at every step: on the old home
 tombstone, on the new home after the commit. The generation lets every hab and client pick that
 copy from the catalog with no extra protocol.
 
-### 5.8 Built choices (stage B3, task-nz4aglbr)
+### 5.8 Built choices (stage B3)
 
 `internal/groups` holds the plan checks, the record and its store; gff-hab's group service runs
 it on the home hab.
@@ -771,7 +771,7 @@ when the command dies.
   per low-disk episode: host, free space, the largest leftovers the hab knows (7.5). The card's
   waits line shows it. Hosts with no group get one notice.
 
-### 8.3 Built choices (stage B5, task-aagbyg89)
+### 8.3 Built choices (stage B5)
 
 `internal/heavy`, wired into gff-hab; `gff heavy` and `gff-hab heavy` share its CLI.
 
@@ -888,7 +888,7 @@ for another member: tools `member_compact` and `member_handoff`.
 - One supervision action per member at a time. A second request while one runs gets `conflict`.
 - An agent cannot act on a member outside its own group.
 
-### 9.5 Built choices (stage B6, task-humtiqof)
+### 9.5 Built choices (stage B6)
 
 gff-hab's supervisor (`cmd/gff-hab/supervise.go`) runs on every hab with the holder link, for
 that hab's own members.
@@ -949,7 +949,7 @@ that hab's own members.
 
 ## 10. Usage pacing
 
-Groups spend several times a chat's tokens (11). The usage governor (Part 14 G, task-k0ydtgae)
+Groups spend several times a chat's tokens (11). The usage governor (Part 14 G)
 gives each group a share of the plan window. This spec needs from it (12.2):
 
 - **A consumer per group,** `group:<id>`, with a share the governor's settings set.
@@ -1011,7 +1011,7 @@ defines the internals. Each row is **shared**: a change on either side updates b
   (5.7).
 - Capcom has no shell. The heavy-run lock and the lane do not need one from the coordinator.
 
-Built (task-itwl1sbg, B8):
+Built (B8):
 
 - Capcom's engine already serves every `gff-hab mcp` tool under its `mcp__flightdeck__*` allow
   rule, so the group tools needed no engine change. Their calls reach the hab on the engine's
@@ -1043,18 +1043,18 @@ Built (task-itwl1sbg, B8):
 As in section 10: a consumer per group, a check before a new turn, an event on change, and
 "unpaced" for a harness with no readings.
 
-### 12.3 The spawn verb (task-6iwat66b, stage B2) — shared
+### 12.3 The spawn verb (stage B2) — shared
 
 As in 4.1: host, harness alias, model, folder, name, seed and the group fields in; session id,
 name and address out; the seed as a start envelope naming the spawner.
 
-Built (task-6iwat66b, `harness-adapters.md` Spawn): the `spawn` tool with host, harness or alias,
+Built (`harness-adapters.md` Spawn): the `spawn` tool with host, harness or alias,
 model, folder, name, seed and `mode` (teammate or detached); the `[aliases]` table; the address
 in `ConfirmResult.address`; teammate reports through `session.create`'s `report_to`. B2 adds
 `{group, role, item}` to `ConfirmStart` and the tool, and `trust_cover` to `session.create`,
-both optional fields beside these. Built (task-7kzvfcna): both, as 4.2's built choices say.
+both optional fields beside these. Built: both, as 4.2's built choices say.
 
-### 12.4 Self-compact (task-f2fhhr6p) — shared
+### 12.4 Self-compact — shared
 
 Self-compact compacts only the caller's own pane today. Supervision needs the same steps started
 by the hab for a member's pane, with a follow-up the hab writes. The states and events
@@ -1084,7 +1084,7 @@ matches the cover (4.2), and holds the `blocked:trust` report up to `[groups] tr
 while it does. This is an
 exception `app.md` 7.10 must state: the hab answers, the user does not, because the user
 confirmed the plan, or turned the plan's confirmation off (`confirmation: none`, 13 Q2).
-Built (task-7kzvfcna): `app.md` 7.10, Group members, states it.
+Built: `app.md` 7.10, Group members, states it.
 
 ### 12.7 Worktrees (`hab-logic-api.md` 3.10, B4) — shared
 
@@ -1101,7 +1101,7 @@ its named successor, in order, and the sender sees them delivered to the same ad
 
 ## 13. Owner decisions
 
-The owner answered this spec's open questions on 2026-11-06 (plan-xagejg31 (q), and (r) for Q7).
+The owner answered this spec's open questions on 2026-11-06 (and (r) for Q7).
 None are open.
 
 | # | Question | Decision (owner, 2026-11-06) | Where |
@@ -1112,7 +1112,7 @@ None are open.
 | Q4 | Does the lane close a lead and its reviewer after a land? | No. They keep running; they end at the group's end, when the coordinator drops them, or when the user closes them | 7.3 step 7, 7.5 |
 | Q5 | Under `logbook.approval = agents`, may the hab write a group's claims and hand-off notes so they land at once? | Yes: the hab writes them as the group, with the member as the source session. Other member writes stay proposals | 4.3, 9.3 |
 | Q6 | May the user move a group's home hab? | Yes, in the first build, including a Capcom-coordinated group when the Capcom mark moves | 5.7, stage B9 |
-| Q7 | Are the spec's fixed limits settings? | Yes (plan-xagejg31 (r)): every cap is a setting with its earlier value as the default; only values that are not limits stay fixed | 15.3 |
+| Q7 | Are the spec's fixed limits settings? | Yes: every cap is a setting with its earlier value as the default; only values that are not limits stay fixed | 15.3 |
 
 ---
 
@@ -1189,7 +1189,7 @@ CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`.
 
 ### 15.3 Settings
 
-Owner, 2026-11-06 (plan-xagejg31 (r)): every cap is configurable. Each limit this spec names is a
+Owner, 2026-11-06: every cap is configurable. Each limit this spec names is a
 setting, with its earlier fixed value as the default. Two homes, by who tunes it:
 
 - **Hab-side settings** (`app.md` 20.5) for what the user tunes in the app. Stored on every hab
@@ -1262,20 +1262,20 @@ from the target branch (7.3).
 
 ## 16. Build stages and acceptance
 
-Each stage is a task in the Part 15 plan (plan-vu079jrc). Core stages (B3, B4, B6) get a
+Each stage is one buildable outcome with its own acceptance checks. Core stages (B3, B4, B6) get a
 fresh-eyes reviewer before they close.
 
-| # | Stage | Builds | Depends on | Task |
-|---|---|---|---|---|
-| B1 | This spec | — | Spawn verb spec | task-5ntfv32q |
-| B2 | Spawn and trust | The spawn verb's group fields; `trust_cover` and the held trust report (12.6), also with `confirmation: none`; the Codex trust rule and its keys; addresses to both sides | task-6iwat66b | task-7kzvfcna |
-| B3 | Record, card, confirmation | `group.*`, the record and its file, the Logbook plan and tasks with hab-written claims and notes, the envelope in each start, `confirm.group_plan`, reports and the inbox (5.5), pause (5.6), the card in the app and gff, the catalog section | B2 | task-nz4aglbr |
-| B5 | Lock and disk | `gff heavy`, `heavy.*`, the disk fields in the catalog, the threshold and the messages | B1 | task-aagbyg89 |
-| B7 | Review | `lane_submit` up to the verdict (item states `review`, `fix`, `ready`), reviewer choice, `review_verdict`, findings on the card, fix in place on the review branch | B2, B3 | task-3eez53r6 |
-| B4 | Stacking and lane | Worktrees per lead with `fetch` (12.7), stacking, the lane from `ready` through its seven steps, back to the lead, the end of a group | B3, B7 | task-ur5zmuah |
-| B6 | Supervision | `context_pct` from Claude Code and Codex; compact, fresh session, sibling actions, the settings; the hab-started compaction and the nudge off for members (12.4); messages across a swap (12.8) | B3, task-f2fhhr6p | task-humtiqof |
-| B8 | Capcom coordinates | Group tools for Capcom, the card from its thread | Part 14 A2, B3 | task-itwl1sbg |
-| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, commit from the catalog, stale pending copies), the queued move on the target hab, `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 | task-3vwhq3dn |
+| # | Stage | Builds | Depends on |
+|---|---|---|---|
+| B1 | This spec | — | Spawn verb spec |
+| B2 | Spawn and trust | The spawn verb's group fields; `trust_cover` and the held trust report (12.6), also with `confirmation: none`; the Codex trust rule and its keys; addresses to both sides | Spawn verb |
+| B3 | Record, card, confirmation | `group.*`, the record and its file, the Logbook plan and tasks with hab-written claims and notes, the envelope in each start, `confirm.group_plan`, reports and the inbox (5.5), pause (5.6), the card in the app and gff, the catalog section | B2 |
+| B5 | Lock and disk | `gff heavy`, `heavy.*`, the disk fields in the catalog, the threshold and the messages | B1 |
+| B7 | Review | `lane_submit` up to the verdict (item states `review`, `fix`, `ready`), reviewer choice, `review_verdict`, findings on the card, fix in place on the review branch | B2, B3 |
+| B4 | Stacking and lane | Worktrees per lead with `fetch` (12.7), stacking, the lane from `ready` through its seven steps, back to the lead, the end of a group | B3, B7 |
+| B6 | Supervision | `context_pct` from Claude Code and Codex; compact, fresh session, sibling actions, the settings; the hab-started compaction and the nudge off for members (12.4); messages across a swap (12.8) | B3 |
+| B8 | Capcom coordinates | Group tools for Capcom, the card from its thread | Part 14 A2, B3 |
+| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, commit from the catalog, stale pending copies), the queued move on the target hab, `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 |
 
 Order: B2 and B5; then B3; then B7 and B6; then B4; then B9; B8 after Part 14 A2, and B9's
 Capcom rows after B8. Usage pacing (10) lands with
@@ -1290,9 +1290,9 @@ over OSC 7501 and hooks.
 
 | Friction | Test passes when | Stage |
 |---|---|---|
-| The owner opened the Codex pane | A Claude Code coordinator's `group_create` with a Codex lead on the other hab starts it there after one confirmation; no client opens or types into any pane | B2, B3 |
-| The owner approved Codex's folder trust | The fake Codex draws the trust prompt in its new worktree; gff-hab answers it; no trust card is raised; the seed goes in after | B2 |
-| The owner told the coordinator where the pane was | The member's first reply reaches the coordinator by name, with no address typed by anyone | B2 |
+| The user opened the Codex pane | A Claude Code coordinator's `group_create` with a Codex lead on the other hab starts it there after one confirmation; no client opens or types into any pane | B2, B3 |
+| The user approved Codex's folder trust | The fake Codex draws the trust prompt in its new worktree; gff-hab answers it; no trust card is raised; the seed goes in after | B2 |
+| The user told the coordinator where the pane was | The member's first reply reaches the coordinator by name, with no address typed by anyone | B2 |
 | Reminders about context | A member at 41% gets one compact with no message from the coordinator; the fifth trigger starts a fresh session from the task's hand-off note, under the old name; a sibling's message held at the swap reaches the new session; the same at the Safe level (`logbook.approval = agents`) | B6 |
 | Reminders about usage | With usage readings at the group's cap, the group is `paused`, no message goes into a member, and it resumes when the window moves (fake clock) | G, B3 |
 | Reminders about disk | Free space below the threshold makes a heavy run wait and sends the coordinator exactly one message | B5 |
@@ -1316,11 +1316,11 @@ over OSC 7501 and hooks.
 
 ## 17. Sources
 
-- `docs/specs/swarm-study.md` 2.6, 3, 4, 7 and 8; master plan decisions (o) and (p).
+- `docs/specs/swarm-study.md` 2.6, 3, 4, 7 and 8.
 - `rounds.md` 5 and 6 (the lock); `capcom.md` 6 (confirmations); `app.md` 7.10 (trust card),
   20.2 to 20.5 (settings); `mesh.md` 6 (channels); `hab-logic-api.md` 3.10 (worktrees);
   `logbook.md` 2.2, 2.4 and 10 (records, links, `claim`); `harness-adapters.md`, Usage.
-- Self-compact and the context nudge (task-f2fhhr6p).
+- Self-compact and the context nudge.
 - Hacker News item 50380658 (reviewers nearly always find something);
   https://www.anthropic.com/engineering/multi-agent-research-system;
   https://code.claude.com/docs/en/agent-teams; https://cognition.com/blog/dont-build-multi-agents.

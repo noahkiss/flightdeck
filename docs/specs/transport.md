@@ -1,6 +1,6 @@
 # Transport security: behaviour spec
 
-Status: recommendation settled by /consensus (3/3), 2026-10-31. Part 3, study task.
+Status: recommendation settled 2026-10-31.
 
 This spec says how Flightdeck clients and habs authenticate and encrypt their connections, and how
 habs do the same with each other. It covers device identity, pairing, rotation and revocation. It
@@ -176,7 +176,7 @@ Carriers are a separate axis from identity. Under A, the same SSH key check runs
 arrive over the LAN, a tailnet, or a later carrier. WebSocket stays possible only as a later
 carrier for a client that cannot speak SSH.
 
-Decision: A (/consensus 3/3).
+Decision: A.
 
 ---
 
@@ -259,11 +259,11 @@ shown as text, instead of needing sshd for the first contact. Revisit when a rea
 - `swift-nio-ssh` with Secure Enclave keys is proven on macOS by the spike (4.8). It is not yet
   proven on an iPhone; the app's first device build checks it.
 
-Decision: settled (/consensus 3/3, 2026-10-31).
+Decision: settled (2026-10-31).
 
 ### 4.8 Spike result: swift-nio-ssh with a Secure Enclave key
 
-The spike is `swift/Spikes/SSHSpike` (task-iv89iwd8, 2026-11-01). It is a macOS command-line tool
+The spike is `swift/Spikes/SSHSpike` (2026-11-01). It is a macOS command-line tool
 built on `swift-nio-ssh` 0.15.1. `run.sh` starts a throwaway sshd on a loopback port with its own
 host key and authorized-keys file, and a `gff-hab serve` with a temporary socket and state. It
 never touches the system sshd or `~/.ssh`.
@@ -291,8 +291,7 @@ Timing on an M1 Pro over loopback, Secure Enclave key, first connection of a fre
 
 Later runs on the same machine under a load average near 200 ranged from 255 ms to 1.1 s. Most of
 the time goes to starting the remote process, not to the crypto. Loading the Secure Enclave key
-took about 3 ms. The cold-start time on an iPhone over a real network is still to measure
-(task-iv89iwd8 acceptance).
+took about 3 ms. The cold-start time on an iPhone over a real network is still to measure.
 
 **What `swift-nio-ssh` 0.15.1 supports:**
 
@@ -308,7 +307,7 @@ took about 3 ms. The cold-start time on an iPhone over a real network is still t
 | Missing | Covered by |
 |---|---|
 | RSA keys | Not supported (1.8). Import refuses RSA with a clear message |
-| Reading OpenSSH key files and passphrase decryption | Our own reader, task-1csglxtc |
+| Reading OpenSSH key files and passphrase decryption | Our own reader |
 | `known_hosts` parsing | Not needed: the app pins the hab's key from the pairing code (6.1). The spike parses one OpenSSH public-key line with `NIOSSHPublicKey(openSSHPublicKey:)` |
 | `chacha20-poly1305@openssh.com` and `aes-ctr` | Not needed for our servers. A system sshd limited to those ciphers would refuse the app; OpenSSH's defaults include AES-GCM |
 | Keepalive | The app sends `hab.ping` on the control connection (`hab-logic-api.md` 3.5) |
@@ -336,7 +335,7 @@ took about 3 ms. The cold-start time on an iPhone over a real network is still t
 
 Decision: settled. `swift-nio-ssh` is the app's SSH library.
 
-**Follow-up: the carrier in the app (task-iv89iwd8, 2026-11-01).** The spike's path is now the
+**Follow-up: the carrier in the app (2026-11-01).** The spike's path is now the
 app's `NIOSSHTransport` (`app.md` 10.6). What the spike left open:
 
 | Item | Result |
@@ -346,7 +345,7 @@ app's `NIOSSHTransport` (`app.md` 10.6). What the spike left open:
 | Live check on a Mac | `apple/scripts/ssh-live-check.sh`: a throwaway loopback sshd running a fresh `gff-hab connect` with a holder. Host key probe, changed key refused, one-shot ping 213 ms, connect to online (hello and subscribe) 271 ms, a live pane's output over a second channel on the same connection 120 ms. An imported passphrase-protected Ed25519 key (`app.md` 10.7): one-shot ping 136 ms. an Apple silicon laptop under load; software key, because the screen was locked |
 | iOS build | The same path runs in the iOS simulator (software key, NIOPosix sockets) against the same sshd: process start to the first hab reply 552 to 625 ms over four cold starts, load average near 25 |
 | iPhone device run | Not run yet. The phone was locked and the Mac had no iOS development signing (no Xcode account, no development profile for the bundle id). Cold start on a real network is still to measure |
-| QR pairing | The code format is fixed (6.1) and parsed. The hab side is built as `gff-hab pair` (6.1, task-99pfhjlg, 2026-11-02); the app's half (6.1.2) is built too (task-3th1o91q, 2026-11-06, `app.md` 18.8), checked end to end by `apple/scripts/pair-live-check.sh` |
+| QR pairing | The code format is fixed (6.1) and parsed. The hab side is built as `gff-hab pair` (6.1, 2026-11-02); the app's half (6.1.2) is built too (2026-11-06, `app.md` 18.8), checked end to end by `apple/scripts/pair-live-check.sh` |
 | Background action | A local notification action runs one `hab.ping` over the carrier and disconnects (`app.md` 10.6). Not yet run on a device |
 
 ---
@@ -429,7 +428,7 @@ level M in half-block characters, with a quiet zone. The link, which holds the t
 text, is printed on its own line only with `-link`: otherwise the token would stay in the
 terminal's scrollback, or a Flightdeck pane's ring, after the window closes.
 
-Built: the app's parser (`PairingCode`, task-iv89iwd8) and the hab's encoder (`internal/pairing`).
+Built: the app's parser (`PairingCode`) and the hab's encoder (`internal/pairing`).
 
 #### 6.1.2 The token exchange
 
@@ -573,10 +572,10 @@ app keeps a hidden fallback, like `ssh-copy-id`: Add a hab by address, then "Set
 password". The app connects with the account password once, has the owner compare and trust the
 host key, appends its key line to `~/.ssh/authorized_keys` with the rules of 6.1.4 (comment
 prefix, `restrict`, append only, mode 0600), checks a key login, and forgets the password. It never
-stores the password and never uses password auth again. A host with password auth off (the owner's
-choice for his machines) cannot use it; it pairs by QR or takes the key by hand (`app.md` 18.8).
+stores the password and never uses password auth again. A host with password auth off cannot
+use it; it pairs by QR or takes the key by hand (`app.md` 18.8).
 
-Built (task-3th1o91q): `PasswordSetup` in the app. The host key is trusted first, so the password
+Built: `PasswordSetup` in the app. The host key is trusted first, so the password
 goes only to the pinned key, and only once. Over one exec channel the app runs `sh -s` and sends
 a short POSIX script on its input, so any login shell works. The script makes a missing `~/.ssh`
 at 0700. It leaves a key already in the file alone and says so. Otherwise it adds a newline when
@@ -668,8 +667,7 @@ key this way is safe: it came over a pinned, authenticated channel.
   owner decision: an embedded tailnet node in the app, or an end-to-end relay. A router port forward
   is possible but not recommended.
 - Background notification actions: the device key, generated or imported, signs once the device
-  has been unlocked after it starts, also while it is locked again (owner decision 2026-11-02,
-  task-pfggputn). iOS mirrors a banner to the Watch only while the phone is locked, so this is
+  has been unlocked after it starts, also while it is locked again (decided 2026-11-02). iOS mirrors a banner to the Watch only while the phone is locked, so this is
   what lets Approve and Deny from a Watch banner sign. On the phone's own lock screen, iOS still
   asks for unlock on actions marked as needing authentication.
   - **Access class.** New Secure Enclave keys are made with
@@ -754,8 +752,8 @@ key this way is safe: it came over a pinned, authenticated channel.
 
 ## 8. Discuss-first for the owner
 
-These follow the owner's hard stops: a new listening port, and any change to how the owner
-authenticates.
+Each of these opens a new listening port or changes how the user authenticates, so each is
+discussed before it is built.
 
 | Item | Why it is discuss-first | Proposed default |
 |---|---|---|
@@ -775,9 +773,9 @@ authenticates.
 
 ## 9. Plan changes
 
-Applied 2026-10-31 after the /consensus.
+Applied 2026-10-31.
 
-### 9.1 Part 3 stage 2, task-phkmrjaw (peer list, SSH transport, online and offline)
+### 9.1 Part 3 stage 2 (peer list, SSH transport, online and offline)
 
 - Peers connect over the system sshd.
 - Each hab makes its own host key on first start; the welcome carries its fingerprint.
@@ -785,7 +783,7 @@ Applied 2026-10-31 after the /consensus.
   `gff-hab peers accept`.
 - Online and offline come from the connection; a tailnet's local status is optional, never required.
 
-### 9.2 Part 3 stage 3, task-99pfhjlg (unshelved)
+### 9.2 Part 3 stage 3 (unshelved)
 
 Rescoped as **"Embedded gff-hab SSH server with QR pairing (off by default, owner approval to
 enable)"**:
@@ -797,7 +795,7 @@ enable)"**:
 - Fuzzing, rate-limited refusals, and a fresh-eyes security review before any real host enables it.
 - No WhoIs authorization, no ACL work. A tailnet is a bind address only.
 
-### 9.3 Part 6, task-iv89iwd8 (iOS transport)
+### 9.3 Part 6 (iOS transport)
 
 - A spike first: `swift-nio-ssh` with a Secure Enclave P-256 key, against gff-hab's embedded server
   or a system sshd.
@@ -811,8 +809,8 @@ enable)"**:
 Status 2026-11-01: the spike (4.8), the carrier, the Secure Enclave key with its fingerprint in
 Settings, the by-hand path (`app.md` 18.8), the code parser and scanner, and the background action
 are built (`app.md` 10.6). Left: the iPhone device run with the cold-start time on a real network,
-the app's half of pairing (6.1.2) against `gff-hab pair` (built 2026-11-02, task-99pfhjlg), and
-key import (task-1csglxtc).
+the app's half of pairing (6.1.2) against `gff-hab pair` (built 2026-11-02), and
+key import.
 
 ### 9.4 `hab-logic-api.md`
 

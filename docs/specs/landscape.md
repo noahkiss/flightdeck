@@ -73,7 +73,7 @@ match it.
 | herdr TUI | SSH machines with one combined agent list, a shared SSH ControlMaster, and reconnect backoff up to 2 minutes. A lost machine shows its cached state dimmed, and input stays off until a fresh screen arrives |
 | hc | `hc machine add` over SSH, or a custom connection command. Addresses look like `box/t3` |
 | Rex | A home server keeps the host list. Each host has several endpoints, tried in turn. `hosts check` notices when an address now reaches a different machine |
-| Ours | Peer list from config over SSH stdio (`transport.md` 4.1, task-phkmrjaw). The client merges hosts (task-kbvoirca). Device ids are pinned |
+| Ours | Peer list from config over SSH stdio (`transport.md` 4.1). The client merges hosts. Device ids are pinned |
 | Bar | Match herdr: SSH, a cached view of an offline host, input off while stale |
 | Flag | **Even**. Add herdr's stale-input rule (idea 4.9) |
 
@@ -202,7 +202,7 @@ match it.
 | Paseo | Workspaces of three kinds: a folder, a checkout, or a worktree it creates. A project file defines setup, teardown, scripts and services. An include file copies ignored files (such as `.env`) into a new worktree. Setup from a PR out of another repository waits for the user to confirm. A diff and PR panel per workspace |
 | herdr | `herdr worktree create/open/remove`, with groups |
 | Rex | None |
-| Ours | Projects keyed by repository identity, with the latest folder of several worktrees (`hab-logic-api.md` 3.9, project fields). Built (task-wvbuz085, `hab-logic-api.md` 3.10): `worktree.create`, `worktree.list`, `worktree.setup` and `worktree.remove`, and `gff-hab worktree`; `flightdeck.json` setup and teardown, `.worktreeinclude`, setup from another remote or a pull request ref waits for a yes. Open is `session.create` with the worktree as `project_dir`. No PR checkout by number, scripts or services yet |
+| Ours | Projects keyed by repository identity, with the latest folder of several worktrees (`hab-logic-api.md` 3.9, project fields). Built (`hab-logic-api.md` 3.10): `worktree.create`, `worktree.list`, `worktree.setup` and `worktree.remove`, and `gff-hab worktree`; `flightdeck.json` setup and teardown, `.worktreeinclude`, setup from another remote or a pull request ref waits for a yes. Open is `session.create` with the worktree as `project_dir`. No PR checkout by number, scripts or services yet |
 | Bar | Match herdr: create, open and remove a worktree for a project |
 | Flag | **Meets** (idea 4.5) |
 
@@ -224,7 +224,7 @@ match it.
 | Paseo | npm, a desktop app that runs its own daemon, or a container. The daemon supervises itself; no launchd or systemd units found. Stable and beta channels; a stable desktop release rolls out over 36 h |
 | herdr | curl, Homebrew, mise, nix; `herdr update`. hc checks an update against a SHA-256 manifest over HTTPS, with no separate signature |
 | Rex | Sparkle checks at launch and daily and cannot be turned off. The 1698 binary contains a `launchd` package that writes plists and boots jobs in the GUI domain |
-| Ours | `gff-hab install` writes systemd and launchd jobs; per-build copies; signed Mac bundles; Homebrew (`hab-holder.md` 5; task-ygmxs1lu) |
+| Ours | `gff-hab install` writes systemd and launchd jobs; per-build copies; signed Mac bundles; Homebrew (`hab-holder.md` 5) |
 | Bar | Match herdr: one-line install, self-update, sessions untouched |
 | Flag | **Above**. Fine; the service jobs serve the holder |
 
@@ -280,7 +280,7 @@ through its API, or host its TUI in a PTY.
 | Remote transport | SSH / tailnet identity / relay | Noise relay, direct, SSH tunnel | SSH | SSH | tsnet, tailnet identity | SSH |
 | Speech | NVIDIA Parakeet TDT 0.6B; Kokoro | Both, on the host | — | — | — | Parakeet on the hab, device options; Kokoro later |
 | Push | APNs | Through Expo | — | — | — | Direct, each user's key |
-| Agent manual | The binary prints or installs its own skill | Not found | — | `hc --skill` | `rex skill setup` | Agent kit (task-6ho9972u) |
+| Agent manual | The binary prints or installs its own skill | Not found | — | `hc --skill` | `rex skill setup` | Agent kit |
 
 **Lineage.** herdr-core took OSC 7501 from Rex; herdr#5069 cites the Rex spec. Paseo names none
 of the others and uses no herdr data or libghostty. herdr's phone story rests on third-party
@@ -296,25 +296,25 @@ yet.
 
 ## 4. Smart ideas we have not planned
 
-Each idea names its source, what it does, why it helps, and a proposed home. The coordinator turns
-accepted ideas into tasks.
+Each idea names its source, what it does, why it helps, and a proposed home. Accepted ideas
+become planned work.
 
 | # | Idea | Source | What it does | Why it helps | Proposed home |
 |---|---|---|---|---|---|
-| 4.1 | Presence tiers for push | Paseo | A client focused on the agent gets nothing. A client active in the last 180 s gets an in-app notice. Otherwise, a push | Fewer pushes while the owner is at the Mac, with no lost approvals. We have only the first tier | task-oe7ioczy |
-| 4.2 | Idempotency keys on create and send | Paseo | Each session start and chat send carries a client key; the hab drops a repeat | A phone that reconnects mid-send never sends a prompt twice or starts two sessions | task-uu40arhs; built in the hab (`hab-logic-api.md` 3.9, Idempotency keys) |
-| 4.3 | State resets from the owner's interrupt and prompt marks | Paseo, Rex spec | Esc or Ctrl-C typed into a working Claude pane clears `working`. An OSC 133 `A` mark (a shell prompt is back) drops OSC 7501 `working` and `blocked` | Claude sends no Stop on interrupt, so a pane can stick in `working`. A harness that exits leaves stale OSC 7501 state | new task: "Adapters: clear working on owner interrupt and on a prompt mark" (Part 4) |
-| 4.4 | Plan approval and questions as structured answers | Paseo | The app shows a plan and answers plan-mode exit; AskUserQuestion shows real choices | The phone answers the common "approve this plan?" stop, not only tool permissions | task-oe7ioczy, with the hook side in the Claude stage of plan-9icxnz2m |
-| 4.5 | Worktrees per project | Paseo, herdr | Create, open and remove a worktree for a project. A project file names setup and teardown; an include list copies ignored files. Setup from a foreign PR waits for a yes | Parallel agents on one repo is the common pattern; both tools ship it | new task: "Projects: worktree create, open and remove, with setup scripts" |
-| 4.6 | Heartbeats beside cron | Paseo | A schedule that re-prompts an existing session, beside one that starts a fresh agent | "Check the deploy every hour" in the same conversation keeps context | task-226cqosp |
-| 4.7 | `explain` for detection | herdr | Print, per pane, the rule that matched, the region it read and the source that won | Turns "why is this pane idle?" from a guess into one command | task-bgjbr5rn; built: `detect.explain` (`harness-adapters.md`, Detection) |
-| 4.8 | Usage strings written for child programs | Rex (1698) | Every TCC prompt says a program in a terminal wants the access, not the hab | The owner reads a Mac prompt correctly; no grant by confusion | task-7eh7h89k |
-| 4.9 | Stale remote input off | herdr | A host that dropped shows cached state dimmed; input stays off until fresh state arrives | Nobody types into a screen that is minutes old | task-kbvoirca |
-| 4.10 | Adopt a session started elsewhere | Paseo | Bring a harness session started in a plain terminal into Flightdeck by its resume id | An owner moving in keeps their running work | new task: "Adopt an outside session by resume id" (Part 4) |
-| 4.11 | Clipboard images over SSH | herdr | `gff` forwards a pasted image to the remote pane's agent | Screenshots reach a remote agent from the desktop client too | task-g1uwtlsb, or new task in Part 5 |
-| 4.12 | Speech on the hab | Paseo | The phone streams audio; the hab transcribes with Parakeet | No 440 MB model on the phone; old phones get the good engine | task-h011ghy9; the default engine since 2026-11-01 (`voice.md`) |
+| 4.1 | Presence tiers for push | Paseo | A client focused on the agent gets nothing. A client active in the last 180 s gets an in-app notice. Otherwise, a push | Fewer pushes while the user is at the Mac, with no lost approvals. We have only the first tier | Planned |
+| 4.2 | Idempotency keys on create and send | Paseo | Each session start and chat send carries a client key; the hab drops a repeat | A phone that reconnects mid-send never sends a prompt twice or starts two sessions | Built in the hab (`hab-logic-api.md` 3.9, Idempotency keys) |
+| 4.3 | State resets from the owner's interrupt and prompt marks | Paseo, Rex spec | Esc or Ctrl-C typed into a working Claude pane clears `working`. An OSC 133 `A` mark (a shell prompt is back) drops OSC 7501 `working` and `blocked` | Claude sends no Stop on interrupt, so a pane can stick in `working`. A harness that exits leaves stale OSC 7501 state | Planned: "Adapters: clear working on owner interrupt and on a prompt mark" (Part 4) |
+| 4.4 | Plan approval and questions as structured answers | Paseo | The app shows a plan and answers plan-mode exit; AskUserQuestion shows real choices | The phone answers the common "approve this plan?" stop, not only tool permissions | Planned, with the hook side in the Claude Code adapter |
+| 4.5 | Worktrees per project | Paseo, herdr | Create, open and remove a worktree for a project. A project file names setup and teardown; an include list copies ignored files. Setup from a foreign PR waits for a yes | Parallel agents on one repo is the common pattern; both tools ship it | Planned: "Projects: worktree create, open and remove, with setup scripts" |
+| 4.6 | Heartbeats beside cron | Paseo | A schedule that re-prompts an existing session, beside one that starts a fresh agent | "Check the deploy every hour" in the same conversation keeps context | Planned |
+| 4.7 | `explain` for detection | herdr | Print, per pane, the rule that matched, the region it read and the source that won | Turns "why is this pane idle?" from a guess into one command | Built: `detect.explain` (`harness-adapters.md`, Detection) |
+| 4.8 | Usage strings written for child programs | Rex (1698) | Every TCC prompt says a program in a terminal wants the access, not the hab | The user reads a Mac prompt correctly; no grant by confusion | Planned |
+| 4.9 | Stale remote input off | herdr | A host that dropped shows cached state dimmed; input stays off until fresh state arrives | Nobody types into a screen that is minutes old | Planned |
+| 4.10 | Adopt a session started elsewhere | Paseo | Bring a harness session started in a plain terminal into Flightdeck by its resume id | An owner moving in keeps their running work | Planned: "Adopt an outside session by resume id" (Part 4) |
+| 4.11 | Clipboard images over SSH | herdr | `gff` forwards a pasted image to the remote pane's agent | Screenshots reach a remote agent from the desktop client too | Planned for the gff client |
+| 4.12 | Speech on the hab | Paseo | The phone streams audio; the hab transcribes with Parakeet | No 440 MB model on the phone; old phones get the good engine | Built; the default engine (`voice.md`) |
 | 4.13 | Save before logout and restart | herdr | Watch the Mac's logout and restart signals and checkpoint 15 to 20 s before agents are killed | The reboot restore (`gff-client.md` 6.2) has fresh layouts and resume ids | Built 2026-11-06 (`hab-holder.md` 2.11): state is saved at each change, so SIGTERM with a 15 s deadline is enough; no OS watcher |
-| 4.14 | Agents start agents on other hosts | Paseo | An MCP tool lets an agent start a session on a named host | Capcom and teammates can place work on the right machine | task-6iwat66b, task-ph00sdci |
+| 4.14 | Agents start agents on other hosts | Paseo | An MCP tool lets an agent start a session on a named host | Capcom and teammates can place work on the right machine | Planned |
 
 **Top five**, by value for the cost: 4.2 (idempotency keys), 4.3 (state resets), 4.4 (plan
 approval), 4.1 (presence tiers), 4.5 (worktrees).
@@ -375,7 +375,7 @@ not code.
 | herdrm (third party) | PolyForm Noncommercial; do not reuse beyond behaviour | — | — | — | 2.8 (Swift libghostty client) |
 
 **How to watch.** The manifest refresh already pulls herdr's catalogue (`gff-hab manifests
-refresh`). The harness drift job (task-hpte2o08) can also diff the listed doc paths and changelogs
+refresh`). The harness drift job can also diff the listed doc paths and changelogs
 each week and open one issue per change that touches an area above. That keeps watching cheap and
 tied to our areas. The OSC 7501 spec deserves its own check: Rex revises it, and three of our
 sources depend on it.

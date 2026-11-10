@@ -1,12 +1,11 @@
 # Swarm study: Capcom as an always-on service, agent groups, watchers
 
-A study that new plan parts build on. Owner direction of 2026-11-06 (plan decisions (l) to (o))
-sets the scope:
+A study that new plan parts build on. Its scope:
 
 - **A. Capcom as an always-on service** is the core (section 2).
-- **B. Agent groups** are a first-class, optional capability, modelled on the coordinator
-  workflow that builds Flightdeck (section 3). Section 4 maps the friction that workflow has today
-  to the pieces that remove it.
+- **B. Agent groups** are a first-class, optional capability, modelled on a
+  coordinator session that splits work across agents (section 3). Section 4 maps the friction
+  of doing that by hand to the pieces that remove it.
   The behaviour spec is `groups.md`.
 - **D. Watchers** are long-lived, event-driven rounds (section 5).
 - **E. iMessage** is optional and minor (section 6).
@@ -24,7 +23,7 @@ sets the scope:
 | Logbook | Records on every host, `claim`, proposals, a brief | `logbook.md` |
 | Worktrees | One checkout per writer, setup and teardown | `hab-logic-api.md` 3.10 |
 | App | Chat view, image and file attachments, speech input, push with actions | `app.md` 4, `voice.md` |
-| Spawn verb (open) | A teammate in any harness by alias, result through channels | task-6iwat66b |
+| Spawn verb (open) | A teammate in any harness by alias, result through channels | `groups.md` 3 |
 
 ## 2. A. Capcom as an always-on service
 
@@ -97,7 +96,7 @@ background, and the card is the guardrail.
   the usage readings. At the cap the engine answers with a small model or says it waits.
 - **Proactive turns** (section 5) are batched, use a small model for the first look, and have a
   daily turn budget.
-- **Terms.** Personal use on the owner's own plan fits "ordinary, individual usage". Flightdeck
+- **Terms.** Personal use on the user's own plan fits "ordinary, individual usage". Flightdeck
   shipped to others must never collect plan credentials: it uses the user's own login or an API
   key. Recheck before release.
 
@@ -134,7 +133,7 @@ card with the task, each member's state and context, approvals, the merge queue 
 
 | Mechanism | Flightdeck piece | Status |
 |---|---|---|
-| Start a member on a host, in a harness, with a brief | Spawn verb with host and alias; seed through the adapter | Open (task-6iwat66b); extend |
+| Start a member on a host, in a harness, with a brief | Spawn verb with host and alias; seed through the adapter | Open; extend |
 | Folder trust on first start | Trust card; the group's start confirmation may pre-answer it for the group's folders | Card exists; pre-answer new |
 | Messaging | The spawn verb names each member on channels and tells both sides the address | Channels exist; wiring new |
 | Queue | Logbook tasks with `claim`, one per item | Exists |
@@ -158,13 +157,13 @@ about 7x in plan mode. Parallel agents make conflicting implicit decisions (Cogn
 OpenHands). Reviewers nearly always find something (HN 50380658), so they report only the top
 findings. A group's value is cross-host, cross-harness and visible.
 
-## 4. C. Tonight's friction, mapped
+## 4. C. Friction of a hand-run group, mapped
 
 | Friction | Piece that removes it |
 |---|---|
-| The owner opened the Codex pane | Spawn verb: the coordinator starts it on the right host and harness |
-| The owner approved Codex's folder trust | Trust card, pre-answered by the group's start confirmation |
-| The owner told the coordinator the pane existed and how to reach it | Spawn returns the member's channel name; replies route by name |
+| The user opened the Codex pane | Spawn verb: the coordinator starts it on the right host and harness |
+| The user approved Codex's folder trust | Trust card, pre-answered by the group's start confirmation |
+| The user told the coordinator the pane existed and how to reach it | Spawn returns the member's channel name; replies route by name |
 | Reminders about context and compaction | Context supervision (3.2), on by default |
 | Reminders about usage pacing | The usage governor (2.6) |
 | Reminders about disk | Disk watch and the heavy-run lock |
@@ -173,10 +172,10 @@ findings. A group's value is cross-host, cross-harness and visible.
 
 ## 5. D. Watchers: always-on rounds
 
-Rounds 9 (task-awkgh5h1) adds a fixed list of hab events with debounce and cooldown. A watcher
+Rounds 9 adds a fixed list of hab events with debounce and cooldown. A watcher
 goes further: a long-lived program the hab supervises like a server, whose output wakes a target.
 
-| Change to task-awkgh5h1 | Detail |
+| Change to the rounds spec | Detail |
 |---|---|
 | New trigger kind `watch` | The round names a command or module that runs at all times. gff-hab restarts it with backoff, stops it on sleep and starts it at wake, and logs it like a run |
 | Event lines | The watcher prints one JSON line per event; debounce, cooldown and coalescing apply as for hab events |
@@ -220,7 +219,7 @@ SMS and Twilio are out.
 | G | Usage governor: daily pacing for Capcom and groups | Build | Usage readings |
 | A6 | Codex SDK engine | Build | A2 |
 | B1 | Groups spec: roles, record, supervision, merge lane, lock | Spec | Spawn verb spec |
-| B2 | Spawn verb with trust pre-answer and channel wiring | Build | task-6iwat66b, trust card |
+| B2 | Spawn verb with trust pre-answer and channel wiring | Build | Spawn verb spec, trust card |
 | B3 | Group record and group card in the app and gff | Build | B2 |
 | B4 | Stacked worktrees, gate and merge lane | Build | B3, worktrees |
 | B5 | Heavy-run lock and disk watch | Build | B1 |
