@@ -41,8 +41,10 @@ func TestLinkEventBatches(t *testing.T) {
 	if m := e.next(); inputID(m) != u.ID {
 		t.Fatalf("first input %s, want the user's %s", inputID(m), u.ID)
 	}
-	h.link.Kick()
+	// The release first, then the kick, as gff-hab's Released hook does: a kick the pump took
+	// before the release would find no batch, and nothing would wake it again.
 	h.clock.Advance(capcomevents.DefaultLimits.BatchWindow)
+	h.link.Kick()
 	m := e.next()
 	var in InputItem
 	json.Unmarshal(m.Item, &in)

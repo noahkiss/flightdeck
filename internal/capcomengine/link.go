@@ -108,6 +108,7 @@ type Link struct {
 	approval map[string]*openApproval
 	typingT  func() bool
 	kick     chan struct{}
+	turnC    chan struct{} // closed when a turn becomes known or the connection goes; nil: none waits
 	cx       ctxState
 	// sitesMu orders the allowed-site lists the engine gets: each save and its send, and the
 	// hello's read and send, hold it, so a later list never arrives before an earlier one.
@@ -168,6 +169,40 @@ func (l *Link) wake() {
 	select {
 	case l.kick <- struct{}{}:
 	default:
+	}
+}
+
+// WaitTurn returns the status once a turn runs, the connection is gone, or d passed. A route call
+// comes from a tool inside a turn, but it reaches gff-hab on another socket than the engine's
+// turn.started, so it can arrive first; a caller that judges the call by its turn waits for it.
+func (l *Link) WaitTurn(d time.Duration) Status {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		l.mu.Lock()
+		if l.st.Turn != "" || !l.st.Connected {
+			s := l.statusLocked()
+			l.mu.Unlock()
+			return s
+		}
+		if l.turnC == nil {
+			l.turnC = make(chan struct{})
+		}
+		ch := l.turnC
+		l.mu.Unlock()
+		select {
+		case <-ch:
+		case <-timer.C:
+			return l.Status()
+		}
+	}
+}
+
+// turnKnownLocked wakes each WaitTurn.
+func (l *Link) turnKnownLocked() {
+	if l.turnC != nil {
+		close(l.turnC)
+		l.turnC = nil
 	}
 }
 
@@ -238,6 +273,7 @@ func (l *Link) Serve(rw io.ReadWriteCloser) error {
 	if l.cur == c {
 		l.cur = nil
 		l.st = Status{}
+		l.turnKnownLocked()
 		if l.typingT != nil {
 			l.typingT()
 			l.typingT = nil
@@ -365,6 +401,7 @@ func (l *Link) handle(c *conn, m Message) {
 			// user began it (9.4). An agent report's turn counts as a user turn then.
 			l.st.UserTurn = t.Origin == "user"
 			running = t.Turn
+			l.turnKnownLocked()
 		}
 		c.ready = true
 		c.engine = m.Engine
@@ -443,6 +480,7 @@ func (l *Link) handle(c *conn, m Message) {
 		}
 		l.typingLocked(m.Origin == "user")
 		l.stopQuietLocked()
+		l.turnKnownLocked()
 		l.mu.Unlock()
 		l.changed()
 	case TInputTaken:
