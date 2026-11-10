@@ -324,9 +324,10 @@ func (s *Store) OpsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 // again: the text would stay there for good. So when the caller holds no forget of a redacted op
 // by have, the op goes in the page with one forget this replica holds and the ops of that
 // forget's origin up to it, so every origin's run in the page stays gap-free (forgetDeps). The
-// group goes whole into a page or waits for the next; in an empty page it may pass the limits
-// asked for, never PageOps or PageBytes. Only where no such group exists (the forget lies past a
-// gap here, or the group is larger than a page) does the op travel alone, as before.
+// group goes whole into a page. In an empty page it may pass the limits asked for, never PageOps
+// or PageBytes. A group that does not fit stops its origin's run for this page, and the other
+// origins go on, the forget's among them, so the group shrinks on later pages. Only when no
+// origin can move, or when every forget of the op lies past a gap here, does it travel alone.
 func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int) ([][]byte, Vector, bool, error) {
 	mine, err := s.Vector(ctx)
 	if err != nil {
@@ -336,6 +337,8 @@ func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 	last := Vector{}
 	inPage := map[OpID]bool{}
 	size := 0
+	more := false
+	var waiting *sentOp // the first op whose group waits for a later page
 	for _, origin := range sortedKeys(mine) {
 		if mine[origin] <= have[origin] {
 			continue
@@ -365,12 +368,18 @@ func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 			for _, g := range group {
 				need += len(g.raw)
 			}
-			if len(out) == 0 && len(group) > 1 && (len(group) > PageOps || need > PageBytes) {
-				group, need = group[:1], len(raw) // larger than any page: the op alone
-			}
-			if len(out) > 0 && ((maxOps > 0 && len(out)+len(group) > maxOps) || (maxBytes > 0 && size+need > maxBytes)) {
+			over := len(out) > 0 && ((maxOps > 0 && len(out)+len(group) > maxOps) || (maxBytes > 0 && size+need > maxBytes))
+			if len(group) == 1 && over {
 				rows.Close()
 				return out, last, true, nil
+			}
+			if len(group) > 1 && (over || len(group) > PageOps || need > PageBytes) {
+				// The group waits: this origin stops here for this page, the others go on.
+				if waiting == nil {
+					waiting = &sentOp{id, raw}
+				}
+				more = true
+				break
 			}
 			for _, g := range group {
 				out = append(out, g.raw)
@@ -384,7 +393,11 @@ func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 			return nil, nil, false, err
 		}
 	}
-	return out, last, false, nil
+	if len(out) == 0 && waiting != nil {
+		// No origin could move: the op travels alone, so sync never stops for good.
+		return [][]byte{waiting.raw}, Vector{waiting.id.Origin: waiting.id.Seq}, true, nil
+	}
+	return out, last, more, nil
 }
 
 type sentOp struct {
@@ -393,19 +406,23 @@ type sentOp struct {
 }
 
 // forgetDeps returns op first, then what must travel with it so that no redacted op in the group
-// reaches a caller with vector have that would hold no forget of it: for each such op, a forget
-// this replica holds in its gap-free run, and the ops of the forget's origin from where the
-// caller and the page (last, inPage) leave off up to it, each checked the same way. A redacted
-// op whose forgets all lie past a gap here gets none; a group over PageOps ops stops growing.
+// reaches a caller with vector have that would hold no forget of it: for each such op, the
+// forget this replica holds in its gap-free run with the shortest run to send, and the ops of the
+// forget's origin from where the caller and the page (last, inPage) leave off up to it, each
+// checked the same way. A redacted op whose forgets all lie past a gap here gets none. A forget
+// in an origin the caller skips counts as held: the caller would refuse it. The group stops
+// growing once it passes PageOps ops or PageBytes bytes, which no page can carry.
 func (s *Store) forgetDeps(ctx context.Context, op sentOp, have, last Vector, inPage map[OpID]bool, mine Vector) ([]sentOp, error) {
 	group := []sentOp{op}
 	if !bytes.Contains(op.raw, []byte(forgottenPrefix)) {
 		return group, nil
 	}
 	in := map[OpID]bool{op.id: true}
+	size := len(op.raw)
 	upTo := Vector{} // per origin, the last seq the group holds from a forget's run
 	covered := func(o string) uint64 { return max(have[o], last[o], upTo[o]) }
-	for i := 0; i < len(group) && len(group) <= PageOps; i++ {
+	full := func() bool { return len(group) > PageOps || size > PageBytes }
+	for i := 0; i < len(group) && !full(); i++ {
 		g := group[i]
 		if !bytes.Contains(g.raw, []byte(forgottenPrefix)) {
 			continue
@@ -415,24 +432,25 @@ func (s *Store) forgetDeps(ctx context.Context, op sentOp, have, last Vector, in
 			return nil, err
 		}
 		var pick *OpID
+		held := false
 		for _, f := range fs {
 			if f.Seq <= covered(f.Origin) || inPage[f] || in[f] {
-				pick = nil
-				break // the caller holds one, or gets one with this page
+				held = true // the caller holds one, or gets one with this page
+				break
 			}
-			if pick == nil && f.Seq <= mine[f.Origin] {
+			if f.Seq <= mine[f.Origin] && (pick == nil || f.Seq-covered(f.Origin) < pick.Seq-covered(pick.Origin)) {
 				pick = &f
 			}
 		}
-		if pick == nil {
+		if held || pick == nil {
 			continue
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT seq, raw FROM ops WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq`,
-			pick.Origin, covered(pick.Origin), pick.Seq)
+		rows, err := s.db.QueryContext(ctx, `SELECT seq, raw FROM ops WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?`,
+			pick.Origin, covered(pick.Origin), pick.Seq, PageOps+1)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
+		for rows.Next() && !full() {
 			var seq uint64
 			var raw []byte
 			if err := rows.Scan(&seq, &raw); err != nil {
@@ -443,6 +461,7 @@ func (s *Store) forgetDeps(ctx context.Context, op sentOp, have, last Vector, in
 			if !in[id] && !inPage[id] {
 				in[id] = true
 				group = append(group, sentOp{id, raw})
+				size += len(raw)
 			}
 		}
 		rows.Close()
