@@ -258,7 +258,11 @@ Apple run passed (3.3), then one job on macOS, a call of the shared `xcode-ci.ym
 10. Each `xcodebuild` log is filtered to errors, signing warnings and failed tests; the full logs
     are uploaded as an artifact on failure.
 
-Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves them. No signing, no
+Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves them, and the test
+timeouts: `-test-timeouts-enabled YES`, 120 seconds a test by default, 300 at most for a test that
+sets its own `executionTimeAllowance`. A test that hangs then fails by name, its log is uploaded,
+and the job does not sit silent until its own timeout (the Kit's simulator tests hung that way
+twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. No signing, no
 secrets. Timeout 90 minutes: a branch with several app stages ran past 60 by 2026-11. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
 
