@@ -1474,7 +1474,7 @@ Made by the stages named, not by this study.
 | `rounds.md` 3, 5.2, 13 | `RoundRun.outcome` (written in this change); the `actions` field on `capcom` rounds and in the round message (9.6) | Rounds stage 9 (outcome), A9 (actions) |
 | `app.md` 20.3, 20.5 | The levelled setting `capcom.event_actions` (Safe `ask`, Balanced and Bypass `allow`; settled, E24), and `capcom.event_actions_per_turn` and `capcom.event_action_max_age` (19.1) | A9 |
 | `docs/examples/hab.toml` | `[capcom] auth`, `oauth_token_command` and `api_key_command`, with a placeholder command; no token or key value; each limit key of 19.2 with its default, added by the stage that reads it | A2, A4, A5, G |
-| AGENTS.md command table | `gff-hab capcom say|thread|stop|pause|resume`, the engine's tests, the Node dependency | A2, A8 |
+| `docs/testing.md` and the CLI help | `gff-hab capcom say|thread|stop|pause|resume`, the engine's tests, the Node dependency | A2, A8 |
 
 ---
 

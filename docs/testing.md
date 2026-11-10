@@ -105,11 +105,11 @@ when it was written:
 | Intel Macs, Windows, more than one Linux distribution | Not product targets |
 | Transports not yet built (embedded SSH server, pairing) | Their own stages test them |
 
-## Until CI exists
+## Core tests in detail
 
-Each holder stage close records a passing `make race` run (`go test -race -count=3` of the holder
-packages) on macOS as well as Linux. `make fuzz` runs each holderproto fuzz target for `FUZZTIME`
-(default 30s); the nightly job will run it. `GFF_RESTART_LOOP=200 go test -run TestRestartLoop
+`make race` runs the race set (`go test -race -count=3`) on Linux in CI and on macOS when holder
+packages change. `make fuzz` runs each holderproto fuzz target for `FUZZTIME` (default 30s); the
+nightly job runs it. `GFF_RESTART_LOOP=200 go test -run TestRestartLoop
 ./internal/link/` is the nightly restart loop of core test 1; the push run does 20.
 
 Core test 1 runs its holder with a ring smaller than the program's output, so a rebuild from the
@@ -154,3 +154,116 @@ answer to a query) and the stalled-client and fake-frame checks of spec 5.
 alone), typing moving ownership between two clients with one event per change, and a redraw
 that writes nothing to the program's input. `internal/panesize` proves the same ownership rules
 with a fake clock: debounce, throttle, nudge gap and grace period without sleeping.
+
+## Test commands
+
+One row per test command: what it covers, and the spec section it proves where one applies. Run a single test with `-run`; the test names say the rest.
+
+| Command | What it covers |
+|---|---|
+| `go test ./internal/version/ ./internal/pathfilter/...` | The version request forms and output, release version order |
+| `go test ./internal/notices/` | The notice generator on a hand-made repository |
+| `go test -race ./internal/procscope/ && go test -race -run TestEscaped ./cmd/gff-hab` | Escaped-process cleanup (`hab-holder.md` Q4) |
+| `go test -race ./internal/holder/... ./cmd/...` | Holder end-to-end tests |
+| `go test ./internal/service/` | Unit and plist rendering |
+| `go test -race ./internal/peers/ && go test -race -run 'TestPeer' ./cmd/gff-hab` | Peer file path, bad entries by line, the pin edit that keeps comments, two habs sharing one file |
+| `go test -race ./internal/pairing/ ./internal/devicestore/ && go test -race -run TestPair ./cmd/gff-hab` | Pairing with a Go SSH client as the phone |
+| `go test -run '^$' -fuzz FuzzParseRequest -fuzztime 30s ./internal/pairing` | Fuzz the pairing request parser, which reads bytes from any client before the token check |
+| `go test -race ./internal/catalog/ && go test -race -run 'TestCatalog' ./cmd/gff-hab` | Two habs sharing a project show one project with two locations |
+| `go test -race ./internal/capcomthread/ ./internal/capcomengine/ && go test -race -run TestResolveCapcom ./internal/channels/ && go test -race -run 'TestCapcomService\|TestUninstallStopsEngine\|TestMCPClearsCredential' ./cmd/gff-hab` | The Capcom service (`capcom-service.md` 18, A2) |
+| `go test -race -run 'TestContext' ./internal/capcomengine/ && go test -race -run 'TestServiceConfig' ./internal/capcom/ && go test -race -run TestCapcomServiceContext ./cmd/gff-hab` | The Capcom context manager and memory (`capcom-service.md` 6, 18 A4) |
+| `go test -race -run 'TestSupervisorCodexCredential\|TestLink\|TestContextReseedEarly' ./internal/capcomengine/ && go test -race -run TestServiceConfigCodex ./internal/capcom/ && go test -race -run 'TestCapcomService' ./cmd/gff-hab` | The Codex engine's hab half (`capcom-service.md` 4.1, 4.5, 18 A6) |
+| `cd capcom-engine && npm ci && npm run typecheck && npm run build && npm test` | The Capcom engine against a fake SDK and a fake hab |
+| `go test -race ./internal/governor/ && go test -race -run 'TestServiceConfigPace' ./internal/capcom/ && go test -race -run 'TestLinkPace' ./internal/capcomengine/ && go test -race -run TestSDKReading ./internal/usage/ && go test -race -run 'TestCapcomServicePace' ./cmd/gff-hab && go test -race -run 'TestGovernorText\|TestBoardGovernor' ./internal/gffclient/` | The usage governor (`capcom-service.md` 10.1, stage G) on a fake clock with hand-written readings |
+| `go test -run 'TestContext' ./internal/capcom/ && go test -race -run 'TestCapcomContext' ./cmd/gff-hab` | Capcom context (`capcom.md` 8.4) |
+| `go test -race -run 'TestNotifierAsk\|TestAskCategory' ./internal/push/ && go test -race -run 'TestNoticeStore\|TestPushAskContext\|TestCapcomAskAfterRestart\|TestCapcomDetachByDeviceID' ./cmd/gff-hab` | "Ask an agent", hab half (`capcom.md` 8.5) |
+| `go test ./internal/capcom/ && go test -race -run 'TestCapcom\|TestResumeSession' ./cmd/gff-hab ./internal/structure` | Capcom host |
+| `go test -race ./internal/channels/ && go test -race -run 'TestChannels\|TestChannelTools' ./cmd/gff-hab` | Channels over fake peers |
+| `go test -race ./internal/personal/ && go test -race -run 'TestServiceConfigPersonal' ./internal/capcom/ && go test -race -run 'TestCapcomPersonalTools' ./cmd/gff-hab` | The personal tools against fake WeatherKit, Apple Maps and Google servers (never the real services) |
+| `go test -race ./internal/rounds/ && go test -race -run 'TestWatch\|TestSecretValues\|TestPaneSafe' ./cmd/gff-hab && go test -race ./docs/examples/mailwatch` | Watchers (`rounds.md` 4.4, 4.7, 14.1 stage 11) |
+| `go test -race ./internal/confirm/ ./internal/suggest/ && go test -race -run 'TestConfirm\|TestActionToolText\|TestHarnessStart\|TestMCPCancelled\|TestSnapshotOpenOnly' ./cmd/gff-hab && go test -race -run 'TestSeedAndNote\|TestChannelRoute' ./internal/channels ./internal/hook` | Confirmations against a fake runner |
+| `go test -race ./internal/aliases/ && go test -race -run TestDeliveringAndSendTo ./internal/channels/ && go test -race -run 'TestSpawnAliases\|TestSpawnTeammate\|TestSpawnHarnessEdit\|TestReportToUnlistedPeer\|TestSpawnTool\|TestSpawnFolders\|TestTeammates\|TestSpawnEndToEnd\|TestSpawnOnPeer' ./cmd/gff-hab` | The spawn verb (`harness-adapters.md`, Spawn) |
+| `go test -race ./internal/suggest/ && go test -race -run 'TestLocalSend' ./internal/channels && go test -race -run 'TestHandOff\|TestFileRecord' ./cmd/gff-hab` | Hand-off and file (`capcom.md` 6.5) on a fake catalog |
+| `go test -race ./internal/readtools/ && go test -race -run 'TestReadTool\|TestMCP\|TestReadRoute' ./cmd/gff-hab ./internal/hook` | Read tools over hand-written transcripts in temporary folders |
+| `go test -race ./internal/content/` | Rich content |
+| `go test -race ./internal/habits/ ./internal/hook/ && go test -race -run 'TestBrief\|TestDefaultView' ./internal/lbsvc/ && go test -race -run 'TestCurrentProject\|TestFileBriefHabits' ./internal/lbcli/ && go test -race -run TestRead ./internal/settings/ && go test -race -run TestLogbookHabits ./cmd/gff-hab` | Logbook habits (`logbook.md` 11, 11.4) |
+| `go test -race ./internal/usage/ && go test -race -run 'TestUsage\|TestStatusline' ./cmd/gff-hab` | Usage readings from hand-written fixtures (`testdata/`, expected readings in `.usage.json`; `-update` rewrites them) |
+| `go test -race ./internal/mcpreg/ && go test -race -run TestMCPRenderCLI ./cmd/gff-hab` | MCP registry over temporary folders, with a stand-in for Claude's CLI |
+| `go test -race -run 'TestLauncher\|TestShellJoin\|TestShellRoundTrip\|TestSecretNotQuoted\|TestHeadersParallel\|TestResolver\|TestLaunchEnvNames' ./internal/mcpreg/ && go test -race -run TestMCPLaunchCLI ./cmd/gff-hab` | Launch-time secrets (8.5) with invented values that no file holds (the fake provider prints rot13 of its reference) |
+| `go test -race ./internal/instructions/ && go test -race -run TestInstructions ./cmd/gff-hab` | Instruction renderer over a hand-written fake source tree in a temporary directory |
+| `go test -race ./internal/hook/ ./internal/agentcli/ && go test -race -run 'TestCompact\|TestNudge\|TestJoinContext' ./cmd/gff-hab` | Self-compact and the context nudge (`harness-adapters.md`) |
+| `go test -race ./internal/harness/... ./internal/hook/...` | Hook fixtures per harness to the exact `agent.state` stream |
+| `go test ./internal/progstatus/` | OSC 7501 report parsing over hand-written byte fixtures cut at every chunk size |
+| `go test -race -run 'TestClaudeAdapter\|TestBlockingPermissionHook' ./cmd/gff-hab/` | The Claude Code adapter end to end with the real binaries |
+| `go test -race -run 'TestTrust\|TestSetTrust' ./internal/harness/ && go test -race -run 'TestTrust' ./cmd/gff-hab` | The folder trust card (`app.md` 7.10) |
+| `go test -race ./internal/confirm/ && go test -race -run 'TestGroupPlanRow' ./internal/settings/ && go test -race -run 'TestCover\|TestTrustHoldConfig\|TestGroupTrust' ./cmd/gff-hab` | Group starts and the trust cover (`groups.md` 4.2, 12.6, stage B2) |
+| `go test -race -run 'TestCodexAdapter\|TestChatCodex\|TestHarnessStart' ./cmd/gff-hab` | Codex adapter end to end |
+| `go test -race ./internal/speech/... ./internal/speechproto/ ./internal/oggopus/ && go test -race -run TestSpeech ./internal/control/` | The speech engine against a fake helper (the test binary run as the helper) |
+| `go test -run '^$' -fuzz FuzzParse -fuzztime 30s ./internal/oggopus` | Fuzz the Ogg Opus reader, which parses client bytes, seeded with the hand-made streams |
+| `GFF_SPEECH_HELPER_BIN=build/gff-hab-speech GFF_SPEECH_MODEL_DIR=<model> go test -run TestRealHelper ./internal/speech` | The engine end to end with the real helper and model, with the vocabulary fix-up on a spoken clip (macOS `say`) |
+| `go test -race -run 'TestSpeech\|TestServeSpeech' ./cmd/gff-hab` | Speech setup (the memory default, the config switch, no helper), the vocabulary from git in a session's project folder, then `gff-hab serve` with a fake helper |
+| `go test -race ./internal/attach/ && go test -race -run 'TestAttachment\|TestChatAttachments' ./cmd/gff-hab` | Attachments (`app.md` 4.4) |
+| `go test -race ./internal/lbsvc/ ./internal/lbcli/ && go test -race -run 'TestLogbook' ./cmd/gff-hab ./internal/control` | The Logbook surface (`logbook.md` 10, 18 rows 4 and 7) |
+| `go test -race ./internal/logbook/` | Logbook's store (`logbook.md` 2, 4, 5) on real files with fake clocks |
+| `go test -race -run 'TestIdentityForms\|TestFirstSight\|TestRemoteChange\|TestJoin\|TestPrivateHidden\|TestPaneProjectRules\|TestE9TwoReplicas' ./internal/lbsvc/ && go test -race -run 'TestProjectReads' ./internal/logbook/ && go test -race -run 'TestProjectVerbs\|TestPaneFileHidesPrivate' ./internal/lbcli/ && go test -race -run 'TestLogbookProjects' ./cmd/gff-hab` | Logbook projects (`logbook.md` 3.3, 18 row 5) |
+| `go test -race -run 'TestP1\|TestP4\|TestP5\|TestP7\|TestP8\|TestP9' ./internal/logbook/` | Logbook sync's properties (`logbook.md` 7.6, 17) over `Store.Sync` in one process |
+| `go test -race ./internal/lbsync/ && go test -race -run 'TestLogbook\|TestOpenLogbook' ./cmd/gff-hab` | Logbook sync in gff-hab (`logbook.md` 7.6) |
+| `go test -race ./internal/push/` | Push against an HTTP/2 fake APNs (never Apple) |
+| `go test -race ./internal/summary/ && go test -race -run 'TestSummary' ./internal/push/ && go test -race -run TestPushSummaries ./cmd/gff-hab` | Model-written approval titles (`app.md` 16.5) |
+| `go test -race -run 'TestAnswerWithdrawsBanner\|TestServePush\|TestPushKeyCommand' ./cmd/gff-hab/` | gff-hab with push |
+| `go test -race ./internal/settings/ && go test -race -run 'TestSettings\|TestPermissionWaitLock' ./cmd/gff-hab` | Hab-side settings (`app.md` 20.5) |
+| `go test -race ./internal/gitstatus/` | Project git status with real git in temp folders (skips with no git) |
+| `go test -race -run 'TestEvent\|TestHabWoke\|TestOutcome' ./internal/rounds/ && go test -race -run 'TestRound\|TestEventBlock' ./internal/channels/ && go test -race -run TestFold ./internal/logbook/` | Event rounds in the store and scheduler (`rounds.md` 4.3, 4.5, 5.2) on a fake clock |
+| `go test -race -run 'TestRoundMatcher\|TestRoundMessageRuns\|TestRoundBatchCarried\|TestRoundsExampleSettings\|TestRoundMoveStage9\|TestRoundLimitSettings\|TestRoundEvents$\|TestRoundCapcomPeers\|TestRoundCapcomOneWay\|TestRoundGroupPeers' ./cmd/gff-hab` | Event, capcom and group rounds in gff-hab |
+| `go test -race ./internal/rounds/` | Round definitions and the rounds store (`docs/specs/rounds.md` 3, 4.1, 7.6, 7.7) |
+| `go test -race -run 'TestRound\|TestSessionRound' ./cmd/gff-hab ./internal/control ./internal/structure` | Rounds in gff-hab |
+| `go test -race ./internal/confirm/ && go test -race -run 'TestRoundAgentKit\|TestRoundElsewhere\|TestRoundConfirmation\|TestRoundToolNulls\|TestRoundToolEvents\|TestRoundHostFromPane\|TestMCPProtocol' ./cmd/gff-hab && go test -run TestFindHab ./cmd/gff` | Rounds in the agent kit (`rounds.md` 13, stage 10) |
+| `go test -race -run 'TestRoundLock\|TestRoundFork\|TestLock\|TestAgentUse\|TestForkRefused\|TestForkMemo\|TestRoundEnvelope\|TestSendGuarded\|TestClientSendInUse\|TestTargetMemo\|TestTakeOverBeforePrompt\|TestAdoptedTurnMarker\|TestAdoptResumeNotDelivered' ./cmd/gff-hab` | Resume and fork runs |
+| `go test -race -run 'TestRoundHarness' ./cmd/gff-hab` | Harness runs (`docs/specs/rounds.md` 7, stage 4) with the real gff-hab and holder and fake `claude` and `codex` programs on `PATH` that report over OSC 7501 |
+| `go test -race -run 'TestHarness\|TestTrustDialog\|TestAdoptedTurn' ./cmd/gff-hab` | Harness run units |
+| `go test -race ./internal/channels/ && go test -race -run 'TestSupervise\|TestSibling\|TestNudgeOff\|TestCodexContext\|TestGroupSupervision' ./cmd/gff-hab` | Context supervision of group members (`groups.md` 9, stage B6) against fakes |
+| `go test -race ./internal/heavy/ ./internal/hoststats/ && go test -race -run TestHeavy ./internal/control/ ./internal/settings/ && go test -race -run 'TestHeavy' ./cmd/gff-hab && go test -race -run 'TestBoardHeavy\|TestKeepHeavy' ./internal/gffclient/` | The heavy-run lock (`groups.md` 8, stage B5) on a fake clock |
+| `go test -race ./internal/groups/ ./internal/confirm/ && go test -race -run 'TestGroup\|TestCover\|TestTrustHold' ./cmd/gff-hab` | Agent groups (`groups.md` 3, 5, stage B3) |
+| `go test ./internal/capcom/ && go test -race -run TestLinkUserJoinsEventTurn ./internal/capcomengine/ && go test -race -run 'TestCapcomGroup$\|TestCapcomCoordinatorFollowsService' ./cmd/gff-hab && (cd capcom-engine && npm test)` | Capcom as a group's coordinator (`groups.md` 12.1, stage B8) |
+| `go test -race ./internal/worktree/ && go test -race -run TestWorktrees ./cmd/gff-hab` | Worktrees with real git in temp folders (skips with no git) |
+| `go test -race ./internal/transcript/` | Claude Code transcript and Codex rollout readers over hand-written fixtures (`testdata/claude-*.jsonl` and `testdata/codex-*.jsonl`, expected messages in `.chat.json`; `-update` rewrites them) |
+| `go test -race ./internal/cmdmarks/ && go test -race -run TestCommandMarks ./cmd/gff-hab` | OSC 133 commands |
+| `go test -race ./internal/opencode/ ./internal/harness/ ./internal/transcript/ && go test -race -run Opencode ./cmd/gff-hab` | opencode 2.x |
+| `go test ./internal/detect/...` | Detection tests |
+| `go test -race -run 'TestDetectExplain\|TestExplainVerdict\|TestRegionTail' ./cmd/gff-hab` | `detect.explain` end to end |
+| `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests |
+| `go test ./internal/link/` | Holder link end-to-end tests |
+| `go test -race ./internal/habconn/` | Connection library suite over the Unix socket, an in-process pipe, `SSHTransport` with a stand-in `ssh`, and the real `ssh` to localhost |
+| `go test -race ./internal/merge/` | Multi-host merge over three fake habs |
+| `go test ./scripts/hygiene/` | The scan in temporary repositories with invented values |
+| `go test -race ./internal/hosts/ ./internal/board/` | Many hosts over in-process fake habs |
+| `go test -race ./internal/hoststats/ ./internal/control/ && go test -race -run TestHabStats ./cmd/gff-hab` | Shared host stats |
+| `go test -race ./internal/gffclient/` | The workspace over fake habs |
+| `go test -race -run 'TestWindowTitleFocus\|TestTitleTemplateAndSanitizing' ./internal/gffclient/` | Window titles |
+| `go test -race -run 'TestResume' ./internal/gffclient/ && go test -race -run 'TestResume\|TestSessionResume' ./cmd/gff-hab` | Resume (`gff-client.md` 6.4) |
+| `go test -race -run 'TestLogoutCheckpoint\|TestShutdownWatchdog\|TestResumeBookFlush' ./cmd/gff-hab` | Logout, restart and shutdown (`hab-holder.md` 2.11) |
+| `go test -race -run 'TestOutside' ./internal/transcript/ && go test -race -run 'TestAdopt\|TestSessionAdopt' ./cmd/gff-hab` | Adopt (`gff-client.md` 6.5) over hand-written transcripts |
+| `go test -race -run 'TestLayoutTree\|TestStackArrange\|TestFocusAcrossNestedLayout\|TestNewPane' ./internal/gffclient/ && go test -race -run 'TestCreateCwdOf\|TestLsofName' ./cmd/gff-hab` | New panes, splits and stacks (`gff-client.md` 5.4) |
+| `go test -race -run 'TestTabRenameCloseLast\|TestWorkspaceConfig' ./internal/gffclient/` | Tab actions and the workspace name (`gff-client.md` 5.5) |
+| `go test -race -run 'TestWorkspaceSaved\|TestStartupTabs\|TestWorkspaceFile' ./internal/gffclient/` | The saved workspace (`gff-client.md` 5.6) |
+| `go test -race -run 'TestWheelScrollsLocally\|TestParseMouse' ./internal/gffclient/` | Scrollback and the mouse (`gff-client.md` 5.7) |
+| `go test -race ./internal/grants/ ./cmd/gff/ ./cmd/gff-hab/` | Permission check |
+| `go test ./api/modules/` | Block vocabulary and manifest (`docs/specs/modules.md` 6.5) |
+| `go test -race ./internal/modhost/` | The module runtime (`docs/specs/modules.md` 7.3, 7.4, 8.4) over the hand-written bundles in `internal/modhost/testdata/bundles/` |
+| `go test -race -run TestModuleHostProcess ./cmd/gff-hab` | The real `gff-hab module-host` under `modhost.Host` |
+| `go test -race ./internal/modview/` | The terminal renderer of module block trees (`docs/specs/modules.md` 6.6) |
+| `go test -race -run 'TestModule\|TestModStyle\|TestCanvasText' ./internal/gffclient/` | Module cards on gff's status board |
+| `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac), with the block fixtures decoded and encoded back |
+| `cd apple/FlightdeckKit && swift test` | Test the app's shared package (it links `swift/HabAPI`) |
+| `cd apple/FlightdeckKit && swift test --filter CapcomThreadTests` | The Capcom service thread in the app (`capcom-service.md` 7.6) over a fake hab |
+| `go test -race -run 'TestLinkAllowSite\|TestCapcomMessage\|TestCapcomPushesMessage\|TestThreadLines' ./internal/capcomengine/ ./internal/push/ ./cmd/gff-hab/ ./internal/gffclient/` | Capcom A3, hab and gff half (`capcom-service.md` 5.3, 7.6, 7.7) |
+| `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_SSH_HOST=<host> FLIGHTDECK_LIVE_SSH_COMMAND=... FLIGHTDECK_LIVE_SSH_OPTIONS=...] swift test --filter LiveTests` (in `apple/FlightdeckKit`) | Live check against a real hab |
+| `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_PROGRAM='vim -u NONE -N'] swift test --filter LiveTerminalTests` (in `apple/FlightdeckKit`) | Live terminal check against a real hab with a holder (`-tags ghostty` for real snapshots) |
+| `FLIGHTDECK_LIVE_SOCKET=<sock> FLIGHTDECK_LIVE_CHAT_SESSION=<session> swift test --filter LiveTests.testLiveChatSendAndReply` (in `apple/FlightdeckKit`) | Live chat check |
+| `FLIGHTDECK_LIVE_SOCKET=<sock> FLIGHTDECK_LIVE_ROUNDS=<path to gff-hab> swift test --filter LiveTests.testLiveRounds` (in `apple/FlightdeckKit`) | Live rounds check against a real hab that runs rounds and holds one (a `-every 1m` command round) |
+| `apple/scripts/usage-live-check.sh` | Live usage check |
+| `FLIGHTDECK_UPDATE_SNAPSHOTS=1 swift test --filter ChatSnapshotTests` (in `apple/FlightdeckKit`) | Rewrite the chat view's text snapshots from `internal/transcript/testdata/*.chat.json` |
+| `apple/scripts/ssh-live-check.sh [serve]` | Live check of the app's SSH carrier (swift-nio-ssh) |
+| `apple/scripts/pair-live-check.sh` | Live check of QR pairing from the app |
+| `cd apple/FlightdeckKit && swift test --filter PairingFlowTests` | The app's half of QR pairing and the password setup |
+| `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
