@@ -304,7 +304,7 @@ child is made under the responsible process (1.2). So:
 |---|---|---|
 | GFF Holder.app | `com.apple.security.automation.apple-events`, `com.apple.security.device.audio-input`, `com.apple.security.device.camera`, `com.apple.security.personal-information.addressbook`, `...calendars`, `...location`, `...photos-library` | `NSAppleEventsUsageDescription`, `NSLocalNetworkUsageDescription`, `NSMicrophoneUsageDescription`, `NSCameraUsageDescription`, `NSContactsUsageDescription`, `NSCalendarsUsageDescription`, `NSRemindersUsageDescription`, `NSLocationUsageDescription`, `NSPhotoLibraryUsageDescription`. Each says "A program running in a Flightdeck pane wants to ..." |
 | GFF Hab.app | None | `NSLocalNetworkUsageDescription` |
-| Flightdeck.app | `com.apple.security.device.audio-input` (voice mode) | `NSLocalNetworkUsageDescription`, `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription` if voice uses on-device speech |
+| Flightdeck.app | `com.apple.security.device.audio-input` (voice mode), `com.apple.security.personal-information.location` and `...calendars` (Capcom's device context and cards, events and reminders) | `NSLocalNetworkUsageDescription`, `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription` if voice uses on-device speech, `NSLocationUsageDescription`, `NSLocationWhenInUseUsageDescription`, `NSLocationAlwaysAndWhenInUseUsageDescription`, `NSCalendarsFullAccessUsageDescription`, `NSCalendarsWriteOnlyAccessUsageDescription`, `NSRemindersFullAccessUsageDescription` |
 | gff | None | None |
 
 No bundle needs `cs.allow-jit`, `cs.allow-unsigned-executable-memory` or
