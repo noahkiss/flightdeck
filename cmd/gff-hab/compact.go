@@ -77,9 +77,15 @@ type compactService struct {
 	limits  compactLimits
 	now     func() time.Time
 
-	mu    sync.Mutex
-	jobs  map[string]*compactJob // pending, by pane
-	paths map[string]string      // the transcript path each Claude pane's hooks named
+	// ctx ends at Close; wg counts the running jobs.
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	mu     sync.Mutex
+	closed bool
+	jobs   map[string]*compactJob // pending, by pane
+	paths  map[string]string      // the transcript path each Claude pane's hooks named
 }
 
 // compactJob is one pending compaction.
@@ -105,9 +111,23 @@ func newCompactService(agents compactAgents, session func(string) (string, bool)
 	if publish == nil {
 		publish = func(structure.Event) {}
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &compactService{agents: agents, session: session, send: send, publish: publish, logf: logf,
-		limits: defaultCompactLimits, now: time.Now, jobs: map[string]*compactJob{}, paths: map[string]string{}}
+		limits: defaultCompactLimits, now: time.Now, ctx: ctx, cancel: cancel,
+		jobs: map[string]*compactJob{}, paths: map[string]string{}}
 }
+
+// Close refuses new compactions, ends each pending one as failed, and waits for them.
+func (s *compactService) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	s.cancel()
+	s.wg.Wait()
+}
+
+// errCompactStopped: Close ended the compaction.
+var errCompactStopped = errors.New("gff-hab is stopping")
 
 // Request starts a compaction of pane. It checks the pane and answers at once with state
 // queued; the rest runs on its own.
@@ -143,6 +163,10 @@ func (s *compactService) request(pane string, p api.CompactParams, guard func(st
 		return api.Compaction{}, control.Errorf(api.ErrorKindInvalid, "this pane is not a session; self-compact runs in an agent's session")
 	}
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return api.Compaction{}, control.Errorf(api.ErrorKindUnavailable, "gff-hab is stopping")
+	}
 	if j := s.jobs[pane]; j != nil {
 		s.mu.Unlock()
 		return api.Compaction{}, control.Errorf(api.ErrorKindConflict, "compaction %s is already pending for this pane", j.c.ID)
@@ -152,10 +176,14 @@ func (s *compactService) request(pane string, p api.CompactParams, guard func(st
 		guard: guard, done: done}
 	s.jobs[pane] = j
 	c := j.c
+	s.wg.Add(1) // under mu, so no Add after Close's Wait
 	s.mu.Unlock()
 	s.logf("pane %s: compaction %s queued", pane, c.ID)
 	s.emit(c)
-	go s.run(j)
+	go func() {
+		defer s.wg.Done()
+		s.run(j)
+	}()
 	return c, nil
 }
 
@@ -265,7 +293,7 @@ func (s *compactService) waitAndSend(j *compactJob, text string, limit time.Dura
 			if before != nil {
 				before()
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 			guard := s.guard
 			if j.guard != nil {
 				guard = j.guard
@@ -274,6 +302,9 @@ func (s *compactService) waitAndSend(j *compactJob, text string, limit time.Dura
 			cancel()
 			if err == nil {
 				return nil
+			}
+			if s.ctx.Err() != nil {
+				return errCompactStopped
 			}
 			var ce *control.Error
 			if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindConflict {
@@ -286,6 +317,8 @@ func (s *compactService) waitAndSend(j *compactJob, text string, limit time.Dura
 		case <-retry.C:
 		case <-deadline.C:
 			return errors.New(what)
+		case <-s.ctx.Done():
+			return errCompactStopped
 		}
 	}
 }
@@ -360,6 +393,9 @@ wait:
 		case <-startBy.C:
 			s.step(j, compactFailed, "compaction did not start within "+s.limits.start.String()+"; the follow-up was not sent")
 			return
+		case <-s.ctx.Done():
+			s.step(j, compactFailed, "gff-hab stopped before compaction started; the follow-up was not sent")
+			return
 		}
 	}
 	s.step(j, compactCompacting, "")
@@ -379,6 +415,9 @@ end:
 			}
 		case <-endBy.C:
 			s.step(j, compactFailed, "compaction did not end within "+s.limits.end.String()+"; the follow-up was not sent")
+			return
+		case <-s.ctx.Done():
+			s.step(j, compactFailed, "gff-hab stopped during compaction; the follow-up was not sent")
 			return
 		}
 	}

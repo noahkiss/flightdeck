@@ -99,6 +99,8 @@ func newCompactRig(t *testing.T) *compactRig {
 		r.mu.Unlock()
 		r.evCh <- c
 	}, t.Logf)
+	// Each test's pending compactions end before the test does: run logs through t.
+	t.Cleanup(r.svc.Close)
 	r.svc.limits = compactLimits{turn: 5 * time.Second, start: 2 * time.Second, end: 2 * time.Second, prompt: 2 * time.Second, poll: 20 * time.Millisecond}
 	return r
 }
@@ -321,6 +323,32 @@ func TestCompactFailures(t *testing.T) {
 		t.Fatalf("reason %q", c.Reason)
 	}
 	if len(r.sends()) != 1 {
+		t.Fatalf("sends %v", r.sends())
+	}
+}
+
+// TestCompactClose: Close ends a pending compaction as failed before it returns, and refuses
+// the next request.
+func TestCompactClose(t *testing.T) {
+	r := newCompactRig(t)
+	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
+	if _, err := r.svc.Request("p1", api.CompactParams{}); err != nil {
+		t.Fatal(err)
+	}
+	r.next(t, compactQueued)
+	r.svc.Close()
+	select {
+	case c := <-r.evCh:
+		if c.State != compactFailed || !strings.Contains(c.Reason, "stopping") {
+			t.Fatalf("after Close: %+v", c)
+		}
+	default:
+		t.Fatal("Close returned before the compaction ended")
+	}
+	if _, err := r.svc.Request("p1", api.CompactParams{}); err == nil {
+		t.Fatal("a request after Close")
+	}
+	if len(r.sends()) != 0 {
 		t.Fatalf("sends %v", r.sends())
 	}
 }
