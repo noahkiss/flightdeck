@@ -46,10 +46,15 @@ jobs:
       actions: read
     outputs:
       run: ${{ steps.mode.outputs.run }}
+      full: ${{ steps.mode.outputs.full }}
     steps:
+      # Full or Swift only: a pull request whose files on the Apple paths are all under api/ or
+      # swift/HabAPI/ (the schema, its testdata and the generated package) runs only the two
+      # `swift test`s. Any other Apple path, a push, a tag and a dispatch run everything.
       # Skip only when this push to main merges a pull request whose apple.yml run on its head
-      # passed. Any lookup that fails leaves it on.
-      - name: Run or skip
+      # passed in full; a Swift-only pull request gets its full run on main. Any lookup that
+      # fails leaves it on and full.
+      - name: Run, full or Swift only
         id: mode
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,24 +62,48 @@ jobs:
           REF: ${{ github.ref }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # Prints "swift" when every changed file (and each rename's old name) on an Apple path
+          # lies under api/ or swift/HabAPI/, else "full". Files off the Apple paths do not count.
+          kind() {
+            local files f any=false
+            files=$(gh api --paginate "repos/$REPO/pulls/$1/files" --jq '.[] | .filename, (.previous_filename // empty)') || { echo full; return; }
+            [ -n "$files" ] || { echo full; return; }
+            while IFS= read -r f; do
+              case "$f" in
+                api/schema.json | api/testdata/* | api/modules/testdata/* | swift/HabAPI/*) any=true ;;
+                apple/* | design/icons/* | internal/transcript/testdata/* | internal/capcom/testdata/* \
+                  | cmd/gff-hab/testdata/console/* | .github/workflows/apple.yml)
+                  echo full; return ;;
+              esac
+            done <<< "$files"
+            if [ "$any" = true ]; then echo swift; else echo full; fi
+          }
           run=true
+          full=true
+          if [ "$EVENT" = pull_request ] && [ -n "$PR" ] && [ "$(kind "$PR")" = swift ]; then
+            echo "Only the API and the Swift package changed on the Apple paths: Swift tests only."
+            full=false
+          fi
           if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
-            heads=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null) | .head.sha] | join(" ")') || heads=""
-            for head in $heads; do
+            prs=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[] | select(.merged_at != null) | "\(.number) \(.head.sha)"') || prs=""
+            while read -r number head; do
+              [ -n "$number" ] || continue
               passed=$(gh run list -R "$REPO" --workflow apple.yml --commit "$head" --status success --limit 1 --json databaseId --jq 'length') || passed=0
-              if [ "$passed" = 1 ]; then
-                echo "This push merges a pull request whose Apple run on $head passed: nothing to run."
+              if [ "$passed" = 1 ] && [ "$(kind "$number")" = full ]; then
+                echo "This push merges pull request #$number, whose full Apple run on $head passed: nothing to run."
                 run=false
                 break
               fi
-            done
+            done <<< "$prs"
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
 
   apple:
-    name: Apple
+    name: Apple (${{ needs.plan.outputs.full == 'true' && 'full' || 'Swift only' }})
     needs: plan
     if: needs.plan.outputs.run == 'true'
     permissions:
@@ -87,13 +116,12 @@ jobs:
       swift-test-dirs: |
         swift/HabAPI
         apple/FlightdeckKit
-      generate: apple/scripts/generate.sh
+      # Swift only: empty generate, builds and tests skip those steps in xcode-ci.
+      generate: ${{ needs.plan.outputs.full == 'true' && 'apple/scripts/generate.sh' || '' }}
       project: apple/Flightdeck.xcodeproj
-      builds: |
-        FlightdeckiOS | generic/platform=iOS Simulator
-        FlightdeckMac | generic/platform=macOS
-      tests: |
-        FlightdeckKit-Package | ios-simulator | apple/FlightdeckKit
+      # fromJSON turns the \n in the JSON string into the line break between the two builds.
+      builds: ${{ needs.plan.outputs.full == 'true' && fromJSON('"FlightdeckiOS | generic/platform=iOS Simulator\nFlightdeckMac | generic/platform=macOS"') || '' }}
+      tests: ${{ needs.plan.outputs.full == 'true' && 'FlightdeckKit-Package | ios-simulator | apple/FlightdeckKit' || '' }}
       # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5).
       xcodebuild-args: -onlyUsePackageVersionsFromResolvedFile
       spm-cache-key-file: apple/FlightdeckKit/Package.resolved

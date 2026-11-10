@@ -164,14 +164,17 @@ test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
 
 # Run the holder, structure, link, control, data stream, connection library, gff client core, pane size, command
-# marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push, summaries, speech and logbook tests three times under the race
+# marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push, summaries, speech and logbook tests RACE_COUNT times under the race
 # detector. No libghostty needed. The list is in race-pkgs.mk: the macOS Go job starts on a change to
 # this Makefile (for its build pins), and a new package in the list is no reason to start it.
 include race-pkgs.mk
+# RACE_COUNT runs: 3 by default, on main and nightly; ci.yml passes 1 on a pull request
+# (docs/specs/ci-release.md 3.2).
+RACE_COUNT ?= 3
 # cmd/gff-hab under -race -count=3 runs past go test's 10-minute default on a loaded machine.
 RACE_TIMEOUT ?= 30m
 race:
-	GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -race -count=3 -timeout $(RACE_TIMEOUT) -- $(RACE_PKGS)
+	GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -race -count=$(RACE_COUNT) -timeout $(RACE_TIMEOUT) -- $(RACE_PKGS)
 
 # Run each fuzz target in internal/holderproto for FUZZTIME, one after the other. For nightly use.
 FUZZTIME ?= 30s

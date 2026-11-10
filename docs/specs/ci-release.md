@@ -169,7 +169,7 @@ Two jobs.
 | `cache-path` | `build/libghostty-vt` |
 | `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline` (section 5) |
 | `cancel-in-progress` | `${{ github.ref != 'refs/heads/main' }}` (E4) |
-| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make ci-full GO_TEST_SHARD=0/4 GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `vet`, `test`, `race`) |
+| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make ci-full GO_TEST_SHARD=0/4 RACE_COUNT=<1 on a pull request, else 3> GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `vet`, `test`, `race`) |
 | `commands`, fast | `GFF_TEST_TIMEOUT_SCALE=3 make ci-fast GO_TEST_SHARD=all GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `build`) |
 | job name | `go (full)` or `go (fast)`, from the `plan` output (7.4) |
 
@@ -179,7 +179,15 @@ input. Without the flags, a cache miss would build a native-CPU libghostty and s
 | `timeout-minutes` | `75`. The full set ran about 40 minutes by 2026-11; a train of several stages passed 45 |
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
-binaries. `make race` runs the race list three times.
+binaries. `make race` runs the race list `RACE_COUNT` times, 3 by default.
+
+**A pull request runs the race list once.** `ci.yml` passes `RACE_COUNT=1` on a `pull_request`
+event and 3 on every other event; `nightly.yml` runs `make ci-full` with the default 3. Repeats
+catch a race that one pass misses, but in November 2026 the second and third pass were about two
+thirds of the race time, roughly 4 to 5 minutes on each shard. Every merged change still gets
+three passes: a direct push runs them, and a merged pull request's push runs the fast set, so the
+nightly run (3.6) gives it three passes that night. The holder packages on macOS keep
+`-count=3` on every event (3.5).
 
 **The full set runs as five jobs.** `cmd/gff-hab` holds the end-to-end tests, about 400 of them,
 one after another: on one runner it took 8 minutes of `make test` and 28 of the 33 minutes of
@@ -226,13 +234,16 @@ steps in the same order.
   the same two questions. `macos-go.yml`'s nightly run covers the merged `main` that night; a direct
   push, a tag, a dispatch and a schedule always run. `app-release.yml` grants the called
   `apple.yml` `pull-requests: read` and `actions: read` for its `plan` job.
+- `apple.yml` has a short form instead of a fast set: a pull request whose changes on the Apple
+  paths are all under `api/` and `swift/HabAPI/` runs only the Swift package tests (3.4). Its
+  merge is no skip: the push that merges it runs the full Apple build.
 - A **Renovate** pull request runs the full set. The bot rule of rule 3 is for private repos; this
   repo is public.
 
 ### 3.4 `apple.yml`: the Apple build
 
 A `plan` job (ubuntu, a few seconds) that skips the build on a push merging a pull request whose
-Apple run passed (3.3), then one job on macOS, a call of the shared `xcode-ci.yml` (E5, section
+full Apple run passed (3.3) and picks full or Swift only, then one job on macOS, a call of the shared `xcode-ci.yml` (E5, section
 11.2), which runs these steps from its inputs:
 
 1. Check out. Select `/Applications/Xcode_27.1.app` by path (`xcode-app`, through
@@ -256,6 +267,16 @@ Apple run passed (3.3), then one job on macOS, a call of the shared `xcode-ci.ym
 10. Each `xcodebuild` log is filtered to errors, signing warnings and failed tests; the full logs
     are uploaded as an artifact on failure.
 
+**Swift only.** A pull request whose files on the Apple paths (3.1) are all `api/schema.json`,
+`api/testdata/**`, `api/modules/testdata/**` or `swift/HabAPI/**` (a rename counts its old path
+too) runs steps 1 to 5 and 10 only: `plan` passes empty `generate`, `builds` and `tests`, which
+`xcode-ci.yml` skips. Most pull requests touch the API, and the Xcode steps took 14 to 22 of the
+job's 17 to 30 minutes (November 2026). The Kit's `swift test` still compiles the Kit against the
+new package. The apps' own sources and the iOS Simulator run wait for the push to `main`, which
+always runs the full build, as do a dispatch and an app tag. A change to any other Apple path, or
+a lookup of the pull request's files that fails, runs the full build. The job's name says which
+ran: `Apple (full)` or `Apple (Swift only)`.
+
 Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves them. No signing, no
 secrets. Timeout 90 minutes: a branch with several app stages ran past 60 by 2026-11. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
@@ -264,7 +285,10 @@ not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 A `plan` job as in `ci.yml` (the guard, the merged pull request skip of 3.3 and the cache key), then `go-ci.yml` with the `runner`
 extension set to the macOS label, `mise`, and the libghostty cache keyed `<ghostty_key>-macOS-ARM64-baseline`. Commands on a holder change:
-`go test -race -count=3` over the holder group's packages, then `make test`. First the job runs
+`go test -race -count=3` over the holder group's packages, then `make test`. The holder group keeps
+three passes on a pull request too, unlike `ci.yml`'s race list (3.2): macOS is where its PTY and
+launchd code differ from Linux, a holder stage closes on a three-pass race run on macOS
+(`testing.md`), and the step takes about 3 of the job's 12 to 16 minutes. First the job runs
 `brew install bash` and sets `GFF_TEST_BASH` to it: the image's `/bin/bash` is 3.2 and it ships
 no Homebrew bash, while the marked shell tests need bash 4.4 (`hab-logic-api.md` 2.5). With
 `GFF_TEST_BASH` set, those tests fail on an old bash instead of skipping. The nightly leg and a
@@ -1303,7 +1327,7 @@ The CI-minute rules the shared workflows follow, and how this repo applies each.
 |---|---|---|---|
 | 1 | Cancel superseded runs | Applied once E4 merges; partly applied until then | Workflow-level group per workflow and ref in `ci.yml`, `apple.yml`, `macos-go.yml`, `hygiene.yml`; `cancel-in-progress` off for `main` and tags. Release and nightly workflows never cancel. go-ci's own job-level guard cancels `main` and nightly runs across workflows today (2); E4 fixes it, and until then those workflows run go-ci's steps inline |
 | 2 | Each workflow runs only for the paths it tests | Applied, but for `hygiene.yml` | `ci.yml` lists an allow-list of what the Go build and tests read, `docs/examples/**` included because tests read it (2). `apple.yml` and `macos-go.yml` run on their paths only. `hygiene.yml` has no filter on purpose: docs are what it guards. Tags get their runs |
-| 3 | No double runs for one change | Applied | Pull requests run the full set; a push to `main` that merges a passed pull request runs the fast set in `ci.yml` and nothing in `apple.yml` and `macos-go.yml` (3.3); a direct push runs the full set. The bot clause is for private repos: not applicable, this repo is public |
+| 3 | No double runs for one change | Applied | Pull requests run the full set; a push to `main` that merges a passed pull request runs the fast set in `ci.yml` and nothing in `apple.yml` (after a full Apple run) and `macos-go.yml` (3.3); a direct push runs the full set. A pull request runs the race list once, `main` and nightly three times (3.2); an API-only pull request runs only Apple's Swift tests (3.4). The bot clause is for private repos: not applicable, this repo is public |
 | 4 | macOS only for jobs that need macOS | Applied | Only Xcode, Swift, launchd and macOS PTY jobs and the darwin release leg run on macOS; each is path- or tag-gated |
 | 5 | Releases and slow suites on tags or a schedule | Applied | Releases on `v*` and `app-v*` tags; fuzz, the 200-cycle restart loop and the service check run nightly, skipped when `main` has not moved |
 | 6 | Cache dependencies keyed on the lockfile | Applied | Go on `go.sum` (go-ci), libghostty on the Makefile pin and `mise.toml`, SwiftPM on `Package.resolved`, gems on `Gemfile.lock` (section 5) |
