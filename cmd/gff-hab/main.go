@@ -1689,6 +1689,7 @@ func serve(args []string) error {
 				s.Publish(e)
 			}
 		}, logger.Printf)
+		defer compacts.Close()
 		if roundsSvc != nil {
 			compacts.typing = func(pane string) bool { return roundsSvc.typedWithin(pane, compactTypingWindow) }
 		}
