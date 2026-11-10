@@ -127,7 +127,10 @@ const roundEventData = 2 << 10
 // refused on a hab that does not run the service. The channels service calls it with its lock
 // held: nothing here calls back into channels.
 func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, string) {
-	if !e.holds() || e.Session() == "" {
+	// The mark alone decides: right after a start the engine and its session come up in the
+	// background, and a message a peer pushed meanwhile waits in the queue, which holds every
+	// batch until the engine's start, rather than being refused for good.
+	if !e.holds() {
 		if label := e.moved(); label != "" {
 			return api.ChannelStateRefused, "Capcom moved to " + label
 		}
