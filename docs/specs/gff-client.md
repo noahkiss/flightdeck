@@ -1195,7 +1195,7 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
 
 ---
 
-### 7.7 Built choices: groups (task-pf1c4cpn)
+### 7.7 Built choices: groups
 
 Agent groups (`groups.md` 5.4) on the status board: a "Groups" section below the sessions and
 above Rounds. Each group has a header line: title, state, home host, items landed of items
