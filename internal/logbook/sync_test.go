@@ -538,22 +538,23 @@ func TestHoldWrites(t *testing.T) {
 // forgets A's tag, C takes A's ops from B in a page cut before B's forget, and B's disk dies.
 // Had C stored the redacted add alone, nothing would ever bring A the forget, and A, which
 // already holds the add, is never sent it again: A would keep the text and fold apart from C.
-// Cases: a page cut by ops, one cut by bytes, and an empty page that carries the add, the
-// forget and B's earlier op as one group past the limit asked for. Each way: pull and push.
+// Cases: a page cut by ops or by bytes, where A's run stops before the add and B's run, with
+// the forget, goes on; and an empty page that carries the add, the forget and B's earlier op as
+// one group past the limit asked for. Each way: pull and push.
 func TestRedactedOpTravelsWithItsForget(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
-		name     string
-		cHolds   bool   // C holds A's create already, so the page starts at the add
-		bFirst   bool   // B writes an op of its own before the forget
-		lim      Limits // the page asked for
-		redacted bool   // the forget reaches C, and through C, A
+		name      string
+		cHolds    bool   // C holds A's create already, so the page starts at the add
+		bFirst    bool   // B writes an op of its own before the forget
+		lim       Limits // the page asked for
+		pastLimit bool   // the page carries the group past the limit asked for
 	}{
 		{name: "cut by ops", lim: Limits{Ops: 2}},
 		{name: "cut by ops, B's own op first", bFirst: true, lim: Limits{Ops: 3}},
 		{name: "cut by bytes", lim: Limits{Bytes: -1}}, // A's two ops fit; the forget does not
-		{name: "empty page", cHolds: true, lim: Limits{Ops: 1}, redacted: true},
-		{name: "empty page, B's own op first", cHolds: true, bFirst: true, lim: Limits{Ops: 1}, redacted: true},
+		{name: "empty page", cHolds: true, lim: Limits{Ops: 1}, pastLimit: true},
+		{name: "empty page, B's own op first", cHolds: true, bFirst: true, lim: Limits{Ops: 1}, pastLimit: true},
 	} {
 		for _, way := range []string{"pull", "push"} {
 			t.Run(tc.name+"/"+way, func(t *testing.T) {
@@ -623,11 +624,11 @@ func TestRedactedOpTravelsWithItsForget(t *testing.T) {
 				if dump(t, a.Store) != dump(t, c.Store) || dumpOps(t, a.Store) != dumpOps(t, c.Store) {
 					t.Fatalf("A and C differ after B died:\n%s\n---\n%s", dumpOps(t, a.Store), dumpOps(t, c.Store))
 				}
-				tags := a.get(t, id).Tags
-				if got := len(tags) == 1 && strings.HasPrefix(tags[0], forgottenPrefix); got != tc.redacted {
-					t.Fatalf("A's tags %q; want redacted %v", tags, tc.redacted)
+				// The forget reached C in the page, and through C, A.
+				if tags := a.get(t, id).Tags; len(tags) != 1 || !strings.HasPrefix(tags[0], forgottenPrefix) {
+					t.Fatalf("A's tags %q, not redacted", tags)
 				}
-				if tc.redacted && len(page) <= lim.Ops {
+				if tc.pastLimit && len(page) <= lim.Ops {
 					t.Fatalf("the group of %d ops kept to the limit asked for", len(page))
 				}
 			})
@@ -672,5 +673,109 @@ func TestRedactedOpGroupCycle(t *testing.T) {
 		if tags := c.get(t, id).Tags; len(tags) != 1 || !strings.HasPrefix(tags[0], forgottenPrefix) {
 			t.Fatalf("C's tags on %s: %q", id, tags)
 		}
+	}
+}
+
+// writeBulk writes n tasks on r, in batches of 100.
+func writeBulk(t testing.TB, r *replica, n int) {
+	t.Helper()
+	for n > 0 {
+		var steps []Step
+		for range min(n, 100) {
+			steps = append(steps, create(NewID(TypeTask), TypeTask, map[string]any{"title": "bulk"}))
+		}
+		r.write(t, nil, steps...)
+		n -= len(steps)
+	}
+}
+
+// The forget's origin is more than a page ahead of the caller: the group cannot fit any page.
+// A's run stops before the redacted add and B's run moves, page by page, until the group fits;
+// the add never lands without its forget, and once B is gone A still gets the forget through C.
+func TestRedactedOpForgetOriginFarAhead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, way := range []string{"pull", "push"} {
+		t.Run(way, func(t *testing.T) {
+			a, b, c := newReplica(t, "A"), newReplica(t, "B"), newReplica(t, "C")
+			id := NewID(TypeFinding)
+			a.write(t, nil, create(id, TypeFinding, map[string]any{"title": "a finding"}))
+			tag := a.write(t, nil, add(id, "tags", "ui")).Ops[0]
+			if _, err := b.Sync(ctx, &direct{to: a}); err != nil {
+				t.Fatal(err)
+			}
+			writeBulk(t, b, PageOps+50)
+			forget := b.write(t, nil, Step{Kind: KindForget, Target: tag}).Ops[0]
+
+			// One page at a time, checking after each that C never holds the redacted add alone.
+			for page := 0; ; page++ {
+				var err error
+				if way == "pull" {
+					c.maxPages = 1
+					_, err = c.Sync(ctx, &direct{to: b})
+				} else {
+					b.maxPages = 1
+					_, err = b.Sync(ctx, &direct{to: c})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if hasOp(t, c.Store, tag) && !hasOp(t, c.Store, forget) {
+					t.Fatalf("page %d: C holds the redacted add without its forget", page)
+				}
+				if hasOp(t, c.Store, forget) && hasOp(t, c.Store, tag) {
+					break
+				}
+				if page > 5 {
+					t.Fatalf("C holds %v after %d pages", c.vec(t), page)
+				}
+			}
+			_ = b.Close()
+			c.maxPages = 0
+			for range 3 {
+				if _, err := a.Sync(ctx, &direct{to: c}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tags := a.get(t, id).Tags; len(tags) != 1 || !strings.HasPrefix(tags[0], forgottenPrefix) {
+				t.Fatalf("A's tags %q, not redacted", tags)
+			}
+		})
+	}
+}
+
+// Many forgets far into another origin cost no extra pages: a fresh replica takes the whole
+// log in about as many pages as it holds ops over PageOps.
+func TestRedactedOpsPageCount(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("writes 5,600 ops; one goroutine, so the race build adds nothing")
+	}
+	t.Parallel()
+	ctx := context.Background()
+	a, b, c := newReplica(t, "A"), newReplica(t, "B"), newReplica(t, "C")
+	id := NewID(TypeFinding)
+	a.write(t, nil, create(id, TypeFinding, map[string]any{"title": "a finding"}))
+	var adds []Step
+	for i := range 300 {
+		adds = append(adds, add(id, "tags", fmt.Sprintf("t%d", i)))
+	}
+	tags := a.write(t, nil, adds...).Ops
+	if _, err := b.Sync(ctx, &direct{to: a}); err != nil {
+		t.Fatal(err)
+	}
+	writeBulk(t, b, 5000)
+	var forgets []Step
+	for _, tag := range tags {
+		forgets = append(forgets, Step{Kind: KindForget, Target: tag})
+	}
+	b.write(t, nil, forgets...)
+	d := &direct{to: b}
+	res, err := c.Sync(ctx, d)
+	if err != nil || res.Stalled != "" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	total := 1 + 300 + 5000 + 300
+	if res.Pulled.Stored != total || len(d.pulls) > total/PageOps+3 {
+		t.Fatalf("stored %d of %d in %d pulls", res.Pulled.Stored, total, len(d.pulls))
 	}
 }
