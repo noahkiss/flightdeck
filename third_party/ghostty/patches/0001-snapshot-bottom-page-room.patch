@@ -10,30 +10,37 @@ memory. After about 40 cycles at a 16 MiB limit the terminal drops scrollback
 that a terminal fed the same bytes keeps.
 
 Give the bottom page of the SCREEN record as many rows as a standard page of
-its width holds, while it still fits in a standard page's memory, and let the
-page decoder accept a destination with more rows than the record declares.
+its width holds, while it still fits in the memory it takes anyway: a
+standard page, or the largest page for one enlarged past that (more styles or
+graphemes). Let the page decoder accept a destination with more rows than the
+record declares.
 
 Applied by `make libghostty` to the pinned Ghostty commit (GHOSTTY_COMMIT).
 
 diff --git a/src/terminal/snapshot/page.zig b/src/terminal/snapshot/page.zig
-index 995d7d5d1c2d..f58e3d10be39 100644
+index 995d7d5d1c2d..fa962eda0ecd 100644
 --- a/src/terminal/snapshot/page.zig
 +++ b/src/terminal/snapshot/page.zig
-@@ -229,24 +229,51 @@ pub const Decoder = struct {
+@@ -229,24 +229,56 @@ pub const Decoder = struct {
          return self.header.pageCapacity() catch unreachable;
      }
  
 +    /// Return the advertised capacity with room for more rows: as many as a
 +    /// standard page of these columns holds, while the page still fits in the
-+    /// memory a standard page takes. A decoded page at its exact capacity is
-+    /// full, so the next row written below it would start a new page and the
-+    /// unused rest of this page's memory would stay allocated and counted
-+    /// against the scrollback limit. Use it for the page that holds the
-+    /// bottom of the screen. Returns the exact capacity when there is no room.
++    /// memory it takes anyway: a standard page, or for a page enlarged past
++    /// that (more styles or graphemes), the largest page. A decoded page at
++    /// its exact capacity is full, so the next row written below it would
++    /// start a new page and the unused rest of this page's memory would stay
++    /// allocated and counted against the scrollback limit. Use it for the page
++    /// that holds the bottom of the screen. Returns the exact capacity when
++    /// there is no room.
 +    pub fn capacityWithRoom(self: *const Decoder) TerminalPageCapacity {
 +        const exact = self.capacity();
 +        const std_size = TerminalPage.layout(terminal_page.std_capacity).total_size;
-+        if (TerminalPage.layout(exact).total_size > std_size) return exact;
++        const limit = if (TerminalPage.layout(exact).total_size > std_size)
++            max_page_size
++        else
++            std_size;
 +        const std_rows = (terminal_page.std_capacity.adjust(
 +            .{ .cols = exact.cols },
 +        ) catch return exact).rows;
@@ -41,7 +48,7 @@ index 995d7d5d1c2d..f58e3d10be39 100644
 +        var cap = exact;
 +        cap.rows = std_rows;
 +        while (cap.rows > exact.rows and
-+            TerminalPage.layout(cap).total_size > std_size) cap.rows -= 1;
++            TerminalPage.layout(cap).total_size > limit) cap.rows -= 1;
 +        return cap;
 +    }
 +

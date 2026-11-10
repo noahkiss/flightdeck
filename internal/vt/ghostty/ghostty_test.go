@@ -80,53 +80,78 @@ func TestReadScreenStyles(t *testing.T) {
 }
 
 // A restored terminal keeps writing into the bottom page it restored, so restarts cost no
-// memory: a terminal snapshotted, restored and written to 60 times holds the same pages and
-// the same scrollback as one that parsed the same bytes. Unpatched libghostty restores that
-// page full, every cycle leaves one more mostly empty page behind, and at this cap of ten
-// pages the chained terminal drops scrollback the reference keeps (the nightly restart loop's
-// failure). third_party/ghostty/patches/0001 fixes it.
+// memory: a terminal snapshotted, restored and written to many times holds the same pages and
+// the same scrollback as one that parsed the same bytes. Unpatched libghostty restores that page
+// full, so every cycle leaves one more mostly empty page behind: the memory check fails within a
+// few cycles, and later, at the cap, the chained terminal would drop scrollback the reference
+// keeps (the nightly restart loop's failure). third_party/ghostty/patches/0001 fixes it. The styled case
+// draws 40 true-colour cells a line, which grows the page's style capacity past a standard page;
+// such a page must get room too.
 func TestRestoreLeavesRoom(t *testing.T) {
-	cfg := vt.Config{Cols: 80, Rows: 24, ScrollbackBytes: 4 << 20}
-	p := Parser{}
-	ref, err := p.New(cfg)
-	if err != nil {
-		t.Fatal(err)
+	plain := func(n int) string { return fmt.Sprintf("\x1b[3%dmline %d\x1b[0m \x1b[1m世界\x1b[0m\r\n", n%8, n) }
+	styled := func(n int) string {
+		var b strings.Builder
+		for c := range 40 {
+			fmt.Fprintf(&b, "\x1b[38;2;%d;%d;%dm#", n%256, c*6, (n*c)%256)
+		}
+		b.WriteString("\x1b[0m\r\n")
+		return b.String()
 	}
-	defer ref.Close()
-	cur, err := p.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { cur.Close() }()
-	line := 0
-	for cycle := range 60 {
-		var b bytes.Buffer
-		for range 7 {
-			line++
-			fmt.Fprintf(&b, "\x1b[3%dmline %d\x1b[0m \x1b[1m世界\x1b[0m\r\n", line%8, line)
-		}
-		ref.Write(b.Bytes())
-		cur.Write(b.Bytes())
-		snap, err := cur.Snapshot(vt.EncodingGhostty, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
-		if err != nil {
-			t.Fatal(err)
-		}
-		next, err := p.Restore(vt.EncodingGhostty, snap, cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		cur.Close()
-		cur = next
-		want, _, _ := ref.(*terminal).MemoryUsage()
-		got, _, _ := cur.(*terminal).MemoryUsage()
-		if got != want {
-			t.Fatalf("cycle %d: the restored terminal holds %d bytes of pages, the reference %d", cycle, got, want)
-		}
-	}
-	wantText, _ := ref.PlainText()
-	gotText, _ := cur.PlainText()
-	if gotText != wantText {
-		t.Fatalf("after 60 restores the text differs: %d lines, the reference %d",
-			strings.Count(gotText, "\n"), strings.Count(wantText, "\n"))
+	for _, tc := range []struct {
+		name          string
+		line          func(int) string
+		cycles, lines int
+		cap           int // well above what the reference holds: near the cap, pages drop at other points
+	}{
+		{"plain", plain, 60, 7, 4 << 20},
+		{"styled", styled, 200, 7, 16 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := vt.Config{Cols: 80, Rows: 24, ScrollbackBytes: tc.cap}
+			p := Parser{}
+			ref, err := p.New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ref.Close()
+			cur, err := p.New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { cur.Close() }()
+			n := 0
+			for cycle := range tc.cycles {
+				var b bytes.Buffer
+				for range tc.lines {
+					n++
+					b.WriteString(tc.line(n))
+				}
+				ref.Write(b.Bytes())
+				cur.Write(b.Bytes())
+				snap, err := cur.Snapshot(vt.EncodingGhostty, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+				if err != nil {
+					t.Fatal(err)
+				}
+				next, err := p.Restore(vt.EncodingGhostty, snap, cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cur.Close()
+				cur = next
+				want, _, _ := ref.(*terminal).MemoryUsage()
+				got, _, _ := cur.(*terminal).MemoryUsage()
+				// A restore may hold less than the reference (an enlarged page restores at the
+				// size it needs), never more.
+				if got > want {
+					t.Fatalf("cycle %d: the restored terminal holds %d bytes of pages, the reference %d", cycle, got, want)
+				}
+			}
+			wantText, _ := ref.PlainText()
+			gotText, _ := cur.PlainText()
+			if gotText != wantText {
+				t.Fatalf("after %d restores the text differs: %d lines, the reference %d",
+					tc.cycles, strings.Count(gotText, "\n"), strings.Count(wantText, "\n"))
+			}
+		})
 	}
 }

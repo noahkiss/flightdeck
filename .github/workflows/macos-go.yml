@@ -3,7 +3,8 @@
 # A change: the holder group under -race three times, then every test with libghostty. The
 # nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh); a
 # scheduled run is skipped when main has not moved since the last passing nightly run. The paths
-# include the parser (internal/vt) and the build pins (Makefile, go.mod, go.sum, mise.toml).
+# include the parser (internal/vt), the build pins (Makefile, go.mod, go.sum, mise.toml) and our
+# Ghostty patches (third_party/ghostty).
 # The image's /bin/bash is 3.2 and it has no Homebrew bash, so the job installs one: the marked
 # shell tests need bash 4.4 (PS0), and with GFF_TEST_BASH set they fail rather than skip.
 name: macOS Go
@@ -20,6 +21,7 @@ on:
       - 'internal/service/**'
       - 'internal/grants/**'
       - 'internal/vt/**'
+      - 'third_party/ghostty/**'
       - 'cmd/gff-hab-holder/**'
       - 'Makefile'
       - 'go.mod'
