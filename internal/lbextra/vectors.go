@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/internal/logbook"
 	"github.com/noahkiss/flightdeck/internal/push"
@@ -277,17 +278,22 @@ func (f FakeEngine) Embed(_ context.Context, texts []string) ([][]float32, error
 }
 
 // Vectors is the index of one replica's records: one vector per record that is not deleted, by
-// the hash of its text, saved to Path after each change.
+// the hash of its text, saved to Path after each change. Sync runs one at a time; it holds the
+// index's lock only between engine calls, so a Search never waits for an embed.
 type Vectors struct {
 	Engine Engine
 	Path   string
 
-	mu     sync.Mutex
+	syncMu sync.Mutex // one Sync at a time
+
+	mu     sync.Mutex // guards the fields below; never held across an Engine call
 	cursor int64
 	loaded bool
 	recs   map[string]vecEntry
 }
 
+// vecEntry is one record's vector. A nil Vec marks a record the engine refused alone: it is
+// tried again when its text changes, and never ranked.
 type vecEntry struct {
 	Hash string
 	Vec  []float32
@@ -300,7 +306,12 @@ type vecFile struct {
 // embedBatch is how many texts go in one Embed call.
 const embedBatch = 32
 
-// Text is what the index embeds for a record: title, body, tags and notes.
+// MaxText caps the text the index embeds for one record, in bytes, cut on a rune boundary.
+// Embedding servers refuse inputs past their model's context (8,192 tokens for common models);
+// the head of a record carries its meaning.
+const MaxText = 8000
+
+// Text is what the index embeds for a record: title, body, tags and notes, at most MaxText bytes.
 func Text(r *logbook.Record) string {
 	var b strings.Builder
 	b.WriteString(r.Title)
@@ -311,49 +322,68 @@ func Text(r *logbook.Record) string {
 		b.WriteString("\n" + strings.Join(r.Tags, " "))
 	}
 	for _, n := range r.Notes {
+		if b.Len() > MaxText {
+			break
+		}
 		b.WriteString("\n" + n.Text)
 	}
-	return b.String()
+	t := b.String()
+	if len(t) <= MaxText {
+		return t
+	}
+	t = t[:MaxText]
+	for len(t) > 0 && !utf8.ValidString(t) {
+		t = t[:len(t)-1]
+	}
+	return t
+}
+
+// refusedAlone reports an engine error that names the input, not the server: a batch that gets
+// it is sent again one text at a time, so one record cannot hold up the rest.
+func refusedAlone(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && (se.Code == http.StatusBadRequest || se.Code == http.StatusRequestEntityTooLarge ||
+		se.Code == http.StatusUnprocessableEntity)
 }
 
 // Sync embeds the records that changed since the last call (every record at the first), and
-// drops the deleted and the gone. A forgotten text changes the record's text, so its vector is
-// made again from what is left.
+// drops the deleted and the gone. A record whose text changed loses its vector at once, before
+// the new one is asked for: a forgotten text (5.7) leaves the index, memory and file, even while
+// the engine is down, and its vector is made again from what is left.
 func (v *Vectors) Sync(ctx context.Context, st *logbook.Store) (int, error) {
+	v.syncMu.Lock()
+	defer v.syncMu.Unlock()
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	if !v.loaded {
 		v.load()
 		v.loaded = true
 	}
+	cursor := v.cursor
+	v.mu.Unlock()
 	var ids []string
 	var next int64
 	var err error
-	if v.cursor == 0 {
+	if cursor == 0 {
 		if next, err = st.Cursor(ctx); err != nil {
 			return 0, err
 		}
 		if ids, err = st.IDs(ctx); err != nil {
 			return 0, err
 		}
-		for id := range v.recs {
-			if !slices.Contains(ids, id) {
-				delete(v.recs, id)
-			}
-		}
-	} else if ids, next, err = st.Changes(ctx, v.cursor); err != nil {
+	} else if ids, next, err = st.Changes(ctx, cursor); err != nil {
 		return 0, err
 	}
 	type job struct{ id, hash, text string }
-	var jobs []job
-	changed := false
+	type state struct {
+		gone bool
+		hash string
+		text string
+	}
+	states := make(map[string]state, len(ids))
 	for _, id := range ids {
 		r, err := st.Get(ctx, id)
 		if errors.Is(err, logbook.ErrNotFound) || err == nil && r.Deleted {
-			if _, ok := v.recs[id]; ok {
-				delete(v.recs, id)
-				changed = true
-			}
+			states[id] = state{gone: true}
 			continue
 		}
 		if err != nil {
@@ -361,13 +391,57 @@ func (v *Vectors) Sync(ctx context.Context, st *logbook.Store) (int, error) {
 		}
 		t := Text(r)
 		sum := sha256.Sum256([]byte(t))
-		h := hex.EncodeToString(sum[:])
-		if e, ok := v.recs[id]; ok && e.Hash == h {
+		states[id] = state{hash: hex.EncodeToString(sum[:]), text: t}
+	}
+	var jobs []job
+	changed := false
+	v.mu.Lock()
+	if cursor == 0 {
+		for id := range v.recs {
+			if _, ok := states[id]; !ok {
+				delete(v.recs, id)
+				changed = true
+			}
+		}
+	}
+	for _, id := range ids {
+		s := states[id]
+		e, ok := v.recs[id]
+		if ok && !s.gone && e.Hash == s.hash {
 			continue
 		}
-		jobs = append(jobs, job{id, h, t})
+		if ok {
+			delete(v.recs, id)
+			changed = true
+		}
+		if !s.gone {
+			jobs = append(jobs, job{id, s.hash, s.text})
+		}
+	}
+	var serr error
+	if changed {
+		serr = v.save()
+	}
+	v.mu.Unlock()
+	if serr != nil {
+		return 0, serr
 	}
 	n := 0
+	put := func(part []job, vs [][]float32) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		for j, jb := range part {
+			v.recs[jb.id] = vecEntry{Hash: jb.hash, Vec: vs[j]}
+			if vs[j] != nil {
+				n++
+			}
+		}
+	}
+	saveNow := func() error {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return v.save()
+	}
 	for i := 0; i < len(jobs); i += embedBatch {
 		part := jobs[i:min(i+embedBatch, len(jobs))]
 		texts := make([]string, len(part))
@@ -375,23 +449,41 @@ func (v *Vectors) Sync(ctx context.Context, st *logbook.Store) (int, error) {
 			texts[j] = jb.text
 		}
 		vs, err := v.Engine.Embed(ctx, texts)
+		if err == nil && len(vs) != len(part) {
+			err = fmt.Errorf("embeddings: %d vectors for %d texts", len(vs), len(part))
+		}
+		if err != nil && refusedAlone(err) {
+			// One text may be what the server refuses: ask for each alone, and mark the
+			// ones it still refuses, so the rest of the index moves on.
+			vs, err = make([][]float32, len(part)), nil
+			for j := range part {
+				one, oerr := v.Engine.Embed(ctx, texts[j:j+1])
+				switch {
+				case oerr == nil && len(one) == 1:
+					vs[j] = one[0]
+				case oerr == nil:
+					err = fmt.Errorf("embeddings: %d vectors for 1 text", len(one))
+				case !refusedAlone(oerr):
+					err = oerr
+				}
+				if err != nil {
+					break
+				}
+			}
+		}
 		if err != nil {
-			if changed || n > 0 {
-				_ = v.save()
+			if n > 0 {
+				_ = saveNow()
 			}
 			return n, err // the cursor stays: the next call tries these again
 		}
-		if len(vs) != len(part) {
-			return n, fmt.Errorf("embeddings: %d vectors for %d texts", len(vs), len(part))
-		}
-		for j, jb := range part {
-			v.recs[jb.id] = vecEntry{Hash: jb.hash, Vec: vs[j]}
-			n++
-		}
+		put(part, vs)
 	}
+	v.mu.Lock()
 	v.cursor = next
-	if changed || n > 0 {
-		return n, v.save()
+	v.mu.Unlock()
+	if n > 0 || len(jobs) > 0 {
+		return n, saveNow()
 	}
 	return n, nil
 }
@@ -400,6 +492,9 @@ func (v *Vectors) Sync(ctx context.Context, st *logbook.Store) (int, error) {
 func (v *Vectors) Search(ctx context.Context, words string, k int) ([]string, error) {
 	q, err := v.Engine.Embed(ctx, []string{words})
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if len(q) != 1 {
