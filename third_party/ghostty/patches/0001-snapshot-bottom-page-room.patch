@@ -1,0 +1,100 @@
+Restore a snapshot's bottom page with room for more rows.
+
+The snapshot decoder allocates every page at the exact capacity its record
+declares, which is the page's used rows. The page holding the bottom of the
+screen is then full, so the first row written after a restore starts a new
+page, and the old page keeps a whole pool page with spare rows it can never
+use. A snapshot keeps that layout, so each snapshot, restore and write cycle
+adds one page that counts against the scrollback byte limit and stays in
+memory. After about 40 cycles at a 16 MiB limit the terminal drops scrollback
+that a terminal fed the same bytes keeps.
+
+Give the bottom page of the SCREEN record as many rows as a standard page of
+its width holds, while it still fits in a standard page's memory, and let the
+page decoder accept a destination with more rows than the record declares.
+
+Applied by `make libghostty` to the pinned Ghostty commit (GHOSTTY_COMMIT).
+
+diff --git a/src/terminal/snapshot/page.zig b/src/terminal/snapshot/page.zig
+index 995d7d5d1c2d..f58e3d10be39 100644
+--- a/src/terminal/snapshot/page.zig
++++ b/src/terminal/snapshot/page.zig
+@@ -229,24 +229,51 @@ pub const Decoder = struct {
+         return self.header.pageCapacity() catch unreachable;
+     }
+ 
++    /// Return the advertised capacity with room for more rows: as many as a
++    /// standard page of these columns holds, while the page still fits in the
++    /// memory a standard page takes. A decoded page at its exact capacity is
++    /// full, so the next row written below it would start a new page and the
++    /// unused rest of this page's memory would stay allocated and counted
++    /// against the scrollback limit. Use it for the page that holds the
++    /// bottom of the screen. Returns the exact capacity when there is no room.
++    pub fn capacityWithRoom(self: *const Decoder) TerminalPageCapacity {
++        const exact = self.capacity();
++        const std_size = TerminalPage.layout(terminal_page.std_capacity).total_size;
++        if (TerminalPage.layout(exact).total_size > std_size) return exact;
++        const std_rows = (terminal_page.std_capacity.adjust(
++            .{ .cols = exact.cols },
++        ) catch return exact).rows;
++        if (std_rows <= exact.rows) return exact;
++        var cap = exact;
++        cap.rows = std_rows;
++        while (cap.rows > exact.rows and
++            TerminalPage.layout(cap).total_size > std_size) cap.rows -= 1;
++        return cap;
++    }
++
+     /// Largest remaining PAGE payload staged into one contiguous buffer.
+     /// This comfortably covers every payload a standard-capacity page can
+     /// produce while keeping the allocation an untrusted length can force
+     /// far below the record framing's four-byte length limit.
+     const max_staged_payload = 8 * 1024 * 1024;
+ 
+     /// Decode the remaining payload into caller-owned native page storage.
+     ///
+-    /// The destination must be freshly initialized with `capacity`. `alloc`
++    /// The destination must be freshly initialized with `capacity`, or with
++    /// `capacityWithRoom`, which differs only in more rows. `alloc`
+     /// is used only for temporary staging, ID remaps, and integrity-check
+     /// storage.
+     pub fn decode(
+         self: *Decoder,
+         destination: *TerminalPage,
+         alloc: Allocator,
+     ) DecodeError!void {
+-        if (!std.meta.eql(destination.capacity, self.capacity())) {
+-            return error.InvalidDestinationCapacity;
++        {
++            var want = self.capacity();
++            if (destination.capacity.rows >= want.rows) want.rows = destination.capacity.rows;
++            if (!std.meta.eql(destination.capacity, want)) {
++                return error.InvalidDestinationCapacity;
++            }
+         }
+ 
+         destination.size = .{
+diff --git a/src/terminal/snapshot/screen.zig b/src/terminal/snapshot/screen.zig
+index 8d5076298a15..b9a703c91c84 100644
+--- a/src/terminal/snapshot/screen.zig
++++ b/src/terminal/snapshot/screen.zig
+@@ -395,10 +395,17 @@ pub fn decode(
+ 
+         // Allocate each PAGE at its declared capacity and decode directly into
+         // builder-owned storage, avoiding an intermediate page representation.
+-        for (0..header.page_count) |_| {
++        // The last page gets room for more rows, so output written after the
++        // restore fills it before a new page starts.
++        for (0..header.page_count) |i| {
+             var decoder: page.Decoder = undefined;
+             try decoder.init(source, try record.nextHeader(source));
+-            const native_page = try builder.allocatePage(decoder.capacity());
++            const native_page = try builder.allocatePage(
++                if (i + 1 == header.page_count)
++                    decoder.capacityWithRoom()
++                else
++                    decoder.capacity(),
++            );
+             try decoder.decode(native_page, alloc);
+         }
+ 

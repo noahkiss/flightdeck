@@ -59,7 +59,7 @@ jobs:
         id: key
         run: |
           set -euo pipefail
-          commit=$(sed -n 's/^GHOSTTY_COMMIT := //p' Makefile)
+          commit=$(make -s ghostty-id) # the pinned commit and the patch id
           zig=$(sed -n 's/^zig = "\(.*\)"$/\1/p' mise.toml)
           [ -n "$commit" ] && [ -n "$zig" ] || { echo "::error::cannot read GHOSTTY_COMMIT or the zig pin"; exit 1; }
           echo "ghostty_key=libghostty-${commit}-zig${zig}" >> "$GITHUB_OUTPUT"

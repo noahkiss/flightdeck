@@ -71,7 +71,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | Command | What it does |
 |---|---|
 | `make gen` | Regenerate the API schema, Go client and Swift package from `api/`, and the block vocabulary's schemas and Go and Swift types from `api/modules/vocab.go` |
-| `make libghostty [GHOSTTY_ZIGFLAGS='-Dtarget=... -Dcpu=baseline']` | Fetch the pinned Ghostty commit and build libghostty-vt into `build/` (needs zig). CI and releases pass a fixed target and the baseline CPU (`docs/specs/ci-release.md` 7.3); empty builds for this machine. Run `make clean-libghostty` before switching flags |
+| `make libghostty [GHOSTTY_ZIGFLAGS='-Dtarget=... -Dcpu=baseline']` | Fetch the pinned Ghostty commit, apply our patches in `third_party/ghostty/patches/`, and build libghostty-vt into `build/` (needs zig). `make ghostty-id` prints the commit and the patches' id, CI's cache key. CI and releases pass a fixed target and the baseline CPU (`docs/specs/ci-release.md` 7.3); empty builds for this machine. Run `make clean-libghostty` before switching flags |
 | `make ci-full`, `make ci-fast` | What `ci.yml` runs after its gofmt and generate checks: `check-pure vet test race`, or `check-pure build` |
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |

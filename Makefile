@@ -6,7 +6,11 @@ ZIG ?= zig
 GHOSTTY_COMMIT := f54340ad77814fe319d136e5e915d6a48de8dd23
 GHOSTTY_SRC := build/ghostty-src
 GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
-GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)
+# Our patches to that commit (third_party/ghostty/patches), applied in name order. Their id is in
+# the stamp and in CI's cache key (`make ghostty-id`), so a changed patch rebuilds the library.
+GHOSTTY_PATCHES := $(sort $(wildcard third_party/ghostty/patches/*.patch))
+GHOSTTY_PATCH_ID := $(if $(GHOSTTY_PATCHES),$(shell cat $(GHOSTTY_PATCHES) | git hash-object --stdin | cut -c1-12),none)
+GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
 # Extra zig build flags for libghostty. CI and releases pass a fixed target and the baseline CPU
 # (docs/specs/ci-release.md 7.3); empty builds for this machine. The stamp does not record them:
 # run `make clean-libghostty` before building with other flags.
@@ -61,7 +65,7 @@ endif
 # The speech build tag selects cmd/gff-hab-speech; pkg-config finds sherpa-onnx and opus.
 SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH)) $(SPEECH_LDFLAGS) CGO_ENABLED=1
 
-.PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty build vet clean-libghostty \
+.PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty ghostty-id build vet clean-libghostty \
 	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast release-build \
 	notices check-notices
 
@@ -77,10 +81,16 @@ $(GHOSTTY_STAMP):
 	@if [ ! -d $(GHOSTTY_SRC)/.git ]; then git -C $(GHOSTTY_SRC) init -q && \
 		git -C $(GHOSTTY_SRC) remote add origin https://github.com/ghostty-org/ghostty.git; fi
 	git -C $(GHOSTTY_SRC) fetch -q --depth 1 origin $(GHOSTTY_COMMIT)
-	git -C $(GHOSTTY_SRC) checkout -q --detach $(GHOSTTY_COMMIT)
+	git -C $(GHOSTTY_SRC) checkout -q -f --detach $(GHOSTTY_COMMIT)
+	$(foreach p,$(GHOSTTY_PATCHES),git -C $(GHOSTTY_SRC) apply $(CURDIR)/$(p) &&) true
+	@rm -f $(GHOSTTY_PREFIX)/.built-*
 	cd $(GHOSTTY_SRC) && $(ZIG) build -Demit-lib-vt -Demit-xcframework=false \
 		-Doptimize=ReleaseFast $(GHOSTTY_ZIGFLAGS) --prefix $(GHOSTTY_PREFIX)
 	@touch $@
+
+# Print the pinned commit and the patch id: what CI keys its libghostty cache on.
+ghostty-id:
+	@echo $(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
 
 clean-libghostty:
 	rm -rf $(GHOSTTY_SRC) $(GHOSTTY_PREFIX)
