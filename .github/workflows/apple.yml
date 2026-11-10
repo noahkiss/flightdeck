@@ -2,9 +2,12 @@
 # project generated from apple/project.yml, built for the iOS Simulator and for macOS, and the
 # Kit package's tests on an iOS Simulator. No signing, no secrets; the Mac app signs ad hoc (no
 # Local.xcconfig in CI). It runs only when the app, the Swift package, the schema it is generated
-# from, or the Go testdata the Swift tests read change. The live tests skip: they need a real hab.
+# from, or the Go testdata the Swift tests read change. A Go change under api/ that alters the schema
+# also regenerates swift/HabAPI, so the schema file and the testdata folders are enough. The live
+# tests skip: they need a real hab.
 # app-release.yml calls it on an app tag (workflow_call), so the release tests the tagged commit
-# with these same inputs.
+# with these same inputs. The push that merges a pull request whose own Apple run passed builds
+# nothing again (spec 3.3); a direct push to main, a tag and a dispatch always run.
 name: Apple
 
 on:
@@ -13,9 +16,12 @@ on:
     paths: &apple
       - 'apple/**'
       - 'swift/HabAPI/**'
-      - 'api/**'
+      - 'api/schema.json'
+      - 'api/testdata/**'
+      - 'api/modules/testdata/**'
       - 'design/icons/**'
       - 'internal/transcript/testdata/**'
+      - 'internal/capcom/testdata/**'
       - 'cmd/gff-hab/testdata/console/**'
       - '.github/workflows/apple.yml'
   pull_request:
@@ -30,8 +36,47 @@ concurrency:
 permissions: {}
 
 jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      run: ${{ steps.mode.outputs.run }}
+    steps:
+      # Skip only when this push to main merges a pull request whose apple.yml run on its head
+      # passed. Any lookup that fails leaves it on.
+      - name: Run or skip
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          run=true
+          if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
+            heads=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null) | .head.sha] | join(" ")') || heads=""
+            for head in $heads; do
+              passed=$(gh run list -R "$REPO" --workflow apple.yml --commit "$head" --status success --limit 1 --json databaseId --jq 'length') || passed=0
+              if [ "$passed" = 1 ]; then
+                echo "This push merges a pull request whose Apple run on $head passed: nothing to run."
+                run=false
+                break
+              fi
+            done
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   apple:
     name: Apple
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
     permissions:
       contents: read
     uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main

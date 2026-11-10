@@ -1,16 +1,18 @@
 # The Go gate on Linux (docs/specs/ci-release.md 3.2): gofmt, the generate check, then
 # `make ci-full` (check-pure, vet, every test with libghostty, the race list) or `make ci-fast`.
 # A pull request and a direct push to main run the full set; the push that merges a pull request
-# whose own run passed runs the fast set. Docs-only changes start nothing (docs/examples stays in:
-# tests read it). The scan for leaks is hygiene.yml.
+# whose own run passed runs the fast set. The paths are an allow-list of what the Go build and tests
+# read (spec 2): Go sources, the API and the Swift package make check-gen compares, scripts, the
+# notice inputs, docs/examples (tests load it), this file and release.yml (which reads this filter).
+# Docs, the app, design, capcom-engine and agent files start nothing. The scan for leaks is hygiene.yml.
 name: CI
 
 on:
   push:
     branches: [main]
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '!design/**', '!LICENSE']
+    paths: ['go.mod', 'go.sum', 'Makefile', 'race-pkgs.mk', 'mise.toml', 'cmd/**', 'internal/**', 'api/**', 'swift/**', 'scripts/**', 'third_party/**', 'NOTICE', '!**/*.md', 'docs/examples/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '.github/workflows/ci.yml', '.github/workflows/release.yml']
   pull_request:
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '!design/**', '!LICENSE']
+    paths: ['go.mod', 'go.sum', 'Makefile', 'race-pkgs.mk', 'mise.toml', 'cmd/**', 'internal/**', 'api/**', 'swift/**', 'scripts/**', 'third_party/**', 'NOTICE', '!**/*.md', 'docs/examples/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '.github/workflows/ci.yml', '.github/workflows/release.yml']
   workflow_dispatch:
 
 concurrency:
@@ -30,6 +32,7 @@ jobs:
       actions: read
     outputs:
       full: ${{ steps.mode.outputs.full }}
+      shards: ${{ steps.mode.outputs.full == 'true' && '["0/4","1/4","2/4","3/4","4/4"]' || '["all"]' }}
       ghostty_key: ${{ steps.key.outputs.ghostty_key }}
     steps:
       - name: Checkout
@@ -72,22 +75,36 @@ jobs:
 
   # The job name says which set ran: the release check accepts only a run with a passing
   # "go (full) / ..." job (docs/specs/ci-release.md 7.4).
+  # The full set runs as five jobs on five runners: shard 0/4 is gofmt, the generate check,
+  # check-pure, vet and every package but cmd/gff-hab; shards 1/4 to 4/4 each run a quarter of
+  # cmd/gff-hab's tests, the long pole, in make test and make race (scripts/go-test-split.sh,
+  # spec 3.2). The job names start "go (full)": the release check accepts a run whose "go (full)"
+  # jobs passed (spec 7.4).
   go:
-    name: go (${{ needs.plan.outputs.full == 'true' && 'full' || 'fast' }})
+    name: go (${{ needs.plan.outputs.full == 'true' && 'full' || 'fast' }}) ${{ matrix.shard }}
     needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
+    # go-ci-concurrency-key until noahkiss/workflows#19 (the concurrency-key input) merges; then @main.
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-concurrency-key
     with:
-      generate-check: true
+      fmt: ${{ matrix.shard == '0/4' || matrix.shard == 'all' }}
+      generate-check: ${{ matrix.shard == '0/4' || matrix.shard == 'all' }}
       mise: true
       cache-path: build/libghostty-vt
       cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+      concurrency-key: ${{ matrix.shard }}
       # A hosted runner is slower than a dev box; the scale raises every test's upper bound.
       # GHOSTTY_ZIGFLAGS is inline because go-ci has no env input: on a cache miss, make builds
       # the release's baseline libghostty, the one the -baseline key promises.
       commands: >-
-        GFF_TEST_TIMEOUT_SCALE=3 make ${{ needs.plan.outputs.full == 'true' && 'ci-full' || 'ci-fast' }}
+        GFF_TEST_TIMEOUT_SCALE=3 make
+        ${{ needs.plan.outputs.full != 'true' && 'ci-fast' || (matrix.shard == '0/4' && 'ci-full' || 'test race') }}
+        GO_TEST_SHARD=${{ matrix.shard }}
         GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
-      timeout-minutes: 75
+      timeout-minutes: 45

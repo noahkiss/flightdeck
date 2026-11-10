@@ -1,0 +1,37 @@
+# The Capcom engine's own gate (docs/specs/ci-release.md 3.7): the TypeScript engine in
+# capcom-engine/, through the shared node-ci on Linux. npm ci, then typecheck, build and the tests,
+# which run against a fake SDK and a fake hab (no credential, no network). It runs only when the
+# engine or this file changes; the Go tests in ci.yml use a stub engine and never read this folder.
+# The whole job is the fast check, so a push to main runs it as a pull request does.
+name: Capcom engine
+
+on:
+  push:
+    branches: [main]
+    paths: &engine
+      - 'capcom-engine/**'
+      - '!capcom-engine/**/*.md'
+      - '.github/workflows/capcom-engine.yml'
+  pull_request:
+    paths: *engine
+  workflow_dispatch:
+
+concurrency:
+  group: capcom-engine-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions: {}
+
+jobs:
+  engine:
+    name: Engine
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/node-ci.yml@main
+    with:
+      working-directory: capcom-engine
+      scripts: |
+        typecheck
+        build
+        test
+      timeout-minutes: 15
