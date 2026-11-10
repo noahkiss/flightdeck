@@ -10,6 +10,9 @@ GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
 # the stamp and in CI's cache key (`make ghostty-id`), so a changed patch rebuilds the library.
 GHOSTTY_PATCHES := $(sort $(wildcard third_party/ghostty/patches/*.patch))
 GHOSTTY_PATCH_ID := $(if $(GHOSTTY_PATCHES),$(shell cat $(GHOSTTY_PATCHES) | git hash-object --stdin | cut -c1-12),none)
+ifeq ($(GHOSTTY_PATCH_ID),)
+$(error cannot compute the id of $(GHOSTTY_PATCHES): git hash-object failed)
+endif
 GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
 # Extra zig build flags for libghostty. CI and releases pass a fixed target and the baseline CPU
 # (docs/specs/ci-release.md 7.3); empty builds for this machine. The stamp does not record them:
@@ -82,6 +85,7 @@ $(GHOSTTY_STAMP):
 		git -C $(GHOSTTY_SRC) remote add origin https://github.com/ghostty-org/ghostty.git; fi
 	git -C $(GHOSTTY_SRC) fetch -q --depth 1 origin $(GHOSTTY_COMMIT)
 	git -C $(GHOSTTY_SRC) checkout -q -f --detach $(GHOSTTY_COMMIT)
+	git -C $(GHOSTTY_SRC) clean -fdq
 	$(foreach p,$(GHOSTTY_PATCHES),git -C $(GHOSTTY_SRC) apply $(CURDIR)/$(p) &&) true
 	@rm -f $(GHOSTTY_PREFIX)/.built-*
 	cd $(GHOSTTY_SRC) && $(ZIG) build -Demit-lib-vt -Demit-xcframework=false \
