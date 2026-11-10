@@ -23,7 +23,7 @@ name = "Ghostty"
 url = "https://github.com/ghostty-org/ghostty"
 license = "MIT"
 files = ["third_party/licenses/ghostty/LICENSE"]
-release = { in = "gff, gff-hab (libghostty-vt)", version = "make:GHOSTTY_COMMIT" }
+release = { in = "gff, gff-hab (libghostty-vt, built with the patches in third_party/ghostty/patches of the Flightdeck repository)", version = "make:GHOSTTY_COMMIT" }
 app = { in = "Flightdeck (GhosttyKit, the libghostty build of libghostty-spm)", version = "the commit in libghostty-spm's Ghostty.ref" }
 
 [[component]]
