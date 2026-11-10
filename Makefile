@@ -155,9 +155,11 @@ vet: libghostty
 GO_TEST_SHARD ?= all
 SPLIT_PKG := ./cmd/gff-hab
 
-# Run every Go test, the libghostty tests included.
+# Run every Go test, the libghostty tests included. cmd/gff-hab alone runs past go test's 10-minute
+# default on a hosted macOS runner (about 11 minutes, November 2026).
+TEST_TIMEOUT ?= 30m
 test: libghostty
-	$(GHOSTTY_ENV) GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -tags ghostty -- ./...
+	$(GHOSTTY_ENV) GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -tags ghostty -timeout $(TEST_TIMEOUT) -- ./...
 
 # Run the tests that need no C toolchain and no libghostty.
 test-pure:
