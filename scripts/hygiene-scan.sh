@@ -66,6 +66,9 @@ fi
 
 AWK=${GFF_HYGIENE_AWK:-awk}
 command -v "$AWK" >/dev/null 2>&1 || die "no awk named $AWK"
+# gawk 5.4 matches with its new MinRX engine unless this is set; CI's gawk 5.3 uses the GNU
+# matchers. A dev box then matches with the same engine as CI, about 13 times faster on the tree.
+export GAWK_GNU_MATCHERS=1
 
 # Private rules reach awk through the environment only: never argv, never a file the script
 # writes. Each one is checked on its own first, with awk's stderr silenced, because awk prints a
