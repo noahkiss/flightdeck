@@ -1,8 +1,9 @@
 # The Go gate on Linux (docs/specs/ci-release.md 3.2): gofmt, the generate check, then
 # `make ci-full` (check-pure, vet, every test with libghostty, the race list) or `make ci-fast`.
 # A pull request and a direct push to main run the full set; the push that merges a pull request
-# whose own run passed runs the fast set. The paths are an allow-list of what the Go build and tests
-# read (spec 2): Go sources, the API and the Swift package make check-gen compares, scripts, the
+# whose own run passed runs the fast set. A pull request runs the race list once (RACE_COUNT=1);
+# a direct push to main and the nightly run (nightly.yml) run it three times.
+# The paths are an allow-list of what the Go build and tests read (spec 2): Go sources, the API and the Swift package make check-gen compares, scripts, the
 # notice inputs, docs/examples (tests load it), this file and release.yml (which reads this filter).
 # Docs, the app, design, capcom-engine and agent files start nothing. The scan for leaks is hygiene.yml.
 name: CI
@@ -105,5 +106,6 @@ jobs:
         GFF_TEST_TIMEOUT_SCALE=3 make
         ${{ needs.plan.outputs.full != 'true' && 'ci-fast' || (matrix.shard == '0/4' && 'ci-full' || 'test race') }}
         GO_TEST_SHARD=${{ matrix.shard }}
+        RACE_COUNT=${{ github.event_name == 'pull_request' && '1' || '3' }}
         GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
       timeout-minutes: 45

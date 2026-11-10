@@ -107,8 +107,9 @@ when it was written:
 
 ## Core tests in detail
 
-`make race` runs the race set (`go test -race -count=3`) on Linux in CI and on macOS when holder
-packages change. `make fuzz` runs each holderproto fuzz target for `FUZZTIME` (default 30s); the
+`make race` runs the race set (`go test -race -count=3`; `RACE_COUNT` sets the count) on Linux in
+CI, once on a pull request and three times on a direct push to `main` and nightly. The holder packages run three
+times on macOS when they change. `make fuzz` runs each holderproto fuzz target for `FUZZTIME` (default 30s); the
 nightly job runs it. `GFF_RESTART_LOOP=200 go test -run TestRestartLoop
 ./internal/link/` is the nightly restart loop of core test 1; the push run does 20.
 

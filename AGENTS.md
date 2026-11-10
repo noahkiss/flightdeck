@@ -48,7 +48,7 @@ Go code builds on macOS or Linux; Swift and SwiftUI need a Mac with Xcode.
 |---|---|
 | `make gen`, `make check-gen` | Regenerate the API schema, Go client and Swift package from `api/`; fail when one is stale |
 | `make libghostty` | Build the pinned libghostty-vt with our patches into `build/` (needs zig; `docs/layout.md`) |
-| `make test`, `make test-pure`, `make race` | Every Go test with libghostty; the tests that need no cgo; the race set three times |
+| `make test`, `make test-pure`, `make race` | Every Go test with libghostty; the tests that need no cgo; the race set three times (`RACE_COUNT`) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make ci-full`, `make ci-fast` | What `ci.yml` runs after its gofmt and generate checks |
 | `cd swift/HabAPI && swift test` | The generated Swift package |
