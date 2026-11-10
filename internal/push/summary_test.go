@@ -277,20 +277,29 @@ func TestSummaryLate(t *testing.T) {
 
 // TestSummaryWaitMidBatch: a request that arrives while the notifier waits on another's
 // summary waits its own time from its arrival, not after the first wait ends.
+//
+// B arrives just after A's wait began. Run from its arrival, B's wait ends near B+wait; run
+// after A's wait, it would end near B+2*wait. The check splits the two at B+wait*3/2, so the
+// slack either way is half a wait, not a few milliseconds of a loaded runner's time.
 func TestSummaryWaitMidBatch(t *testing.T) {
 	s := &summarizer{line: "Run tests?", delay: time.Minute}
 	const wait = 400 * time.Millisecond
 	r := summaryRig(t, s, wait)
 	r.store.Register("dev-phone", phone, Production, allKinds, false)
 	r.n.State(blocked("req-a", "make test"))
-	time.Sleep(wait / 2)
+	waitFor(t, func() bool { return s.calls.Load() == 1 })
+	time.Sleep(wait / 8)
 	b := blocked("req-b", "go vet ./...")
 	b.Pane = "p2"
 	sentB := time.Now()
 	r.n.State(b)
 	waitFor(t, func() bool { return len(alerts(r.prod.requests(), phone)) == 2 })
-	if el := time.Since(sentB); el > wait+wait/4 {
-		t.Fatalf("the second banner came %v after its request, with a %v wait", el, wait)
+	el := time.Since(sentB)
+	if el < wait {
+		t.Fatalf("the second banner came %v after its request, before its %v wait ended", el, wait)
+	}
+	if el > wait*3/2 {
+		t.Fatalf("the second banner came %v after its request, with a %v wait: it waited after the first", el, wait)
 	}
 }
 
