@@ -120,8 +120,11 @@ jobs:
   test:
     name: Test
     needs: verify
+    # apple.yml's plan job reads pull requests and runs; on a tag it always runs the build.
     permissions:
       contents: read
+      pull-requests: read
+      actions: read
     uses: ./.github/workflows/apple.yml
 
   ios:

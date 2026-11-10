@@ -2,9 +2,10 @@
 # holder packages run here when they change, plus a nightly run (owner decision, 2026-10-31).
 # A change: the holder group under -race three times, then every test with libghostty. The
 # nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh); a
-# scheduled run is skipped when main has not moved since the last passing nightly run. The paths
-# include the parser (internal/vt), the build pins (Makefile, go.mod, go.sum, mise.toml) and our
-# Ghostty patches (third_party/ghostty).
+# scheduled run is skipped when main has not moved since the last passing nightly run, and the push
+# that merges a pull request whose own run passed is skipped too: that night's run covers the merge.
+# The paths include the parser (internal/vt), the build pins (Makefile, go.mod, go.sum, mise.toml)
+# and our Ghostty patches (third_party/ghostty).
 # The image's /bin/bash is 3.2 and it has no Homebrew bash, so the job installs one: the marked
 # shell tests need bash 4.4 (PS0), and with GFF_TEST_BASH set they fail rather than skip.
 name: macOS Go
@@ -27,6 +28,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'mise.toml'
+      - 'scripts/go-test-split.sh'
       - 'scripts/service-check.sh'
       - 'scripts/macos-bundle.sh'
       - '.github/workflows/macos-go.yml'
@@ -49,6 +51,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
       actions: read
     outputs:
       run: ${{ steps.guard.outputs.run }}
@@ -66,7 +69,7 @@ jobs:
           [ -n "$commit" ] && [ -n "$zig" ] || { echo "::error::cannot read GHOSTTY_COMMIT or the zig pin"; exit 1; }
           echo "ghostty_key=libghostty-${commit}-zig${zig}" >> "$GITHUB_OUTPUT"
 
-      - name: Skip a nightly run when main has not moved
+      - name: Skip a nightly run when main has not moved, and a merge already tested
         id: guard
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,6 +85,17 @@ jobs:
               echo "main is still at $SHA, which the last nightly run passed; nothing to do."
               run=false
             fi
+          fi
+          if [ "$EVENT" = push ]; then
+            heads=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null) | .head.sha] | join(" ")') || heads=""
+            for head in $heads; do
+              passed=$(gh run list -R "$REPO" --workflow macos-go.yml --commit "$head" --status success --limit 1 --json databaseId --jq 'length') || passed=0
+              if [ "$passed" = 1 ]; then
+                echo "This push merges a pull request whose run on $head passed; the nightly run covers the merge."
+                run=false
+                break
+              fi
+            done
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
 

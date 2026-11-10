@@ -74,6 +74,7 @@ One workflow file per concern. Each row is one file in `.github/workflows/`.
 | `ci.yml` (Go, Linux) | `push` to `main`, `pull_request`, `workflow_dispatch` | `paths`: the Go group (3.1), written as `'**'` then negations, with `docs/examples/**` added back | Group per workflow and ref; cancel unless the ref is `main` |
 | `apple.yml` (Swift and Xcode, macOS) | `push` to `main`, `pull_request`, `workflow_dispatch` | `paths`: the Apple group (section 3.1) | Same as `ci.yml` |
 | `macos-go.yml` (Go on macOS) | `push` to `main`, `pull_request` on the holder group; `schedule` nightly | `paths`: the holder group (section 3.1) | Same; the nightly run never cancels. Holder group: owner decision, Q2 |
+| `capcom-engine.yml` (TypeScript, Linux) | `push` to `main`, `pull_request`, `workflow_dispatch` | `paths`: the Engine group (3.1) | Same as `ci.yml` |
 | `hygiene.yml` | `push` to any branch, `pull_request`, tags | None: docs are where leaks happen most | Group per ref; cancel superseded runs |
 | `nightly.yml` | `schedule` (one daily slot, UTC), `workflow_dispatch` | None | One group; never cancels |
 | `release.yml` (Go binaries) | `push` of a `v*` tag; `workflow_dispatch` with a `tag` input | None (path filters never apply to tags) | Group per tag; never cancels |
@@ -98,14 +99,22 @@ and a `cancel-in-progress` input (default `true`, today's behaviour) lets a call
 `${{ github.ref != 'refs/heads/main' }}`. Every go-ci caller here passes that expression. Until E4
 merges, these workflows run go-ci's steps inline instead.
 
-**The `ci.yml` path filter.** A plain `paths-ignore: docs/**` would skip runs that change
-`docs/examples/`, whose config files the settings, catalog, peers, speech and gff client tests
-load (rule 2: never ignore a file the build or tests use). So `ci.yml` lists `paths` with negations, in this
-order (a later pattern wins):
+**The `ci.yml` path filter.** The repo holds several stacks (Go, the Apple app, the Capcom engine
+in TypeScript), so each workflow lists the paths it reads, not the paths it ignores (rule 2). `ci.yml`
+runs for the Go sources and build files, `api/` and `swift/` (`make check-gen` compares both),
+`scripts/` (the hygiene scan and the test splitter have Go tests or run in `make`), the notice
+inputs (`third_party/`, `NOTICE`, the two `apple/` files of 7.8), `docs/examples/` (the settings,
+catalog, peers, speech and gff client tests load its config files, and it holds a Go package), its
+own file, and `release.yml`, which reads this filter (7.4). Markdown is left out, then
+`docs/examples/**` is added back; a later pattern wins:
 
 ```yaml
-paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '!design/**', '!LICENSE']
+paths: ['go.mod', 'go.sum', 'Makefile', 'race-pkgs.mk', 'mise.toml', 'cmd/**', 'internal/**', 'api/**', 'swift/**', 'scripts/**', 'third_party/**', 'NOTICE', '!**/*.md', 'docs/examples/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '.github/workflows/ci.yml', '.github/workflows/release.yml']
 ```
+
+Docs, `AGENTS.md`, `.claude/`, `design/`, the app, `capcom-engine/`, `spikes/`, `renovate.json` and
+the other workflows start no Go run. `internal/pathfilter`'s `TestCIPaths` checks the filter on
+those files.
 
 **Required checks.** No check is required on `main` (the default). `ci.yml`, `apple.yml` and
 `macos-go.yml` are path-filtered, so a pull request that touches none of their paths never starts
@@ -130,10 +139,11 @@ spec reserves its secret names in section 6 only.
 
 | Group | Paths | Why |
 |---|---|---|
-| Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE` | Nothing builds them. Only the hygiene scan runs |
-| Go | everything not in Docs, `apple/` or `design/`; `docs/examples/**`, `NOTICE`, `apple/App/Acknowledgements.txt` and `apple/FlightdeckKit/Package.resolved` included | `ci.yml`. Go tests load the example config files in `docs/examples/`; `make check-notices` compares the two notice files with what `Package.resolved` and the rest produce (7.8) |
-| Apple | `apple/**`, `swift/HabAPI/**`, `api/**`, `design/icons/**`, `api/testdata/**`, `internal/transcript/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`. `GoldenTests`, `ChatSnapshotTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
-| Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `cmd/gff-hab-holder/**`, `scripts/service-check.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
+| Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE`, `.claude/**`, `renovate.json` | Nothing builds them. Only the hygiene scan runs |
+| Go | `go.mod`, `go.sum`, `Makefile`, `race-pkgs.mk`, `mise.toml`, `cmd/**`, `internal/**`, `api/**`, `swift/**`, `scripts/**`, `third_party/**`, `NOTICE`, `docs/examples/**`, `apple/App/Acknowledgements.txt`, `apple/FlightdeckKit/Package.resolved`, `ci.yml` and `release.yml`; no Markdown outside `docs/examples/` (2) | `ci.yml`. Go tests load the example config files in `docs/examples/`; `make check-notices` compares the two notice files with what `Package.resolved` and the rest produce (7.8) |
+| Apple | `apple/**`, `swift/HabAPI/**`, `api/schema.json`, `api/testdata/**`, `api/modules/testdata/**`, `design/icons/**`, `internal/transcript/testdata/**`, `internal/capcom/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`; a schema change regenerates `swift/HabAPI`, so a Go change under `api/` that leaves the schema alone tests nothing here. `GoldenTests`, `BlockTests`, `ChatSnapshotTests`, `CapcomEntryTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
+| Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `internal/vt/**`, `cmd/gff-hab-holder/**`, `Makefile`, `go.mod`, `go.sum`, `mise.toml`, `scripts/go-test-split.sh`, `scripts/service-check.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
+| Engine | `capcom-engine/**` but its Markdown, `.github/workflows/capcom-engine.yml` | `capcom-engine.yml` (3.7). The Go tests run a stub engine and read nothing here |
 
 `swift/` stays in the Go group too: `make check-gen` diffs `api` and `swift`, so a hand edit to
 the generated Swift package must fail the Go gate.
@@ -159,8 +169,8 @@ Two jobs.
 | `cache-path` | `build/libghostty-vt` |
 | `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline` (section 5) |
 | `cancel-in-progress` | `${{ github.ref != 'refs/heads/main' }}` (E4) |
-| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make ci-full GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `vet`, `test`, `race`) |
-| `commands`, fast | `GFF_TEST_TIMEOUT_SCALE=3 make ci-fast GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `build`) |
+| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make ci-full GO_TEST_SHARD=0/4 GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `vet`, `test`, `race`) |
+| `commands`, fast | `GFF_TEST_TIMEOUT_SCALE=3 make ci-fast GO_TEST_SHARD=all GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `build`) |
 | job name | `go (full)` or `go (fast)`, from the `plan` output (7.4) |
 
 **`GHOSTTY_ZIGFLAGS` sits inline in every command that can build libghostty.** go-ci has no `env`
@@ -169,7 +179,21 @@ input. Without the flags, a cache miss would build a native-CPU libghostty and s
 | `timeout-minutes` | `75`. The full set ran about 40 minutes by 2026-11; a train of several stages passed 45 |
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
-binaries. `make race` runs the race list three times. Both run with `GFF_TEST_TIMEOUT_SCALE=3`
+binaries. `make race` runs the race list three times.
+
+**The full set runs as five jobs.** `cmd/gff-hab` holds the end-to-end tests, about 400 of them,
+one after another: on one runner it took 8 minutes of `make test` and 28 of the 33 minutes of
+`make race` (November 2026), and the job ran 36 to 45 minutes. The `go` job is a matrix over
+`GO_TEST_SHARD`, one runner each, through go-ci's `concurrency-key` input: `0/4` runs gofmt, the
+generate check, `check-pure`, `vet`, and `test` and `race` over every package but `cmd/gff-hab`;
+`1/4` to `4/4` each run `make test race` over a quarter of `cmd/gff-hab`'s top-level tests
+(`scripts/go-test-split.sh`: the sorted names in batches of 16, dealt round the four shards). Every
+test still runs, with the same flags and count, in exactly one shard. Separate runners, not
+workers on one: three or four test processes on one runner's four cores starved the timing tests
+in `internal/link` and `internal/logbook`, which then failed. A fast run is one job, `all`.
+Locally `GO_TEST_SHARD` defaults to `all`, which runs `go test` as before.
+The race list lives in `race-pkgs.mk`, not the Makefile, so adding a package to it does not start
+`macos-go.yml` (3.5). Both run with `GFF_TEST_TIMEOUT_SCALE=3`
 (a hosted runner is slower than a dev box; `testing.md`, Principles). go-ci has no `env` input,
 so the commands set it inline (`GFF_TEST_TIMEOUT_SCALE=3 make test`).
 
@@ -197,13 +221,19 @@ steps in the same order.
   on its head succeeded.
 - Most changes here land as direct pushes to `main`, so most runs are full. That is rule 3's
   "direct push runs the full suite".
+- `apple.yml` and `macos-go.yml` follow the same rule with no fast set: the push that merges a
+  pull request whose own run of that workflow passed runs nothing. Each has a `plan` job that asks
+  the same two questions. `macos-go.yml`'s nightly run covers the merged `main` that night; a direct
+  push, a tag, a dispatch and a schedule always run. `app-release.yml` grants the called
+  `apple.yml` `pull-requests: read` and `actions: read` for its `plan` job.
 - A **Renovate** pull request runs the full set. The bot rule of rule 3 is for private repos; this
   repo is public.
 
 ### 3.4 `apple.yml`: the Apple build
 
-One job on macOS, a call of the shared `xcode-ci.yml` (E5, section 11.2), which runs these
-steps from its inputs:
+A `plan` job (ubuntu, a few seconds) that skips the build on a push merging a pull request whose
+Apple run passed (3.3), then one job on macOS, a call of the shared `xcode-ci.yml` (E5, section
+11.2), which runs these steps from its inputs:
 
 1. Check out. Select `/Applications/Xcode_27.1.app` by path (`xcode-app`, through
    `DEVELOPER_DIR`); fail when it is missing (never the image default, never a beta or release
@@ -232,7 +262,7 @@ not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 ### 3.5 `macos-go.yml`: Go on macOS (owner decision, Q2)
 
-A `plan` job as in `ci.yml` (the guard and the cache key), then `go-ci.yml` with the `runner`
+A `plan` job as in `ci.yml` (the guard, the merged pull request skip of 3.3 and the cache key), then `go-ci.yml` with the `runner`
 extension set to the macOS label, `mise`, and the libghostty cache keyed `<ghostty_key>-macOS-ARM64-baseline`. Commands on a holder change:
 `go test -race -count=3` over the holder group's packages, then `make test`. First the job runs
 `brew install bash` and sets `GFF_TEST_BASH` to it: the image's `/bin/bash` is 3.2 and it ships
@@ -268,6 +298,17 @@ cache, so the linux arm64 release leg starts warm (5).
 
 Timeout 75 minutes: the full set takes most of it. The slow suites themselves budget about 10 minutes (`testing.md`, Layers).
 
+### 3.7 `capcom-engine.yml`: the Capcom engine
+
+One job on ubuntu, a call of the shared `node-ci.yml` with `working-directory: capcom-engine`:
+`npm ci` from `package-lock.json` (cached by `setup-node`), then the package scripts `typecheck`,
+`build` and `test`, the same as `cd capcom-engine && npm ci && npm run typecheck && npm run build &&
+npm test` locally. The tests run against a fake SDK and a fake hab, with no credential and no
+network. The Node version is `capcom-engine/.node-version` (24); the engine's floor stays
+`engines.node` in `package.json`. Timeout 15 minutes. Before this workflow, nothing in CI ran the
+engine's tests, so a Renovate bump of an SDK was gated by nothing. The job is the fast check
+itself, so a push to `main` runs it as the pull request did (rule 3).
+
 ---
 
 ## 4. Runners
@@ -277,7 +318,7 @@ holds: macOS runs only what needs it.
 
 | Job | Runner | Why |
 |---|---|---|
-| `ci.yml`, `hygiene.yml`, `nightly.yml`, every `plan`, `verify` and `publish` job | `ubuntu-latest` | Default. go-ci runs here |
+| `ci.yml`, `capcom-engine.yml`, `hygiene.yml`, `nightly.yml`, every `plan`, `verify` and `publish` job | `ubuntu-latest` | Default. go-ci and node-ci run here |
 | `apple.yml` | `xcode-27` (arm64) | Xcode 27.1, Swift |
 | `macos-go.yml` | `macos-26` (arm64) | launchd, macOS PTYs; needs only the command line clang |
 | `release.yml` linux amd64 leg | `ubuntu-24.04` | Native cgo build (7.3) |
@@ -1222,6 +1263,7 @@ with an Acknowledgements row that opens the file as text.
 |---|---|---|
 | Go gate on Linux | `go-ci.yml` | Fits for pure Go. Needs `mise`, `cache-path`, `cache-key` for libghostty |
 | Go on macOS | `go-ci.yml` | Needs `runner` too |
+| Capcom engine (TypeScript) | `node-ci.yml` | Fits as it is (`working-directory`, `scripts`) |
 | Apple build (Swift tests, Xcode builds) | `xcode-ci.yml` (E5) | Built in stage 4; `apple.yml` calls it |
 | TestFlight upload and Mac notarization | `actions/xcode-match-signing`, `actions/xcode-archive-upload` (E6) | Built in stage 4; composite, not a reusable workflow. `app-release.yml` (stage 8) uses them |
 | Sign and notarize the helper bundles | `actions/macos-sign-notarize` | Not used: it signs one item with a `.p12` secret, while `macos-bundle.sh` signs two bundles and a binary, compares requirements and staples. The script stays the one copy |
@@ -1260,8 +1302,8 @@ The CI-minute rules the shared workflows follow, and how this repo applies each.
 | # | Rule | Status | How, or why not |
 |---|---|---|---|
 | 1 | Cancel superseded runs | Applied once E4 merges; partly applied until then | Workflow-level group per workflow and ref in `ci.yml`, `apple.yml`, `macos-go.yml`, `hygiene.yml`; `cancel-in-progress` off for `main` and tags. Release and nightly workflows never cancel. go-ci's own job-level guard cancels `main` and nightly runs across workflows today (2); E4 fixes it, and until then those workflows run go-ci's steps inline |
-| 2 | Skip runs that test nothing | Applied | `ci.yml` lists `paths` with negations: docs, `apple/` and `design/` are left out, `docs/examples/**` stays in because tests read it (2). `apple.yml` and `macos-go.yml` run on their paths only. `hygiene.yml` has no filter on purpose: docs are what it guards. Tags get their runs |
-| 3 | No double runs for one change | Applied | Pull requests run the full set; a push to `main` that merges a passed pull request runs the fast set (3.3); a direct push runs the full set. The bot clause is for private repos: not applicable, this repo is public |
+| 2 | Each workflow runs only for the paths it tests | Applied, but for `hygiene.yml` | `ci.yml` lists an allow-list of what the Go build and tests read, `docs/examples/**` included because tests read it (2). `apple.yml` and `macos-go.yml` run on their paths only. `hygiene.yml` has no filter on purpose: docs are what it guards. Tags get their runs |
+| 3 | No double runs for one change | Applied | Pull requests run the full set; a push to `main` that merges a passed pull request runs the fast set in `ci.yml` and nothing in `apple.yml` and `macos-go.yml` (3.3); a direct push runs the full set. The bot clause is for private repos: not applicable, this repo is public |
 | 4 | macOS only for jobs that need macOS | Applied | Only Xcode, Swift, launchd and macOS PTY jobs and the darwin release leg run on macOS; each is path- or tag-gated |
 | 5 | Releases and slow suites on tags or a schedule | Applied | Releases on `v*` and `app-v*` tags; fuzz, the 200-cycle restart loop and the service check run nightly, skipped when `main` has not moved |
 | 6 | Cache dependencies keyed on the lockfile | Applied | Go on `go.sum` (go-ci), libghostty on the Makefile pin and `mise.toml`, SwiftPM on `Package.resolved`, gems on `Gemfile.lock` (section 5) |

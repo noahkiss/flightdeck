@@ -149,9 +149,15 @@ build: libghostty
 vet: libghostty
 	$(GHOSTTY_ENV) $(GO) vet -tags ghostty ./...
 
+# cmd/gff-hab holds most of the test time, one test after another. GO_TEST_SHARD runs one share of
+# test and race (scripts/go-test-split.sh): 0/n every other package, i/n the i-th share of
+# cmd/gff-hab's tests. CI runs each shard as its own job; all, the default, runs go test as before.
+GO_TEST_SHARD ?= all
+SPLIT_PKG := ./cmd/gff-hab
+
 # Run every Go test, the libghostty tests included.
 test: libghostty
-	$(GHOSTTY_ENV) $(GO) test -tags ghostty ./...
+	$(GHOSTTY_ENV) GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -tags ghostty -- ./...
 
 # Run the tests that need no C toolchain and no libghostty.
 test-pure:
@@ -159,20 +165,13 @@ test-pure:
 
 # Run the holder, structure, link, control, data stream, connection library, gff client core, pane size, command
 # marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push, summaries, speech and logbook tests three times under the race
-# detector. No libghostty needed.
-RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
-	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
-	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/hosts/... ./internal/merge/... ./internal/peers/... ./internal/catalog/... ./internal/capcom/... ./internal/capcomthread/... ./internal/capcomengine/... ./internal/personal/... ./internal/channels/... ./internal/board/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
-	./internal/cmdmarks/... ./internal/readtools/... ./internal/confirm/... ./internal/suggest/... \
-	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
-	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/summary/... ./internal/settings/... ./internal/rounds/... \
-	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... ./internal/logbook/... ./internal/lbsync/... ./internal/lbsvc/... ./internal/lbcli/... ./internal/habits/... ./internal/modhost/... ./internal/modview/... \
-	./internal/pairing/... ./internal/devicestore/... ./internal/heavy/... ./internal/governor/... ./internal/aliases/... ./internal/groups/... \
-	./cmd/...
+# detector. No libghostty needed. The list is in race-pkgs.mk: the macOS Go job starts on a change to
+# this Makefile (for its build pins), and a new package in the list is no reason to start it.
+include race-pkgs.mk
 # cmd/gff-hab under -race -count=3 runs past go test's 10-minute default on a loaded machine.
 RACE_TIMEOUT ?= 30m
 race:
-	$(GO) test -race -count=3 -timeout $(RACE_TIMEOUT) $(RACE_PKGS)
+	GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -race -count=3 -timeout $(RACE_TIMEOUT) -- $(RACE_PKGS)
 
 # Run each fuzz target in internal/holderproto for FUZZTIME, one after the other. For nightly use.
 FUZZTIME ?= 30s

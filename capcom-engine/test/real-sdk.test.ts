@@ -99,7 +99,8 @@ async function run(status: number, f: (h: { hab: FakeHab; code: () => number | u
     (engine as any).route?.close();
     await hab.close();
     api.close();
-    await fs.rm(dir, { recursive: true, force: true });
+    // The SDK's binary can still be writing into cfg as the engine exits; rm retries on ENOTEMPTY.
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
