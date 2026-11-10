@@ -194,14 +194,20 @@ var eventActing = []string{"channel.send", "confirm.request",
 	"group.create", "group.amend", "group.close", "group.retry", "member.compact", "member.handoff", "member.action",
 	"round.create", "round.update", "round.delete", "round.run", "round.pause", "round.unpause"}
 
-// routeGuard refuses an acting call from the engine's route while the running turn is an event
-// turn: no user message opened it or joined it (9.4).
+// routeTurnWait is how long an acting call from the engine's route waits for its turn to be
+// known: the call comes from inside a turn, but the turn.started before it travels on the
+// engine's own connection and can arrive after it.
+const routeTurnWait = 5 * time.Second
+
+// routeGuard refuses an acting call from the engine's route unless the running turn is a user
+// turn: a user message opened it or joined it (9.4). An event turn's call is refused, and so is
+// one with no turn known, since only a turn runs tools.
 func (e *capcomEngine) routeGuard(pane, method string) error {
 	if pane != capcomRoute || !slices.Contains(eventActing, method) {
 		return nil
 	}
-	st := e.link.Status()
-	if st.Turn == "" || st.UserTurn {
+	st := e.link.WaitTurn(routeTurnWait)
+	if st.Turn != "" && st.UserTurn {
 		return nil
 	}
 	return control.Errorf(api.ErrorKindDenied, "%s is not allowed in a turn Capcom began on its own, from an event or an agent's report: ask the user first, and act once they answer", method)
