@@ -952,6 +952,12 @@ it; it holds letters, digits, dots, dashes and underscores only. The rules reach
 the environment only: never a command-line argument (visible in the process list), never a file
 the script writes.
 
+**Each rule compiles once.** gawk keeps one compiled regex per `~` in the program text and
+compiles again whenever the string there changes. One `~` in a loop over the rules compiled every
+rule on every line: with 32 rules, `--tree` took over two minutes. The script writes one `~` per
+rule number into the program instead; that text holds rule numbers only, never a rule. The
+built-in rules are regex literals.
+
 **A bad rule stops the scan.** Before scanning, the script checks each rule in its own `awk` run
 with stderr silenced: a line with no tab, a name outside the set above, a regex that does not
 compile, or one that matches an empty line (it would hit every line). Any such rule exits 2 with
