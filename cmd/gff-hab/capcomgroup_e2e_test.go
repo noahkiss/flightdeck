@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,11 +33,17 @@ func threadItem(items []api.CapcomItem, f func(api.CapcomItem) bool) (api.Capcom
 func TestCapcomGroup(t *testing.T) {
 	needGit(t)
 	fakes, work := groupFakes(t)
-	e := newServiceEnv(t, "")
+	// Events reach Capcom at once and at any hour: an event turn comes from a real notice.
+	e := newServiceEnv(t, "\n[settings]\n\"capcom.quiet_hours\" = \"00:00-00:00\"\n\"capcom.events.batch_max\" = 1\n")
 	e.env = append(e.env, "PATH="+fakes+":/usr/bin:/bin", "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
 		"CLAUDE_CONFIG_DIR="+filepath.Join(work, "claude"), noRaceExitSleep)
 	e.serve()
 	c := e.control()
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("stub log:\n%s", e.stubLog())
+		}
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(150*time.Second))
 	defer cancel()
 	run(t, "capcom", "assign", "-socket", e.sock, "self")
@@ -67,8 +74,12 @@ func TestCapcomGroup(t *testing.T) {
 		return text
 	}
 
-	// An event turn may not start a group (capcom-service.md 9.4).
-	run(t, "capcom", "say", "-socket", e.sock, "event:group "+string(pj))
+	// An event turn may not start a group (capcom-service.md 9.4): a notice starts it, and the
+	// stub calls group_create with the plan from its folder.
+	if err := os.WriteFile(filepath.Join(e.stubDir, "plan.json"), pj, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notifyAt(t, e.sock, "active", "try group")
 	if r := reply("group: ", "error"); !strings.Contains(r, "ask the user first") || !strings.Contains(r, `"denied"`) {
 		t.Fatalf("an event turn's group_create: %s", r)
 	}
@@ -139,7 +150,10 @@ func TestCapcomGroup(t *testing.T) {
 	}
 
 	// An event turn may not close it either; the user's close sends Capcom the result.
-	run(t, "capcom", "say", "-socket", e.sock, "event:groupclose "+gid)
+	if err := os.WriteFile(filepath.Join(e.stubDir, "group"), []byte(gid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notifyAt(t, e.sock, "active", "try groupclose")
 	if r := reply("groupclose: ", "error"); !strings.Contains(r, "ask the user first") {
 		t.Fatalf("an event turn's group_close: %s", r)
 	}

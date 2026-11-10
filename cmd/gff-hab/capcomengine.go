@@ -645,10 +645,11 @@ func (e *capcomEngine) GroupCard(group, text string) {
 	}
 }
 
-// eventTurn reports whether the engine runs a turn an event started (capcom-service.md 9.4).
+// eventTurn reports whether the engine runs a turn no user item opened or joined
+// (capcom-service.md 9.4): the same rule as routeGuard's.
 func (e *capcomEngine) eventTurn() bool {
 	st := e.link.Status()
-	return st.Turn != "" && st.Origin == "event"
+	return st.Turn != "" && !st.UserTurn
 }
 
 // groupsCapcomOf is the engine as the groups' Capcom, or nil with no engine.
