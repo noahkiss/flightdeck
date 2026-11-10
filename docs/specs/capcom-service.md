@@ -1235,7 +1235,7 @@ Rejected: a Capcom-only job list on the home hab. It could not use watchers on o
 without rebuilding round runners, and it would show a second "scheduled things" list beside
 Rounds.
 
-### 9.7 Built (stage A7, task-hj8cnr5v)
+### 9.7 Built choices (A7)
 
 The queue is `internal/capcomevents`; gff-hab's side is `cmd/gff-hab/capcomevents.go`; the link
 sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice open:
