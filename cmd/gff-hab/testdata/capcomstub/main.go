@@ -22,7 +22,8 @@
 // that starts with "event:" runs as an event turn, as does an input of kind event (an event
 // batch, logged as "event batch <id> <n>: <texts>"), whose texts steer it: "stay quiet" sends no
 // reply; "try handoff" and "try start" call channel.send and confirm.request on the pane route,
-// in any turn, and reply with the answer.
+// in any turn, and reply with the answer; "try group" calls group.create with the plan in
+// $STUB_DIR/plan.json and "try groupclose" group.close of the group id in $STUB_DIR/group.
 //
 // With GFF_HAB_CAPCOM_KIND=codex it stands in for the Codex engine (A6): ready names engine
 // codex and only images, interrupt, resume_by_id and usage_events; "usage <pct>" sends the
@@ -408,6 +409,13 @@ func turns(sock, token string) {
 		}
 		if strings.Contains(text, "try start") {
 			reply = "start: " + routeCall(sock, token, `{"method":"confirm.request","params":{"kind":"start_session","folder":"/nowhere"}}`)
+		}
+		if strings.Contains(text, "try groupclose") {
+			g, _ := os.ReadFile(filepath.Join(os.Getenv("STUB_DIR"), "group"))
+			reply = "groupclose: " + routeCall(sock, token, fmt.Sprintf(`{"method":"group.close","params":{"group":%q}}`, strings.TrimSpace(string(g))))
+		} else if strings.Contains(text, "try group") {
+			plan, _ := os.ReadFile(filepath.Join(os.Getenv("STUB_DIR"), "plan.json"))
+			reply = "group: " + routeCall(sock, token, fmt.Sprintf(`{"method":"group.create","params":{"plan":%s}}`, plan))
 		}
 		if !(origin == "event" && strings.Contains(text, "stay quiet")) {
 			send(map[string]any{"type": "reply", "turn": turn, "part": 0, "text": reply})
