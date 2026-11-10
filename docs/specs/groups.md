@@ -584,7 +584,7 @@ it on the home hab.
   started worktree setup or fetch first (B4). The app's group card and gff's board section are
   built after B3 (5.9).
 
-### 5.9 Built choices: the group card (task-pf1c4cpn)
+### 5.9 Built choices: the group card
 
 The client half of 5.4 and 3.2. Code: `apple/FlightdeckKit/Sources/FlightdeckKit/Groups/`
 (the records, the cards, the actions), `Confirm/GroupPlanDraft.swift` (the plan card's edits),
@@ -626,7 +626,7 @@ The client half of 5.4 and 3.2. Code: `apple/FlightdeckKit/Sources/FlightdeckKit
   no item and no member, or a new item with no lead. Member rows are told apart by hab and
   name, as the hab tells members apart.
 
-### 5.9 Built choices (stage B9, task-3vwhq3dn)
+### 5.9 Built choices (stage B9)
 
 `cmd/gff-hab/groupmove.go` runs the hand-over of 5.7; `groups.Find` picks a group's home from
 the catalog copies.
@@ -739,7 +739,7 @@ branch:
 - The lead's next `lane_submit` waits until the verdict. After a pass with fixes, the hab tells
   the lead to fast-forward to the review branch before any new change.
 
-### 6.5 Built choices (stage B7, task-3eez53r6)
+### 6.5 Built choices (stage B7)
 
 `internal/groups` holds the reviewer choice, the submit and verdict rules, and the idle check;
 gff-hab's group service runs them on the home hab.
@@ -885,7 +885,7 @@ When every item is landed or dropped, or the coordinator calls `group_close`:
   it.
 - It marks the Logbook plan record `done` (or `dropped` when nothing landed).
 
-### 7.6 Built choices (stage B4, task-ur5zmuah)
+### 7.6 Built choices (stage B4)
 
 `internal/lane` runs git and the project's commands for one land; `internal/groups` holds the
 lane's rules on the record; gff-hab's group service runs the lane on the home hab.
