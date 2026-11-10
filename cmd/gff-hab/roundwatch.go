@@ -70,6 +70,9 @@ type watcher struct {
 	// own says gff-hab is hanging the running watcher up (a wake, an edit, a stop): its exit
 	// counts for nothing.
 	own bool
+	// pausing says quick exits stopped the watcher and the scheduler's pause of its round is
+	// not in the store yet: until exitDone clears it, a look starts nothing.
+	pausing bool
 }
 
 // watchSup is the watchers' supervisor. One goroutine (loop) starts and stops watchers; the
@@ -299,6 +302,11 @@ func (w *watchSup) reconcile(id string) {
 	if wt == nil {
 		wt = w.get(id)
 	}
+	if wt.pausing {
+		// The round's pause is on its way (exitDone); exitDone looks again once it landed.
+		w.mu.Unlock()
+		return
+	}
 	if wt.state == watchStopped && wt.reason != "" {
 		// A round that starts again (an unpause, an edit) starts with a clean backoff.
 		wt.back.Reset()
@@ -509,7 +517,7 @@ func (w *watchSup) exitLocked(id string, wt *watcher, how string, now time.Time)
 	delay, pause := wt.back.Exit(wt.started, now, false, w.lim())
 	w.stopTimerLocked(wt)
 	if pause {
-		wt.state, wt.reason, wt.next = watchStopped, watchReasonExits, time.Time{}
+		wt.state, wt.reason, wt.next, wt.pausing = watchStopped, watchReasonExits, time.Time{}, true
 		return watchExit{id: id, how: how, pause: true, session: wt.session, exits: wt.back.Quick}
 	}
 	wt.state, wt.next = watchBackoff, now.Add(delay)
@@ -532,6 +540,13 @@ func (w *watchSup) exitDone(x watchExit) {
 	if err := w.s.sched.PauseWatcher(x.id, x.how, x.session, x.exits); err != nil && !errors.Is(err, rounds.ErrNotFound) {
 		w.s.cfg.logf("rounds: round %s: pause after its watcher's exits: %v", x.id, err)
 	}
+	// The pause is in the store now (or failed): a look follows the round from here.
+	w.mu.Lock()
+	if wt := w.m[x.id]; wt != nil {
+		wt.pausing = false
+	}
+	w.mu.Unlock()
+	w.look(x.id)
 }
 
 // woke hangs up every running watcher at a wake, after its settle, and starts it again: its

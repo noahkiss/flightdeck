@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -111,7 +113,7 @@ func (f *watchFakes) counts() (starts, hangUps int, last string) {
 	return len(f.starts), len(f.hangUps), last
 }
 
-func newWatchSupTest(t *testing.T, lim rounds.WatchLimits) (*roundsService, *watchFakes, *watchClock, string) {
+func newWatchSupTest(t *testing.T, lim rounds.WatchLimits, more ...func(*roundsConfig)) (*roundsService, *watchFakes, *watchClock, string) {
 	t.Helper()
 	f := &watchFakes{exited: map[string]bool{}}
 	clk := &watchClock{wall: time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)}
@@ -141,6 +143,9 @@ func newWatchSupTest(t *testing.T, lim rounds.WatchLimits) (*roundsService, *wat
 			f.mu.Unlock()
 			svc.watchers.exited(pane, "ended by SIGHUP")
 			return nil
+		}
+		for _, m := range more {
+			m(c)
 		}
 	})
 	f.mu.Lock()
@@ -260,6 +265,51 @@ func TestWatchSupPauseAfter(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if n, _, _ := f.counts(); n != 2 {
 		t.Fatalf("%d starts after the pause, want 2", n)
+	}
+}
+
+// A look at the round between the quick exit that pauses it and the scheduler's pause (here
+// the round.updated that exitDone publishes first) starts nothing: the watcher waits for the
+// pause, then stays stopped with the crash as its last exit.
+func TestWatchSupPauseInFlight(t *testing.T) {
+	lim := rounds.DefaultWatchLimits()
+	lim.PauseAfter = 1
+	var svcp atomic.Pointer[roundsService]
+	var looked atomic.Bool
+	svc, f, _, project := newWatchSupTest(t, lim, func(c *roundsConfig) {
+		c.publish = func(ev structure.Event) {
+			svc := svcp.Load()
+			if svc == nil || ev.Type != control.EventRoundUpdated {
+				return
+			}
+			w := svc.watchers.state(ev.ID)
+			if e, _ := svc.store.Get(ev.ID); w == nil || w.Reason != watchReasonExits || e.Round.Paused || looked.Swap(true) {
+				return
+			}
+			// The loop gets the look and has time to act on it before the pause lands.
+			svc.watchers.look(ev.ID)
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
+	svcp.Store(svc)
+	svc.start()
+	id := createWatchRound(t, svc, project, "w")
+	waitUntil(t, "the first start", func() bool { n, _, _ := f.counts(); return n == 1 })
+	_, _, pane := f.counts()
+	f.crash(pane) // quick exit 1: pauses
+	if !looked.Load() {
+		t.Fatal("the test's look between the exit and the pause never ran")
+	}
+	waitUntil(t, "the pause", func() bool {
+		e, _ := svc.store.Get(id)
+		return e.Round.Paused && e.State.PausedReason == rounds.ReasonWatcherPause
+	})
+	time.Sleep(200 * time.Millisecond)
+	if n, h, _ := f.counts(); n != 1 || h != 0 {
+		t.Fatalf("%d starts and %d hang-ups around the pause, want 1 and 0", n, h)
+	}
+	if w := svc.watchers.state(id); w.State != watchStopped || w.Reason != watchReasonExits || w.LastExit != "exit status 3" || w.Restarts != 0 {
+		t.Fatalf("after the pause %+v", w)
 	}
 }
 
