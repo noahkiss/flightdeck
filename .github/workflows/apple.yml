@@ -94,8 +94,17 @@ jobs:
         FlightdeckMac | generic/platform=macOS
       tests: |
         FlightdeckKit-Package | ios-simulator | apple/FlightdeckKit
-      # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5).
-      xcodebuild-args: -onlyUsePackageVersionsFromResolvedFile
+      # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5). A test
+      # that hangs fails by name after 2 minutes (at most 5 with its own allowance), so the job
+      # never sits until its own timeout with nothing in the log (spec 3.4).
+      xcodebuild-args: |
+        -onlyUsePackageVersionsFromResolvedFile
+        -test-timeouts-enabled
+        YES
+        -default-test-execution-time-allowance
+        120
+        -maximum-test-execution-time-allowance
+        300
       spm-cache-key-file: apple/FlightdeckKit/Package.resolved
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
       timeout-minutes: 90
