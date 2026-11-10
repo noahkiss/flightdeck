@@ -966,7 +966,9 @@ the script writes.
 compiles again whenever the string there changes. One `~` in a loop over the rules compiled every
 rule on every line: with 32 rules, `--tree` took over two minutes. The script writes one `~` per
 rule number into the program instead; that text holds rule numbers only, never a rule. The
-built-in rules are regex literals.
+built-in rules are regex literals. The script also sets `GAWK_GNU_MATCHERS=1`: gawk 5.4 otherwise
+matches with its newer MinRX engine, which took 53 s on the tree where the GNU matchers of CI's
+gawk 5.3 take 4 s, and a dev box should match with the same engine as CI.
 
 **A bad rule stops the scan.** Before scanning, the script checks each rule in its own `awk` run
 with stderr silenced: a line with no tab, a name outside the set above, a regex that does not
