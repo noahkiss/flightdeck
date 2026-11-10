@@ -67,9 +67,14 @@ func TestBoardMatchesRoundLs(t *testing.T) {
 		if start < 0 {
 			return false
 		}
+		// Count the rows of the Rounds section only: it ends at the next section's header, such as
+		// Heavy runs, whose row for host one shows when the test's disk is below the heavy-run floor.
 		shown := 0
 		for _, l := range lines[start+1:] {
-			if strings.HasPrefix(l, "  ") && strings.Contains(l, " one ") {
+			if !strings.HasPrefix(l, "  ") {
+				break
+			}
+			if strings.Contains(l, " one ") {
 				shown++
 			}
 		}
