@@ -839,9 +839,9 @@ Code: `apple/FlightdeckKit/Sources/FlightdeckKit/Chat/CapcomThread.swift`, `Chat
   characters, category `capcom-reply`, collapse id `capcom-<item>`, the item id in the
   metadata, no Ask action. The notification service extension turns it into a communication
   notification (`INSendMessageIntent`, sender "Capcom" with a drawn avatar). iOS refuses that
-  without the Communication Notifications capability, and the plain banner shows: the
-  capability must be enabled for the app id in the signing store before the entitlement is
-  added. Reply asks for unlock, since the device key signs the call, and sends
+  without the Communication Notifications capability, and the plain banner shows. The iOS
+  app id carries the capability, its App Store profile in the signing store names it, and the
+  app's entitlements (`apple/App/iOS/App.entitlements`) claim it. Reply asks for unlock, since the device key signs the call, and sends
   `session.send` with an idempotency key; on failure a "Not sent" notice, and the text waits
   in the Capcom composer.
 
