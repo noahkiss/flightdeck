@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
-import { CODEX_CAPABILITIES, CODEX_DEFAULT_MODEL, EPHEMERAL_VAR } from '../src/codex.js';
+import { CODEX_CAPABILITIES, CODEX_DEFAULT_MODEL, ENGINE_HOME, EPHEMERAL_VAR } from '../src/codex.js';
 import { findCodexBinary, wrapperScript, writeWrapper } from '../src/codexbin.js';
 import { CODEX_FEATURES_OFF, offeredTools, onCodexSurface } from '../src/codexpolicy.js';
 import { SEED_MARKER } from '../src/context.js';
@@ -355,14 +355,98 @@ test('the API key reaches the SDK as apiKey and nowhere else; inherited keys nev
   });
 });
 
-test('the user\'s own Codex login: no key passes, CODEX_HOME does', async () => {
+test('the user\'s own Codex login: no key passes; the engine home links the login and the threads', async () => {
   await withRig({ hello: { credential: { kind: 'login', value: 'ignored' } } }, async (r) => {
     await codexStarted(r);
     r.hab.input('it1', 'hi');
     await r.hab.wait('turn.ended');
     const main = r.codex.turns[0]!.thread.codexOptions;
     assert.equal(main.apiKey, undefined);
-    assert.equal(main.env!.CODEX_HOME, r.home);
+    const home = path.join(r.cwd, ENGINE_HOME);
+    assert.equal(main.env!.CODEX_HOME, home);
+    assert.deepEqual((await fs.readdir(home)).sort(), ['auth.json', 'sessions']);
+    assert.equal(await fs.readlink(path.join(home, 'auth.json')), path.join(r.home, 'auth.json'));
+    assert.equal(await fs.readlink(path.join(home, 'sessions')), path.join(r.home, 'sessions'));
+  });
+});
+
+test('every run gets the engine home as CODEX_HOME and HOME; the start check its own', async () => {
+  await withRig({}, async (r) => {
+    await codexStarted(r);
+    r.hab.input('it1', 'hi');
+    await r.hab.wait('turn.ended');
+    const home = path.join(r.cwd, ENGINE_HOME);
+    assert.ok(r.codex.options.length >= 2);
+    for (const o of r.codex.options) {
+      const want = o.baseUrl ? path.join(r.cwd, '.start-check') : home;
+      assert.equal(o.env!.CODEX_HOME, want);
+      assert.equal(o.env!.HOME, want);
+    }
+  });
+});
+
+test('under an API key the engine home holds only the sessions link', async () => {
+  await withRig(
+    {
+      setup: async ({ cwd }) => {
+        // left by an earlier start under the login
+        await fs.mkdir(path.join(cwd, ENGINE_HOME));
+        await fs.writeFile(path.join(cwd, ENGINE_HOME, 'auth.json'), '{}');
+      },
+    },
+    async (r) => {
+      await codexStarted(r);
+      r.hab.input('it1', 'hi');
+      await r.hab.wait('turn.ended');
+      assert.deepEqual(await fs.readdir(path.join(r.cwd, ENGINE_HOME)), ['sessions']);
+    },
+  );
+});
+
+test('each start clears what the CLI would load from the engine home and keeps its own state', async () => {
+  const deny = ['AGENTS.md', 'AGENTS.override.md', 'config.toml'];
+  const denyDirs = ['skills/one', '.agents/skills/two', 'rules', 'prompts', 'plugins'];
+  await withRig(
+    {
+      setup: async ({ cwd }) => {
+        const h = path.join(cwd, ENGINE_HOME);
+        await fs.mkdir(path.join(h, 'sessions'), { recursive: true }); // a folder, not the link
+        for (const d of denyDirs) await fs.mkdir(path.join(h, d), { recursive: true });
+        for (const f of deny) await fs.writeFile(path.join(h, f), 'planted');
+        await fs.writeFile(path.join(h, 'skills', 'one', 'SKILL.md'), 'planted');
+        await fs.writeFile(path.join(h, 'state_5.sqlite'), 'the CLI\'s own state');
+      },
+    },
+    async (r) => {
+      await codexStarted(r);
+      r.hab.input('it1', 'hi');
+      await r.hab.wait('turn.ended');
+      const h = path.join(r.cwd, ENGINE_HOME);
+      assert.deepEqual((await fs.readdir(h)).sort(), ['sessions', 'state_5.sqlite']);
+      assert.equal(await fs.readlink(path.join(h, 'sessions')), path.join(r.home, 'sessions'));
+    },
+  );
+});
+
+test('a fresh thread lands in the user\'s CODEX_HOME through the sessions link', async () => {
+  await withRig({}, async (r) => {
+    await codexStarted(r);
+    r.hab.input('it1', 'hi');
+    await r.hab.wait('turn.ended');
+    const id = r.codex.turns[0]!.thread.id!;
+    const file = await findRollout(r.home, id);
+    assert.ok(file?.startsWith(path.join(r.home, 'sessions') + path.sep));
+    assert.deepEqual([...(await rolloutHandedIds(file!))], ['it1']);
+  });
+});
+
+test('an engine home that cannot be made stops the engine with error start', async () => {
+  await withRig({ setup: ({ cwd }) => fs.writeFile(path.join(cwd, ENGINE_HOME), 'not a folder') }, async (r) => {
+    const err = await r.hab.wait('error');
+    assert.equal(err.kind, 'start');
+    assert.match(err.text, /Codex home/);
+    await until(() => r.exitCode() === 1, 5000, 'exit 1');
+    assert.equal(r.codex.turns.length, 0);
   });
 });
 

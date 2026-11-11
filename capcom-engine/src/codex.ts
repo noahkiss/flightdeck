@@ -82,6 +82,27 @@ export interface CodexDeps {
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 
+// The CLI's home for every run but the start check: <engine folder>/.codex-home. The CLI loads
+// $CODEX_HOME/AGENTS.md, $CODEX_HOME/skills and $HOME/.agents/skills whatever --ignore-user-config
+// says (verified on 0.167.0), so it gets a home of its own, as CODEX_HOME and HOME. The home holds
+// two links into the user's CODEX_HOME and nothing copied: `sessions`, so the threads stay where
+// `codex resume <id>` finds them (11), and, under the login, `auth.json`, which the CLI reads and
+// refreshes through the link (verified). Everything else the CLI writes there is its own state.
+export const ENGINE_HOME = '.codex-home';
+// Names a home of ours must never hold: the CLI would load them.
+const HOME_DENY = ['AGENTS.md', 'AGENTS.override.md', 'skills', '.agents', 'config.toml', 'rules', 'prompts', 'plugins'];
+
+async function linkTo(target: string, at: string): Promise<void> {
+  try {
+    const st = await fs.lstat(at);
+    if (st.isSymbolicLink() && (await fs.readlink(at)) === target) return;
+    await fs.rm(at, { recursive: true, force: true });
+  } catch {
+    // not there
+  }
+  await fs.symlink(target, at);
+}
+
 // Variables the CLI never gets from the engine's environment: the engine route's token (3.3)
 // and any OpenAI key not from hello.
 const DROP_ENV = new Set([ENGINE_TOKEN_VAR, 'OPENAI_API_KEY', 'CODEX_API_KEY', EPHEMERAL_VAR, 'GFF_HAB_CAPCOM_KIND']);
@@ -321,6 +342,7 @@ export class CodexEngine {
     const timer = setTimeout(() => ac.abort(), Math.max(1, ms));
     try {
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      await this.prepareHome();
       const codex = this.d.codex(this.codexOptions({ mcp: false, ephemeral: true, developer: SUMMARY_SYSTEM }));
       const th = codex.startThread({
         ...this.threadOptions(this.settings.small_model ?? this.settings.model ?? CODEX_DEFAULT_MODEL),
@@ -390,7 +412,9 @@ export class CodexEngine {
   codexOptions(o: { mcp: boolean; ephemeral?: boolean; developer?: string; baseUrl?: string; apiKey?: string; home?: string }): CodexOptions {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(this.d.env)) if (v !== undefined && !DROP_ENV.has(k)) env[k] = v;
-    if (o.home) env.CODEX_HOME = o.home;
+    const home = o.home ?? path.join(this.d.cwd, ENGINE_HOME);
+    env.CODEX_HOME = home;
+    env.HOME = home;
     if (o.ephemeral) env[EPHEMERAL_VAR] = '1';
     const config: Record<string, any> = { features: { ...CODEX_FEATURES_OFF } };
     if (o.mcp && this.mcp) {
@@ -417,6 +441,19 @@ export class CodexEngine {
       networkAccessEnabled: false,
       webSearchMode: 'live',
     };
+  }
+
+  // prepareHome makes the engine's own Codex home: the links of ENGINE_HOME and nothing the CLI
+  // would load as instructions or skills.
+  async prepareHome(): Promise<void> {
+    const home = path.join(this.d.cwd, ENGINE_HOME);
+    const user = codexHome(this.d.env);
+    await fs.mkdir(home, { recursive: true, mode: 0o700 });
+    await fs.mkdir(path.join(user, 'sessions'), { recursive: true, mode: 0o700 });
+    for (const n of HOME_DENY) await fs.rm(path.join(home, n), { recursive: true, force: true });
+    await linkTo(path.join(user, 'sessions'), path.join(home, 'sessions'));
+    if (this.credential?.kind === 'login') await linkTo(path.join(user, 'auth.json'), path.join(home, 'auth.json'));
+    else await fs.rm(path.join(home, 'auth.json'), { force: true });
   }
 
   // The start check (5.1 on Codex), once per engine process.
@@ -471,6 +508,14 @@ export class CodexEngine {
     if (gen !== this.gen || this.exiting) return;
     this.handed = new Set();
     this.rollout = undefined;
+    try {
+      await this.prepareHome();
+    } catch (e) {
+      this.sendError(`the engine's Codex home: ${(e as Error).message}`, 'start', true);
+      await this.exit(1);
+      return;
+    }
+    if (gen !== this.gen || this.exiting) return;
     const codex = this.d.codex(this.codexOptions({ mcp: true }));
     if (resume) {
       const file = await findRollout(codexHome(this.d.env), resume);
