@@ -1,6 +1,8 @@
 package vt
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -9,8 +11,8 @@ import (
 // Fake is a Parser for tests that must run without cgo. It keeps a plain grid of runes: it moves the
 // cursor, wraps, scrolls into a scrollback, switches to the alternate screen, and counts wide
 // characters as two cells. It ignores colours, styles and most modes, and keeps the last OSC 0 or 2
-// title. Its only snapshot encoding is EncodingVT, which holds the title, the text and the cursor
-// position alone.
+// title. Its only snapshot encoding is EncodingVT, which holds the title, the text, the mouse and
+// cursor key modes, and the cursor position.
 type Fake struct{}
 
 var _ Parser = Fake{}
@@ -512,6 +514,13 @@ func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) 
 	if t.altActive {
 		b.WriteString("\x1b[?1049h\x1b[H\x1b[2J")
 		b.WriteString(strings.Join(rowText(t.alt), "\r\n"))
+	}
+	// The modes a program set, so a client that attaches late still sends it the mouse and
+	// the application cursor keys.
+	for _, n := range slices.Sorted(maps.Keys(fakeModes)) {
+		if t.modes[n] {
+			b.WriteString("\x1b[?" + strconv.Itoa(n) + "h")
+		}
 	}
 	// The cursor goes last, so bytes written after a restore land where they would have.
 	b.WriteString("\x1b[" + strconv.Itoa(t.y+1) + ";" + strconv.Itoa(t.x+1) + "H")
