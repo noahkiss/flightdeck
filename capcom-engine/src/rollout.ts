@@ -11,9 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { MARKER_RE } from './transcript.js';
 
-// The Codex home: $CODEX_HOME, else ~/.codex.
+// The Codex home: $CODEX_HOME, else ~/.codex, as an absolute path (the engine home's links must
+// not resolve against the engine home itself).
 export function codexHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  return path.resolve(env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 }
 
 // findRollout finds the thread's rollout under <home>/sessions, newest day first. A thread id is

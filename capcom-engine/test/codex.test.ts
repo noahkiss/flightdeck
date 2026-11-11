@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
-import { CODEX_CAPABILITIES, CODEX_DEFAULT_MODEL, ENGINE_HOME, EPHEMERAL_VAR } from '../src/codex.js';
+import { CODEX_CAPABILITIES, CODEX_DEFAULT_MODEL, CodexEngine, ENGINE_HOME, EPHEMERAL_VAR } from '../src/codex.js';
 import { findCodexBinary, wrapperScript, writeWrapper } from '../src/codexbin.js';
 import { CODEX_FEATURES_OFF, offeredTools, onCodexSurface } from '../src/codexpolicy.js';
 import { SEED_MARKER } from '../src/context.js';
@@ -385,13 +385,13 @@ test('every run gets the engine home as CODEX_HOME and HOME; the start check its
   });
 });
 
-test('under an API key the engine home holds only the sessions link', async () => {
+test('under an API key the engine home links no login, and keeps a saved one aside', async () => {
   await withRig(
     {
-      setup: async ({ cwd }) => {
-        // left by an earlier start under the login
+      setup: async ({ cwd, home }) => {
+        // left by earlier starts under the login: a link, and a login the CLI saved as a file
         await fs.mkdir(path.join(cwd, ENGINE_HOME));
-        await fs.writeFile(path.join(cwd, ENGINE_HOME, 'auth.json'), '{}');
+        await fs.symlink(path.join(home, 'auth.json'), path.join(cwd, ENGINE_HOME, 'auth.json'));
       },
     },
     async (r) => {
@@ -399,6 +399,48 @@ test('under an API key the engine home holds only the sessions link', async () =
       r.hab.input('it1', 'hi');
       await r.hab.wait('turn.ended');
       assert.deepEqual(await fs.readdir(path.join(r.cwd, ENGINE_HOME)), ['sessions']);
+    },
+  );
+  await withRig(
+    {
+      setup: async ({ cwd }) => {
+        await fs.mkdir(path.join(cwd, ENGINE_HOME));
+        await fs.writeFile(path.join(cwd, ENGINE_HOME, 'auth.json'), '{"fresh":1}');
+      },
+    },
+    async (r) => {
+      await codexStarted(r);
+      r.hab.input('it1', 'hi');
+      await r.hab.wait('turn.ended');
+      const names = (await fs.readdir(path.join(r.cwd, ENGINE_HOME))).sort();
+      assert.equal(names.length, 2);
+      assert.match(names[0]!, /^auth\.json\.aside-/);
+      assert.equal(names[1], 'sessions');
+      assert.equal(await fs.readFile(path.join(r.cwd, ENGINE_HOME, names[0]!), 'utf8'), '{"fresh":1}');
+    },
+  );
+});
+
+test('under the login a saved auth.json is moved aside, never deleted, and the link made', async () => {
+  await withRig(
+    {
+      hello: { credential: { kind: 'login', value: 'ignored' } },
+      setup: async ({ cwd }) => {
+        // what a CLI that saves by a temporary file and a rename would leave
+        await fs.mkdir(path.join(cwd, ENGINE_HOME));
+        await fs.writeFile(path.join(cwd, ENGINE_HOME, 'auth.json'), '{"refresh":"newest"}');
+      },
+    },
+    async (r) => {
+      await codexStarted(r);
+      r.hab.input('it1', 'hi');
+      await r.hab.wait('turn.ended');
+      const h = path.join(r.cwd, ENGINE_HOME);
+      const aside = (await fs.readdir(h)).filter((n) => n.startsWith('auth.json.aside-'));
+      assert.equal(aside.length, 1);
+      assert.equal(await fs.readFile(path.join(h, aside[0]!), 'utf8'), '{"refresh":"newest"}');
+      assert.equal(await fs.readlink(path.join(h, 'auth.json')), path.join(r.home, 'auth.json'));
+      assert.ok(r.logs.some((l) => l.includes('moved auth.json aside')));
     },
   );
 });
@@ -410,7 +452,8 @@ test('each start clears what the CLI would load from the engine home and keeps i
     {
       setup: async ({ cwd }) => {
         const h = path.join(cwd, ENGINE_HOME);
-        await fs.mkdir(path.join(h, 'sessions'), { recursive: true }); // a folder, not the link
+        await fs.mkdir(path.join(h, 'sessions', '2026'), { recursive: true }); // a folder, not the link
+        await fs.writeFile(path.join(h, 'sessions', '2026', 'rollout-old.jsonl'), 'a thread');
         for (const d of denyDirs) await fs.mkdir(path.join(h, d), { recursive: true });
         for (const f of deny) await fs.writeFile(path.join(h, f), 'planted');
         await fs.writeFile(path.join(h, 'skills', 'one', 'SKILL.md'), 'planted');
@@ -422,10 +465,53 @@ test('each start clears what the CLI would load from the engine home and keeps i
       r.hab.input('it1', 'hi');
       await r.hab.wait('turn.ended');
       const h = path.join(r.cwd, ENGINE_HOME);
-      assert.deepEqual((await fs.readdir(h)).sort(), ['sessions', 'state_5.sqlite']);
+      const names = (await fs.readdir(h)).sort();
+      assert.equal(names.length, 3);
+      assert.deepEqual([names[0], names[2]], ['sessions', 'state_5.sqlite']);
+      // the folder that stood where the link goes is kept aside, with its thread
+      assert.match(names[1]!, /^sessions\.aside-/);
+      assert.equal(await fs.readFile(path.join(h, names[1]!, '2026', 'rollout-old.jsonl'), 'utf8'), 'a thread');
       assert.equal(await fs.readlink(path.join(h, 'sessions')), path.join(r.home, 'sessions'));
     },
   );
+});
+
+test('a relative CODEX_HOME is made absolute before the links', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-codex-rel-'));
+  try {
+    const user = path.join(dir, 'codex-home');
+    const cwd = path.join(dir, 'engine');
+    await fs.mkdir(cwd);
+    const rel = path.relative(process.cwd(), user);
+    assert.ok(!path.isAbsolute(rel));
+    const engine = new CodexEngine({ codex: () => { throw new Error('no runs'); }, env: { CODEX_HOME: rel }, cwd, exit: () => {} });
+    (engine as any).credential = { kind: 'login', value: '' };
+    await engine.prepareHome();
+    const h = path.join(cwd, ENGINE_HOME);
+    assert.equal(await fs.readlink(path.join(h, 'sessions')), path.join(user, 'sessions'));
+    assert.equal(await fs.readlink(path.join(h, 'auth.json')), path.join(user, 'auth.json'));
+    assert.ok((await fs.stat(path.join(h, 'sessions'))).isDirectory(), 'the sessions link resolves');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('prepareHome calls that race (a summary beside a session start) all succeed', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-codex-race-'));
+  try {
+    const user = path.join(dir, 'codex-home');
+    for (let i = 0; i < 20; i++) {
+      const cwd = path.join(dir, `engine${i}`);
+      await fs.mkdir(cwd);
+      const engine = new CodexEngine({ codex: () => { throw new Error('no runs'); }, env: { CODEX_HOME: user }, cwd, exit: () => {} });
+      (engine as any).credential = { kind: 'login', value: '' };
+      await Promise.all([engine.prepareHome(), engine.prepareHome(), engine.prepareHome()]);
+      assert.equal(await fs.readlink(path.join(cwd, ENGINE_HOME, 'sessions')), path.join(user, 'sessions'));
+      assert.equal(await fs.readlink(path.join(cwd, ENGINE_HOME, 'auth.json')), path.join(user, 'auth.json'));
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('a fresh thread lands in the user\'s CODEX_HOME through the sessions link', async () => {
