@@ -452,7 +452,7 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
   through a wrapper, `<engine folder>/.codex-exec`, that adds `--ignore-user-config` and
   `--ignore-rules`. The user's `config.toml`, MCP servers and rules never load.
 - **Threads land in the user's `CODEX_HOME`,** under `sessions/<yyyy>/<mm>/<dd>/rollout-*-<id>.jsonl`,
-  and a resume appends to the same file. So `codex resume <id>` finds them (11).
+  through the engine home's `sessions` link, and a resume appends to the same file. So `codex resume <id>` finds them (11).
 - **The folder.** The engine folder holds `AGENTS.md` with the manual; Codex reads it. The
   `flightdeck` MCP server is passed as `--config`, with `env_vars = ["GFF_HAB"]`, since Codex
   hands an MCP server only a short list of variables.
@@ -470,11 +470,19 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
   before any event), is a re-seed with `restart_failed`; the untaken items go into the fresh
   session.
 - **A refused login** ends the turn `error` with `error {kind: auth}`, as 10.2 says for Claude.
-- **Open: the user's global instructions.** `--ignore-user-config` skips only `config.toml`.
-  The CLI still loads `$CODEX_HOME/AGENTS.md` and the skills under `$CODEX_HOME/skills` into
-  every request (verified on 0.167.0), and no config key turns either off. An engine-owned
-  `CODEX_HOME` would keep them out, but it must share the user's login (whose refresh token
-  the CLI rewrites) and keep threads where `codex resume` finds them. For the owner to decide.
+- **The engine's own home.** The user's global instructions and skills never reach Capcom (E29).
+  `--ignore-user-config` skips only `config.toml`: the CLI still loads `$CODEX_HOME/AGENTS.md`,
+  the skills under `$CODEX_HOME/skills` and the skills under `$HOME/.agents/skills`, and a
+  `$name` mention injects a skill even with `skills.include_instructions = false` (verified on
+  0.167.0 and 0.167.1). So every CLI run gets `<engine folder>/.codex-home` as both `CODEX_HOME`
+  and `HOME`. The home holds two links into the user's `CODEX_HOME`: `sessions`, so threads
+  land where `codex resume` finds them, and, under `auth = "login"`, `auth.json`, which the CLI
+  reads and rewrites through the link. Each start removes `AGENTS.md`, `AGENTS.override.md`,
+  `skills`, `.agents`, `config.toml`, `rules`, `prompts` and `plugins` from the home; the CLI's
+  own state files stay. A home the engine cannot make stops it with `error {kind: start}`.
+  Nothing a run does needs the user's `HOME`: the CLI has no shell, so the model runs no git or
+  ssh, and `gff-hab mcp` reaches the hab through `GFF_HAB`. The start check runs under its own
+  throwaway home, `<engine folder>/.start-check`.
 - **`max_turns` and `max_turn_usd`** have no Codex equivalent and are ignored.
 - **Tools (5.1 on Codex).** The CLI sends no tool list before a model call. The start check runs
   the CLI once against a loopback endpoint in the engine, with `--ephemeral`, and reads the tool
@@ -1400,7 +1408,7 @@ first consumer.
   command keys only. A command's stderr is logged by its first line only, as for the push key.
 - **The Codex engine.** `auth = "login"`, its default, uses the user's own `codex login` in
   `CODEX_HOME`. gff-hab never reads that folder's login: `hello` names the kind `login` with no
-  value, and the CLI reads it. `auth = "api_key"` takes the key from `api_key_command`, then
+  value, and the CLI reads it through the engine home's link (4.5). `auth = "api_key"` takes the key from `api_key_command`, then
   `OPENAI_API_KEY` in gff-hab's environment, and the engine hands it to the CLI as
   `CODEX_API_KEY`. gff-hab's own `OPENAI_API_KEY`, `CODEX_API_KEY` and `CODEX_HOME` never
   reach the engine job's environment file; `CODEX_HOME` goes in as a path only. A refused login
@@ -1590,6 +1598,7 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 | E26 | `gff-hab mcp` clears `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from its own environment at start, so the credential never reaches a program it runs. Formerly Q4 | Settled 2026-11-07. The process needs no credential; clearing it costs nothing |
 | E27 | `ListMcpResourcesTool` and `ReadMcpResourceTool` are on the surface while `flightdeck` is the only MCP server the SDK's `init` lists (5.1). Formerly Q5 | Settled 2026-11-07. They read only what that server offers; any other unexpected tool still fails the start check |
 | E28 | `gff-hab capcom pause` ends the engine after its turn; gff-hab does not start it again until `gff-hab capcom resume` (11) | Settled 2026-11-07: kept as built in A2. A stopped engine cannot write the session, so a terminal resume has one writer |
+| E29 | The Codex engine runs the CLI on a home of its own, without the user's global `AGENTS.md` or skills; the home links the user's threads and login (4.5) | Owner, 2026-11-11. It matches the Claude engine, which loads only its folder's project files (E4) |
 
 ---
 
