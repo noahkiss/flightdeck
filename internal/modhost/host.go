@@ -293,7 +293,8 @@ func (h *Host) scheduleLocked() {
 	})
 }
 
-// ended is called once a child has exited and every request on it has failed.
+// ended is called once a child has exited and every request on it is cut off, before any of
+// those calls returns its error.
 func (h *Host) ended(p *proc) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -459,8 +460,10 @@ func (p *proc) read(stdout io.Reader) {
 		p.h.logf("module host (pid %d) stderr:\n%s", p.cmd.Process.Pid, lines)
 	}
 	p.c.end()
-	close(p.done)
+	// The host forgets this child before any failed call returns: a caller that saw the host
+	// down then finds it down or restarted, never this dead child.
 	p.h.ended(p)
+	close(p.done)
 }
 
 func exitReason(err error, line string) string {
