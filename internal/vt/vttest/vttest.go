@@ -273,6 +273,30 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 	}
 
 	for _, enc := range p.Encodings() {
+		t.Run("restore keeps the mouse and cursor key modes "+string(enc), func(t *testing.T) {
+			term := newTerm(t)
+			term.Write([]byte("\x1b[?1h\x1b[?1000h\x1b[?1006hmouse on"))
+			snap, err := term.Snapshot(enc, all)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored, err := p.Restore(enc, snap, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restored.Close()
+			for _, m := range []struct {
+				n    int
+				want bool
+			}{{1, true}, {1000, true}, {1006, true}, {1002, false}, {1003, false}} {
+				if set, known := restored.Mode(m.n, false); !known || set != m.want {
+					t.Errorf("mode %d after restore: set %v known %v, want set %v", m.n, set, known, m.want)
+				}
+			}
+		})
+	}
+
+	for _, enc := range p.Encodings() {
 		t.Run("snapshot holds no query, palette or directory "+string(enc), func(t *testing.T) {
 			term := newTerm(t)
 			term.Write([]byte("before\r\n"))
