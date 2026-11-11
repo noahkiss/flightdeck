@@ -256,7 +256,7 @@ func (t *terminal) Scrollback(skip, n int) (vt.ScrollbackPage, error) {
 	b, err := src.format(libghostty.FormatterFormatVT,
 		libghostty.WithFormatterSelection(&libghostty.Selection{Start: *from, End: *to}),
 		libghostty.WithFormatterTrim(true),
-		libghostty.WithFormatterExtraHyperlink(false),
+		libghostty.WithFormatterExtras(libghostty.FormatterExtrasNone),
 	)
 	if err != nil {
 		return vt.ScrollbackPage{}, err
@@ -274,16 +274,8 @@ func (t *terminal) formatVT(scrollback int) ([]byte, error) {
 	return t.format(libghostty.FormatterFormatVT,
 		libghostty.WithFormatterSelection(sel),
 		libghostty.WithFormatterTrim(false),
-		libghostty.WithFormatterExtraModes(true),
-		libghostty.WithFormatterExtraScrollingRegion(true),
-		libghostty.WithFormatterExtraTabstops(true),
-		libghostty.WithFormatterExtraKeyboard(true),
-		libghostty.WithFormatterExtraCursor(true),
-		libghostty.WithFormatterExtraStyle(true),
-		libghostty.WithFormatterExtraHyperlink(true),
-		libghostty.WithFormatterExtraProtection(true),
-		libghostty.WithFormatterExtraKittyKeyboard(true),
-		libghostty.WithFormatterExtraCharsets(true),
+		libghostty.WithFormatterExtras(libghostty.FormatterExtrasAll&^
+			(libghostty.FormatterExtraPalette|libghostty.FormatterExtraPwd)),
 	)
 }
 

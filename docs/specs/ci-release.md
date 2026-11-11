@@ -209,10 +209,10 @@ so the commands set it inline (`GFF_TEST_TIMEOUT_SCALE=3 make test`).
 
 **Every libghostty build goes through make, or sets its environment.** The bindings find the
 library with `#cgo pkg-config: --static libghostty-vt-static`, and only the Makefile's
-`GHOSTTY_ENV` points `PKG_CONFIG_PATH` at `build/libghostty-vt/share/pkgconfig`. A bare
+`GHOSTTY_ENV` points `PKG_CONFIG_PATH` at `build/libghostty-vt/lib/pkgconfig`. A bare
 `go test -tags ghostty` fails to find it. So CI uses make targets, and a raw `go` command with
 `-tags ghostty` starts with
-`PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1`.
+`PKG_CONFIG_PATH="$PWD/build/libghostty-vt/lib/pkgconfig" CGO_ENABLED=1`.
 
 **What go-ci runs as it is, and what it needs.** go-ci sets up Go from `go.mod` (the
 `toolchain` line), caches modules keyed on `go.sum`, checks `gofmt`, checks `go generate`, and runs
@@ -321,7 +321,7 @@ After the guard, Linux jobs on go-ci with `mise` and the cache, all in parallel:
   - `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`, which
     restores or builds the baseline library for the restart loop
   - `make fuzz FUZZTIME=30s`
-  - `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
+  - `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/lib/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
     (3.2: a bare `-tags ghostty` command cannot find the library)
   - `scripts/service-check.sh` under systemd. The runner user needs a user manager:
     `sudo loginctl enable-linger "$USER"` first; the job waits up to 30 s for the user bus and

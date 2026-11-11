@@ -852,7 +852,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==============================================================================
 go.mitchellh.com/libghostty
-Version: v0.0.0-20261021212106-df1957cbff56
+Version: v0.0.0-20261107144202-b13f277ddcb2
 Source: https://pkg.go.dev/go.mitchellh.com/libghostty
 Licence: see the text below
 In: gff, gff-hab
@@ -3117,7 +3117,7 @@ In: gff-hab
 
 ==============================================================================
 Ghostty
-Version: f54340ad77814fe319d136e5e915d6a48de8dd23
+Version: 5813c9461d5af78b6307a1254d00b1bc190eaccd
 Source: https://github.com/ghostty-org/ghostty
 Licence: MIT
 In: gff, gff-hab (libghostty-vt, built with the patches in third_party/ghostty/patches of the Flightdeck repository)

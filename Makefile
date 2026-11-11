@@ -3,7 +3,7 @@ ZIG ?= zig
 
 # libghostty-vt, pinned to the exact Ghostty commit that the go.mitchellh.com/libghostty
 # version in go.mod was built against. Bump both together.
-GHOSTTY_COMMIT := f54340ad77814fe319d136e5e915d6a48de8dd23
+GHOSTTY_COMMIT := 5813c9461d5af78b6307a1254d00b1bc190eaccd
 GHOSTTY_SRC := build/ghostty-src
 GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
 # Our patches to that commit (third_party/ghostty/patches), applied in name order. Their id is in
@@ -20,7 +20,7 @@ GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
 GHOSTTY_ZIGFLAGS ?=
 
 # The ghostty build tag selects the cgo parser in internal/vt/ghostty.
-GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/share/pkgconfig CGO_ENABLED=1
+GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/lib/pkgconfig CGO_ENABLED=1
 
 # The speech helper, gff-hab-speech (docs/specs/voice.md): sherpa-onnx's C API from its pinned
 # static release, plus libopus from the system (pkg-config opus). Nothing of it is committed.
