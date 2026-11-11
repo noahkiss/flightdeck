@@ -383,3 +383,109 @@ func TestMarkerLookalikeRemove(t *testing.T) {
 		t.Fatalf("a remove passed as redacted: %s", sorted)
 	}
 }
+
+// orphanOnC leaves C holding A's tag redacted, without its forget, seen at C's clock.
+func orphanOnC(t *testing.T, a, c *replica) OpID {
+	t.Helper()
+	ctx := context.Background()
+	_, tag, _ := sameOriginFarAhead(t, a, c)
+	ans, err := a.ServePull(ctx, c.vec(t), nil, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Apply(ctx, ans.Ops); err != nil {
+		t.Fatal(err)
+	}
+	if orphanCount(t, c) != 1 {
+		t.Fatalf("%d orphans", orphanCount(t, c))
+	}
+	c.clock.Advance(time.Second)
+	return tag
+}
+
+// A repair that fails stays an orphan, logs once however often it is tried, and goes through
+// once writes do.
+func TestRepairRetry(t *testing.T) {
+	ctx := context.Background()
+	a, c := newReplica(t, "A"), newReplica(t, "C")
+	tag := orphanOnC(t, a, c)
+	if _, err := c.db.Exec(`INSERT INTO origins(origin, shared) VALUES(?, 1) ON CONFLICT(origin) DO UPDATE SET shared = 1`, "SHA256:C"); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := c.RepairOrphans(ctx, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := 0
+	for _, l := range c.logged() {
+		if strings.Contains(l, "repairing the missing forget") {
+			n++
+		}
+	}
+	if n != 1 || orphanCount(t, c) != 1 || len(forgetsBy(t, c, tag)) != 0 {
+		t.Fatalf("failed repairs: %d logs, %d orphans", n, orphanCount(t, c))
+	}
+	if _, err := c.db.Exec(`UPDATE origins SET shared = 0 WHERE origin = ?`, "SHA256:C"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RepairOrphans(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if k := forgetsBy(t, c, tag); len(k) != 1 || k[0] != ActorHab || orphanCount(t, c) != 0 {
+		t.Fatalf("after the retry: forgets by %q, %d orphans", k, orphanCount(t, c))
+	}
+}
+
+// Two repairs at once write one forget.
+func TestRepairConcurrent(t *testing.T) {
+	ctx := context.Background()
+	a, c := newReplica(t, "A"), newReplica(t, "C")
+	tag := orphanOnC(t, a, c)
+	errs := make(chan error, 4)
+	for range 4 {
+		go func() { errs <- c.RepairOrphans(ctx, 0) }()
+	}
+	for range 4 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if k := forgetsBy(t, c, tag); len(k) != 1 {
+		t.Fatalf("forgets by %q", k)
+	}
+}
+
+// An orphan of a kind this build does not know gets no forget and stays, so a later build that
+// knows the kind repairs it.
+func TestRepairKeepsUnknownKind(t *testing.T) {
+	ctx := context.Background()
+	a, c := newReplica(t, "A"), newReplica(t, "C")
+	_, tag, _ := sameOriginFarAhead(t, a, c)
+	ans, err := a.ServePull(ctx, c.vec(t), nil, Limits{})
+	if err != nil || len(ans.Ops) != 1 {
+		t.Fatalf("pull: %d ops %v", len(ans.Ops), err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(ans.Ops[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	m["k"] = json.RawMessage(`"tagify"`)
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Apply(ctx, [][]byte{raw}); err != nil {
+		t.Fatal(err)
+	}
+	if orphanCount(t, c) != 1 {
+		t.Fatalf("%d orphans", orphanCount(t, c))
+	}
+	c.clock.Advance(time.Second)
+	if err := c.RepairOrphans(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if k := forgetsBy(t, c, tag); len(k) != 0 || orphanCount(t, c) != 1 {
+		t.Fatalf("forgets by %q, %d orphans", k, orphanCount(t, c))
+	}
+}

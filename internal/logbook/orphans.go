@@ -3,6 +3,7 @@ package logbook
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -114,9 +115,9 @@ func (s *Store) RepairOrphans(ctx context.Context, grace time.Duration) error {
 }
 
 // repairBefore writes a forget, as the hab, of each orphan first seen before cutoff whose forget
-// still has not arrived. An orphan whose op a forget cannot name (a kind this build does not
-// know) is dropped. It does nothing while the start hold lasts; a failed write is logged and
-// tried again at the next call.
+// still has not arrived. An orphan whose op this build does not know (a newer kind or field)
+// stays, unrepaired, so a later build repairs it. It does nothing while the start hold lasts; a
+// failed write is logged once per orphan and tried again at the next call.
 func (s *Store) repairBefore(ctx context.Context, cutoff time.Time) error {
 	s.repairMu.Lock()
 	defer s.repairMu.Unlock()
@@ -149,18 +150,33 @@ func (s *Store) repairBefore(ctx context.Context, cutoff time.Time) error {
 		if n == 0 {
 			continue
 		}
-		_, err := s.Write(ctx, Batch{Actor: RepairActor, Steps: []Step{{Kind: KindForget, Target: id}}})
+		var raw []byte
+		if err := s.db.QueryRowContext(ctx, `SELECT raw FROM ops WHERE origin = ? AND seq = ?`, id.Origin, id.Seq).Scan(&raw); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if raw != nil {
+			if o, err := decodeOp(raw); err != nil || !o.known() {
+				continue
+			}
+		}
+		_, err = s.Write(ctx, Batch{Actor: RepairActor, Steps: []Step{{Kind: KindForget, Target: id}}})
 		var inv *InvalidError
 		switch {
 		case err == nil:
+			delete(s.repairLogged, id)
 		case errors.As(err, &inv) || errors.Is(err, ErrNotFound):
+			delete(s.repairLogged, id)
 			if _, err := s.db.ExecContext(ctx, `DELETE FROM orphans WHERE origin = ? AND seq = ?`, id.Origin, id.Seq); err != nil {
 				return err
 			}
-		case errors.Is(err, ErrSharedOrigin) || errors.Is(err, ErrRestoring):
-			return nil // no write goes through; the store says why elsewhere
 		default:
-			s.logf("logbook: repairing the missing forget of %s: %v", id, err)
+			if !s.repairLogged[id] {
+				if s.repairLogged == nil {
+					s.repairLogged = map[OpID]bool{}
+				}
+				s.repairLogged[id] = true
+				s.logf("logbook: repairing the missing forget of %s: %v", id, err)
+			}
 			return nil
 		}
 	}
