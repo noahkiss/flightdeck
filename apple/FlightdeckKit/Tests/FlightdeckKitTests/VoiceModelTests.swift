@@ -107,8 +107,11 @@ final class VoiceModelTests: XCTestCase {
     /// The owner speaks: words, then a tap ends the turn.
     private func say(_ b: Bench, live: String) async {
         b.io.nextTurn.live = live
+        let begun = b.io.turnsBegun
         b.io.emit(.words(live, at: 0))
-        await eventually("hearing") { b.model.phase == .hearing || b.model.phase == .answering || b.model.phase == .tapToAnswer }
+        // The model began the turn. Its phase alone cannot say so: while it waits for an answer,
+        // it is already answering before the words arrive, and a turn it has not begun does not end.
+        await eventually("hearing") { b.io.turnsBegun > begun }
         await b.model.endTurn()
     }
 
