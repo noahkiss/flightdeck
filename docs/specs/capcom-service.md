@@ -475,14 +475,21 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
   the skills under `$CODEX_HOME/skills` and the skills under `$HOME/.agents/skills`, and a
   `$name` mention injects a skill even with `skills.include_instructions = false` (verified on
   0.167.0 and 0.167.1). So every CLI run gets `<engine folder>/.codex-home` as both `CODEX_HOME`
-  and `HOME`. The home holds two links into the user's `CODEX_HOME`: `sessions`, so threads
-  land where `codex resume` finds them, and, under `auth = "login"`, `auth.json`, which the CLI
-  reads and rewrites through the link. Each start removes `AGENTS.md`, `AGENTS.override.md`,
-  `skills`, `.agents`, `config.toml`, `rules`, `prompts` and `plugins` from the home; the CLI's
-  own state files stay. A home the engine cannot make stops it with `error {kind: start}`.
-  Nothing a run does needs the user's `HOME`: the CLI has no shell, so the model runs no git or
-  ssh, and `gff-hab mcp` reaches the hab through `GFF_HAB`. The start check runs under its own
-  throwaway home, `<engine folder>/.start-check`.
+  and `HOME`. The home holds two links into the user's `CODEX_HOME`, made absolute first:
+  `sessions`, so threads land in the user's folder, and, under `auth = "login"`, `auth.json`,
+  which the CLI reads and rewrites through the link. A file or folder that stands where a link
+  goes (a login the CLI saved as a file, a threads folder) is renamed to `<name>.aside-<time>`,
+  never deleted. Each start removes `AGENTS.md`, `AGENTS.override.md`, `skills`, `.agents`,
+  `config.toml`, `rules`, `prompts` and `plugins` from the home; the CLI's own state files stay.
+  A home the engine cannot make stops it with `error {kind: start}`. Nothing a run does needs
+  the user's `HOME`: the CLI has no shell, so the model runs no git or ssh, and `gff-hab mcp`
+  reaches the hab through `GFF_HAB`. The start check runs under its own throwaway home,
+  `<engine folder>/.start-check`.
+- **What the home does not cover.** The CLI writes its bundled system skills into the home
+  (`skills/.system`), and they reach the request: they are the CLI's own content, not the
+  user's. The CLI indexes threads in `state_5.sqlite` under the home it runs with, so the
+  engine's threads open in a plain terminal by id only, not in the `codex resume` picker or
+  with `--last`. Nothing backfills the user's index.
 - **`max_turns` and `max_turn_usd`** have no Codex equivalent and are ignored.
 - **Tools (5.1 on Codex).** The CLI sends no tool list before a model call. The start check runs
   the CLI once against a loopback endpoint in the engine, with `--ephemeral`, and reads the tool
@@ -1451,8 +1458,10 @@ AGENTS.md: "Resuming a session from a plain terminal must always work."
   reads what the terminal added.
 - Older SDK sessions (before a re-seed) are never touched again and resume freely.
 - **Codex.** The engine's threads land in the user's `CODEX_HOME` (4.5), so `codex resume <id>`
-  opens one after `gff-hab capcom pause`. The wrapper's `--ignore-user-config` applies only to
-  the engine's runs. The live check needs a real login, so it runs by hand.
+  opens one after `gff-hab capcom pause`: by id only, not in the picker or with `--last`. The
+  wrapper's `--ignore-user-config` applies only to the engine's runs. `test/codex-home-cli.test.ts`
+  checks a resume by id with the pinned CLI and a loopback endpoint; a check with a real login
+  runs by hand.
 - **If the verification fails,** section 17 asks the owner for an exception.
 
 ---
