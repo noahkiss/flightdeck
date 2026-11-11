@@ -25,6 +25,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/habconn"
+	"github.com/noahkiss/flightdeck/internal/testgit"
 	"github.com/noahkiss/flightdeck/internal/testtmp"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
@@ -36,6 +37,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	testgit.Hermetic() // no user's global git config in any git these tests or their gff-hab run
 	d, err := testtmp.MainDir("gffcl")
 	if err != nil {
 		panic(err)

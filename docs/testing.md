@@ -26,6 +26,10 @@ Every stage's acceptance checks follow it.
   short socket path from `os.MkdirTemp` gets a `t.Cleanup` that removes it. What a `TestMain`
   builds once and shares goes in `testtmp.MainDir`, removed with `testtmp.Exit` after `m.Run`.
   A directory still there fails the run. The next run sweeps one a panic or timeout left.
+- A test binary that runs git calls `testgit.Hermetic()` first in its `TestMain`. It points
+  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` at `/dev/null` and sets a test identity, so a
+  developer's hooks path, filters or default branch never reach the tests or the gff-hab they
+  start. A test that needs another author sets `GIT_AUTHOR_*` and `GIT_COMMITTER_*` on its command.
 - No coverage targets and no benchmarks until a user-visible budget depends on one. Spec edge
   cases and review findings decide what gets a test.
 - Core functionality also gets a fresh-eyes review before its stage closes.
@@ -243,6 +247,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/habconn/` | Connection library suite over the Unix socket, an in-process pipe, `SSHTransport` with a stand-in `ssh`, and the real `ssh` to localhost |
 | `go test -race ./internal/merge/` | Multi-host merge over three fake habs |
 | `go test ./scripts/hygiene/` | The scan in temporary repositories with invented values |
+| `go test ./internal/testgit/` | `testgit.Hermetic` keeps a failing global post-checkout hook and a global identity out of git |
 | `go test -race ./internal/hosts/ ./internal/board/` | Many hosts over in-process fake habs |
 | `go test -race ./internal/hoststats/ ./internal/control/ && go test -race -run TestHabStats ./cmd/gff-hab` | Shared host stats |
 | `go test -race ./internal/gffclient/` | The workspace over fake habs |

@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/noahkiss/flightdeck/internal/testgit"
 )
 
 var (
@@ -47,10 +49,11 @@ func newRepo(t *testing.T) *repo {
 		t.Skip("no git")
 	}
 	r := &repo{t: t, dir: t.TempDir()}
-	r.env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid",
-		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid",
+	r.env = os.Environ()
+	for k, v := range testgit.Env() {
+		r.env = append(r.env, k+"="+v)
+	}
+	r.env = append(r.env,
 		"GFF_HYGIENE_PATTERNS=", "GFF_HYGIENE_PATTERNS_FILE=",
 		"GFF_HYGIENE_PR_TITLE=", "GFF_HYGIENE_PR_BODY=", "GFF_HYGIENE_REF=", "GFF_HYGIENE_AWK=",
 	)
