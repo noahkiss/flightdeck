@@ -3,4 +3,4 @@
 # with no gem cache: a cache saved on a tag is visible to that tag only (5).
 source "https://rubygems.org"
 
-gem "fastlane", "2.241.0"
+gem "fastlane", "2.241.2"
