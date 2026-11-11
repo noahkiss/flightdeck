@@ -92,15 +92,47 @@ export const ENGINE_HOME = '.codex-home';
 // Names a home of ours must never hold: the CLI would load them.
 const HOME_DENY = ['AGENTS.md', 'AGENTS.override.md', 'skills', '.agents', 'config.toml', 'rules', 'prompts', 'plugins'];
 
-async function linkTo(target: string, at: string): Promise<void> {
+// moveAside renames what stands at `at` to `<at>.aside-<time>`, so nothing the CLI saved there
+// (a login with a fresh refresh token, a thread) is lost. A path gone in a race is fine.
+async function moveAside(at: string): Promise<string | undefined> {
+  const to = `${at}.aside-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   try {
-    const st = await fs.lstat(at);
-    if (st.isSymbolicLink() && (await fs.readlink(at)) === target) return;
-    await fs.rm(at, { recursive: true, force: true });
+    await fs.rename(at, to);
+    return to;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw e;
+  }
+}
+
+// linkTo makes `at` a link to target. A wrong link is replaced; anything else is moved aside,
+// never deleted. A link made at the same moment by another prepareHome is accepted.
+async function linkTo(target: string, at: string, log: (l: string) => void): Promise<void> {
+  const isLink = async (): Promise<boolean> => {
+    try {
+      return (await fs.lstat(at)).isSymbolicLink() && (await fs.readlink(at)) === target;
+    } catch {
+      return false;
+    }
+  };
+  if (await isLink()) return;
+  let st;
+  try {
+    st = await fs.lstat(at);
   } catch {
     // not there
   }
-  await fs.symlink(target, at);
+  if (st?.isSymbolicLink()) await fs.rm(at, { force: true });
+  else if (st) {
+    const to = await moveAside(at);
+    if (to) log(`engine home: moved ${path.basename(at)} aside to ${path.basename(to)}`);
+  }
+  try {
+    await fs.symlink(target, at);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST' && (await isLink())) return;
+    throw e;
+  }
 }
 
 // Variables the CLI never gets from the engine's environment: the engine route's token (3.3)
@@ -451,9 +483,16 @@ export class CodexEngine {
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
     await fs.mkdir(path.join(user, 'sessions'), { recursive: true, mode: 0o700 });
     for (const n of HOME_DENY) await fs.rm(path.join(home, n), { recursive: true, force: true });
-    await linkTo(path.join(user, 'sessions'), path.join(home, 'sessions'));
-    if (this.credential?.kind === 'login') await linkTo(path.join(user, 'auth.json'), path.join(home, 'auth.json'));
-    else await fs.rm(path.join(home, 'auth.json'), { force: true });
+    const log = (l: string) => this.log(l);
+    await linkTo(path.join(user, 'sessions'), path.join(home, 'sessions'), log);
+    const auth = path.join(home, 'auth.json');
+    if (this.credential?.kind === 'login') await linkTo(path.join(user, 'auth.json'), auth, log);
+    else {
+      // Under an API key the home holds no login: a link goes, a saved login is kept aside.
+      const st = await fs.lstat(auth).catch(() => undefined);
+      if (st?.isSymbolicLink()) await fs.rm(auth, { force: true });
+      else if (st && (await moveAside(auth))) log('engine home: moved auth.json aside');
+    }
   }
 
   // The start check (5.1 on Codex), once per engine process.
