@@ -1026,8 +1026,8 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   same `Transport` as its control connection. It does not use the Go library built for Apple
   platforms: the app already speaks the control protocol in Swift, and this keeps the Go runtime
   and gomobile out of the iOS app. Swift's libghostty is the only parser the app carries.
-- **libghostty-spm**, `GhosttyTerminal` product, pinned exactly to 1.6.20260909 (commit
-  7e45d271, Ghostty 82938b633ba6), as Heeler and herdrm pin it. The version scheme has a date, so
+- **libghostty-spm**, `GhosttyTerminal` product, pinned exactly to 2.2.2026110702 (commit
+  1d84cf66, Ghostty 042b16b6146a), as Heeler and herdrm pin it. The version scheme has a date, so
   a range would drift; each bump needs a review of the binary checksum. Its in-memory backend
   takes the hab's bytes and hands back what the terminal writes.
 - **`PaneStream`**, one per open terminal view: `data.ticket`, then `transport.open(.data)` (a

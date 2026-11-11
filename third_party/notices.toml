@@ -208,16 +208,16 @@ release = { in = "gff-hab-speech (linked statically on macOS)", version = "the b
 # --- Swift packages in Package.resolved --------------------------------------------------------
 
 [[swift]]
+identity = "displaylink"
+license = "MIT"
+
+[[swift]]
 identity = "fluidaudio"
 license = "Apache-2.0; its third-party licences follow"
 
 [[swift]]
 identity = "libghostty-spm"
 license = "MIT; bash-preexec (MIT) and the iTerm2 colour schemes (MIT) follow"
-
-[[swift]]
-identity = "msdisplaylink"
-license = "MIT"
 
 [[swift]]
 identity = "swift-asn1"

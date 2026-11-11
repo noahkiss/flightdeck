@@ -24,9 +24,9 @@ Contents
   z2d
   JetBrains Mono
   Nerd Fonts (Symbols Only)
+  displaylink
   fluidaudio
   libghostty-spm
-  msdisplaylink
   swift-asn1
   swift-atomics
   swift-collections
@@ -1021,6 +1021,37 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+==============================================================================
+displaylink
+Version: 3.0.1
+Source: https://github.com/Lakr233/DisplayLink
+Licence: MIT
+In: Flightdeck (Swift package)
+
+--- third_party/licenses/swift/displaylink/LICENSE
+
+MIT License
+
+Copyright (c) 2024 Lakr Aream
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ==============================================================================
 fluidaudio
@@ -2116,7 +2147,7 @@ limitations under the License.
 
 ==============================================================================
 libghostty-spm
-Version: 1.6.20260909
+Version: 2.2.2026110702
 Source: https://github.com/Lakr233/libghostty-spm
 Licence: MIT; bash-preexec (MIT) and the iTerm2 colour schemes (MIT) follow
 In: Flightdeck (Swift package)
@@ -2180,37 +2211,6 @@ under the following license.
 The MIT License
 
 Copyright (c) 2017 Ryan Caloras and contributors (see https://github.com/rcaloras/bash-preexec)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-==============================================================================
-msdisplaylink
-Version: 2.2.1
-Source: https://github.com/Lakr233/MSDisplayLink
-Licence: MIT
-In: Flightdeck (Swift package)
-
---- third_party/licenses/swift/msdisplaylink/LICENSE
-
-MIT License
-
-Copyright (c) 2024 Lakr Aream
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
