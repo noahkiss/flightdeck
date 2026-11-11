@@ -78,13 +78,14 @@ export class FakeCodex {
     return th;
   }
 
-  // The rollout file of a thread, as the CLI writes it.
-  rolloutPath(id: string): string {
-    return path.join(this.home, 'sessions', '2026', '11', '07', `rollout-2026-11-07T00-00-00-${id}.jsonl`);
+  // The rollout file of a thread, as the CLI writes it under its CODEX_HOME (the user's by
+  // default; a run writes under the home it was given).
+  rolloutPath(id: string, home = this.home): string {
+    return path.join(home, 'sessions', '2026', '11', '07', `rollout-2026-11-07T00-00-00-${id}.jsonl`);
   }
 
-  async appendRollout(id: string, recs: unknown[]): Promise<void> {
-    const p = this.rolloutPath(id);
+  async appendRollout(id: string, recs: unknown[], home = this.home): Promise<void> {
+    const p = this.rolloutPath(id, home);
     await fs.mkdir(path.dirname(p), { recursive: true });
     await fs.appendFile(p, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
   }
@@ -170,7 +171,10 @@ export class FakeThread implements CodexThreadLike {
     const recs: unknown[] = [];
     if (fresh) recs.push({ type: 'session_meta', payload: { id, cwd: this.threadOptions.workingDirectory } });
     recs.push({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
-    await this.fake.appendRollout(id, recs);
+    // The CLI writes under the CODEX_HOME of its run: the engine's home, whose `sessions` links
+    // into the user's.
+    const home = this.codexOptions.env?.CODEX_HOME ?? this.fake.home;
+    await this.fake.appendRollout(id, recs, home);
     yield { type: 'turn.started' };
     const queue: ThreadEvent[] = [];
     let wake: (() => void) | undefined;
@@ -205,7 +209,7 @@ export class FakeThread implements CodexThreadLike {
       context: (used) =>
         this.fake.appendRollout(id, [
           { type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: Math.round(used * 100000), output_tokens: 0 }, model_context_window: 100000 } } },
-        ]),
+        ], home),
       limits: (rateLimits, timestamp = new Date().toISOString()) =>
         this.fake.appendRollout(id, [
           {
@@ -218,7 +222,7 @@ export class FakeThread implements CodexThreadLike {
               rate_limits: rateLimits,
             },
           },
-        ]),
+        ], home),
       until: async (f) => {
         while (!f()) {
           if (opts.signal?.aborted) throw new AbortErr('aborted');
@@ -317,6 +321,7 @@ export async function codexRig(
       GFF_HAB: hab.addr,
       GFF_HAB_CAPCOM_TOKEN: hab.token,
       CODEX_HOME: home,
+      HOME: path.join(dir, 'user-home'),
       OPENAI_API_KEY: 'inherited-should-go',
       CODEX_API_KEY: 'inherited-should-go',
     },
