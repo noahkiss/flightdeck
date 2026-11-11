@@ -135,8 +135,8 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
 
 - **Pinned, not vendored.** `go.mod` pins the Go bindings, `go.mitchellh.com/libghostty`, to one
   commit. The Makefile pins the Ghostty commit those bindings were built against
-  (`GHOSTTY_COMMIT`). Bump both together. No Ghostty source is committed here, only our own
-  patches to that commit in `third_party/ghostty/patches/`.
+  (`GHOSTTY_COMMIT`). Bump both together, by the steps in `docs/specs/ci-release.md` 7.9. No Ghostty
+  source is committed here, only our own patches to that commit in `third_party/ghostty/patches/`.
 - **Our patches.** `make libghostty` applies each `.patch` there, in name order, to the fetched
   commit before it builds. `0001` restores a snapshot's bottom page with room for more rows, so
   each gff-hab restart does not leave one more mostly empty 400 KiB page in every pane's

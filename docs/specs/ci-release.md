@@ -800,6 +800,47 @@ new Swift package needs its texts under `third_party/licenses/swift/<identity>/`
 `[[swift]]` entry. A new C library, Zig package, font or data set needs its texts and a
 `[[component]]` entry. Then `make notices`.
 
+### 7.9 Core pins
+
+Renovate opens a pull request for most dependencies each night, and its non-major updates merge
+when green (9 in section 12). A **core pin** needs more than a green pull request: a patch rebase,
+the 200-cycle restart loop, a notices change Renovate cannot make, or a release dry run. Core
+pins still move on a schedule. A maintenance job outside the repo checks them daily. It moves each
+one soon after upstream moves (libghostty at most once a week), runs the validation below on a
+`deps/core-<date>-<topic>` branch, and merges on green. When a pin cannot be merged, the pull
+request stays open with a comment that names the failure, and a maintainer takes it over.
+
+| Pin | Where | Moves with | Validation before merge |
+|---|---|---|---|
+| Go bindings, `go.mitchellh.com/libghostty` | `go.mod` | Its newest version on the Go proxy | All of the libghostty row |
+| `GHOSTTY_COMMIT` | `Makefile` | The bindings' `CMakeLists.txt` `GIT_TAG` at their new revision; never past it | `make libghostty`, `make vet`, `make test`, the restart loop at 200 cycles, the pull request's checks, `nightly.yml` dispatched on the branch, a `release.yml` dry run on the branch head (7.6) |
+| Our Ghostty patches | `third_party/ghostty/patches/` | Each `GHOSTTY_COMMIT` move: dropped when upstream fixed the bug, else rebased (context only) and refreshed so it applies clean | As `GHOSTTY_COMMIT` |
+| zig | `mise.toml` | The new Ghostty commit's `build.zig.zon` `minimum_zig_version` | As `GHOSTTY_COMMIT` |
+| `SHERPA_VERSION` and its sha256 lines | `Makefile` | sherpa-onnx releases | `make test-speech`, `make test`, the checks |
+| Xcode | `apple.yml`, `app-release.yml` (`Xcode_<n>.app`) | The newest released Xcode (no beta or RC) on the same runner image; a new image label is a maintainer's call | The Apple check and an `app-release.yml` dry run (7.6) |
+| Renovate's majors (libghostty-spm, node, the Go version, actions) | Renovate's pull request | Renovate | Release notes read for breaks; for libghostty-spm, its new dependencies pinned in `Package.resolved` with licence texts and `[[swift]]` entries (7.8) and the binary checksum compared with the release asset's digest; the checks |
+
+**A libghostty move, step by step.**
+
+1. Read the bindings' newest revision and the Ghostty commit in its `CMakeLists.txt`. Set both
+   pins. Set zig to that commit's `minimum_zig_version` when it differs.
+2. For each patch: read its header (it names the bug). If upstream fixed it, delete the patch.
+   Else apply it; when it fails or applies with an offset, rebase it in `build/ghostty-src` and
+   write it again as its header plus `git diff`. A rebase that must change the fix's code is a
+   maintainer's call.
+3. `make libghostty`. Check the install layout (the pkg-config files moved from
+   `share/pkgconfig` to `lib/pkgconfig` in November 2026; `git grep pkgconfig` finds every user).
+4. `make vet`. Fix a bindings API change in `internal/vt/ghostty` without changing behaviour.
+   Read the bindings' history for changed defaults, not only the compile errors.
+5. `make notices`. Compare the Ghostty components linked into libghostty-vt (uucode, simdutf,
+   Highway, Wuffs, and any new one) between the two commits; update a changed licence text.
+6. `make test`, the restart loop at 200 cycles (3.6), `make check-gen`, `make check-pure`.
+7. Open the pull request, dispatch `nightly.yml` on its branch, run a `release.yml` dry run on
+   its head, and merge when all three are green.
+
+The app's libghostty-spm builds its own snapshots of Ghostty main, so its Ghostty commit cannot
+match `GHOSTTY_COMMIT`. Both move on the cadence above, so they stay within weeks of each other.
+
 ---
 
 ## 8. Tap bump
@@ -1350,7 +1391,7 @@ The CI-minute rules the shared workflows follow, and how this repo applies each.
 | 6 | Cache dependencies keyed on the lockfile | Applied | Go on `go.sum` (go-ci), libghostty on the Makefile pin and `mise.toml`, SwiftPM on `Package.resolved`, gems on `Gemfile.lock` (section 5) |
 | 7 | `timeout-minutes` on every job | Applied | Every job states one (sections 3, 7, 9, 10); go-ci and the new workflows take it as an input |
 | 8 | Prefer public repos for CI-heavy projects | Applied | The repo is public; the hygiene scan keeps it publishable |
-| 9 | Dependency-bot cadence | Applied | No github-actions Dependabot entry here (the workflows repo covers callers at `@main`). `renovate.json` extends `github>noahkiss/renovate-config` (plan stage 2). One repo rule: Renovate ignores `go.mitchellh.com/libghostty`, because it must move with `GHOSTTY_COMMIT` in the Makefile, by hand. Security updates stay on |
+| 9 | Dependency-bot cadence | Applied | No github-actions Dependabot entry here (the workflows repo covers callers at `@main`). `renovate.json` extends `github>noahkiss/renovate-config` (plan stage 2). Two repo rules: Renovate ignores `go.mitchellh.com/libghostty` and zig, because they move with `GHOSTTY_COMMIT`. Those and the other core pins move on their own schedule with heavier validation (7.9). Security updates stay on |
 | 10 | Run CI's checks locally first | Applied | Every CI command is a `make` target or a repo script that runs the same on a dev box (AGENTS.md, Build and test). The hygiene scan runs locally with a pattern file |
 | 11 | Fold tiny jobs into the job before them | Applied, with stated exceptions | The tap bump uses `dispatch-and-wait` as its own job: the reusable workflow cannot be a step. `plan` and `verify` are separate because their outputs gate the matrix. On a public repo the whole-minute rounding costs nothing; the reason is wall time, and each of these adds seconds |
 | 12 | Agents batch pushes | Applied | Agents push once per finished change, after local checks. A push to `main` here builds no deploy, but each still runs the full Go set |
