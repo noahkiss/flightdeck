@@ -84,14 +84,18 @@ gen:
 # Build libghostty-vt into build/ (ignored by git). Needs zig (mise.toml) and git.
 libghostty: $(GHOSTTY_STAMP)
 
+# The Ghostty checkout is ours alone: no global or system git config, so a developer's hooksPath
+# (a git-lfs hook with no git-lfs installed, say) or URL rewrite never reaches it.
+GHOSTTY_GIT := GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -C $(GHOSTTY_SRC)
+
 $(GHOSTTY_STAMP):
 	@mkdir -p $(GHOSTTY_SRC)
-	@if [ ! -d $(GHOSTTY_SRC)/.git ]; then git -C $(GHOSTTY_SRC) init -q && \
-		git -C $(GHOSTTY_SRC) remote add origin https://github.com/ghostty-org/ghostty.git; fi
-	git -C $(GHOSTTY_SRC) fetch -q --depth 1 origin $(GHOSTTY_COMMIT)
-	git -C $(GHOSTTY_SRC) checkout -q -f --detach $(GHOSTTY_COMMIT)
-	git -C $(GHOSTTY_SRC) clean -fdq
-	$(foreach p,$(GHOSTTY_PATCHES),git -C $(GHOSTTY_SRC) apply $(CURDIR)/$(p) &&) true
+	@if [ ! -d $(GHOSTTY_SRC)/.git ]; then $(GHOSTTY_GIT) init -q && \
+		$(GHOSTTY_GIT) remote add origin https://github.com/ghostty-org/ghostty.git; fi
+	$(GHOSTTY_GIT) fetch -q --depth 1 origin $(GHOSTTY_COMMIT)
+	$(GHOSTTY_GIT) checkout -q -f --detach $(GHOSTTY_COMMIT)
+	$(GHOSTTY_GIT) clean -fdq
+	$(foreach p,$(GHOSTTY_PATCHES),$(GHOSTTY_GIT) apply $(CURDIR)/$(p) &&) true
 	@rm -f $(GHOSTTY_PREFIX)/.built-*
 	cd $(GHOSTTY_SRC) && $(ZIG) build -Demit-lib-vt -Demit-xcframework=false \
 		-Doptimize=ReleaseFast $(GHOSTTY_ZIGFLAGS) --prefix $(GHOSTTY_PREFIX)
