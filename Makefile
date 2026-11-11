@@ -20,7 +20,12 @@ GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
 GHOSTTY_ZIGFLAGS ?=
 
 # The ghostty build tag selects the cgo parser in internal/vt/ghostty.
-GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/lib/pkgconfig CGO_ENABLED=1
+# The go build cache keys a cgo package on CGO_LDFLAGS but not on what pkg-config returns, so a
+# package built in one checkout would link that checkout's library from another (a removed
+# worktree's, say). The -L of the pkg-config folder, which holds no library, keeps each checkout's
+# builds apart. It appends to CGO_LDFLAGS, so release-build's macOS flags stay.
+GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/lib/pkgconfig CGO_ENABLED=1 \
+	CGO_LDFLAGS="$${CGO_LDFLAGS:--O2 -g} -L$(GHOSTTY_PREFIX)/lib/pkgconfig"
 
 # The speech helper, gff-hab-speech (docs/specs/voice.md): sherpa-onnx's C API from its pinned
 # static release, plus libopus from the system (pkg-config opus). Nothing of it is committed.
@@ -90,6 +95,10 @@ $(GHOSTTY_STAMP):
 	@rm -f $(GHOSTTY_PREFIX)/.built-*
 	cd $(GHOSTTY_SRC) && $(ZIG) build -Demit-lib-vt -Demit-xcframework=false \
 		-Doptimize=ReleaseFast $(GHOSTTY_ZIGFLAGS) --prefix $(GHOSTTY_PREFIX)
+	@# zig writes the absolute prefix into the pkg-config files. Point them at their own folder
+	@# instead, so a build/ copied or restored into another checkout still links its own library.
+	@for pc in $(GHOSTTY_PREFIX)/lib/pkgconfig/*.pc; do \
+		sed 's|^prefix=.*|prefix=$${pcfiledir}/../..|' "$$pc" > "$$pc.tmp" && mv "$$pc.tmp" "$$pc"; done
 	@touch $@
 
 # Print the pinned commit and the patch id: what CI keys its libghostty cache on.
