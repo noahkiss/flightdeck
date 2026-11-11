@@ -118,6 +118,7 @@ type Config struct {
 type copyRec struct {
 	Catalog api.Catalog `json:"catalog"`
 	SeenAt  time.Time   `json:"seen_at"`
+	stored  uint64      // the stores count when it was stored; prune keeps what a round did not see
 }
 
 // saved is catalog.json.
@@ -146,6 +147,7 @@ type Service struct {
 	folders   map[string]Folder // by path, from the last scan
 	scanned   map[string]bool   // paths the last scan tried
 	copies    map[string]*copyRec
+	stores    uint64              // copies stored since start
 	put       map[string]uint64   // label -> the generation last handed over on its link
 	pulled    map[string]uint64   // device id -> the generation of the copy last pulled; a put clears it
 	fails     map[string]*failure // label -> the failed exchanges in a row on that link
@@ -303,7 +305,8 @@ func (s *Service) store(c api.Catalog) {
 	old, had := s.copies[c.DeviceID]
 	changed := !had || !reflect.DeepEqual(old.Catalog, c)
 	mark := had && old.Catalog.AlwaysOn != c.AlwaysOn || !had && c.AlwaysOn
-	s.copies[c.DeviceID] = &copyRec{Catalog: c, SeenAt: s.cfg.Now()}
+	s.stores++
+	s.copies[c.DeviceID] = &copyRec{Catalog: c, SeenAt: s.cfg.Now(), stored: s.stores}
 	if changed {
 		s.saveLocked()
 	}

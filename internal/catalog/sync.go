@@ -54,6 +54,9 @@ func (s *Service) round(ctx context.Context) {
 	if s.cfg.Peers == nil {
 		return
 	}
+	s.mu.Lock()
+	stores := s.stores
+	s.mu.Unlock()
 	links := s.cfg.Peers.Links()
 	now := s.now()
 	var wg sync.WaitGroup
@@ -83,7 +86,7 @@ func (s *Service) round(ctx context.Context) {
 		return
 	}
 	pl := s.cfg.Peers.List()
-	s.prune(pl, links)
+	s.prune(pl, links, stores)
 	s.checkAlwaysOn(pl)
 }
 
@@ -171,8 +174,10 @@ func (s *Service) checkPulled(l Link, c api.Catalog) error {
 }
 
 // prune drops the copies of habs that are neither in the peer list nor linked to this hab
-// (mesh.md 5.2: dropped only when the user removes the peer).
-func (s *Service) prune(pl api.PeerList, links []Link) {
+// (mesh.md 5.2: dropped only when the user removes the peer). pl and links are read during the
+// round, so a copy stored after stores (a link that came up meanwhile handed it over) stays
+// until a round that saw that link.
+func (s *Service) prune(pl api.PeerList, links []Link, stores uint64) {
 	keep := map[string]bool{}
 	for _, p := range pl.Peers {
 		keep[p.DeviceID] = true
@@ -186,7 +191,7 @@ func (s *Service) prune(pl api.PeerList, links []Link) {
 	var gone []string
 	s.mu.Lock()
 	for id := range s.copies {
-		if !keep[id] {
+		if !keep[id] && s.copies[id].stored <= stores {
 			delete(s.copies, id)
 			delete(s.alerted, id)
 			delete(s.pulled, id)
