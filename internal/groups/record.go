@@ -299,11 +299,21 @@ const CapcomAddress = "capcom"
 // ByCapcom reports whether the Capcom service coordinates a group.
 func ByCapcom(g api.Group) bool { return g.Coordinator.Address == CapcomAddress }
 
+// copyRef copies a move ref, so a catalog never shares one with the record it came from: the
+// old home sets Acked on its tombstone while the catalog is marshalled for a peer.
+func copyRef(r *api.GroupMoveRef) *api.GroupMoveRef {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	return &c
+}
+
 // Short is a group's short form for the catalog and group.list (groups.md 5.1).
 func Short(g api.Group) api.CatalogGroup {
 	c := api.CatalogGroup{ID: g.ID, Title: g.Title, State: string(g.State), Generation: g.Generation, Home: g.Home, Revision: g.Revision,
 		Coordinator: &api.CatalogMember{Device: CoordinatorDevice(g), Session: g.Coordinator.Session, Name: g.Coordinator.Name, Capcom: ByCapcom(g)},
-		Moving:      g.Moving, Moved: g.Moved, Tried: g.Tried}
+		Moving:      copyRef(g.Moving), Moved: copyRef(g.Moved), Tried: g.Tried}
 	for _, it := range g.Items {
 		if it.State != ItemDropped {
 			c.Items++
