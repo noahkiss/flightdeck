@@ -94,7 +94,9 @@ type Store struct {
 	mu     sync.Mutex // one write at a time per Store; SQLite's lock orders Stores and processes
 	// repairMu runs one RepairOrphans at a time, so two callers never forget one orphan twice.
 	repairMu sync.Mutex
-	stmts    stmts
+	// repairLogged holds the orphans whose failed repair was logged, so each logs once.
+	repairLogged map[OpID]bool
+	stmts        stmts
 	// maxPages bounds the pages of one Sync in each direction; 0 means maxSyncPages. Tests lower it.
 	maxPages int
 }
