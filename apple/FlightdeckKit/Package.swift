@@ -28,10 +28,10 @@ let package = Package(
         // The in-app SSH carrier (transport.md 4.8). swift-nio-ssh is pre-1.0,
         // so pin it exactly; swift-nio follows semver.
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.15.1"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.104.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.105.0"),
         // Parakeet TDT on Core ML, as the on-device spike measured it. Pre-1.0:
         // pin it exactly.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.3"),
     ],
     targets: [
         .target(
