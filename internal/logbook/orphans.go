@@ -3,6 +3,7 @@ package logbook
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"time"
@@ -20,11 +21,11 @@ import (
 // markerRe matches a JSON string that is exactly a forgotten value.
 var markerRe = regexp.MustCompile(`"` + forgottenPrefix + `[0-9a-f]{64}"`)
 
-// OrphanGrace is how long an orphan waits for its forget outside an exchange this replica dials:
-// longer than one exchange, so a forget a later page carries arrives first. gff-hab's sync
-// service repairs older orphans at each round (lbsync), so a hab that only answers links still
-// repairs; the dialer also repairs at the end of each Sync.
-const OrphanGrace = 2 * time.Minute
+// OrphanGrace is how long an orphan waits for its forget: ten times the 60 s call limit, so a
+// forget a later page carries, on this link or another, arrives first. gff-hab's sync service
+// repairs older orphans at each round (lbsync), also on a hab that only answers links. A repair
+// that comes too early still only redacts what is already redacted.
+const OrphanGrace = 10 * time.Minute
 
 // RepairActor is the actor of a forget the hab writes to repair one it never received.
 var RepairActor = &Actor{Kind: ActorHab}
@@ -36,12 +37,21 @@ const orphansSchema = `
 CREATE TABLE IF NOT EXISTS orphans (origin TEXT NOT NULL, seq INTEGER NOT NULL, seen INTEGER NOT NULL, PRIMARY KEY (origin, seq));
 `
 
-// redactedForm reports whether raw is an op in redacted form: it holds a forgotten value and a
-// redaction would change no byte of it. A redaction writes the op's keys sorted, and an op as
-// written (encode) never has them sorted, so only bytes a redaction made pass: a value that only
-// looks like a forgotten one, written by a person or an agent, never does.
+// redactedForm reports whether raw is an op in redacted form: an op a forget redacts, holding a
+// forgotten value, that a redaction would change no byte of. A redaction writes the op's keys
+// sorted, and an op as written (encode) never has them sorted, so only bytes a redaction made
+// pass: a value that only looks like a forgotten one, written by a person or an agent, never
+// does. An op a forget leaves alone (a remove, a set of a field with no text) never passes.
 func redactedForm(raw []byte) bool {
 	if !markerRe.Match(raw) {
+		return false
+	}
+	var o struct {
+		Kind  Kind            `json:"k"`
+		Field string          `json:"f"`
+		Value json.RawMessage `json:"val"`
+	}
+	if json.Unmarshal(raw, &o) != nil || o.Value == nil || !forgettable(o.Kind, o.Field) {
 		return false
 	}
 	r, err := redact(raw)
@@ -108,6 +118,8 @@ func (s *Store) RepairOrphans(ctx context.Context, grace time.Duration) error {
 // know) is dropped. It does nothing while the start hold lasts; a failed write is logged and
 // tried again at the next call.
 func (s *Store) repairBefore(ctx context.Context, cutoff time.Time) error {
+	s.repairMu.Lock()
+	defer s.repairMu.Unlock()
 	if until, err := s.heldUntil(ctx); err != nil || (!until.IsZero() && s.now().Before(until)) {
 		return err
 	}
@@ -129,6 +141,14 @@ func (s *Store) repairBefore(ctx context.Context, cutoff time.Time) error {
 		return err
 	}
 	for _, id := range ids {
+		// A forget may have come since the listing: it cleared the row, and needs no repair.
+		var n int
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM orphans WHERE origin = ? AND seq = ?`, id.Origin, id.Seq).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
 		_, err := s.Write(ctx, Batch{Actor: RepairActor, Steps: []Step{{Kind: KindForget, Target: id}}})
 		var inv *InvalidError
 		switch {
@@ -137,17 +157,12 @@ func (s *Store) repairBefore(ctx context.Context, cutoff time.Time) error {
 			if _, err := s.db.ExecContext(ctx, `DELETE FROM orphans WHERE origin = ? AND seq = ?`, id.Origin, id.Seq); err != nil {
 				return err
 			}
+		case errors.Is(err, ErrSharedOrigin) || errors.Is(err, ErrRestoring):
+			return nil // no write goes through; the store says why elsewhere
 		default:
 			s.logf("logbook: repairing the missing forget of %s: %v", id, err)
 			return nil
 		}
 	}
 	return nil
-}
-
-// repair runs RepairOrphans for an exchange: an error is logged, never the exchange's.
-func (s *Store) repair(ctx context.Context, cutoff time.Time) {
-	if err := s.repairBefore(ctx, cutoff); err != nil {
-		s.logf("logbook: repairing missing forgets: %v", err)
-	}
 }

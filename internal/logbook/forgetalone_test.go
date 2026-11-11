@@ -3,6 +3,7 @@ package logbook
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -14,19 +15,30 @@ import (
 // that the replica that kept the text and the one that took the redacted op converge on the
 // redacted form.
 
-// syncQuiet syncs a and b both ways until neither moves.
+// syncQuiet syncs a and b both ways until neither moves, lets OrphanGrace pass with a repair
+// round on each (as gff-hab's sync round), and syncs again.
 func syncQuiet(t *testing.T, a, b *replica) {
 	t.Helper()
 	ctx := context.Background()
 	a.maxPages, b.maxPages = 0, 0
-	for range 4 {
-		if _, err := a.Sync(ctx, &direct{to: b}); err != nil {
-			t.Fatal(err)
+	sync := func() {
+		for range 4 {
+			if _, err := a.Sync(ctx, &direct{to: b}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.Sync(ctx, &direct{to: a}); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if _, err := b.Sync(ctx, &direct{to: a}); err != nil {
+	}
+	sync()
+	for _, r := range []*replica{a, b} {
+		r.clock.Advance(OrphanGrace + time.Second)
+		if err := r.RepairOrphans(ctx, OrphanGrace); err != nil {
 			t.Fatal(err)
 		}
 	}
+	sync()
 }
 
 // heldRedacted reports whether r holds op id with redacted bytes.
@@ -182,7 +194,7 @@ func orphanCount(t *testing.T, r *replica) int {
 }
 
 // While the forget's writer lives, the forget arrives in the same exchange, or the next one
-// after an exchange cut short, and the hab writes no forget of its own.
+// after an exchange cut short, and the hab writes no forget of its own: Sync repairs nothing.
 func TestRepairWaitsForTheForget(t *testing.T) {
 	ctx := context.Background()
 	for _, cut := range []bool{false, true} {
@@ -208,9 +220,9 @@ func TestRepairWaitsForTheForget(t *testing.T) {
 	}
 }
 
-// Outside an exchange it dials, a replica repairs an orphan only after OrphanGrace (gff-hab's
-// sync round calls RepairOrphans); answering pulls and pushes repairs nothing.
-func TestRepairDialedSide(t *testing.T) {
+// A replica repairs an orphan only after OrphanGrace (gff-hab's sync round calls
+// RepairOrphans); answering pulls and pushes repairs nothing.
+func TestRepairAfterGrace(t *testing.T) {
 	ctx := context.Background()
 	a, c := newReplica(t, "A"), newReplica(t, "C")
 	_, tag, _ := sameOriginFarAhead(t, a, c)
@@ -228,7 +240,7 @@ func TestRepairDialedSide(t *testing.T) {
 	if k := forgetsBy(t, c, tag); len(k) != 0 {
 		t.Fatalf("repaired inside the grace: %q", k)
 	}
-	c.clock.Advance(2 * time.Minute)
+	c.clock.Advance(OrphanGrace)
 	if _, err := c.ServePull(ctx, Vector{}, nil, Limits{}); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +258,7 @@ func TestRepairDialedSide(t *testing.T) {
 // No repair during the start hold; one after it.
 func TestRepairWaitsOutTheHold(t *testing.T) {
 	ctx := context.Background()
-	a, c, d := newReplica(t, "A"), newReplica(t, "C"), newReplica(t, "D")
+	a, c := newReplica(t, "A"), newReplica(t, "C")
 	_, tag, _ := sameOriginFarAhead(t, a, c)
 	ans, err := a.ServePull(ctx, c.vec(t), nil, Limits{})
 	if err != nil {
@@ -259,7 +271,7 @@ func TestRepairWaitsOutTheHold(t *testing.T) {
 	if err := c.HoldWrites(ctx, c.clock.Now().Add(5*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Sync(ctx, &direct{to: d}); err != nil {
+	if err := c.RepairOrphans(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
 	if k := forgetsBy(t, c, tag); len(k) != 0 {
@@ -268,7 +280,7 @@ func TestRepairWaitsOutTheHold(t *testing.T) {
 	if err := c.HoldWrites(ctx, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Sync(ctx, &direct{to: d}); err != nil {
+	if err := c.RepairOrphans(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
 	if k := forgetsBy(t, c, tag); len(k) != 1 || k[0] != ActorHab {
@@ -307,7 +319,8 @@ func TestRepairScanAtOpen(t *testing.T) {
 
 // A value that only looks like a forgotten one, written here or sent by a peer, is no orphan
 // and never gets a forget: a redaction writes its op's keys sorted, which an op as written never
-// has, so only redacted bytes are in redacted form. The person reads the same note everywhere.
+// has, so only redacted bytes are in redacted form; a remove, which a forget leaves alone, is never
+// one either. The person reads the same note everywhere.
 func TestMarkerLookalike(t *testing.T) {
 	ctx := context.Background()
 	look := forgottenPrefix + strings.Repeat("ab", 32)
@@ -325,6 +338,11 @@ func TestMarkerLookalike(t *testing.T) {
 		if _, err := a.ServePull(ctx, Vector{}, nil, Limits{}); err != nil {
 			t.Fatal(err)
 		}
+		for _, r := range []*replica{a, c} {
+			if err := r.RepairOrphans(ctx, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	notes := func(r *replica) string {
 		var text string
@@ -333,10 +351,35 @@ func TestMarkerLookalike(t *testing.T) {
 		}
 		return text
 	}
-	if orphanCount(t, a)+orphanCount(t, c) != 0 || len(forgetsBy(t, a, own))+len(forgetsBy(t, c, own)) != 0 {
+	forgets := 0
+	for _, op := range []OpID{own} {
+		forgets += len(forgetsBy(t, a, op)) + len(forgetsBy(t, c, op))
+	}
+	if orphanCount(t, a)+orphanCount(t, c) != 0 || forgets != 0 {
 		t.Fatalf("the lookalike was taken for a forgotten value: %d %d orphans", orphanCount(t, a), orphanCount(t, c))
 	}
 	if dumpOps(t, a.Store) != before || dumpOps(t, c.Store) != before || notes(a) != look || notes(c) != look {
 		t.Fatalf("the note changed: %q %q", notes(a), notes(c))
+	}
+}
+
+// A remove holds no text a forget redacts, so one whose member looks forgotten, its keys sorted as
+// a redaction writes them, is still never in redacted form (logbook.md 7.6, Redacted ops).
+func TestMarkerLookalikeRemove(t *testing.T) {
+	look := forgottenPrefix + strings.Repeat("ab", 32)
+	o := Op{V: OpVersion, Origin: "SHA256:a", Seq: 2, BatchLast: 2, Kind: KindRemove, Record: "r", Field: "tags", Value: jsonString(look)}
+	if err := o.encode(); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(o.raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	sorted, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redactedForm(o.raw) || redactedForm(sorted) {
+		t.Fatalf("a remove passed as redacted: %s", sorted)
 	}
 }

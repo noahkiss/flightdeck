@@ -92,7 +92,9 @@ type Store struct {
 	now    func() time.Time
 	logf   func(string, ...any)
 	mu     sync.Mutex // one write at a time per Store; SQLite's lock orders Stores and processes
-	stmts  stmts
+	// repairMu runs one RepairOrphans at a time, so two callers never forget one orphan twice.
+	repairMu sync.Mutex
+	stmts    stmts
 	// maxPages bounds the pages of one Sync in each direction; 0 means maxSyncPages. Tests lower it.
 	maxPages int
 }
