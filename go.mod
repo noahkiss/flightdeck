@@ -11,9 +11,9 @@ require (
 	github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c
 	github.com/ebitengine/purego v0.11.3
 	go.mitchellh.com/libghostty v0.0.0-20261107144202-b13f277ddcb2
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
-	golang.org/x/text v0.43.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.62.0
 	rsc.io/qr v0.2.0
 )
