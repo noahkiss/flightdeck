@@ -2573,7 +2573,7 @@ This product contains a derivation of various files from SwiftNIO.
 
 ==============================================================================
 swift-nio
-Version: 2.104.0
+Version: 2.105.0
 Source: https://github.com/apple/swift-nio
 Licence: Apache-2.0
 In: Flightdeck (Swift package)
