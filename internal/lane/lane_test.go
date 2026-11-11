@@ -27,8 +27,6 @@ type repo struct {
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
@@ -41,8 +39,6 @@ func newRepo(t *testing.T, lane string) *repo {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	d := t.TempDir()
 	r := &repo{t: t, bare: filepath.Join(d, "remote.git"), src: filepath.Join(d, "src"), other: filepath.Join(d, "other"), laneWT: filepath.Join(d, "lane", "wt")}
 	git(t, d, "init", "-q", "--bare", "-b", "main", r.bare)
