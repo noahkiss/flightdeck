@@ -151,6 +151,10 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
   Without the tag, `go build ./...` and `go test ./...` skip that package and work on any machine,
   with or without the library. `make build`, `make vet` and `make test` build the library first,
   then pass the tag and `PKG_CONFIG_PATH`. Linking is static, so binaries need no shared library.
+  The pkg-config files name their own folder, not an absolute prefix, so a copied `build/` still
+  links its own library. `GHOSTTY_ENV` also adds that folder as an `-L` to `CGO_LDFLAGS`: the Go
+  build cache does not key on pkg-config's output, and without the marker a checkout could reuse
+  a package that links another checkout's library.
 - **cgo stays in one package.** Every other package, the holder included, must build with
   `CGO_ENABLED=0`. `make check-pure` proves it.
 - **Snapshot encodings.** `snapshot-vt` (the baseline, spec Q6) is libghostty's VT formatter output
