@@ -5344,7 +5344,7 @@ public struct LogbookActor: Codable, Sendable, Hashable {
     public var device: String?
     public var harness: String?
     public var host: String?
-    /// agent or person.
+    /// agent or person; hab for a forget the hab wrote itself, to repair one it never received (logbook.md 7.6).
     public var kind: String?
     public var pane: String?
     public var session: String?

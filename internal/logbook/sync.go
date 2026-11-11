@@ -183,6 +183,13 @@ func (s *Store) syncState(ctx context.Context) (Status, error) {
 // skip on a pull, and is left out of later pushes. A page that moves no vector and finds no new
 // origin to pass over ends that direction (Stalled); the next exchange tries again.
 func (s *Store) Sync(ctx context.Context, r Remote) (res SyncResult, err error) {
+	// An orphan seen before this exchange began had a whole exchange for its forget to arrive.
+	start := s.now()
+	defer func() {
+		if err == nil {
+			s.repair(ctx, start)
+		}
+	}()
 	maxPages := s.maxPages
 	if maxPages <= 0 {
 		maxPages = maxSyncPages

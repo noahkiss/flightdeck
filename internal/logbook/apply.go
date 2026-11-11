@@ -96,6 +96,11 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 				if err != nil {
 					return res, err
 				}
+				if red, err := storedRaw(ctx, tx, o.ID()); err != nil {
+					return res, err
+				} else if err := noteOrphan(ctx, tx, o.ID(), o.Kind, red, nowMS); err != nil {
+					return res, err
+				}
 				affected[root] = true
 				forgot = true
 			}
@@ -135,6 +140,9 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 		for r := range red {
 			affected[r] = true
 			forgot = true
+		}
+		if err := noteOrphan(ctx, tx, o.ID(), o.Kind, o.raw, nowMS); err != nil {
+			return res, err
 		}
 		res.Stored++
 		touched[o.Origin] = true
@@ -320,6 +328,9 @@ func (s *Store) insertOp(ctx context.Context, tx txn, o *Op) (map[string]bool, e
 		return nil, err
 	}
 	if o.Kind == KindForget && o.Target != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM orphans WHERE origin = ? AND seq = ?`, o.Target.Origin, o.Target.Seq); err != nil {
+			return nil, err
+		}
 		var raw []byte
 		var root string
 		err := tx.QueryRowContext(ctx, `SELECT raw, root FROM ops WHERE origin = ? AND seq = ?`,

@@ -349,3 +349,48 @@ func TestServeRefusals(t *testing.T) {
 		t.Fatalf("a refused op: %+v %v", res, err)
 	}
 }
+
+// Each round repairs an orphan redaction past its grace (logbook.md 7.6, Redacted ops), on a hab
+// with no link it dialed too: the redacted op alone, its forget's writer gone.
+func TestRoundRepairsOrphans(t *testing.T) {
+	ctx := context.Background()
+	src, err := logbook.Open(ctx, filepath.Join(t.TempDir(), "logbook.db"), logbook.Options{Origin: "SHA256:src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	id := logbook.NewID(logbook.TypeTask)
+	res, err := src.Write(ctx, logbook.Batch{Steps: []logbook.Step{
+		{Kind: logbook.KindCreate, Record: id, Type: logbook.TypeTask, Fields: map[string]any{"title": "a task"}},
+		{Kind: logbook.KindAppend, Record: id, Field: "notes", Value: "the key is hunter2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Write(ctx, logbook.Batch{Steps: []logbook.Step{{Kind: logbook.KindForget, Target: res.Ops[1]}}}); err != nil {
+		t.Fatal(err)
+	}
+	all, _, err := src.OpsAfter(ctx, logbook.Vector{}, 0, 0)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("ops: %d %v", len(all), err)
+	}
+	page := all[:2] // the create and the redacted note, not the forget: as a page from a build before 7.6's groups
+	zero := time.Duration(0)
+	h := newHab(t, "h", func(h *hab, c *Config) { c.Peers, c.repairGrace = nil, &zero })
+	if _, _, err := h.store.ServePush(ctx, page); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Kick()
+	waitFor(t, "the hab's forget", func() bool {
+		v, err := h.store.Vector(ctx)
+		return err == nil && v[h.id] == 1
+	})
+	ops, err := h.store.History(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := ops[len(ops)-1]
+	if last.Kind != logbook.KindForget || last.Actor == nil || last.Actor.Kind != logbook.ActorHab || *last.Target != res.Ops[1] {
+		t.Fatalf("last op %+v", last)
+	}
+}

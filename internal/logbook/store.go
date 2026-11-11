@@ -241,7 +241,7 @@ func (s *Store) init(ctx context.Context, origin string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+foldedSchema+keysSchema+foldersSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+foldedSchema+keysSchema+foldersSchema+orphansSchema); err != nil {
 		return fmt.Errorf("logbook: schema: %w", err)
 	}
 	m, err := readMeta(ctx, tx)
@@ -268,6 +268,15 @@ func (s *Store) init(ctx context.Context, origin string) error {
 		}
 		m.foldVersion = foldVersion
 		if err := m.write(ctx, tx); err != nil {
+			return err
+		}
+	}
+	var scanned int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM meta WHERE key = 'orphans_scanned'`).Scan(&scanned); err != nil {
+		return err
+	}
+	if scanned == 0 {
+		if err := scanOrphans(ctx, tx, s.now().UnixMilli()); err != nil {
 			return err
 		}
 	}
