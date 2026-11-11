@@ -260,6 +260,42 @@ func TestWatches(t *testing.T) {
 	}
 }
 
+// listHook is a peer list that runs a function each time a round reads the list.
+type listHook struct {
+	*fakePeers
+	hook func()
+}
+
+func (l listHook) List() api.PeerList {
+	l.hook()
+	return l.fakePeers.List()
+}
+
+// TestPruneKeepsMidRoundPut: a link that comes up during a round, after the round read the
+// links, hands over its catalog; that round's prune keeps the copy, and a later round that
+// sees neither the link nor a peer drops it.
+func TestPruneKeepsMidRoundPut(t *testing.T) {
+	fp := &fakePeers{}
+	put := true
+	var s *Service
+	s = newService(Config{Self: idA, Peers: listHook{fp, func() {
+		if put {
+			put = false
+			if err := s.Put(api.PeerHello{DeviceID: idB}, api.Catalog{DeviceID: idB, Generation: 3}); err != nil {
+				t.Error(err)
+			}
+		}
+	}}})
+	s.round(context.Background())
+	if _, ok := s.copies[idB]; !ok {
+		t.Fatal("the round dropped a copy handed over after it read the links")
+	}
+	s.round(context.Background())
+	if _, ok := s.copies[idB]; ok {
+		t.Fatal("a copy of a hab neither listed nor linked stayed")
+	}
+}
+
 // TestCheckPulled: a pulled catalog must be the linked hab's own.
 func TestCheckPulled(t *testing.T) {
 	s := newService(Config{Self: idA})
