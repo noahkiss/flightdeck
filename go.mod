@@ -10,7 +10,7 @@ require (
 	github.com/dlclark/regexp2/v2 v2.11.0
 	github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c
 	github.com/ebitengine/purego v0.11.2
-	go.mitchellh.com/libghostty v0.0.0-20261021212106-df1957cbff56
+	go.mitchellh.com/libghostty v0.0.0-20261107144202-b13f277ddcb2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0

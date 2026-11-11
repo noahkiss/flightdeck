@@ -114,7 +114,7 @@ jobs:
       commands: |
         make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
         make fuzz FUZZTIME=30s
-        PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/
+        PKG_CONFIG_PATH="$PWD/build/libghostty-vt/lib/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/
         sudo loginctl enable-linger "$USER"
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done

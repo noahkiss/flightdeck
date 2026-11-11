@@ -125,7 +125,7 @@ if [ -z "$bindir" ]; then
 	[ -d "$repo/cmd/gff" ] && pkgs="$pkgs ./cmd/gff"
 	say "building $pkgs (build $build, -tags ghostty)"
 	# shellcheck disable=SC2086
-	(cd "$repo" && PKG_CONFIG_PATH=$repo/build/libghostty-vt/share/pkgconfig CGO_ENABLED=1 \
+	(cd "$repo" && PKG_CONFIG_PATH=$repo/build/libghostty-vt/lib/pkgconfig CGO_ENABLED=1 \
 		"$gocmd" build -tags ghostty -trimpath -ldflags "-X main.build=$build" -o "$bindir/" $pkgs)
 fi
 for b in gff-hab gff-hab-holder; do

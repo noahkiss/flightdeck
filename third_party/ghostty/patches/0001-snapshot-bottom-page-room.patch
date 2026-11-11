@@ -18,7 +18,7 @@ record declares.
 Applied by `make libghostty` to the pinned Ghostty commit (GHOSTTY_COMMIT).
 
 diff --git a/src/terminal/snapshot/page.zig b/src/terminal/snapshot/page.zig
-index 995d7d5d1c2d..fa962eda0ecd 100644
+index e1b86a87740d..c3ee25df1668 100644
 --- a/src/terminal/snapshot/page.zig
 +++ b/src/terminal/snapshot/page.zig
 @@ -229,24 +229,56 @@ pub const Decoder = struct {
@@ -82,10 +82,10 @@ index 995d7d5d1c2d..fa962eda0ecd 100644
  
          destination.size = .{
 diff --git a/src/terminal/snapshot/screen.zig b/src/terminal/snapshot/screen.zig
-index 8d5076298a15..b9a703c91c84 100644
+index 0368ae3f6004..d461a63ce777 100644
 --- a/src/terminal/snapshot/screen.zig
 +++ b/src/terminal/snapshot/screen.zig
-@@ -395,10 +395,17 @@ pub fn decode(
+@@ -396,10 +396,17 @@ pub fn decode(
  
          // Allocate each PAGE at its declared capacity and decode directly into
          // builder-owned storage, avoiding an intermediate page representation.
