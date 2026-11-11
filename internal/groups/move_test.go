@@ -109,3 +109,20 @@ func TestQueuedRoundTrip(t *testing.T) {
 		t.Fatal("a broken file read")
 	}
 }
+
+// TestShortCopiesMoveRefs: the catalog form holds its own move refs, so the old home can mark
+// its tombstone acknowledged while a peer's catalog.put is being marshalled.
+func TestShortCopiesMoveRefs(t *testing.T) {
+	g := api.Group{ID: "0123456789abcdef", Moving: &api.GroupMoveRef{To: "a"}, Moved: &api.GroupMoveRef{To: "b"}}
+	c := Short(g)
+	if c.Moving == g.Moving || c.Moved == g.Moved {
+		t.Fatal("Short shares a move ref with the group")
+	}
+	g.Moved.Acked = true
+	if c.Moved.Acked || c.Moved.To != "b" || c.Moving.To != "a" {
+		t.Fatalf("catalog refs = %+v, %+v", c.Moving, c.Moved)
+	}
+	if c := Short(api.Group{}); c.Moving != nil || c.Moved != nil {
+		t.Fatal("Short invents a move ref")
+	}
+}
