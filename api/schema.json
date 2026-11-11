@@ -10884,7 +10884,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "agent or person."
+            "description": "agent or person; hab for a forget the hab wrote itself, to repair one it never received (logbook.md 7.6)."
           },
           "pane": {
             "type": "string"

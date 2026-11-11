@@ -72,6 +72,8 @@ type Config struct {
 	Now       func() time.Time
 	Logf      func(string, ...any)
 
+	// repairGrace, when set, replaces logbook.OrphanGrace in each round (tests).
+	repairGrace *time.Duration
 	// checked, when set, runs after each look of the change loop (tests).
 	checked func()
 }
@@ -327,6 +329,15 @@ func (s *Service) roundLoop() {
 // round starts an exchange over each online link with the logbook capability that is not
 // waiting out a backoff. A link that comes back online is tried at once.
 func (s *Service) round() {
+	// An orphan redaction past its grace gets the hab's forget, also on a hab that only answers
+	// links (logbook.md 7.6, Redacted ops).
+	grace := logbook.OrphanGrace
+	if s.cfg.repairGrace != nil {
+		grace = *s.cfg.repairGrace
+	}
+	if err := s.cfg.Store.RepairOrphans(s.ctx, grace); err != nil {
+		s.cfg.Logf("logbook: repairing missing forgets: %v", err)
+	}
 	if s.cfg.Peers == nil {
 		return
 	}

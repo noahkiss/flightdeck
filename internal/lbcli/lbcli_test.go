@@ -234,3 +234,30 @@ func TestExportImport(t *testing.T) {
 		t.Fatalf("bad line: %d %q", code, errs)
 	}
 }
+
+// A forget the hab wrote to repair one that never arrived reads as that in history, not as a
+// person's or an agent's (logbook.md 7.6, Redacted ops).
+func TestHistoryRepairForget(t *testing.T) {
+	ctx := context.Background()
+	state := t.TempDir()
+	st, err := logbook.Open(ctx, filepath.Join(state, "logbook.db"), logbook.Options{Origin: "SHA256:hab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := logbook.NewID(logbook.TypeTask)
+	res, err := st.Write(ctx, logbook.Batch{Steps: []logbook.Step{
+		{Kind: logbook.KindCreate, Record: id, Type: logbook.TypeTask, Fields: map[string]any{"title": "a task"}},
+		{Kind: logbook.KindAppend, Record: id, Field: "notes", Value: "the key is hunter2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Write(ctx, logbook.Batch{Actor: logbook.RepairActor, Steps: []logbook.Step{{Kind: logbook.KindForget, Target: res.Ops[1]}}}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	out, _, code := runCLI(t, state, "", "history", id)
+	if code != 0 || !strings.Contains(out, "forget") || !strings.Contains(out, "by the hab, repairing a forget that never arrived") || strings.Contains(out, "hunter2") {
+		t.Fatalf("history:\n%s", out)
+	}
+}

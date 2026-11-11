@@ -934,6 +934,10 @@ func history(ctx context.Context, c *cli) (any, string, error) {
 		if !o.Folded {
 			b.WriteString(" (not folded by this build)")
 		}
+		if o.Kind == "forget" && o.By != nil && o.By.Kind == logbook.ActorHab {
+			b.WriteString("  by the hab, repairing a forget that never arrived\n")
+			continue
+		}
 		fmt.Fprintf(&b, "  by %s\n", who(o.By))
 	}
 	return r, b.String(), nil

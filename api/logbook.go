@@ -110,7 +110,7 @@ type LogbookRecord struct {
 // LogbookActor is who asked for a change (logbook.md 2.5): an agent through its pane, or a
 // person through a client device.
 type LogbookActor struct {
-	Kind    string `json:"kind,omitempty" doc:"agent or person."`
+	Kind    string `json:"kind,omitempty" doc:"agent or person; hab for a forget the hab wrote itself, to repair one it never received (logbook.md 7.6)."`
 	Harness string `json:"harness,omitempty"`
 	Session string `json:"session,omitempty"`
 	// SessionName is added after stage 7: an older op has none, so a client shows the session id.

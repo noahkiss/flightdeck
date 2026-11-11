@@ -156,7 +156,7 @@ func (l Link) key() string { return l.Kind + " " + l.To }
 // Actor is who asked for a change (2.1, 2.5): an agent through its pane, or a person through a
 // client device.
 type Actor struct {
-	Kind    string `json:"kind,omitempty"` // "agent" or "person"
+	Kind    string `json:"kind,omitempty"` // "agent", "person", or ActorHab for a repair forget
 	Harness string `json:"harness,omitempty"`
 	Session string `json:"session,omitempty"`
 	// SessionName is the session's name at the write, for display only; Session stays the id.
