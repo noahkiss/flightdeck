@@ -3,12 +3,12 @@
   "extends": ["github>noahkiss/renovate-config"],
   "packageRules": [
     {
-      "description": "Moves only with GHOSTTY_COMMIT in the Makefile, by hand (docs/layout.md, The terminal parser)",
+      "description": "A core pin: moves with GHOSTTY_COMMIT in the Makefile (docs/specs/ci-release.md 7.9)",
       "matchPackageNames": ["go.mitchellh.com/libghostty"],
       "enabled": false
     },
     {
-      "description": "zig must match the pinned Ghostty commit's minimum_zig_version; bumped with it, by hand",
+      "description": "A core pin: zig is the pinned Ghostty commit's minimum_zig_version and moves with it (docs/specs/ci-release.md 7.9)",
       "matchManagers": ["mise"],
       "matchPackageNames": ["zig"],
       "enabled": false
