@@ -184,7 +184,7 @@ binaries. `make race` runs the race list `RACE_COUNT` times, 3 by default. Both 
 10-minute default on a hosted macOS runner, about 11 minutes in November 2026.
 
 **A pull request runs the race list once.** `ci.yml` passes `RACE_COUNT=1` on a `pull_request`
-event and 3 on every other event; `nightly.yml` runs `make ci-full` with the default 3. Repeats
+event and 3 on every other event; `nightly.yml` runs the full set in the same five shards with the default 3. Repeats
 catch a race that one pass misses, but in November 2026 the second and third pass were about two
 thirds of the race time, roughly 4 to 5 minutes on each shard. Every merged change still gets
 three passes: a direct push runs them, and a merged pull request's push runs the fast set, so the
@@ -306,27 +306,38 @@ login, which launchd user agents need; stage 2 proves this before it relies on i
 
 ### 3.6 `nightly.yml`
 
-One Linux job (go-ci with `mise` and the cache), after the guard:
+After the guard, Linux jobs on go-ci with `mise` and the cache, all in parallel:
 
-- `make ci-full GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`: the full set on
-  `main` as it stands. The push that merges a passed pull request runs only the fast set (3.3),
-  and that pull request ran against an older `main`; this catches a break from merge skew by the
-  next morning. It also builds the baseline libghostty on a cache miss, for the commands below.
-- `make fuzz FUZZTIME=30s`
-- `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
-  (3.2: a bare `-tags ghostty` command cannot find the library)
-- `scripts/service-check.sh` under systemd. The runner user needs a user manager:
-  `sudo loginctl enable-linger "$USER"` first; the job waits up to 30 s for the user bus and fails
-  with an error when it never appears. Stage 2 proves it on the hosted image.
+- **Five shard jobs**, "Nightly suites 0/4" to "4/4", the same split as `ci.yml`'s `go (full)`
+  jobs (3.2): `make ci-full GO_TEST_SHARD=0/4` on one, `make test race GO_TEST_SHARD=i/4` on the
+  other four, each with `GFF_TEST_TIMEOUT_SCALE=3` and
+  `GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`. `RACE_COUNT` stays at its
+  default, 3. This is the full set on `main` as it stands. The push that merges a passed pull
+  request runs only the fast set (3.3), and that pull request ran against an older `main`; this
+  catches a break from merge skew by the next morning. Before November 2026 the set ran in one
+  job, where `cmd/gff-hab` under `-race -count=3` alone ran past the 30-minute `RACE_TIMEOUT`.
+  Timeout 45 minutes each, as in `ci.yml`.
+- **One job for the slow suites**, apart from the shards, so a failing shard never skips them:
+  - `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`, which
+    restores or builds the baseline library for the restart loop
+  - `make fuzz FUZZTIME=30s`
+  - `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
+    (3.2: a bare `-tags ghostty` command cannot find the library)
+  - `scripts/service-check.sh` under systemd. The runner user needs a user manager:
+    `sudo loginctl enable-linger "$USER"` first; the job waits up to 30 s for the user bus and
+    fails with an error when it never appears. Stage 2 proves it on the hosted image.
+
+  Timeout 40 minutes. The slow suites themselves budget about 10 minutes (`testing.md`, Layers).
+
+Each job passes its own go-ci `concurrency-key` (the shard, or `slow`), so the jobs of one run
+never queue behind each other.
 
 A scheduled run skips everything when `main` has not moved since the last passing run; a
 dispatch always runs everything.
 
-A second small job on `ubuntu-24.04-arm` runs only
+A last small job on `ubuntu-24.04-arm` runs only
 `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline'` with the
 cache, so the linux arm64 release leg starts warm (5).
-
-Timeout 75 minutes: the full set takes most of it. The slow suites themselves budget about 10 minutes (`testing.md`, Layers).
 
 ### 3.7 `capcom-engine.yml`: the Capcom engine
 
