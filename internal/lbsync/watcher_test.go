@@ -12,11 +12,18 @@ import (
 	"time"
 )
 
+// waitingDSN opens path with a busy timeout, like every connection the store opens: these
+// tests write beside a running hab, and a connection without one fails at once with
+// SQLITE_BUSY while the hab holds the write lock.
+func waitingDSN(path string) string {
+	return path + "?_pragma=busy_timeout(10000)"
+}
+
 // A WAL rewrite can keep both sizes and timestamps unchanged. The committed
 // data_version still changes on the observer's pinned connection.
 func TestWatcherSameFileSignature(t *testing.T) {
 	if path := os.Getenv("GFF_TEST_WATCHER_DB"); path != "" {
-		db, err := sql.Open("sqlite", path)
+		db, err := sql.Open("sqlite", waitingDSN(path))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -27,7 +34,7 @@ func TestWatcherSameFileSignature(t *testing.T) {
 		return
 	}
 	path := filepath.Join(t.TempDir(), "probe.db")
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", waitingDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +96,7 @@ func TestDialerUnchangedFileSignature(t *testing.T) {
 		if _, err := st.Write(context.Background(), logbook.Batch{Steps: []logbook.Step{logbook.Create(logbook.TypeTask, map[string]any{"title": "external writer"})}}); err != nil {
 			t.Fatal(err)
 		}
-		db, err := sql.Open("sqlite", path)
+		db, err := sql.Open("sqlite", waitingDSN(path))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +123,7 @@ func TestDialerUnchangedFileSignature(t *testing.T) {
 	dial(a, b)
 	waitFor(t, "first exchange", func() bool { _, ok := a.svc.LinkStats()["b"]; return ok })
 	path := a.svc.cfg.Path
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", waitingDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}
