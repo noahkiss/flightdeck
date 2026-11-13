@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -172,7 +174,7 @@ func (s *groupsService) lanePass(id string) {
 			if groups.Finished(*g) {
 				// Every item is landed or dropped: the group ends. This also ends a group whose
 				// last land came just before a stop, at the next start.
-				s.goLocked(func() { s.end(id, "The group ended: every item is landed or dropped.") })
+				s.bgLocked(func() { s.end(id, "The group ended: every item is landed or dropped.", false) })
 			}
 			s.mu.Unlock()
 			return
@@ -225,8 +227,11 @@ func (s *groupsService) lanePass(id string) {
 			close(run.done)
 			return
 		}
-		cont := s.laneDone(id, ii, item, res)
+		cont, task := s.laneDone(id, ii, item, res)
 		close(run.done)
+		if task != "" {
+			s.setStatus([]string{task}, "done", "") // here, not on its own goroutine: Stop waits for it
+		}
 		if !cont {
 			return
 		}
@@ -261,13 +266,14 @@ func (s *groupsService) laneStop(id string) {
 	}
 }
 
-// laneDone writes a run's outcome. It reports whether the lane goes on with the next item.
-func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result) bool {
+// laneDone writes a run's outcome. It reports whether the lane goes on with the next item, and
+// the Logbook task of an item that landed, which the caller marks done.
+func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result) (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g := s.groups[id]
 	if g == nil || ii >= len(g.Items) || g.Items[ii].ID != item {
-		return false
+		return false, ""
 	}
 	it := &g.Items[ii]
 	target := res.Target
@@ -288,7 +294,7 @@ func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result
 	if res.NoCI {
 		noCI = " (no CI)"
 	}
-	cont := true
+	cont, task := true, ""
 	switch res.Outcome {
 	case lane.Landed:
 		it.State, it.Landed, it.NoCI, it.Reason = groups.ItemLanded, res.Commit, res.NoCI, ""
@@ -298,11 +304,9 @@ func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result
 			s.memberNoteLocked(g, g.Members[lead], fmt.Sprintf("Group %s, item %s: landed on %s at %s%s. Your session keeps running: the coordinator may still ask about the work.", g.ID, it.ID, target, groups.Short7(res.Commit), noCI))
 		}
 		s.tellLocked(g, fmt.Sprintf("item %s landed on %s at %s%s.", it.ID, target, groups.Short7(res.Commit), noCI), "Flightdeck")
-		if task := it.Task; task != "" {
-			s.goLocked(func() { s.setStatus([]string{task}, "done", "") })
-		}
+		task = it.Task
 		gid := g.ID
-		s.goLocked(func() { s.kick(gid) }) // its lead slot is free (groups.md 4.3, 7.3 step 7)
+		s.bgLocked(func() { s.kick(gid) }) // its lead slot is free (groups.md 4.3, 7.3 step 7)
 		// When this was the last item, the next turn of lanePass finds nothing to land and ends
 		// the group.
 	case lane.Back:
@@ -342,7 +346,7 @@ func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result
 		cont = false
 	}
 	s.saveLocked(g)
-	return cont
+	return cont, task
 }
 
 func (s *groupsService) laneRetryAfter() time.Duration {
@@ -353,6 +357,12 @@ func (s *groupsService) laneRetryAfter() time.Duration {
 }
 
 func (s *groupsService) laneDir() string { return s.cfg.laneDir }
+
+// gone reports whether a folder no longer exists.
+func gone(folder string) bool {
+	_, err := os.Stat(folder)
+	return errors.Is(err, fs.ErrNotExist)
+}
 
 func firstLine(s string) string {
 	l, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
@@ -434,8 +444,10 @@ func (s *groupsService) removeWorktree(folder string) error {
 // of landed items whose sessions ended, lists the leftovers on the record and in one message to
 // the coordinator, and marks the Logbook plan done, or dropped when nothing landed. It removes
 // nothing with uncommitted changes. head is the message's first sentence, before the result;
-// "" sends no message (the coordinator's own close).
-func (s *groupsService) end(id, head string) (api.Group, error) {
+// "" sends no message (the coordinator's own close). resume finishes an end that a stop cut
+// short: the group is already ending. Each step is safe to run again: panes closed and
+// worktrees removed before the stop are gone, and a removal finds nothing to remove.
+func (s *groupsService) end(id, head string, resume bool) (api.Group, error) {
 	closeIdle := s.boolSetting(settings.GroupCloseMembers, true)
 	s.mu.Lock()
 	g := s.groups[id]
@@ -443,7 +455,7 @@ func (s *groupsService) end(id, head string) (api.Group, error) {
 		s.mu.Unlock()
 		return api.Group{}, fmt.Errorf("no group %s on this hab", id)
 	}
-	if !groups.Live(*g) || g.State == groups.StateConfirming || g.State == groups.StateEnding {
+	if !groups.Live(*g) || g.State == groups.StateConfirming || (g.State == groups.StateEnding) != resume {
 		st := g.State
 		s.mu.Unlock()
 		return api.Group{}, fmt.Errorf("group %s is %s", id, st)
@@ -502,10 +514,10 @@ func (s *groupsService) end(id, head string) (api.Group, error) {
 		case !ended:
 			left = append(left, fmt.Sprintf("member %s on %s is still running, in %s", m.Name, m.Host, m.Folder))
 		case landed && m.Device == s.cfg.self:
-			if err := s.removeWorktree(m.Folder); err != nil {
+			if err := s.removeWorktree(m.Folder); err != nil && !gone(m.Folder) {
 				left = append(left, fmt.Sprintf("worktree %s on %s (%s): %s", m.Folder, m.Host, m.Name, errText(err)))
 			} else {
-				removed[m.Name] = true
+				removed[m.Name] = true // gone already: an end the stop cut short removed it
 			}
 		case landed:
 			left = append(left, fmt.Sprintf("worktree %s on %s (%s)", m.Folder, m.Host, m.Name))
@@ -528,6 +540,15 @@ func (s *groupsService) end(id, head string) (api.Group, error) {
 		left = append(left, fmt.Sprintf("branch %s, not landed", it.Branch))
 	}
 	left = append(left, s.buildFolders(ctx, snap)...)
+	// The plan's status goes before the record says ended: a stop after it leaves the group
+	// ending, and the next start writes the status again.
+	status := "done"
+	if !landedAny {
+		status = "dropped"
+	}
+	if snap.PlanRecord != "" {
+		s.setStatus([]string{snap.PlanRecord}, status, "")
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -545,13 +566,6 @@ func (s *groupsService) end(id, head string) (api.Group, error) {
 	}
 	g.State, g.Ended = groups.StateEnded, stampT(s.cfg.now())
 	g.Lane.Landing = ""
-	status := "done"
-	if !landedAny {
-		status = "dropped"
-	}
-	if rec := g.PlanRecord; rec != "" {
-		s.goLocked(func() { s.setStatus([]string{rec}, status, "") })
-	}
 	if head != "" {
 		msg := head + " " + groupEndText(*g)
 		if len(g.Leftovers) > 0 {

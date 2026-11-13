@@ -198,6 +198,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	} else {
 		s.queued = q
 	}
+	var ending []string // groups a stop caught during their end
 	for i := range loaded {
 		g := loaded[i]
 		switch {
@@ -227,6 +228,9 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 		if g.State == groups.StateConfirming {
 			s.dropLocked(&g, "the hab restarted before you answered; propose the plan again")
 		}
+		if g.State == groups.StateEnding {
+			ending = append(ending, g.ID)
+		}
 		for j := range g.Members {
 			if g.Members[j].State == groups.MemberStarting {
 				// A start cut short by the restart: tried again under the same key, so it starts once.
@@ -246,6 +250,11 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	s.base, s.baseCancel = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.watch()
+	for _, id := range ending {
+		// The hab stopped during the group's end: it finishes now (groups.md 7.6). An ending
+		// group starts nothing and lands nothing meanwhile.
+		s.bg(func() { s.end(id, "The group ended: the hab restarted during its end.", true) })
+	}
 	return s, nil
 }
 
@@ -1043,19 +1052,6 @@ func (s *groupsService) Amend(ctx context.Context, p api.GroupAmendParams) (api.
 	}
 	gg, _ := s.Get(p.Group)
 	return api.GroupCreated{Group: gg, Confirmation: &c}, nil
-}
-
-// goLocked runs f in its own goroutine that Stop waits for. Once the service stops it runs
-// nothing: the next start picks the work up again. The caller holds s.mu.
-func (s *groupsService) goLocked(f func()) {
-	if s.closed {
-		return
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		f()
-	}()
 }
 
 // --- the scheduler: lead slots and starts (groups.md 4.3) ---
@@ -2059,7 +2055,7 @@ func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator
 	if byCoordinator {
 		head = "" // the coordinator's own close: its answer is the record
 	}
-	if _, err := s.end(id, head); err != nil {
+	if _, err := s.end(id, head, false); err != nil {
 		return api.Group{}, control.Errorf(api.ErrorKindConflict, "%v", err)
 	}
 	// Idle members on other habs close over the link this hab dialed; a hab offline keeps
