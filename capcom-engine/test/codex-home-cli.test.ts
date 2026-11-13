@@ -41,7 +41,7 @@ async function run(codex: Codex, opts: ThreadOptions, text: string, resume?: str
   return th.id;
 }
 
-test('the engine home keeps the user\'s global instructions and skills out, and codex resume finds the thread', { skip: !bin && 'no Codex CLI for this platform', timeout: 120_000 }, async () => {
+test('the engine home keeps the user\'s global instructions, its skills and the bundled skills out, and codex resume finds the thread', { skip: !bin && 'no Codex CLI for this platform', timeout: 120_000 }, async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-codex-home-'));
   try {
     const user = path.join(dir, 'codex-home'); // the user's CODEX_HOME
@@ -73,6 +73,8 @@ test('the engine home keeps the user\'s global instructions and skills out, and 
     assert.ok(body.includes('the engine manual'), 'the engine folder AGENTS.md loads');
     assert.ok(body.includes('first turn'));
     for (const [what, mark] of Object.entries(PLANTED)) assert.ok(!body.includes(mark), `${what} reached the request`);
+    // The CLI's bundled system skills stay off (skills.bundled.enabled = false).
+    for (const mark of ['skills/.system', 'skill-creator', 'skill-installer']) assert.ok(!body.includes(mark), `bundled skill ${mark} reached the request`);
     assert.ok(first);
 
     // A plain-terminal resume, in the user's own homes, finds the thread and its turn.
