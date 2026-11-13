@@ -205,6 +205,13 @@ license = "BSD-3-Clause"
 files = ["third_party/licenses/opus/COPYING"]
 release = { in = "gff-hab-speech (linked statically on macOS)", version = "the build machine's libopus" }
 
+[[component]]
+name = "NeMo text processing (text-processing-rs)"
+url = "https://github.com/FluidInference/text-processing-rs"
+license = "Apache-2.0; it ports NVIDIA NeMo Text Processing (Apache-2.0) and links rustfst, flate2 and lazy_static (MIT OR Apache-2.0, used under Apache-2.0)"
+files = ["third_party/licenses/nemo-text-processing/LICENSE", "third_party/licenses/nemo-text-processing/NOTICE", "third_party/licenses/nemo-text-processing/THIRD-PARTY-LICENSES.md"]
+app = { in = "Flightdeck (the NemoTextProcessing binary framework of FluidAudio)", version = "the release FluidAudio pins" }
+
 # --- Swift packages in Package.resolved --------------------------------------------------------
 
 [[swift]]

@@ -883,7 +883,7 @@ SOFTWARE.
 
 ==============================================================================
 golang.org/x/crypto
-Version: v0.58.0
+Version: v0.59.0
 Source: https://pkg.go.dev/golang.org/x/crypto
 Licence: see the text below
 In: gff-hab
@@ -909,7 +909,7 @@ In: gff, gff-hab, gff-hab-holder
 
 ==============================================================================
 golang.org/x/text
-Version: v0.43.0
+Version: v0.44.0
 Source: https://pkg.go.dev/golang.org/x/text
 Licence: see the text below
 In: gff, gff-hab
