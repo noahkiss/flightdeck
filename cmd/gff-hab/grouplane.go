@@ -169,6 +169,11 @@ func (s *groupsService) lanePass(id string) {
 		}
 		item := groups.NextLand(*g)
 		if item == "" {
+			if groups.Finished(*g) {
+				// Every item is landed or dropped: the group ends. This also ends a group whose
+				// last land came just before a stop, at the next start.
+				s.goLocked(func() { s.end(id, "The group ended: every item is landed or dropped.") })
+			}
 			s.mu.Unlock()
 			return
 		}
@@ -293,14 +298,13 @@ func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result
 			s.memberNoteLocked(g, g.Members[lead], fmt.Sprintf("Group %s, item %s: landed on %s at %s%s. Your session keeps running: the coordinator may still ask about the work.", g.ID, it.ID, target, groups.Short7(res.Commit), noCI))
 		}
 		s.tellLocked(g, fmt.Sprintf("item %s landed on %s at %s%s.", it.ID, target, groups.Short7(res.Commit), noCI), "Flightdeck")
-		if it.Task != "" {
-			go s.setStatus([]string{it.Task}, "done", "")
+		if task := it.Task; task != "" {
+			s.goLocked(func() { s.setStatus([]string{task}, "done", "") })
 		}
-		go s.kick(g.ID) // its lead slot is free (groups.md 4.3, 7.3 step 7)
-		if groups.Finished(*g) {
-			go s.end(g.ID, "The group ended: every item is landed or dropped.")
-			cont = false
-		}
+		gid := g.ID
+		s.goLocked(func() { s.kick(gid) }) // its lead slot is free (groups.md 4.3, 7.3 step 7)
+		// When this was the last item, the next turn of lanePass finds nothing to land and ends
+		// the group.
 	case lane.Back:
 		it.State, it.Land, it.Reason = groups.ItemFix, "", "the lane sent it back at "+res.Step
 		groups.Dequeue(g, item)
@@ -545,8 +549,8 @@ func (s *groupsService) end(id, head string) (api.Group, error) {
 	if !landedAny {
 		status = "dropped"
 	}
-	if g.PlanRecord != "" {
-		go s.setStatus([]string{g.PlanRecord}, status, "")
+	if rec := g.PlanRecord; rec != "" {
+		s.goLocked(func() { s.setStatus([]string{rec}, status, "") })
 	}
 	if head != "" {
 		msg := head + " " + groupEndText(*g)
