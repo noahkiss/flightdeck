@@ -485,9 +485,10 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
   the user's `HOME`: the CLI has no shell, so the model runs no git or ssh, and `gff-hab mcp`
   reaches the hab through `GFF_HAB`. The start check runs under its own throwaway home,
   `<engine folder>/.start-check`.
-- **What the home does not cover.** The CLI writes its bundled system skills into the home
-  (`skills/.system`), and they reach the request: they are the CLI's own content, not the
-  user's. The CLI indexes threads in `state_5.sqlite` under the home it runs with, so the
+- **Bundled skills.** The CLI writes its bundled system skills into the home
+  (`skills/.system`) on each run. Every run sets `skills.bundled.enabled = false` as a config
+  override, so none of them reaches the request (verified on the pinned CLI).
+- **What the home does not cover.** The CLI indexes threads in `state_5.sqlite` under the home it runs with, so the
   engine's threads open in a plain terminal by id only, not in the `codex resume` picker or
   with `--last`. Nothing backfills the user's index.
 - **`max_turns` and `max_turn_usd`** have no Codex equivalent and are ignored.

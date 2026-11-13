@@ -101,10 +101,11 @@ test('ready declares what Codex has; the start check sees the 5.1 surface', asyn
     assert.equal(probe.apiKey, START_CHECK_KEY);
     assert.equal(probe.env!.CODEX_HOME, path.join(r.cwd, '.start-check'));
     assert.equal(probe.env![EPHEMERAL_VAR], '1');
-    // Every option set carries the features that take built-ins off, and the one MCP server with
-    // GFF_HAB passed through by name.
+    // Every option set carries the features that take built-ins off, the bundled skills off, and
+    // the one MCP server with GFF_HAB passed through by name.
     const main = r.codex.options[r.codex.options.length - 1]!;
     assert.deepEqual((main.config as any).features, CODEX_FEATURES_OFF);
+    assert.deepEqual((main.config as any).skills, { bundled: { enabled: false } });
     assert.deepEqual((main.config as any).mcp_servers, { flightdeck: { command: '/opt/gff/gff-hab', args: ['mcp'], env_vars: ['GFF_HAB'] } });
     assert.equal(main.env!.GFF_HAB, r.hab.addr);
     assert.equal(main.env!.GFF_HAB_CAPCOM_TOKEN, undefined, 'the engine route token stays in the engine');

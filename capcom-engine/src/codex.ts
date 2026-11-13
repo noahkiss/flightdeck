@@ -448,7 +448,9 @@ export class CodexEngine {
     env.CODEX_HOME = home;
     env.HOME = home;
     if (o.ephemeral) env[EPHEMERAL_VAR] = '1';
-    const config: Record<string, any> = { features: { ...CODEX_FEATURES_OFF } };
+    // skills.bundled.enabled = false keeps the CLI's bundled system skills (skills/.system) off
+    // the request (verified on the pinned CLI).
+    const config: Record<string, any> = { features: { ...CODEX_FEATURES_OFF }, skills: { bundled: { enabled: false } } };
     if (o.mcp && this.mcp) {
       // Codex hands an MCP server only a short list of variables; GFF_HAB must reach gff-hab mcp
       // (3.3), and nothing names it on the command line.
