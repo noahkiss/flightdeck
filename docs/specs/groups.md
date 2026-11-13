@@ -939,9 +939,13 @@ lane's rules on the record; gff-hab's group service runs the lane on the home ha
 - **The end.** `group_close`, or every item landed or dropped, ends the group. A run in flight
   stops first; a land push already sent counts, and any other run's item goes back to `ready`
   and is listed. Then the end closes idle members on this hab, removes landed worktrees and lists
-  the leftovers. A gff-hab stop waits for an end in progress. An end that has not started when
-  the hab stops runs at the next start: the lane ends a running group whose items are all landed
-  or dropped.
+  the leftovers, and marks the plan record. A gff-hab stop waits for an end in progress and for
+  the Logbook writes of the end and of a land. An end that has not started when the hab stops
+  runs at the next start: the lane ends a running group whose items are all landed or dropped. A
+  group the hab stopped during its end (`ending`, say after a kill) finishes its end at the next
+  start and starts and lands nothing meanwhile. Each step of an end is safe to run again: a
+  worktree already removed is no leftover, and the plan record is marked before the record says
+  `ended`.
 - **A submit while landing** is refused with `conflict`.
 - **Not built in B4.** Members on another hab: the end lists them and their worktrees, and does
   not close them or remove the worktrees (remote session-end detection, as in B3). A submit of a

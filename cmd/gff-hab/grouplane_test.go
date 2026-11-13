@@ -17,6 +17,8 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/groups"
+	"github.com/noahkiss/flightdeck/internal/lbsvc"
+	"github.com/noahkiss/flightdeck/internal/logbook"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -33,6 +35,7 @@ type laneFix struct {
 	closeHook         func() // runs as the end closes a pane, when set
 	removeErr         map[string]error
 	stateDir, laneDir string
+	lb                *lbsvc.Service // the Logbook, when withLogbook made one
 }
 
 func lgit(t *testing.T, dir string, args ...string) string {
@@ -117,13 +120,58 @@ func (f *laneFix) start() {
 			}
 			return api.WorktreeRemoved{}, nil
 		},
-		logf: f.t.Logf,
+		logf: f.t.Logf, logbook: f.lb,
 	})
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	f.svc = s
 	f.t.Cleanup(s.Stop)
+}
+
+// withLogbook gives the service a Logbook in the fixture's folder, as a restart with one does.
+func (f *laneFix) withLogbook() {
+	f.t.Helper()
+	ctx := context.Background()
+	st, err := logbook.Open(ctx, filepath.Join(f.dir, "logbook.db"), logbook.Options{Origin: "SHA256:test"})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { st.Close() })
+	if f.lb, err = lbsvc.New(ctx, lbsvc.Config{Store: st}); err != nil {
+		f.t.Fatal(err)
+	}
+	f.svc.Stop()
+	f.start()
+}
+
+// record files a Logbook record and returns its id.
+func (f *laneFix) record(typ, title string) string {
+	f.t.Helper()
+	w, err := f.lb.Write(context.Background(), api.LogbookActor{Kind: "person"}, api.LogbookWriteParams{
+		Changes: []api.LogbookChange{{Op: api.LogbookChangeOpCreate, Type: typ, Project: "shop", Title: title}}})
+	if err != nil || len(w.IDs) != 1 {
+		f.t.Fatalf("filing %s: %v %+v", title, err, w)
+	}
+	return w.IDs[0]
+}
+
+func (f *laneFix) status(id string) string {
+	f.t.Helper()
+	r, err := f.lb.Get(context.Background(), api.LogbookGetParams{ID: id})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return r.Record.Status
+}
+
+// put saves a hand-made record as the service's, with no kick.
+func (f *laneFix) put(g api.Group) {
+	f.svc.mu.Lock()
+	f.svc.groups[g.ID] = &g
+	f.svc.order = append(f.svc.order, g.ID)
+	f.svc.saveLocked(&g)
+	f.svc.mu.Unlock()
 }
 
 func (f *laneFix) notesOf(session string) string {
@@ -528,6 +576,8 @@ func TestLaneWaitsOnce(t *testing.T) {
 // returns, so nothing writes the record after the hab stops.
 func TestLaneStopWaitsForEnd(t *testing.T) {
 	f := newLaneFix(t, "", groups.DefaultKeys)
+	f.withLogbook()
+	plan, task := f.record("plan", "Lane g10"), f.record("task", "a")
 	a := f.branch("group/g10/a", "origin/main", "a.txt")
 	sa, err := f.store.CreateSession(structure.SessionSpec{Name: "lead-a", Pane: "p-a", Index: -1})
 	if err != nil {
@@ -537,7 +587,10 @@ func TestLaneStopWaitsForEnd(t *testing.T) {
 	f.mu.Lock()
 	f.closeHook = func() { close(entered); <-release }
 	f.mu.Unlock()
-	f.group("aaaaaaaaaaaaaaaa", laneItem{id: "a", head: a, session: sa.ID})
+	g := makeGroup("aaaaaaaaaaaaaaaa", laneItem{id: "a", head: a, session: sa.ID})
+	g.PlanRecord, g.Items[0].Task = plan, task
+	f.put(g)
+	f.svc.kick(g.ID)
 	select {
 	case <-entered: // the end closes the idle lead
 	case <-time.After(scaleTimeout(15 * time.Second)):
@@ -559,6 +612,10 @@ func TestLaneStopWaitsForEnd(t *testing.T) {
 	if g := f.get("aaaaaaaaaaaaaaaa"); g.State != groups.StateEnded {
 		t.Fatalf("after Stop the group is %s", g.State)
 	}
+	// The statuses are written before Stop returns, not on goroutines it skips.
+	if p, k := f.status(plan), f.status(task); p != "done" || k != "done" {
+		t.Fatalf("plan %q, task %q", p, k)
+	}
 }
 
 // TestLaneEndsFinishedAtStart: a group whose items all landed before a stop, with its end cut
@@ -566,13 +623,33 @@ func TestLaneStopWaitsForEnd(t *testing.T) {
 func TestLaneEndsFinishedAtStart(t *testing.T) {
 	f := newLaneFix(t, "", groups.DefaultKeys)
 	a := f.branch("group/g11/a", "origin/main", "a.txt")
-	g := makeGroup("bbbbbbbbbbbbbbbb", laneItem{id: "a", head: a, state: groups.ItemLanded})
-	f.svc.mu.Lock()
-	f.svc.saveLocked(&g) // the record as the stop left it: nothing kicks it here
-	f.svc.mu.Unlock()
+	f.put(makeGroup("bbbbbbbbbbbbbbbb", laneItem{id: "a", head: a, state: groups.ItemLanded})) // as the stop left it
 	f.svc.Stop()
 	f.start()
 	waitUntil(t, "the group to end", func() bool { return f.get("bbbbbbbbbbbbbbbb").State == groups.StateEnded })
+}
+
+// TestLaneEndingAtStart: a group the hab stopped during its end finishes it at the next start.
+// The end runs again safely: the lead's worktree it already removed is not a leftover, and the
+// plan is marked done.
+func TestLaneEndingAtStart(t *testing.T) {
+	f := newLaneFix(t, "", groups.DefaultKeys)
+	f.withLogbook()
+	plan := f.record("plan", "Lane g12")
+	a := f.branch("group/g12/a", "origin/main", "a.txt")
+	g := makeGroup("cccccccccccccccc", laneItem{id: "a", head: a, state: groups.ItemLanded, folder: filepath.Join(f.dir, "wt-removed")})
+	g.State, g.PlanRecord = groups.StateEnding, plan
+	f.put(g)
+	f.svc.Stop()
+	f.start()
+	waitUntil(t, "the end to finish", func() bool { return f.get("cccccccccccccccc").State == groups.StateEnded })
+	g = f.get("cccccccccccccccc")
+	if len(g.Leftovers) != 0 || !g.Members[0].WorktreeRemoved || !strings.Contains(inbox(g), "restarted during its end") {
+		t.Fatalf("leftovers %v, member %+v, inbox %s", g.Leftovers, g.Members[0], inbox(g))
+	}
+	if st := f.status(plan); st != "done" {
+		t.Fatalf("plan %q", st)
+	}
 }
 
 // TestLaneCloseStopsRun: closing a group while its item's CI runs stops the run: nothing lands
