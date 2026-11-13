@@ -108,7 +108,7 @@ jobs:
     if: needs.plan.outputs.run == 'true'
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@xcode-ci-resolved-only
+    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
     with:
       # Xcode 27.2 by path on the xcode-27 image; never the image default or a beta (spec 4).
       runner: xcode-27
