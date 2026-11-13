@@ -108,7 +108,7 @@ jobs:
     if: needs.plan.outputs.run == 'true'
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
+    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@xcode-ci-resolved-only
     with:
       # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
       runner: xcode-27
@@ -116,6 +116,9 @@ jobs:
       swift-test-dirs: |
         swift/HabAPI
         apple/FlightdeckKit
+      # Resolve and test only the versions in each Package.resolved: a file that does not match its
+      # Package.swift fails, instead of `swift test` rewriting it in silence (spec 3.4).
+      swift-resolved-only: true
       # Swift only: empty generate, builds and tests skip those steps in xcode-ci.
       generate: ${{ needs.plan.outputs.full == 'true' && 'apple/scripts/generate.sh' || '' }}
       project: apple/Flightdeck.xcodeproj
