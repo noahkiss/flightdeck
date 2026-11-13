@@ -106,32 +106,31 @@ async function moveAside(at: string): Promise<string | undefined> {
 }
 
 // linkTo makes `at` a link to target. A wrong link is replaced; anything else is moved aside,
-// never deleted. A link made at the same moment by another prepareHome is accepted.
+// never deleted. Racing calls (a summary run and a session start) converge: each pass removes
+// only a link that points elsewhere, so no call undoes a correct link another call made.
 async function linkTo(target: string, at: string, log: (l: string) => void): Promise<void> {
-  const isLink = async (): Promise<boolean> => {
+  for (let pass = 0; ; pass++) {
+    let st;
     try {
-      return (await fs.lstat(at)).isSymbolicLink() && (await fs.readlink(at)) === target;
+      st = await fs.lstat(at);
     } catch {
-      return false;
+      // not there
     }
-  };
-  if (await isLink()) return;
-  let st;
-  try {
-    st = await fs.lstat(at);
-  } catch {
-    // not there
-  }
-  if (st?.isSymbolicLink()) await fs.rm(at, { force: true });
-  else if (st) {
-    const to = await moveAside(at);
-    if (to) log(`engine home: moved ${path.basename(at)} aside to ${path.basename(to)}`);
-  }
-  try {
-    await fs.symlink(target, at);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'EEXIST' && (await isLink())) return;
-    throw e;
+    if (st?.isSymbolicLink()) {
+      const to = await fs.readlink(at).catch(() => undefined);
+      if (to === target) return;
+      if (to !== undefined) await fs.rm(at, { force: true });
+    } else if (st) {
+      const aside = await moveAside(at);
+      if (aside) log(`engine home: moved ${path.basename(at)} aside to ${path.basename(aside)}`);
+    }
+    try {
+      await fs.symlink(target, at);
+      return;
+    } catch (e) {
+      // Another call made something at `at` between our look and our link: look again.
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || pass >= 5) throw e;
+    }
   }
 }
 
