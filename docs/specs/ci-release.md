@@ -256,7 +256,11 @@ full Apple run passed (3.3) and picks full or Swift only, then one job on macOS,
    anonymous rate limit without it. Removed at the end.
 3. Restore the SwiftPM cache (section 5).
 4. `cd swift/HabAPI && swift test` (the Swift half of core test 5).
-5. `cd apple/FlightdeckKit && swift test`.
+5. `cd apple/FlightdeckKit && swift test`. Steps 4 and 5 resolve and test only the versions in
+   each `Package.resolved` (`swift-resolved-only`, `--only-use-versions-from-resolved-file`).
+   The job fails, naming the file, when `Package.resolved` does not match `Package.swift` or
+   when SwiftPM changes it. Without the flag, `swift test` floats the graph and rewrites the
+   file, so a stale file passes here and fails only the release archive.
 6. `apple/scripts/generate.sh` (XcodeGen, pinned release; it copies the Kit's `Package.resolved`
    into the project, section 5).
 7. `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build`.
@@ -393,7 +397,7 @@ build.
 | Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | go-ci saves it on every run |
 | libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-<patch id>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins and the id of `third_party/ghostty/patches/` (`make ghostty-id`), not on a hash of the whole Makefile, which changes often. A pin or patch change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
-| SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, so a graph that drifts from the pins fails instead of floating |
+| SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, and every `swift test` `--only-use-versions-from-resolved-file` (3.4), so a graph that drifts from the pins fails instead of floating |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
 
@@ -789,6 +793,9 @@ both files and `Package.resolved` (2). `go test ./internal/notices/` checks the 
 the repository too, and `AcknowledgementsTests` in the Kit (`apple.yml`) checks that it names
 every pinned package. A Renovate bump of a Go module or a Swift package therefore fails CI until
 someone runs `make notices` and commits the result.
+Renovate changes `Package.swift` but not `Package.resolved`, so a Swift bump also fails
+`apple.yml` (3.4) until someone runs `swift package resolve` in `apple/FlightdeckKit` and commits
+`Package.resolved`, then runs `make notices`.
 
 **Where it is checked in an artifact.** `make release-build` copies `LICENSE` and `NOTICE` into
 the release folder; `scripts/macos-bundle.sh` puts both in each bundle's `Contents/Resources`
