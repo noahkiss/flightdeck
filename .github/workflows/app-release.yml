@@ -36,8 +36,8 @@ concurrency:
 permissions: {}
 
 env:
-  # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
-  XCODE_APP: /Applications/Xcode_27.1.app
+  # Xcode 27.2 by path on the xcode-27 image; never the image default or a beta (spec 4).
+  XCODE_APP: /Applications/Xcode_27.2.app
 
 jobs:
   verify:
