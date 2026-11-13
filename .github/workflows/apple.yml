@@ -110,9 +110,9 @@ jobs:
       contents: read
     uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
     with:
-      # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
+      # Xcode 27.2 by path on the xcode-27 image; never the image default or a beta (spec 4).
       runner: xcode-27
-      xcode-app: /Applications/Xcode_27.1.app
+      xcode-app: /Applications/Xcode_27.2.app
       swift-test-dirs: |
         swift/HabAPI
         apple/FlightdeckKit

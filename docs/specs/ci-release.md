@@ -248,7 +248,7 @@ A `plan` job (ubuntu, a few seconds) that skips the build on a push merging a pu
 full Apple run passed (3.3) and picks full or Swift only, then one job on macOS, a call of the shared `xcode-ci.yml` (E5, section
 11.2), which runs these steps from its inputs:
 
-1. Check out. Select `/Applications/Xcode_27.1.app` by path (`xcode-app`, through
+1. Check out. Select `/Applications/Xcode_27.2.app` by path (`xcode-app`, through
    `DEVELOPER_DIR`); fail when it is missing (never the image default, never a beta or release
    candidate). The runner is `xcode-27` (4).
 2. Write a `~/.netrc` for `api.github.com` with the job token (`netrc`, on by default). Callers
@@ -265,7 +265,7 @@ full Apple run passed (3.3) and picks full or Swift only, then one job on macOS,
 9. `xcodebuild -scheme FlightdeckKit-Package -destination <iPhone simulator> test` in
    `apple/FlightdeckKit`: the Kit's tests on an iOS Simulator: the first iPhone, by name, of
    the newest iOS runtime no newer than the selected Xcode's simulator SDK. Runtimes are
-   system-wide, and the image's 27.2 RC can bring a runtime Xcode 27.1 cannot test on. Step 5 runs them on macOS; this catches iOS-only breaks.
+   system-wide, and a newer beta on the image can bring a runtime Xcode 27.2 cannot test on. Step 5 runs them on macOS; this catches iOS-only breaks.
 10. Each `xcodebuild` log is filtered to errors, signing warnings and failed tests; the full logs
     are uploaded as an artifact on failure.
 
@@ -360,7 +360,7 @@ holds: macOS runs only what needs it.
 | Job | Runner | Why |
 |---|---|---|
 | `ci.yml`, `capcom-engine.yml`, `hygiene.yml`, `nightly.yml`, every `plan`, `verify` and `publish` job | `ubuntu-latest` | Default. go-ci and node-ci run here |
-| `apple.yml` | `xcode-27` (arm64) | Xcode 27.1, Swift |
+| `apple.yml` | `xcode-27` (arm64) | Xcode 27.2, Swift |
 | `macos-go.yml` | `macos-26` (arm64) | launchd, macOS PTYs; needs only the command line clang |
 | `release.yml` linux amd64 leg | `ubuntu-24.04` | Native cgo build (7.3) |
 | `release.yml` linux arm64 leg | `ubuntu-24.04-arm` | Native cgo build; free on a public repo |
@@ -370,10 +370,11 @@ holds: macOS runs only what needs it.
 
 **Which Xcode.** The project builds with Xcode 27 (the dev Macs run 27.2). GitHub's `macos-26`
 image carries Xcode 26.x only. The `xcode-27` image (GitHub-hosted, macOS 27, a public preview)
-carries Xcode 27.1 as its default and 27.2 as a release candidate (checked in the runner-images
-repo, 2026-11-01). The reference release ran on the same label with Xcode 27.1. So every Xcode
-job runs on `xcode-27` and selects `/Applications/Xcode_27.1.app` by path; it moves to 27.2 when
-the image carries the final release, after a dry run (7.6). The Go-only macOS jobs stay on the GA
+carries Xcode 27.1 as its default, 27.2 as a release and 27.3 as a beta (checked in the
+runner-images repo, 2026-11-12). The reference release ran on the same label with Xcode 27.1.
+So every Xcode job runs on `xcode-27` and selects `/Applications/Xcode_27.2.app` by path, the
+newest release on the image; it moves to the next release when the image carries it, after a dry
+run (7.6). The Go-only macOS jobs stay on the GA
 `macos-26` image. If GitHub ends the preview label, the Xcode jobs move to the GA image that
 carries Xcode 27.
 
@@ -1238,7 +1239,7 @@ them; step 10 is `xcode-match-signing` with `cleanup: 'true'` (E6, section 11.2)
 
 The `ios` job:
 
-1. Check out the tag. Select `/Applications/Xcode_27.1.app` by path (4); fail when missing.
+1. Check out the tag. Select `/Applications/Xcode_27.2.app` by path (4); fail when missing.
 2. Ruby and fastlane from `.github/fastlane/Gemfile` (no bundler cache, as `release.yml`).
 3. `~/.netrc` for SwiftPM (3.4, step 2); restore the SwiftPM cache that xcode-ci saved from
    `main`.
