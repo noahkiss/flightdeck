@@ -30,6 +30,7 @@ type laneFix struct {
 	mu                sync.Mutex
 	notes             map[string][]string // session -> Flightdeck messages
 	closed            []string
+	closeHook         func() // runs as the end closes a pane, when set
 	removeErr         map[string]error
 	stateDir, laneDir string
 }
@@ -99,7 +100,11 @@ func (f *laneFix) start() {
 		closePane: func(ctx context.Context, pane string) error {
 			f.mu.Lock()
 			f.closed = append(f.closed, pane)
+			hook := f.closeHook
 			f.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
 			if ss, ok := f.store.SessionByPane(pane); ok {
 				return f.store.CloseSession(ss.ID)
 			}
@@ -517,6 +522,57 @@ func TestLaneWaitsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.waitItem("8888888888888888", "a", groups.ItemLanded)
+}
+
+// TestLaneStopWaitsForEnd: the end that follows the last land runs to its finish before Stop
+// returns, so nothing writes the record after the hab stops.
+func TestLaneStopWaitsForEnd(t *testing.T) {
+	f := newLaneFix(t, "", groups.DefaultKeys)
+	a := f.branch("group/g10/a", "origin/main", "a.txt")
+	sa, err := f.store.CreateSession(structure.SessionSpec{Name: "lead-a", Pane: "p-a", Index: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.mu.Lock()
+	f.closeHook = func() { close(entered); <-release }
+	f.mu.Unlock()
+	f.group("aaaaaaaaaaaaaaaa", laneItem{id: "a", head: a, session: sa.ID})
+	select {
+	case <-entered: // the end closes the idle lead
+	case <-time.After(scaleTimeout(15 * time.Second)):
+		t.Fatal("the group did not end")
+	}
+	stopped := make(chan struct{})
+	go func() { f.svc.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while the end ran")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(scaleTimeout(15 * time.Second)):
+		t.Fatal("Stop did not return after the end")
+	}
+	if g := f.get("aaaaaaaaaaaaaaaa"); g.State != groups.StateEnded {
+		t.Fatalf("after Stop the group is %s", g.State)
+	}
+}
+
+// TestLaneEndsFinishedAtStart: a group whose items all landed before a stop, with its end cut
+// short, ends at the next start.
+func TestLaneEndsFinishedAtStart(t *testing.T) {
+	f := newLaneFix(t, "", groups.DefaultKeys)
+	a := f.branch("group/g11/a", "origin/main", "a.txt")
+	g := makeGroup("bbbbbbbbbbbbbbbb", laneItem{id: "a", head: a, state: groups.ItemLanded})
+	f.svc.mu.Lock()
+	f.svc.saveLocked(&g) // the record as the stop left it: nothing kicks it here
+	f.svc.mu.Unlock()
+	f.svc.Stop()
+	f.start()
+	waitUntil(t, "the group to end", func() bool { return f.get("bbbbbbbbbbbbbbbb").State == groups.StateEnded })
 }
 
 // TestLaneCloseStopsRun: closing a group while its item's CI runs stops the run: nothing lands

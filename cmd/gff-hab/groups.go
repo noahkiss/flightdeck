@@ -1045,6 +1045,19 @@ func (s *groupsService) Amend(ctx context.Context, p api.GroupAmendParams) (api.
 	return api.GroupCreated{Group: gg, Confirmation: &c}, nil
 }
 
+// goLocked runs f in its own goroutine that Stop waits for. Once the service stops it runs
+// nothing: the next start picks the work up again. The caller holds s.mu.
+func (s *groupsService) goLocked(f func()) {
+	if s.closed {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		f()
+	}()
+}
+
 // --- the scheduler: lead slots and starts (groups.md 4.3) ---
 
 // kick runs a scheduler pass for the group, or asks the running one for another.
