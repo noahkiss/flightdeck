@@ -345,7 +345,7 @@ One job on ubuntu, a call of the shared `node-ci.yml` with `working-directory: c
 `npm ci` from `package-lock.json` (cached by `setup-node`), then the package scripts `typecheck`,
 `build` and `test`, the same as `cd capcom-engine && npm ci && npm run typecheck && npm run build &&
 npm test` locally. The tests run against a fake SDK and a fake hab, with no credential and no
-network. The Node version is `capcom-engine/.node-version` (24); the engine's floor stays
+network. The Node version is `capcom-engine/.node-version` (26); the engine's floor stays
 `engines.node` in `package.json`. Timeout 15 minutes. Before this workflow, nothing in CI ran the
 engine's tests, so a Renovate bump of an SDK was gated by nothing. The job is the fast check
 itself, so a push to `main` runs it as the pull request did (rule 3).
