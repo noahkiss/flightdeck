@@ -544,7 +544,7 @@ exports.act = function () {
 		RegExp Date Math JSON Reflect Proxy Promise Map Set WeakMap WeakSet WeakRef FinalizationRegistry
 		Error TypeError RangeError SyntaxError ReferenceError EvalError URIError AggregateError
 		ArrayBuffer DataView Int8Array Uint8Array Uint8ClampedArray Int16Array Uint16Array Int32Array
-		Uint32Array Float32Array Float64Array BigInt64Array BigUint64Array Iterator
+		Uint32Array Float16Array Float32Array Float64Array BigInt64Array BigUint64Array Iterator
 		NaN Infinity undefined eval isNaN isFinite parseInt parseFloat
 		encodeURI encodeURIComponent decodeURI decodeURIComponent escape unescape`) {
 		allowed[n] = true
