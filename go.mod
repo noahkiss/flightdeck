@@ -8,7 +8,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
 	github.com/dlclark/regexp2/v2 v2.13.0
-	github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c
+	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
 	github.com/ebitengine/purego v0.11.3
 	go.mitchellh.com/libghostty v0.0.0-20261107144202-b13f277ddcb2
 	golang.org/x/crypto v0.59.0
