@@ -2443,7 +2443,7 @@ limitations under the License.
 
 ==============================================================================
 libghostty-spm
-Version: 2.2.2026110702
+Version: 2.2.2026111302
 Source: https://github.com/Lakr233/libghostty-spm
 Licence: MIT; bash-preexec (MIT) and the iTerm2 colour schemes (MIT) follow
 In: Flightdeck (Swift package)
