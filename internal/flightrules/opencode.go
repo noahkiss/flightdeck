@@ -47,6 +47,7 @@ type Opencode struct {
 
 	seen     map[string]bool   // message ids read
 	computed map[string]string // by entry id: the source of each computed entry of the last update
+	ours     map[string]bool   // the ids of every computed entry this source added
 
 	mu    sync.Mutex
 	where map[string]ocWhere // by entry id: where its text is read again
@@ -67,24 +68,37 @@ type ocWhere struct {
 // opencode's global config folder ($XDG_CONFIG_HOME/opencode, else ~/.config/opencode).
 func NewOpencode(session string, client func() (OpencodeAPI, bool), home, configDir string) *Opencode {
 	return &Opencode{session: session, client: client, home: home, configDir: configDir, now: time.Now,
-		seen: map[string]bool{}, computed: map[string]string{}, where: map[string]ocWhere{}}
+		seen: map[string]bool{}, computed: map[string]string{}, ours: map[string]bool{}, where: map[string]ocWhere{}}
 }
 
 // Harness implements Source.
 func (o *Opencode) Harness() string { return "opencode" }
 
 // Update implements Source: it reads the messages added since the last call, then runs the
-// discovery and reads the lists again. A server that is not running leaves the ledger as it is.
+// discovery and reads the lists again. A server that is not running, or that fails a call,
+// leaves the ledger as it is, with a warning; the warning goes once a call succeeds again. A
+// call that runs out of time is an error.
 func (o *Opencode) Update(ctx context.Context, l *Ledger) error {
 	c, ok := o.client()
 	if !ok {
 		l.Warn("offline", "the session's opencode server is not running; the ledger shows what it read before")
 		return nil
 	}
-	if err := o.messages(ctx, c, l); err != nil {
+	l.Unwarn("offline")
+	err := o.messages(ctx, c, l)
+	if err == nil {
+		err = o.current(ctx, c, l)
+	}
+	switch {
+	case err == nil:
+		l.Unwarn("api")
+		return nil
+	case ctx.Err() != nil:
 		return err
 	}
-	return o.current(ctx, c, l)
+	l.Unwarn("api")
+	l.Warn("api", "opencode's server did not answer the ledger's calls (%v); the ledger shows what it read before", err)
+	return nil
 }
 
 // messages reads the session's messages that are new since the last call, oldest first.
@@ -189,18 +203,29 @@ func (o *Opencode) current(ctx context.Context, c OpencodeAPI, l *Ledger) error 
 	}
 	now := map[string]string{}
 	for _, it := range items {
-		now[it.ob.ID()] = it.ob.Source
+		id := it.ob.ID()
+		if l.Has(id) && !o.ours[id] {
+			continue // a message recorded this text: the record stands, a poll adds nothing
+		}
+		now[id] = it.ob.Source
 	}
 	for id, src := range o.computed {
 		if _, ok := now[id]; !ok {
-			l.Remove(Removal{Kinds: []api.FlightRuleKind{api.FlightRuleInstruction, api.FlightRuleSkills, api.FlightRuleMCP}, Source: src, At: at})
+			// Only the computed entry goes: a recorded text of the same file stays.
+			l.Remove(Removal{Kinds: []api.FlightRuleKind{api.FlightRuleInstruction, api.FlightRuleSkills, api.FlightRuleMCP},
+				Source: src, At: at, ID: id})
 		}
 	}
 	for _, it := range items {
-		if _, ok := o.computed[it.ob.ID()]; ok {
+		id := it.ob.ID()
+		if _, ok := now[id]; !ok {
+			continue
+		}
+		if _, ok := o.computed[id]; ok {
 			continue
 		}
 		l.Observe(it.ob)
+		o.ours[id] = true
 		o.keep(it.ob, it.w)
 	}
 	o.computed = now
@@ -407,6 +432,9 @@ func opencodeDiscover(home, configDir, dir, project string, docs []opencode.Conf
 		files = append(files, ocFile{path: p, scope: scope, text: string(data)})
 	}
 	for _, g := range []string{filepath.Join(configDir, "AGENTS.md"), filepath.Join(home, ".claude", "CLAUDE.md")} {
+		if !filepath.IsAbs(g) {
+			continue // no home or config folder: a relative path would name the hab's folder
+		}
 		if info, err := os.Stat(g); err == nil && info.Mode().IsRegular() {
 			add(g, api.FlightScopeUser)
 			break
@@ -460,7 +488,8 @@ func opencodeDiscover(home, configDir, dir, project string, docs []opencode.Conf
 						break
 					}
 				}
-			default:
+			case filepath.IsAbs(configDir):
+				// Outside a project opencode matches a relative pattern in its config folder.
 				matches, _ = filepath.Glob(filepath.Join(configDir, src))
 			}
 			sort.Strings(matches)

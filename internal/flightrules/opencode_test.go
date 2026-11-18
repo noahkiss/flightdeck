@@ -239,3 +239,68 @@ func TestSplitInstructionBlocks(t *testing.T) {
 		t.Errorf("%q %v", got, ok)
 	}
 }
+
+// ocStub is an opencode server in memory: one project folder and fixed messages; fail makes
+// every call fail.
+type ocStub struct {
+	dir      string
+	messages []json.RawMessage
+	fail     error
+}
+
+func (s *ocStub) Location(context.Context) (opencode.Location, error) {
+	var l opencode.Location
+	l.Directory, l.Project.Directory = s.dir, s.dir
+	return l, s.fail
+}
+func (s *ocStub) Config(context.Context) ([]opencode.ConfigDoc, error) { return nil, s.fail }
+func (s *ocStub) Skills(context.Context) ([]opencode.Skill, error)     { return nil, s.fail }
+func (s *ocStub) MCPs(context.Context) ([]opencode.MCP, error)         { return nil, s.fail }
+func (s *ocStub) Messages(_ context.Context, _, _ string, _ int) (opencode.MessagePage, error) {
+	var p opencode.MessagePage
+	for i := len(s.messages) - 1; i >= 0; i-- {
+		p.Data = append(p.Data, s.messages[i])
+	}
+	return p, s.fail
+}
+
+// TestOpencodeRecordedAndComputed: a file a message recorded keeps its recorded entry when the
+// discovery finds the same text, and a poll that finds the file changed does not mark the
+// recorded entry gone. A server that fails its calls leaves the ledger with a warning, which
+// goes once the calls succeed again.
+func TestOpencodeRecordedAndComputed(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "AGENTS.md")
+	if err := os.WriteFile(file, []byte("Rule.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := json.Marshal(map[string]any{"id": "msg_01", "type": "synthetic", "time": map[string]any{"created": 1767261601000},
+		"metadata": map[string]any{"instruction": map[string]any{"paths": []string{file}}}, "text": "Instructions from: " + file + "\nRule.\n"})
+	stub := &ocStub{dir: root, messages: []json.RawMessage{msg}}
+	src := NewOpencode("ses_01", func() (OpencodeAPI, bool) { return stub, true }, "", "")
+	s := NewSession(src, nil)
+	es, _, err := s.List(context.Background())
+	if err != nil || len(es) != 1 || es[0].Attribution != api.FlightRecorded || es[0].Count != 1 {
+		t.Fatalf("same text: %+v %v", es, err)
+	}
+	if err := os.WriteFile(file, []byte("Rule, edited.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	es, _, err = s.List(context.Background())
+	if err != nil || len(es) != 2 || es[0].Gone != "" || es[1].Attribution != api.FlightComputed {
+		t.Fatalf("changed file: %+v %v", es, err)
+	}
+
+	stub.fail = &opencode.APIError{Op: "location.get", Status: 500}
+	es2, warnings, err := s.List(context.Background())
+	if err != nil || len(es2) != 2 || len(warnings) != 1 || !strings.Contains(warnings[0], "did not answer") {
+		t.Errorf("failing server: %d entries, %q, %v", len(es2), warnings, err)
+	}
+	stub.fail = nil
+	if _, warnings, _ := s.List(context.Background()); len(warnings) != 0 {
+		t.Errorf("after the server answers again: %q", warnings)
+	}
+}

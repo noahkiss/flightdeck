@@ -62,6 +62,8 @@ type Removal struct {
 	Kinds  []api.FlightRuleKind
 	Source string
 	At     string
+	// ID, when set, marks only that entry gone, not every text of the source.
+	ID string
 }
 
 // Source reads one session's records for one harness.
@@ -116,6 +118,7 @@ type Ledger struct {
 	hooks    int                        // hook entries, counted against MaxHookEntries
 	headers  map[string]string          // by entry id: the render digest in a rendered file's header
 	warnings []string
+	warnKeys []string // the key of each warning, for Unwarn
 	warned   map[string]bool
 }
 
@@ -133,7 +136,7 @@ func (l *Ledger) Reset() {
 	l.latest = map[string]*api.FlightRule{}
 	l.hooks = 0
 	l.headers = map[string]string{}
-	l.warnings = nil
+	l.warnings, l.warnKeys = nil, nil
 	l.warned = map[string]bool{}
 }
 
@@ -144,6 +147,7 @@ func (l *Ledger) Warn(key, format string, args ...any) {
 	}
 	l.warned[key] = true
 	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+	l.warnKeys = append(l.warnKeys, key)
 }
 
 func sourceKey(kind api.FlightRuleKind, source string) string {
@@ -211,7 +215,7 @@ func (l *Ledger) Observe(o Observation) {
 // Remove marks every entry of a source gone: its newest text and any earlier one.
 func (l *Ledger) Remove(r Removal) {
 	for _, e := range l.entries {
-		if e.Source != r.Source || e.Gone != "" || !slices.Contains(r.Kinds, e.Kind) {
+		if e.Source != r.Source || e.Gone != "" || !slices.Contains(r.Kinds, e.Kind) || r.ID != "" && e.ID != r.ID {
 			continue
 		}
 		e.Gone = r.At
@@ -245,6 +249,20 @@ func (l *Ledger) Entries() []api.FlightRule {
 	}
 	return out
 }
+
+// Unwarn drops the warning of a key, for a condition that has passed.
+func (l *Ledger) Unwarn(key string) {
+	if !l.warned[key] {
+		return
+	}
+	delete(l.warned, key)
+	i := slices.Index(l.warnKeys, key)
+	l.warnings = slices.Delete(l.warnings, i, i+1)
+	l.warnKeys = slices.Delete(l.warnKeys, i, i+1)
+}
+
+// Has says whether the ledger holds an entry with id.
+func (l *Ledger) Has(id string) bool { return l.byID[id] != nil }
 
 // Warnings returns a copy of the warnings, in the order they were raised.
 func (l *Ledger) Warnings() []string { return append([]string(nil), l.warnings...) }

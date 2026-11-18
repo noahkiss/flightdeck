@@ -680,15 +680,17 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
     each folder from the project root down. The root is the nearest folder with a
     `project_root_markers` entry (`.git` by default), read from the home's `config.toml` only.
     Each file's current text that sits in the block on part boundaries (the block's ends or a
-    blank line) is one entry, scope `user` or `project`, attribution `matched`.
+    blank line) is one entry, scope `user` or `project`, attribution `matched`. When the block
+    holds Codex's project separator, the global file is looked for before it and project files
+    after it only.
   - What no file holds now is an entry with source `AGENTS.md instructions`, no scope and
     attribution `unknown`. Its note names the files whose text differs. Codex's separators
     (`--- project-doc ---`) belong to no entry. A file edited since the session loaded it, or
     cut by Codex's 32 KiB budget, lands here.
   - The rendered global file. A block that starts with Flightdeck's render header starts with
     the global file: Codex puts it first. When its text no longer matches the file, the part up
-    to the project separator is still that file, attribution `matched`, with a note. Not when an
-    `AGENTS.override.md` hides the rendered `AGENTS.md`.
+    to the project separator is still that file, attribution `matched`, with a note. Only while
+    the global `AGENTS.md` holds a render, and no `AGENTS.override.md` hides it.
   - A new block replaces the one before: every source of the old block is marked gone, and a
     source the new block carries again comes back.
   - The skill listing: `host_skills.body`, or the text between `<skills_instructions>`
@@ -718,7 +720,8 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
     `AGENTS.md`, else `CLAUDE.md`, in each folder from the location up to the home folder when
     the location is under it, else to the project root; then each config document's
     `instructions` entries (an absolute path or glob, `~/`, or a relative glob searched from
-    the location up to the project root; `**` is not followed). Attribution `computed`, with a
+    the location up to the project root, or in opencode's config folder when the location is
+    outside a project; `**` is not followed). Attribution `computed`, with a
     note. An http or https entry is a placeholder: opencode fetches it, Flightdeck does not.
     The config options that turn parts of the discovery off are not read.
   - Reads the skill list into one `skills` entry (`computed`; the digest covers the list, not
@@ -726,8 +729,11 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
     server does not return a server's instructions.
   - A computed entry not found again is marked gone; a new one is added; one found again is
     left as it is, since a poll is not a load. A changed file is a new entry, and its old text
-    is no longer served.
-  - With the pane's server not running, the ledger stays as it was, with a warning.
+    is no longer served. A text a message already recorded keeps its recorded entry, and a poll
+    never marks a recorded entry gone.
+  - With the pane's server not running, or failing a call, the ledger stays as it was, with a
+    warning. The warning goes once the calls succeed again. A call that runs out of time is
+    the hab's timeout case below.
 - **Configured sources.** The instruction renderer's state record keeps the configured sources
   it took text from (`roots`). An instruction entry at the record's target whose header digest
   equals the record's digest names those sources. A record from before `roots` names its depth-0

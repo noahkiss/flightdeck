@@ -166,7 +166,7 @@ func (f *flightRulesService) List(ctx context.Context, p api.FlightRulesParams) 
 	case err != nil && ctx.Err() != nil:
 		// A long transcript's first read ran out of time. The source keeps its place, so the
 		// next list goes on from there; this one answers with what it read.
-		out.Warnings = append(out.Warnings, "the transcript was not read to the end in time; list again for the rest")
+		out.Warnings = append(out.Warnings, "the session's records were not read to the end in time; list again for the rest")
 	case err != nil:
 		return api.FlightRules{}, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", p.Session, err)
 	}

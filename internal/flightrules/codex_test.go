@@ -262,4 +262,21 @@ func TestSplitAgents(t *testing.T) {
 	if !slices.Equal(got, want) || !slices.Equal(missed, []string{"/g"}) {
 		t.Errorf("parts %q, missed %q", got, missed)
 	}
+
+	// An edited global file whose paragraph equals a project file: the project file is found
+	// after the separator only.
+	files = []codexFile{{path: "/g", scope: "user", text: "Old global."}, {path: "/p", scope: "project", text: "Shared."}}
+	block = "Edited global.\n\nShared." + codexProjectDocSep + "Shared."
+	parts, _ = splitAgents(block, files, "")
+	got = nil
+	for _, p := range parts {
+		name := "?"
+		if p.file != nil {
+			name = p.file.path
+		}
+		got = append(got, name+"="+block[p.start:p.end])
+	}
+	if want := []string{"?=Edited global.\n\nShared.", "/p=Shared."}; !slices.Equal(got, want) {
+		t.Errorf("edited global: parts %q", got)
+	}
 }

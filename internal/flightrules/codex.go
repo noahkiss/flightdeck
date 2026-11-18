@@ -126,10 +126,11 @@ func (c *Codex) block(b codexBlock, l *Ledger) {
 		if err != nil {
 			l.Warn("discover:"+err.Error(), "Codex's AGENTS.md discovery failed: %v", err)
 		}
-		// The renderer's Codex target is the global AGENTS.md. Unless an override file hides
-		// it, a block that starts with a render header starts with that file.
+		// The renderer's Codex target is the global AGENTS.md. While that file holds a render
+		// and no override file hides it, a block that starts with a render header starts with
+		// that file.
 		rendered := filepath.Join(c.home, codexAgentsFile)
-		if _, err := os.Lstat(filepath.Join(c.home, codexAgentsOverride)); err == nil {
+		if _, err := os.Lstat(filepath.Join(c.home, codexAgentsOverride)); err == nil || !holdsRender(rendered) {
 			rendered = ""
 		}
 		parts, missed := splitAgents(b.text, files, rendered)
@@ -138,7 +139,7 @@ func (c *Codex) block(b codexBlock, l *Ledger) {
 			switch {
 			case p.file != nil && p.header:
 				o.Scope, o.Source, o.Attribution = p.file.scope, p.file.path, api.FlightMatched
-				o.Note = "Codex recorded one block of AGENTS.md text. It starts with Flightdeck's render header, so this part is the rendered global file; the file holds another render now"
+				o.Note = "Codex recorded one block of AGENTS.md text. It starts with Flightdeck's render header, so this part is the rendered global file; its text differs from the file as it is now"
 			case p.file != nil:
 				o.Scope, o.Source, o.Attribution = p.file.scope, p.file.path, api.FlightMatched
 				o.Note = "Codex recorded one block of AGENTS.md text; Flightdeck found this file's current text in it"
@@ -166,8 +167,8 @@ func (c *Codex) observe(l *Ledger, b codexBlock, start, end int, o Observation) 
 	c.mu.Unlock()
 }
 
-// Text implements Source: it reads the rollout again and returns the entry's part of the first
-// block it came from.
+// Text implements Source: it reads the rollout again and returns the entry's part of the
+// block it was last seen in, by that block's digest.
 func (c *Codex) Text(ctx context.Context, id string) (string, error) {
 	c.mu.Lock()
 	sp, ok := c.spans[id]
@@ -503,10 +504,24 @@ type agentsPart struct {
 func splitAgents(block string, files []codexFile, rendered string) (parts []agentsPart, missed []string) {
 	var found []agentsPart
 	matched := map[string]bool{}
+	// Codex's separator parts the global file from the project files: a file is looked for on
+	// its own side only, so an edited global file cannot pull a project file into its part.
+	sep := strings.Index(block, codexProjectDocSep)
 	cur := 0
 	for i := range files {
 		f := &files[i]
-		at := findPart(block, f.text, cur)
+		in, from := block, cur
+		if sep >= 0 {
+			if f.scope == api.FlightScopeUser {
+				in = block[:sep]
+			} else {
+				from = max(from, sep+len(codexProjectDocSep))
+			}
+		}
+		if from > len(in) {
+			continue
+		}
+		at := findPart(in, f.text, from)
 		if at < 0 {
 			continue
 		}
@@ -515,7 +530,7 @@ func splitAgents(block string, files []codexFile, rendered string) (parts []agen
 		cur = at + len(f.text)
 	}
 	if rendered != "" && !matched[rendered] && instructions.HeaderDigest(block) != "" {
-		end := strings.Index(block, codexProjectDocSep)
+		end := sep
 		if end < 0 {
 			end = len(block)
 		}
@@ -593,4 +608,14 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// holdsRender says whether the file at p starts with a render header.
+
+func holdsRender(p string) bool {
+
+	data, err := os.ReadFile(p)
+
+	return err == nil && instructions.HeaderDigest(string(data)) != ""
+
 }
