@@ -269,6 +269,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac), with the block fixtures decoded and encoded back |
 | `cd apple/FlightdeckKit && swift test` | Test the app's shared package (it links `swift/HabAPI`) |
 | `cd apple/FlightdeckKit && swift test --filter CapcomThreadTests` | The Capcom service thread in the app (`capcom-service.md` 7.6) over a fake hab |
+| `cd apple/FlightdeckKit && swift test --filter 'GovernorTests\|testSendNowOnlyOnTheCapcomThread'` | The usage governor in the app (`capcom-service.md` 10.1) over a fake hab: the pacing line for each basis and pace, no line without the catalog section, and Send now |
 | `go test -race -run 'TestLinkAllowSite\|TestCapcomMessage\|TestCapcomPushesMessage\|TestThreadLines' ./internal/capcomengine/ ./internal/push/ ./cmd/gff-hab/ ./internal/gffclient/` | Capcom A3, hab and gff half (`capcom-service.md` 5.3, 7.6, 7.7) |
 | `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_SSH_HOST=<host> FLIGHTDECK_LIVE_SSH_COMMAND=... FLIGHTDECK_LIVE_SSH_OPTIONS=...] swift test --filter LiveTests` (in `apple/FlightdeckKit`) | Live check against a real hab |
 | `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_PROGRAM='vim -u NONE -N'] swift test --filter LiveTerminalTests` (in `apple/FlightdeckKit`) | Live terminal check against a real hab with a holder (`-tags ghostty` for real snapshots) |
