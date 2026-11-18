@@ -107,11 +107,11 @@ func postQuery(ctx context.Context, addr string, env harness.Envelope, query str
 // Invocation is one run of `gff-hab hook <harness> [event]`.
 type Invocation struct {
 	Harness string
-	Event   string // empty: taken from the payload (hook_event_name, or an opencode event's type)
+	Event   string // empty: taken from the payload's hook_event_name
 	Stdin   io.Reader
 	Getenv  func(string) string
 	Now     func() time.Time
-	T       int64 // the event's time in ms, stamped by the caller (the opencode plugin); 0 means now
+	T       int64 // the event's time in ms, stamped by the caller (-t); 0 means now
 	// Wait asks the hab to hold a permission request until the app answers (PostWait). Only
 	// the PermissionRequest of Claude Code and Codex waits; any other event posts as usual.
 	Wait bool
@@ -149,13 +149,9 @@ func Run(ctx context.Context, in Invocation) error {
 	if event == "" {
 		var p struct {
 			HookEventName string `json:"hook_event_name"`
-			Type          string `json:"type"`
 		}
 		json.Unmarshal(payload, &p)
 		event = p.HookEventName
-		if event == "" {
-			event = p.Type
-		}
 		if event == "" {
 			return fmt.Errorf("no event name: give one after the harness")
 		}
@@ -245,7 +241,7 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 // Logbook habit it carries (logbook.md 11.3): the brief at a session's start (Claude Code and
 // Codex SessionStart, which also fires after a compaction and on resume), the reminder at a prompt
 // and the closeout at a stop. Claude Code's PostToolUse carries no habit ("") but asks too: the
-// context nudge (harness-adapters.md) rides on it and on UserPromptSubmit. opencode carries none:
+// context nudge (harness-adapters.md) rides on it and on UserPromptSubmit. opencode has no hooks:
 // gff-hab adds its brief through the pane's server (logbook.md 11.4).
 func ContextEvent(harness, event string) (habit string, ok bool) {
 	switch harness {
@@ -267,12 +263,10 @@ func ContextEvent(harness, event string) (habit string, ok bool) {
 // ContextOutput is the hook output that hands text to the agent in harness's shape (logbook.md
 // 11.3). Claude Code and Codex share it: SessionStart, UserPromptSubmit and Claude Code's
 // PostToolUse add context with hookSpecificOutput.additionalContext; Stop blocks once with the text as the reason, so the
-// agent takes one more turn. opencode's plugin reads the text as it is.
+// agent takes one more turn.
 func ContextOutput(harness, event, text string) []byte {
 	var v any
 	switch {
-	case harness == detect.KindOpencode:
-		return []byte(text)
 	case event == "Stop":
 		v = struct {
 			Decision string `json:"decision"`

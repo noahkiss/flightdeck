@@ -3108,7 +3108,7 @@ input to 2 KiB, the rest to 200 characters.
   choice.
 - A request in a folder outside the read scope’s allowed roots or matching its deny list
   (`[read]`, capcom.md 4), or whose files it denies,
-  is never sent. Nor is a request with no folder to check (an opencode plugin's).
+  is never sent. Nor is a request with no folder to check.
 - A device with "Show details in notifications" off gets no summary: its banner reads as 16.1
   says. When every device that would get the banner hides details or is held by presence (8.3),
   or the state raises no banner (a pane's last state replayed after a restart), the hab sends

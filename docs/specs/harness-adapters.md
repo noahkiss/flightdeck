@@ -255,7 +255,7 @@ Per harness:
 |---|---|---|
 | Claude Code | Yes | A `SessionStart` hook appends exports to the file named by `CLAUDE_ENV_FILE`. Claude also exports its own `CLAUDE_CODE_SESSION_ID`. |
 | Codex | No | Codex has no way for a hook to export a variable to later commands. The id comes from hook payloads, and readers find it through `gff-hab`. |
-| opencode | Yes, through a plugin | A plugin can set environment for shell tools (`shell.env` event). The server API also returns the id. |
+| opencode | No | gff-hab installs no opencode plugin. A plugin could set environment for shell tools (`shell.env` event). The server API returns the id. |
 
 Inheritance rules:
 
@@ -329,7 +329,7 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   exits 0, always. It writes to stdout only for the blocking hook and the context events:
   the Logbook habits (`logbook.md` 11.4) and the [Context nudge](#context-nudge). With no
   event argument it takes
-  `hook_event_name` (Claude Code, Codex) or `type` (opencode) from the payload. The post is
+  `hook_event_name` from the payload. The post is
   synchronous with a 900 ms budget for the whole run, enforced by a timer that exits 0: a
   stopped gff-hab fails at dial in a few milliseconds, and a hung one costs at most the budget.
   This keeps posts in order, which a background post would not. `n` is always 1, since each
@@ -344,10 +344,9 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   context events (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`) need no flag: the
   command asks on those events by itself. A flag would make an older gff-hab refuse the line and
   post nothing; `-context`, which an earlier build printed, is still accepted and ignored.
-  opencode gets a JavaScript plugin that spawns
-  `gff-hab hook -t <ms> opencode <event type>` with the event JSON on stdin. The plugin stamps
-  `Date.now()` itself, because each event spawns its own process and those may run out of
-  order. `-t` sets the envelope's `t`; without it the command stamps its own clock. `-command`
+  opencode has no hook config: `-print opencode` fails and names the server follower
+  ([opencode](#opencode), built choices), which gives its state. `-t <ms>` sets the envelope's
+  `t`; without it the command stamps its own clock. `-command`
   sets how the harness runs gff-hab. Claude Code and Codex commands exit quietly when
   that executable is missing. Claude's `PermissionRequest` entry runs
   `gff-hab hook -wait claude PermissionRequest` with a 130 second timeout; see the blocking
@@ -355,15 +354,18 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
 - **Permission input.** A permission request copies the tool input only up to 64 KiB. A larger
   input (a whole file being written) is left out and `input_truncated` is set; `command` and
   `files` stay exact. This keeps one request from filling a client's 8 MiB event backlog.
-- **opencode events.** The plugin posts `session.created` (binds, `idle`), `session.deleted`
-  (unbinds), `session.status` (`busy` or `retry` → `working`; `idle` is left to
-  `session.idle`), `session.idle` (→ `done`), `session.error` (→ `error`), `permission.asked`
-  and `permission.updated` (→ `blocked:permission`, request from the event's id, permission and
-  metadata), and `permission.replied` (resolves the request, → `working`).
+- **No opencode hooks.** opencode state comes only from the server gff-hab follows. A hook
+  post for opencode (from a plugin an earlier build printed) is dropped as an unknown event.
+  Why no plugin: an opencode 2.x plugin reads the same event stream the follower reads from
+  `/api/event`, so in a pane gff-hab started it adds nothing. In a pane started by hand, the
+  TUI uses opencode's shared background service, whose plugins run without the pane's
+  environment, so they cannot name the pane. The plugin of the 1.x shape does not load on 2.x
+  (checked live on 2.3.2: "Plugin must export a default definition with an id and an effect or
+  setup function").
 
 Why a client clock: hook payloads carry no timestamp or sequence. A harness may run its hooks
-in parallel, and the opencode plugin spawns one process per event, so posts can land out of
-order. Without `t`, the server cannot tell a late event from a new one.
+in parallel, so posts can land out of order. Without `t`, the server cannot tell a late event
+from a new one.
 
 ## State event model
 
@@ -682,7 +684,8 @@ Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
   Codex waits for that answer before it reports was not checked.
 - **Hook health.** A pane's `hooks` becomes `missing` when an OSC 7501 report from its harness
   moves it from `working` to `done` or `error`, and no hook from that harness reached this
-  gff-hab run for the pane. gff-hab logs one error line with the fix: install the hook config
+  gff-hab run for the pane. opencode is never marked: it has no hooks. gff-hab logs one error
+  line with the fix: install the hook config
   (`gff-hab hook -print <harness>`), and for Codex, trust it with `/hooks`. Any hook clears the
   field. `idle` does not count as a turn end, because Codex reports `idle` at start, before its
   first hook. The field is for display and health only: it never gates `session.send` or an
@@ -757,7 +760,7 @@ which the adapter is built on, differs; see the 2.x notes and built choices afte
 | Channel | Behaviour |
 |---|---|
 | Detection | Process name `opencode` (manifest id `opencode`, aliases `open-code`). |
-| State | The server's SSE stream `/event`: `session.status`, `session.idle` (→ `idle` or `done`), `permission.asked` (→ `blocked:permission`), `permission.replied`, `session.error` (→ `error`). A plugin can post the same events to our hook endpoint when the server is not reachable. |
+| State | The server's SSE stream `/event`: `session.status`, `session.idle` (→ `idle` or `done`), `permission.asked` (→ `blocked:permission`), `permission.replied`, `session.error` (→ `error`). |
 | Conversation | The server API: `GET /session/:id/message`, plus `message.updated` and `message.part.updated` events. opencode stores sessions in its own database; the adapter never opens the database file. |
 | Input | Prefer the TUI control endpoints (`/tui/append-prompt`, `/tui/submit-prompt`), so the text shows in the TUI as typed. Fallback: PTY paste. Do not use `prompt_async` against a session a TUI is showing unless tests prove the TUI renders it as its own turn. |
 | Permission answer | `POST /session/:id/permissions/:permissionID` with the reply. The request id comes from `permission.asked`. |
@@ -771,7 +774,7 @@ Notes:
 - To reach the TUI's server, hab spawns opencode with `--hostname 127.0.0.1 --port <port>`,
   allocated per pane, and sets `OPENCODE_SERVER_PASSWORD` from a per-pane secret so other local
   users cannot drive it. A pane started by hand has no known port; the adapter falls back to
-  plugin hooks and the PTY.
+  the PTY.
 - The OpenAPI document lives at `/doc` on that server (opencode 1.x; 2.x serves it at `/openapi.json`, below). The adapter records the document's
   version and fails visibly on an unknown one.
 - `opencode serve` or `opencode attach` would start or attach a second front end. The adapter
@@ -1039,9 +1042,9 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
   group signals miss it. If only the wrapper dies, the TUI is left talking to a dead server.
 
 - **Panes opencode was not started in by gff-hab** have no server gff-hab knows: chat, sends
-  and answers are `unavailable`. The plugin hook path (above) still gives state where the
-  plugin runs with the pane's environment; with opencode 2's shared service it does not, and its
-  event shapes were not checked on 2.x.
+  and answers are `unavailable`, and state comes from detection and OSC 7501 alone. Known gap:
+  `opencode --standalone` started by hand runs a private server with the pane's environment,
+  where a plugin could name the pane; gff-hab does not cover it.
 
 ## Input delivery
 
@@ -1529,7 +1532,8 @@ Built (option B, off until the owner turns it on):
 
 Decision: print first; a later opt-in install command writes the config after it shows the diff
 (owner, 2026-11-01). This is the install prompt that `landscape.md` section 6 suggests; Paseo,
-herdr and Rex install hooks themselves. Today `gff-hab hook -print` prints only.
+herdr and Rex install hooks themselves. Today `gff-hab hook -print` prints only, for Claude Code
+and Codex.
 
 ## Sources
 

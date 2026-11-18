@@ -63,7 +63,9 @@ func Normalise(env Envelope) (Update, error) {
 	case detect.KindClaude, detect.KindCodex:
 		u, err = normaliseHookJSON(env)
 	case detect.KindOpencode:
-		u, err = normaliseOpencode(env)
+		// opencode reports through the server gff-hab follows (NormaliseOpencodeServer), never
+		// through hooks. A post from an old plugin is dropped.
+		return Update{}, fmt.Errorf("%w opencode %s: opencode state comes from its server", ErrUnknownEvent, env.Event)
 	default:
 		return Update{}, fmt.Errorf("%w %q", ErrUnknownHarness, env.Harness)
 	}
@@ -180,79 +182,6 @@ func request(id, tool string, input json.RawMessage, cwd string) *api.Permission
 		}
 	}
 	return r
-}
-
-// opencodeEvent is an opencode bus event as a plugin receives it: a type and its properties.
-type opencodeEvent struct {
-	Type       string `json:"type"`
-	Properties struct {
-		SessionID    string          `json:"sessionID"`
-		ID           string          `json:"id"`
-		PermissionID string          `json:"permissionID"`
-		RequestID    string          `json:"requestID"`
-		Permission   string          `json:"permission"`
-		Kind         string          `json:"type"`
-		Metadata     json.RawMessage `json:"metadata"`
-		Status       struct {
-			Type string `json:"type"`
-		} `json:"status"`
-	} `json:"properties"`
-}
-
-// normaliseOpencode handles opencode events posted by the plugin that `gff-hab hook -print
-// opencode` prints. The envelope's event is the bus event type.
-func normaliseOpencode(env Envelope) (Update, error) {
-	var e opencodeEvent
-	if err := json.Unmarshal(env.Payload, &e); err != nil {
-		return Update{}, fmt.Errorf("payload: %w", err)
-	}
-	pr := e.Properties
-	u := Update{Session: pr.SessionID}
-	switch env.Event {
-	case "session.created":
-		u.Bind, u.State = true, api.AgentStatusIdle
-	case "session.deleted":
-		u.Unbind = true
-	case "session.status":
-		switch pr.Status.Type {
-		case "busy", "retry":
-			u.State = api.AgentStatusWorking
-		case "idle":
-			return Update{}, fmt.Errorf("%w opencode session.status idle (session.idle carries it)", ErrUnknownEvent)
-		default:
-			return Update{}, fmt.Errorf("%w opencode session.status %q", ErrUnknownEvent, pr.Status.Type)
-		}
-	case "session.idle":
-		u.State = api.AgentStatusDone
-	case "session.error":
-		u.State = api.AgentStatusError
-	case "permission.asked", "permission.updated":
-		u.State, u.Kind = api.AgentStatusBlocked, api.BlockedKindPermission
-		r := &api.PermissionRequest{ID: pr.ID, Tool: firstNonEmpty(pr.Permission, pr.Kind)}
-		if len(pr.Metadata) > 0 && string(pr.Metadata) != "null" {
-			setInput(r, pr.Metadata)
-			var md struct {
-				Command  string `json:"command"`
-				FilePath string `json:"filepath"`
-				Path     string `json:"path"`
-			}
-			if json.Unmarshal(pr.Metadata, &md) == nil {
-				r.Command = md.Command
-				for _, f := range []string{md.FilePath, md.Path} {
-					if f != "" {
-						r.Files = append(r.Files, f)
-					}
-				}
-			}
-		}
-		u.Request = r
-	case "permission.replied":
-		u.Resolves = firstNonEmpty(pr.PermissionID, pr.RequestID, pr.ID)
-		u.State = api.AgentStatusWorking
-	default:
-		return Update{}, fmt.Errorf("%w opencode %s", ErrUnknownEvent, env.Event)
-	}
-	return u, nil
 }
 
 // MaxInput bounds the tool input copied into a permission request. A larger one is left out

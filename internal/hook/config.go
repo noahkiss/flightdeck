@@ -10,9 +10,8 @@ import (
 
 // Events each harness's hook config subscribes, in the order printed.
 var (
-	ClaudeEvents   = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "PreCompact", "Stop", "StopFailure", "SessionEnd"}
-	CodexEvents    = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"}
-	OpencodeEvents = []string{"session.created", "session.deleted", "session.status", "session.idle", "session.error", "permission.asked", "permission.updated", "permission.replied"}
+	ClaudeEvents = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "PreCompact", "Stop", "StopFailure", "SessionEnd"}
+	CodexEvents  = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"}
 )
 
 type hookCmd struct {
@@ -27,8 +26,9 @@ type hookGroup struct {
 
 // Config returns the hook config for harness, ready to merge into its settings by hand.
 // command is how the harness should run gff-hab ("gff-hab" when on PATH). Claude Code and Codex
-// get JSON in their shared hooks shape; opencode gets a plugin file in JavaScript. Config only
-// prints; writing a harness's settings is a separate step the owner approves.
+// get JSON in their shared hooks shape. opencode has no hook config: gff-hab follows the server
+// of each opencode it starts. Config only prints; writing a harness's settings is a separate step
+// the owner approves.
 func Config(harness, command string) (string, error) {
 	if command == "" {
 		command = "gff-hab"
@@ -44,9 +44,9 @@ func Config(harness, command string) (string, error) {
 		// Codex caps its end hooks at three seconds. PermissionRequest waits as Claude's does.
 		return hooksJSON(command, harness, CodexEvents, map[string]int{"SessionEnd": 2, "Interrupt": 2, "PermissionRequest": PermissionTimeout}, map[string]string{"PermissionRequest": "-wait "})
 	case detect.KindOpencode:
-		return opencodePlugin(command), nil
+		return "", fmt.Errorf("opencode needs no hook config: gff-hab follows the server of each opencode it starts")
 	}
-	return "", fmt.Errorf("no hook config for harness %q; known: claude, codex, opencode", harness)
+	return "", fmt.Errorf("no hook config for harness %q; known: claude, codex", harness)
 }
 
 // PermissionTimeout is the hook timeout, in seconds, of the PermissionRequest hook: above
@@ -88,32 +88,6 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func opencodePlugin(command string) string {
-	events, _ := json.Marshal(OpencodeEvents)
-	cmd, _ := json.Marshal(command)
-	return `// gff-hab hook plugin for opencode. Save it as a plugin file, for example
-// .opencode/plugin/gff-hab.js in a project or the plugin directory of your opencode config.
-// It posts the events below to gff-hab and does nothing outside a pane gff-hab owns.
-const EVENTS = new Set(` + string(events) + `)
-
-export const GffHab = async () => ({
-  event: async ({ event }) => {
-    if (!process.env.GFF_HAB || !EVENTS.has(event.type)) return
-    try {
-      // Stamp the time here: each event spawns its own process, and those may run out of order.
-      const proc = Bun.spawn([` + string(cmd) + `, "hook", "-t", String(Date.now()), "opencode", event.type], {
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      proc.stdin.write(JSON.stringify(event))
-      proc.stdin.end()
-    } catch {}
-  },
-})
-`
 }
 
 // StatusLineEvent is the event name `gff-hab statusline` posts Claude Code's status-line input

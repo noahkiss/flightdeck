@@ -248,10 +248,11 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	}
 	// Hook health (harness-adapters.md, Edge cases: untrusted Codex hooks). Codex skips a hook
 	// it does not trust with no message, so config presence proves nothing: only delivery does.
+	// opencode has no hooks: its state comes from the server gff-hab follows.
 	switch {
 	case src == api.StateSourceHook:
 		next.Hooks = ""
-	case src == api.StateSourceOsc && p.hooked != harness && prevOSC == api.AgentStatusWorking && turnEnd(u.State) && next.Hooks == "":
+	case src == api.StateSourceOsc && harness != detect.KindOpencode && p.hooked != harness && prevOSC == api.AgentStatusWorking && turnEnd(u.State) && next.Hooks == "":
 		next.Hooks = api.HookHealthMissing
 		hint := "install its hook config (gff-hab hook -print " + harness + ")"
 		if harness == detect.KindCodex {
