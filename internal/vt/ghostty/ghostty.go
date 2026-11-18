@@ -85,6 +85,9 @@ type terminal struct {
 	rs *libghostty.RenderState
 	ri *libghostty.RenderStateRowIterator
 	rc *libghostty.RenderStateRowCells
+	// The key encoder and its event, made on the first EncodeKey (keys.go).
+	enc *libghostty.KeyEncoder
+	ev  *libghostty.KeyEvent
 }
 
 func (t *terminal) Write(p []byte) (int, error) {
@@ -477,6 +480,11 @@ func vtColor(c libghostty.StyleColor) vt.Color {
 }
 
 func (t *terminal) Close() error {
+	if t.enc != nil {
+		t.ev.Close()
+		t.enc.Close()
+		t.enc, t.ev = nil, nil
+	}
 	if t.rc != nil {
 		t.rc.Close()
 		t.ri.Close()

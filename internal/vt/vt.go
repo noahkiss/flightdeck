@@ -104,6 +104,34 @@ type Terminal interface {
 	Close() error
 }
 
+// Key is one key event in the kitty keyboard protocol's terms. gff decodes it from the host
+// terminal and encodes it again for a pane (gff-client.md 8.2).
+type Key struct {
+	// Code is the key's kitty code: the unshifted key's code point (lower case for a letter),
+	// 27, 13, 9 and 127 for Esc, Enter, Tab and Backspace, or kitty's number for a functional
+	// key (57344 and up, such as 57399 for keypad 0).
+	Code int
+	// Shifted is the code point the key types with Shift (kitty's alternate key), 0 when the
+	// host did not say.
+	Shifted int
+	// Mods holds kitty's modifier bits: 1 Shift, 2 Alt, 4 Ctrl, 8 Super, 16 Hyper, 32 Meta,
+	// 64 Caps Lock, 128 Num Lock.
+	Mods int
+	// Event is 1 (or 0) for a press, 2 for a repeat, 3 for a release.
+	Event int
+	// Text is the text the key types, "" for none.
+	Text string
+}
+
+// KeyEncoder is implemented by a Terminal that can encode a key the way its program asked with
+// the kitty keyboard protocol, at the flags the program set (KeyboardFlags), with its cursor key
+// and keypad modes applied.
+type KeyEncoder interface {
+	// EncodeKey returns the bytes for k, or nil when k types nothing at the current flags (a
+	// release, when the program did not ask for releases).
+	EncodeKey(k Key) []byte
+}
+
 // ColorKind says how a Color is given.
 type ColorKind uint8
 
