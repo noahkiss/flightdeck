@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -114,7 +115,7 @@ func (u *workspaceUI) keepCatalog(e api.CatalogEntry, ids map[string]bool) {
 func (u *workspaceUI) visibleRounds() []board.RoundRow {
 	var out []board.RoundRow
 	for _, r := range u.rounds {
-		if board.MatchRound(r, u.filter) {
+		if board.MatchRound(r, u.filter) && (!u.jobsOnly || r.Mode == api.RoundModeCapcom) {
 			out = append(out, r)
 		}
 	}
@@ -210,6 +211,18 @@ func (u *workspaceUI) toggleRuns() {
 	} else {
 		u.msg = "run sessions hidden, but those that need you"
 	}
+}
+
+// toggleJobs shows only capcom rounds in the board's Rounds list, the Capcom jobs, or every
+// round again (capcom-service.md 9.6).
+func (u *workspaceUI) toggleJobs() {
+	u.jobsOnly = !u.jobsOnly
+	if u.jobsOnly {
+		u.msg = "Capcom jobs only"
+	} else {
+		u.msg = "every round"
+	}
+	u.fixBoardSel()
 }
 
 // roundUsable says why a round row takes no action, or "".
@@ -387,6 +400,13 @@ func roundText(now time.Time, r board.RoundRow) string {
 	trigger := r.Trigger
 	if r.TriggerError != "" {
 		trigger += ": " + r.TriggerError
+	}
+	if len(r.Actions) > 0 {
+		// A Capcom job's words, and what Capcom did with its last message (9.6).
+		trigger += " · acts: " + strings.Join(r.Actions, ",")
+	}
+	if r.Outcome != "" {
+		trigger += " · " + r.Outcome
 	}
 	return fmt.Sprintf("  %-20s %-7s %-10s %-28s %-22s %s", middle(r.Name, 20), middle(string(r.Mode), 7),
 		middle(r.Host, 10), middle(nextText(now, next, r.Zone), 28), middle(mark, 22), trigger)

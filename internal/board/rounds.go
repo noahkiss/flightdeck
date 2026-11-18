@@ -41,6 +41,10 @@ type RoundRow struct {
 	LastRun api.RoundRunState
 	// LastSession is the newest run's session id, when known.
 	LastSession string
+	// Actions are a Capcom job's words, and Outcome what Capcom did with its newest message
+	// (told, quiet, acted, unseen); both empty from a catalog copy (capcom-service.md 9.6).
+	Actions []string
+	Outcome string
 	// Stale: the host is not online, so the row is the last copy: its own last snapshot, or
 	// another hab's catalog copy. No action reaches it.
 	Stale bool
@@ -151,6 +155,12 @@ func liveRounds(h hosts.Host, stale bool, since time.Time) []RoundRow {
 		}
 		if x.LastRun != nil {
 			r.LastRun, r.LastSession = x.LastRun.State, x.LastRun.Session
+			if o := x.LastRun.Outcome; o != nil {
+				r.Outcome = o.Word
+			}
+		}
+		for _, w := range x.Actions {
+			r.Actions = append(r.Actions, string(w))
 		}
 		out = append(out, r)
 	}

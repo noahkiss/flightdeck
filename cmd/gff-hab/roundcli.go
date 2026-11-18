@@ -41,10 +41,14 @@ const roundUsage = `usage:
                         [-expires time] [-catch-up once|skip] [-on-finish close|keep]
                         [-notify failures|always|never] [-paused] [-run-now]
                         [-command] <prompt... | program args...>
+  gff-hab round add     [door] <name> -mode capcom [-actions w,...] ... <prompt...>
   gff-hab round add     [door] <name> -watch [-secrets set] [-kinds k,...] [-watch-cwd dir]
                         [-mode capcom|group|fresh ...] [-prompt text] [-debounce d] [-cooldown d]
                         -- <watcher program> [args...] [-- <run program> args... with -command]
   gff-hab round edit    [door] <name> [the same fields] [-command] [prompt... | program args...]
+-actions w,...: a Capcom job's action words (hand_off, start_session, set_up_project, group,
+  card, fetch); "" removes them all. Only a person grants a word: from a pane it is refused
+  (denied), and a pane may only remove words from a job that has some.
   gff-hab round rm      [door] [-yes] <name>
   gff-hab round pause | unpause | run [door] <name>
   gff-hab round runs    [door] [-limit n] [-json] <name>
@@ -71,6 +75,8 @@ type roundDef struct {
 	watch                    bool
 	secrets, kinds, watchCwd string
 	prompt                   string
+	// Capcom jobs (capcom-service.md 9.6).
+	actions string
 }
 
 type stringList []string
@@ -90,6 +96,7 @@ func (d *roundDef) flags(fs *flag.FlagSet) {
 	fs.StringVar(&d.watchCwd, "watch-cwd", "", "with -watch: the folder the watcher starts in")
 	fs.StringVar(&d.prompt, "prompt", "", "the prompt, instead of the words after the flags; with -watch those words are the watcher")
 	fs.StringVar(&d.group, "group", "", "group: the group id whose coordinator gets each run's message")
+	fs.StringVar(&d.actions, "actions", "", "capcom: the job's action words, comma-separated (hand_off, start_session, set_up_project, group, card, fetch); \"\" for none. Only a person grants one")
 	fs.StringVar(&d.cron, "cron", "", "a 5-field cron expression")
 	fs.StringVar(&d.tz, "tz", "", "the IANA time zone of -cron or -at (default: the hab's zone)")
 	fs.StringVar(&d.every, "every", "", "a preset: 1m, 5m, 15m, 1h, 1d and the like")
@@ -185,6 +192,14 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 	}
 	if set["group"] {
 		spec.Group = d.group
+	}
+	if set["actions"] {
+		spec.Actions = nil
+		for _, w := range strings.Split(d.actions, ",") {
+			if w = strings.TrimSpace(w); w != "" {
+				spec.Actions = append(spec.Actions, api.RoundAction(w))
+			}
+		}
 	}
 	for _, f := range []string{"kinds", "watch-cwd"} {
 		if set[f] && (spec.Trigger.Kind != api.RoundTriggerKindWatch || spec.Trigger.Watch == nil) {
@@ -764,6 +779,9 @@ func printRound(out io.Writer, r api.Round, runs []api.RoundRun) {
 	row("target", r.Target)
 	row("group", r.Group)
 	row("secrets", r.Secrets)
+	if len(r.Actions) > 0 {
+		row("actions", strings.Join(actionWords(r.Actions), ", "))
+	}
 	if w := r.Trigger.Watch; w != nil {
 		row("watch cwd", w.Cwd)
 	}
@@ -889,6 +907,9 @@ type fileRound struct {
 	Debounce string      `toml:"debounce,omitempty"`
 	Cooldown string      `toml:"cooldown,omitempty"`
 	Group    string      `toml:"group,omitempty"`
+	// Actions are a Capcom job's words (capcom-service.md 9.6). Apply grants them only as a
+	// person: from a pane it is refused.
+	Actions []string `toml:"actions,omitempty"`
 	// Watch triggers (rounds.md 4.4): the export carries the secret set by name only.
 	Secrets string     `toml:"secrets,omitempty"`
 	Watch   *fileWatch `toml:"watch,omitempty"`
@@ -927,7 +948,7 @@ func toFile(r api.Round) fileRound {
 		Name: r.Name, Mode: string(r.Mode), Zone: r.Trigger.Zone, Prompt: r.Prompt, Harness: r.Harness,
 		Model: r.Model, HarnessArgs: r.HarnessArgs, Command: r.Command, Cwd: r.Cwd, Target: r.Target,
 		MaxRuns: r.MaxRuns, ExpiresAt: r.ExpiresAt, CatchUp: string(r.CatchUp), OnFinish: string(r.OnFinish),
-		Notify: string(r.Notify), Paused: r.Paused, Secrets: r.Secrets,
+		Notify: string(r.Notify), Paused: r.Paused, Secrets: r.Secrets, Actions: actionWords(r.Actions),
 	}
 	switch r.Trigger.Kind {
 	case api.RoundTriggerKindCron:
@@ -1070,7 +1091,7 @@ func (f fileRound) spec() (api.RoundSpec, error) {
 		HarnessArgs: f.HarnessArgs, Command: f.Command, Project: f.Project, ProjectRemote: f.ProjectRemote,
 		Cwd: f.Cwd, Target: f.Target, MaxRuns: f.MaxRuns, ExpiresAt: f.ExpiresAt, CatchUp: api.RoundCatchUp(f.CatchUp),
 		OnFinish: api.RoundOnFinish(f.OnFinish), Notify: api.RoundNotify(f.Notify), Paused: f.Paused,
-		Group: f.Group, Secrets: f.Secrets,
+		Group: f.Group, Secrets: f.Secrets, Actions: apiActions(f.Actions),
 	}
 	kinds := 0
 	for _, b := range []bool{f.Cron != "", f.At != "", f.Manual, f.On != "", f.Watch != nil} {
