@@ -668,7 +668,8 @@ for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts`, `flight-rules` (`flightrules.list` and `flightrules.text` work), `detect-explain`
-(`detect.explain` works) and `capcom`. It always sends `mesh`, `idempotency-keys`,
+(`detect.explain` works), `session-restart` (`session.restart` and `Session.stale` work) and
+`capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link), `settings`, `read-tools` and `confirm`. With the holder link on it also sends
 `rounds`. It sends `logbook` when its Logbook file opens (`logbook.md` 10.5), and `logbook-vectors` when its
@@ -832,6 +833,7 @@ names the stage, and an event is defined but never sent.
 | `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes |
 | `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (`capcom.md` 7.6); every other session (`gff-client.md` 6.2) |
+| `session.restart` | Exit an idle or done session's harness and start it again in a new pane, with its resume id | Yes (`instructions-mcp-flight-rules.md` 13.1) |
 | `session.adopt` | Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; `conflict` while it runs elsewhere | Yes (`gff-client.md` 6.5) |
 | `session.outside` | List recent conversations on the host that no session holds, newest first | Yes (`gff-client.md` 6.5) |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |

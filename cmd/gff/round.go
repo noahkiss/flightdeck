@@ -40,18 +40,19 @@ func findHab(exe string, lookPath func(string) (string, error)) (string, error) 
 	}
 	p, err := lookPath("gff-hab")
 	if err != nil {
-		return "", errors.New("gff round runs gff-hab round, and no gff-hab is beside gff or on PATH")
+		return "", errors.New("no gff-hab is beside gff or on PATH")
 	}
 	return p, nil
 }
 
-// roundMain replaces gff with `gff-hab round <args>`; it returns only when that cannot start.
-func roundMain(args []string, stderr io.Writer) int {
+// habMain replaces gff with `gff-hab <verb> <args>`; it returns only when that cannot start.
+// `gff round` and `gff restart` (instructions-mcp-flight-rules.md 13.1) run this way.
+func habMain(verb string, args []string, stderr io.Writer) int {
 	exe, _ := os.Executable()
 	hab, err := findHab(exe, exec.LookPath)
 	if err == nil {
-		err = syscall.Exec(hab, append([]string{"gff-hab", "round"}, args...), os.Environ())
+		err = syscall.Exec(hab, append([]string{"gff-hab", verb}, args...), os.Environ())
 	}
-	fmt.Fprintf(stderr, "gff round: %v\n", err)
+	fmt.Fprintf(stderr, "gff %s: %v\n", verb, err)
 	return 1
 }

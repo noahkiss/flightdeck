@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 )
@@ -49,6 +50,16 @@ func checkContext(method string, r api.CapcomContextRef) *Error {
 type Resumer interface {
 	ResumeSession(ctx context.Context, session string) (pane string, err error)
 }
+
+// Restarter restarts a running session through its harness's resume (session.restart,
+// instructions-mcp-flight-rules.md 13). Actions may implement it; without it, session.restart
+// answers unavailable. An error that is an *Error keeps its kind.
+type Restarter interface {
+	RestartSession(ctx context.Context, session string) (pane string, err error)
+}
+
+// RestartTimeout bounds one session.restart: the harness's exit, then its start.
+const RestartTimeout = 60 * time.Second
 
 // Adopter brings a conversation started outside Flightdeck into a new pane (session.adopt) and
 // lists the ones it could (session.outside), gff-client.md 6.5. Actions may implement it;
@@ -204,6 +215,35 @@ func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 	}
 	res.Seq = s
 	return res, nil
+}
+
+// dispatchRestart answers session.restart. It runs off the read loop (handle), so the seq is
+// taken once the restart ended.
+func (c *conn) dispatchRestart(m message) (any, uint64, *Error) {
+	var p api.SessionRef
+	if e := c.decodeUp(m, &p); e != nil {
+		return nil, c.currentSeq(), e
+	}
+	if p.Session == "" {
+		return nil, c.currentSeq(), appErr(api.ErrorKindInvalid, "session.restart needs a session")
+	}
+	r, ok := c.s.cfg.Actions.(Restarter)
+	if !ok {
+		return nil, c.currentSeq(), appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+	}
+	// Not the connection's context: a client that leaves must not cut a restart between the
+	// exit and the start.
+	ctx, cancel := context.WithTimeout(context.Background(), max(c.s.cfg.ActionTimeout, RestartTimeout))
+	defer cancel()
+	pane, err := r.RestartSession(ctx, p.Session)
+	seq := c.currentSeq()
+	if err != nil {
+		return nil, seq, actionErr(m.Method, err)
+	}
+	if c.s.cfg.Size != nil {
+		c.s.cfg.Size.Created(c.clientID, pane)
+	}
+	return api.SessionCreated{Seq: api.Seq{Seq: seq}, Session: p.Session, Pane: pane}, seq, nil
 }
 
 // dispatchResume answers session.resume.

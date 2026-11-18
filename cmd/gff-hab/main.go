@@ -166,6 +166,8 @@ const usage = `usage:
   gff-hab capcom open   [-socket path | -via command] [-new]
   gff-hab adopt [-socket path | -via command] [-harness h] [-name n] [-cwd dir] [-json] <id>
   gff-hab adopt -list [-socket path | -via command] [-harness h] [-limit n] [-json]
+  gff-hab restart [-socket path | -via command] [-json] <session>   (also gff restart)
+  gff-hab restart -list [-socket path | -via command] [-json]
   gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
@@ -261,6 +263,8 @@ func main() {
 		err = capcomCmd(os.Args[2:], os.Stdout)
 	case "adopt":
 		err = adoptCmd(os.Args[2:], os.Stdout)
+	case "restart":
+		err = restartCmd(os.Args[2:], os.Stdout)
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
@@ -767,10 +771,16 @@ func serve(args []string) error {
 		caps = append(caps, "transcripts")
 		// Flight rules (instructions-mcp-flight-rules.md 11): the context each session's
 		// harness recorded, read from the same transcripts.
-		flightRules = &flightRulesService{session: store.Session, agent: agents.Get, find: findTranscript,
+		// Session.stale (instructions-mcp-flight-rules.md 13.1) comes from the same ledgers.
+		staleW := &staleWatch{store: store, agent: agents.Get, state: absState}
+		frs := &flightRulesService{session: store.Session, agent: agents.Get, find: findTranscript,
 			opencode: ocs.Client, codexHome: codexHome, home: home,
 			opencodeDir: instructions.EnvFrom(os.Getenv, home, absState).OpencodeDir,
-			state:       absState, now: time.Now, ledgers: map[string]*sessionLedger{}}
+			state:       absState, now: time.Now, ledgers: map[string]*sessionLedger{}, mark: staleW.listed}
+		staleW.rules = frs
+		staleW.start()
+		defer staleW.Close()
+		flightRules = frs
 		caps = append(caps, "flight-rules")
 		// Rich content (app.md 4.7): references to files a session showed or touched.
 		contentSvc, err := newContent(dir, content.Config{
@@ -826,6 +836,35 @@ func serve(args []string) error {
 		sessionActs.adopt = newAdopter(sessionActs, resumes, agents.Snapshot, logger.Printf)
 		general.live = sessionActs.adopt.outsideLive
 		sessionActs.general = general.Resume
+		// session.restart (instructions-mcp-flight-rules.md 13.1): exit, then session.resume's path.
+		sessionActs.restart = &restarter{store: store, agent: agents.Get, logf: logger.Printf,
+			hupWait: restartHupWait, termWait: restartTermWait,
+			signal: func(ctx context.Context, pane string, sig hp.Sig) error {
+				u, ok := parseUUID(pane)
+				if !ok {
+					return fmt.Errorf("pane %q is not a pane id", pane)
+				}
+				return lk.Signal(ctx, u, hp.TargetChild, sig)
+			},
+			direct: func(ctx context.Context, pane string) (bool, error) {
+				u, ok := parseUUID(pane)
+				if !ok {
+					return false, fmt.Errorf("pane %q is not a pane id", pane)
+				}
+				ps, ok := lk.Pane(u)
+				if !ok {
+					return false, fmt.Errorf("pane %s is gone", pane)
+				}
+				fg, err := lk.Foreground(ctx, u)
+				if err != nil {
+					return false, err
+				}
+				return ps.Pid != 0 && fg == int(ps.Pid), nil
+			},
+			restarted: staleW.restarted,
+			resume:    sessionActs.ResumeSession,
+			ready:     restartReady(store, resumes, contentSvc.Folder, claudeTranscriptExists)}
+		caps = append(caps, "session-restart")
 		caps = append(caps, "attachments")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.

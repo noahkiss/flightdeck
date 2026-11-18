@@ -121,6 +121,9 @@ type Session struct {
 	// so a newer client reads a session from an older revision 1 hab.
 	Compacts int    `json:"compacts,omitempty" doc:"A group member's compactions that its hab counted toward group.fresh_after_compacts. Absent for none."`
 	Replaced string `json:"replaced,omitempty" doc:"The session this fresh member session replaced (groups.md 9.3). Absent for any other session."`
+	// Stale comes with restart through resume (instructions-mcp-flight-rules.md 13.1). Optional,
+	// so a newer client reads a session from an older revision 1 hab.
+	Stale []string `json:"stale,omitempty" doc:"What the running agent loaded that a newer render replaced: instructions. session.restart picks the new one up. Absent when nothing is stale, or the hab cannot tell."`
 }
 
 // SessionKind says what a session is for, beyond running a program. Open: a client shows an

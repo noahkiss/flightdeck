@@ -80,6 +80,7 @@ var Methods = []Method{
 	{"devices.revoke", "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
 	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
 	{"session.resume", "Start an exited session's harness again in a new pane, with its resume id.", SessionRef{}, SessionCreated{}},
+	{"session.restart", "Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.", SessionRef{}, SessionCreated{}},
 	{"session.adopt", "Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).", SessionAdoptParams{}, SessionAdopted{}},
 	{"session.outside", "List recent conversations on this host that no session of the hab holds, newest first (gff-client.md 6.5). Read-only.", SessionOutsideParams{}, OutsideConversations{}},
 	{"pane.close", "Release a pane: a running program gets a hang-up first (spec 3.9).", PaneRef{}, Empty{}},
@@ -397,5 +398,6 @@ var Translators = map[int]Translator{}
 // (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4). "device-context"
 // means device.context.put works and the hab serves Capcom's personal tools; it is sent with
 // capcom-thread (capcom-service.md 8). "flight-rules" means flightrules.list and
-// flightrules.text work (instructions-mcp-flight-rules.md 11).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules"}
+// flightrules.text work (instructions-mcp-flight-rules.md 11). "session-restart" means
+// session.restart works and a session carries Session.stale (instructions-mcp-flight-rules.md 13.1).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart"}

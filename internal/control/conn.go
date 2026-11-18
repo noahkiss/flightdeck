@@ -526,6 +526,15 @@ func (c *conn) handleLine(line []byte) {
 		c.handleHeavy(m)
 		return
 	}
+	if m.Method == "session.restart" {
+		// A restart waits for a harness to exit: off the read loop, so pings and other calls
+		// go on meanwhile.
+		go func() {
+			result, seq, e := c.dispatchRestart(m)
+			c.reply(m, seq, result, e)
+		}()
+		return
+	}
 	if isGroupMethod(m.Method) {
 		c.handleGroups(m)
 		return

@@ -566,6 +566,12 @@ func (h *Holder) Resize(ctx context.Context, hd hp.Handle, cols, rows uint16) er
 	return h.do(ctx, func(tok uint32) hp.Frame { return &hp.Resize{Handle: hd, Token: tok, Cols: cols, Rows: rows} })
 }
 
+// Signal sends sig to a pane's child or its terminal's foreground group (spec 2.5). A child
+// already reaped answers an error frame with CodeExited.
+func (h *Holder) Signal(ctx context.Context, hd hp.Handle, target hp.Target, sig hp.Sig) error {
+	return h.do(ctx, func(tok uint32) hp.Frame { return &hp.Signal{Handle: hd, Token: tok, Target: target, Signal: sig} })
+}
+
 // Release drops a pane (spec 2.7). On a draining holder, releasing the last pane ends the
 // holder: it sends bye and exits.
 func (h *Holder) Release(ctx context.Context, hd hp.Handle) error {
