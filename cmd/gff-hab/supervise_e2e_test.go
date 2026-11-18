@@ -64,6 +64,7 @@ done
 // group and its conversation stays. A message held for the old session (the group is paused)
 // reaches the new one, after its seed, which points at the notes on the item's task.
 func TestGroupSupervision(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := shortDir(t), shortDir(t)
 	prelude := strings.Replace(strings.ReplaceAll(fakeTrustClaudePrelude, "@DIR@", work), "#!/bin/sh", "#!/bin/bash", 1)

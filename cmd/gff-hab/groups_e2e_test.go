@@ -116,6 +116,7 @@ func getGroup(t *testing.T, e *habEnv, id string) api.Group {
 // lead starts inside the envelope asks nothing, also with the home hab stopped, and is a member.
 // The record survives a gff-hab restart.
 func TestGroupPlanOnPeer(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
@@ -292,6 +293,7 @@ exec cat > "$DIR/alice-in"
 // exited coordinator wait and arrive at its resume; a restart during confirming drops the group
 // and tells the coordinator, and the running group survives it.
 func TestGroupLifecycle(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	e := newHolderEnv(t, 0)
@@ -438,6 +440,7 @@ func (s *trustShows) total() int {
 // TestGroupCardEdits (groups.md 5.8): the title and the briefs the user edits on the plan's
 // card reach the Logbook plan record and the item's task; an item not edited keeps its task.
 func TestGroupCardEdits(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	e := newHolderEnv(t, 0)
@@ -499,6 +502,7 @@ func groupInCopy(t *testing.T, e *habEnv, gid string) (paused, ok bool) {
 // the home hab as a plan host, the peer's lead may not start a worker there; after it, the
 // lead's envelope names the new host and the start asks nothing.
 func TestGroupSyncOnPeer(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
@@ -573,6 +577,7 @@ func TestGroupSyncOnPeer(t *testing.T) {
 // closes stalls its item, and the coordinator hears it; group.close on the home hab closes the
 // peer's idle lead over the link.
 func TestGroupPeerStallAndClose(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),

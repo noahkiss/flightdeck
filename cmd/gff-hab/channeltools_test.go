@@ -35,6 +35,7 @@ func (f *plainFake) Call(context.Context, string, any, any) error { f.calls++; r
 // the pane route with the tool's arguments, refuse outside a pane before any call, and say
 // what came (mesh.md 6.6).
 func TestChannelTools(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	send, _ := findIn(allTools(), "channel_send")
 	wait, _ := findIn(allTools(), "channel_wait")

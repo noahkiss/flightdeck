@@ -14,6 +14,10 @@ Every stage's acceptance checks follow it.
   feature. Use soak and fuzz runs for properties.
 - Tests wait on conditions, never on fixed sleeps, and log any random seed. A flaky test is fixed
   or deleted in the same stage; we never retry it.
+- In `cmd/gff-hab`, a top-level test calls `t.Parallel()` unless it sets the environment or a
+  package variable, directly or through a helper. Those stay serial and run before the parallel
+  ones. The package mostly waits on real processes, so parallel tests cut its run from about
+  11 minutes to about 2 on a dev box.
 - Every wait has an upper bound, `waitLong` in the holder test helpers. On a slow machine or CI
   runner, set `GFF_TEST_TIMEOUT_SCALE` (a positive number, such as `3`) to multiply it. Raise the
   bound; never add a sleep.
@@ -258,6 +262,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race -run 'TestWindowTitleFocus\|TestTitleTemplateAndSanitizing' ./internal/gffclient/` | Window titles |
 | `go test -race -run TestCanvasLinks ./internal/gffclient/ && go test -race -tags ghostty -run 'TestLinkSurvivesComposing' ./internal/gffclient/ && go test -tags ghostty -run TestReadScreenLinks ./internal/vt/ghostty/` | OSC 8 links in the composed view (`gff-client.md` 3.4) |
 | `go test -race -run 'TestKittyHost\|TestLegacyKeyGoldens\|TestLegacyCSIGoldens\|TestKittyInTranslate\|TestKittyReplies' ./internal/gffclient/ && go test -race -tags ghostty -run TestKittyPaneEncoding ./internal/gffclient/ && go test -tags ghostty -run 'TestEncodeKeyGoldens\|TestKeyboardFlagsInSnapshot' ./internal/vt/ghostty/` | The kitty keyboard protocol in the composed view (`gff-client.md` 3.4, 8.2) |
+| `go test -tags ghostty -run TestSnapshotMidSequence ./internal/vt/ghostty/ && go test -race -tags ghostty -run TestDumpAcross ./internal/link/` | A snapshot of a libghostty terminal whose output stops inside an escape sequence or a UTF-8 character, on either screen and after a restore (`hab-logic-api.md`, checkpoints) |
 | `go test -race -run 'TestResume' ./internal/gffclient/ && go test -race -run 'TestResume\|TestSessionResume' ./cmd/gff-hab` | Resume (`gff-client.md` 6.4) |
 | `go test -race -run 'TestLogoutCheckpoint\|TestShutdownWatchdog\|TestResumeBookFlush' ./cmd/gff-hab` | Logout, restart and shutdown (`hab-holder.md` 2.11) |
 | `go test -race -run 'TestOutside' ./internal/transcript/ && go test -race -run 'TestAdopt\|TestSessionAdopt' ./cmd/gff-hab` | Adopt (`gff-client.md` 6.5) over hand-written transcripts |

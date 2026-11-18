@@ -65,6 +65,7 @@ func setApproval(t *testing.T, c *control.Client, v string) {
 // clients get logbook.updated for the proposal as it opens and closes. Under off, the pane's
 // write lands at once (logbook.md 18 row 7).
 func TestLogbookApprovalAgents(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	made := createSession(t, e.sock, api.SessionCreateParams{Name: "worker", Argv: []string{"/bin/sh", "-c", fakeAgent}, Cwd: "/",
@@ -163,6 +164,7 @@ func TestLogbookApprovalAgents(t *testing.T) {
 // record stays, and the reject is flagged decided twice; Y is rejected, the record A made from
 // it is hidden on both habs and flagged approval overruled.
 func TestLogbookDecidedTwiceTwoHabs(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sockA, sockB := filepath.Join(d, "a.sock"), filepath.Join(d, "b.sock")
 	path := sshStandIn(t, map[string]string{"hab-a": sockA, "hab-b": sockB})

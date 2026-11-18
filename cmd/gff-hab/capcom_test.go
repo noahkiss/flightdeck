@@ -116,6 +116,7 @@ func readLines(t *testing.T, path string) []string {
 // leaves an attachment alone, and starts the harness again with the same resume id. A new
 // conversation gets a fresh folder and becomes the standing one; the old session stays.
 func TestCapcomHost(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	claudeDir := shortDir(t)
 	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + claudeDir}
@@ -290,6 +291,7 @@ func TestCapcomHost(t *testing.T) {
 // session.resume refuse, since its harness may still run. Once the holder runs again, the
 // session runs again in the same pane, and no second harness started.
 func TestCapcomHolderNotReached(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + shortDir(t)}
 	e.serve()
@@ -336,6 +338,7 @@ func TestCapcomHolderNotReached(t *testing.T) {
 // file goes too) and a new holder runs. A gff-hab started after that reaches every holder, so
 // the standing session, exited with no status, resumes, and capcom.open resumes it too.
 func TestCapcomResumeAfterHolderLoss(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + shortDir(t)}
 	e.serve()
@@ -400,6 +403,7 @@ func sessionByPane(t *testing.T, c *control.Client, pane string) (api.Session, b
 // B, and A's old conversation stays and resumes. Assigned back to A, B follows. With A stopped,
 // B takes the mark; A, started again, drops its stale mark on its next link.
 func TestCapcomAssign(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	a := newHolderEnv(t, 0)
 	sockB := filepath.Join(d, "b.sock")

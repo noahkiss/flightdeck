@@ -198,3 +198,80 @@ func TestReadScreenLinks(t *testing.T) {
 	defer restored.Close()
 	check("restored from snapshot-vt", restored)
 }
+
+// A pane's output can end anywhere, inside an escape sequence or a UTF-8 character. Every
+// snapshot must still work there, on the alternate screen too (its VT snapshot copies the
+// terminal to reach the primary screen), and the rest of the sequence must land as if it had
+// come in one piece, in the terminal and in a terminal restored from its ghostty snapshot.
+func TestSnapshotMidSequence(t *testing.T) {
+	cfg := vt.Config{Cols: 40, Rows: 6, ScrollbackBytes: 1 << 20}
+	p := Parser{}
+	cases := []struct{ name, head, tail string }{
+		{"csi", "\x1b[3", "1mred\x1b[0m"},
+		{"osc", "\x1b]2;a ti", "tle\x07after"},
+		{"utf8", "\xe4\xb8", "\x96 wide"},
+		{"esc", "\x1b", "[1mbold"},
+	}
+	for _, alt := range []bool{false, true} {
+		for _, c := range cases {
+			name := c.name
+			if alt {
+				name += "-alt"
+			}
+			t.Run(name, func(t *testing.T) {
+				pre := "primary line\r\n"
+				if alt {
+					pre += "\x1b[?1049hon the alternate screen\r\n"
+				}
+				ref, err := p.New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer ref.Close()
+				ref.Write([]byte(pre + c.head + c.tail))
+				want, err := ref.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				term, err := p.New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer term.Close()
+				term.Write([]byte(pre + c.head))
+				if _, err := term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback}); err != nil {
+					t.Fatalf("VT snapshot mid-sequence: %v", err)
+				}
+				if _, err := term.Scrollback(0, 10); err != nil {
+					t.Fatalf("scrollback mid-sequence: %v", err)
+				}
+				snap, err := term.Snapshot(vt.EncodingGhostty, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+				if err != nil {
+					t.Fatalf("ghostty snapshot mid-sequence: %v", err)
+				}
+				restored, err := p.Restore(vt.EncodingGhostty, snap, cfg)
+				if err != nil {
+					t.Fatalf("restore mid-sequence: %v", err)
+				}
+				defer restored.Close()
+				if _, err := restored.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback}); err != nil {
+					t.Fatalf("VT snapshot of the restored terminal mid-sequence: %v", err)
+				}
+				for _, x := range []struct {
+					what string
+					term vt.Terminal
+				}{{"the terminal", term}, {"the restored terminal", restored}} {
+					x.term.Write([]byte(c.tail))
+					got, err := x.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !bytes.Equal(got, want) {
+						t.Errorf("%s after the rest of the sequence\n got %q\nwant %q", x.what, got, want)
+					}
+				}
+			})
+		}
+	}
+}

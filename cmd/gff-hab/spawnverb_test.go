@@ -21,6 +21,7 @@ import (
 // shadow a harness word, the request's model wins, and an unknown word is refused naming the
 // harnesses and the aliases. A teammate start carries report_to, and the result its address.
 func TestSpawnAliases(t *testing.T) {
+	t.Parallel()
 	table := aliases.Table{"gpt": {Harness: "codex", Model: "gpt-5.5"}, "codex": {Harness: "codex", Model: "gpt-5.5-codex"}, "opus": {Harness: "claude", Model: "opus"}}
 	link := &fakeLinkCaller{}
 	var created []api.SessionCreateParams
@@ -90,6 +91,7 @@ func TestSpawnAliases(t *testing.T) {
 // TestSpawnTeammateNeedsRequester: a teammate start from outside a pane names no session to
 // report to, and is refused before anything runs.
 func TestSpawnTeammateNeedsRequester(t *testing.T) {
+	t.Parallel()
 	ran := 0
 	svc, err := confirm.New(confirm.Config{Runner: runnerFunc(func() { ran++ })})
 	if err != nil {
@@ -109,6 +111,7 @@ func TestSpawnTeammateNeedsRequester(t *testing.T) {
 // TestSpawnHarnessEdit: the owner edits an alias start's harness on the card: the old alias's
 // model goes, and the edited word is read as an alias again; a model edit given with it stays.
 func TestSpawnHarnessEdit(t *testing.T) {
+	t.Parallel()
 	table := aliases.Table{"opus": {Harness: "claude", Model: "opus"}, "gpt": {Harness: "codex", Model: "gpt-5.5"}}
 	link := &fakeLinkCaller{}
 	r := &confirmRunner{host: "mac", aliases: func() aliases.Table { return table },
@@ -148,6 +151,7 @@ func TestSpawnHarnessEdit(t *testing.T) {
 // TestReportToUnlistedPeer: a report_to over a link from a hab this hab's peer list does not
 // name is refused before anything starts, since no report could reach it.
 func TestReportToUnlistedPeer(t *testing.T) {
+	t.Parallel()
 	a := &actions{mates: &teammates{}, self: api.ChannelEnd{DeviceID: "d-b", Host: "hb"},
 		listedPeer: func(device string) bool { return device == "d-listed" }}
 	ctx := control.WithCallerPeer(context.Background(), api.PeerHello{DeviceID: "d-other", Host: "ha"})
@@ -193,6 +197,7 @@ func (f *fakeSpawnHab) paneKey() string { return "" }
 // TestSpawnTool: the tool runs only from a pane, sends a teammate start by default and a
 // detached one when asked, refuses another mode, and says the address and how reports come.
 func TestSpawnTool(t *testing.T) {
+	t.Parallel()
 	tl, ok := findIn(actionTools, "spawn")
 	if !ok {
 		t.Fatal("no spawn tool")
@@ -229,6 +234,7 @@ func TestSpawnTool(t *testing.T) {
 // TestSpawnFolders: a start with no folder takes the requester's own folder on this hab, and
 // the same project's folder on a peer, on the same branch when there is one.
 func TestSpawnFolders(t *testing.T) {
+	t.Parallel()
 	own := t.TempDir()
 	cl := api.CatalogList{
 		Hosts: []api.CatalogEntry{{Own: true, Catalog: api.Catalog{DeviceID: "d-mac"}}, {Label: "devbox", Catalog: api.Catalog{DeviceID: "d-dev"}}, {Label: "bare", Catalog: api.Catalog{DeviceID: "d-bare"}}},
@@ -273,6 +279,7 @@ func TestSpawnFolders(t *testing.T) {
 // sender's message, a turn before the write, and an undelivered write send nothing; an error
 // and an exit say so; a resumed session reports from its new pane; the list survives a reopen.
 func TestTeammates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var mu sync.Mutex
 	rev := map[string]uint64{}

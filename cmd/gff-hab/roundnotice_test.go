@@ -22,6 +22,7 @@ import (
 // where the read scope allows the run's folder. The round's notify setting is applied again:
 // a run failure of a notify = never round raises nothing, its self-pause still does.
 func TestRoundNoticePush(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	writePushConfig(t, state)
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(state, "structure"), Holders: structure.NewFakeHolder()})
@@ -138,6 +139,7 @@ func TestRoundNoticePush(t *testing.T) {
 // TestRoundRunChangedPokes: every run change pokes the catalog, so a run's state reaches the
 // rounds section without waiting for a round change (Built (stage 6), the catalog section).
 func TestRoundRunChangedPokes(t *testing.T) {
+	t.Parallel()
 	pokes := 0
 	svc := &roundsService{cfg: roundsConfig{logf: t.Logf, publish: func(structure.Event) {}, changed: func() { pokes++ }}}
 	for i, st := range []rounds.RunState{rounds.RunQueued, rounds.RunWaiting, rounds.RunRunning} {

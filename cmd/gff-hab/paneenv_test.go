@@ -10,6 +10,7 @@ import (
 // the job's variables. The locale the user's environment sets stays; TERM and COLORTERM are
 // always the emulator's, even when gff-hab runs inside another terminal (-init none).
 func TestBasePaneEnv(t *testing.T) {
+	t.Parallel()
 	job := []string{"PATH=/usr/bin:/bin", "HOME=/srv/user", "XPC_SERVICE_NAME=x.gff-hab",
 		"INVOCATION_ID=abc", "JOURNAL_STREAM=8:9", "SYSTEMD_EXEC_PID=7", "TERM="}
 	for goos, lang := range map[string]string{"darwin": "en_US.UTF-8", "linux": "C.UTF-8"} {
@@ -33,6 +34,7 @@ func TestBasePaneEnv(t *testing.T) {
 
 // TestPaneEnvRequestWins: the request's own entries replace the base ones (session.create env).
 func TestPaneEnvRequestWins(t *testing.T) {
+	t.Parallel()
 	got, err := mergeEnv(basePaneEnv(nil, "linux"), []string{"TERM=dumb"})
 	if err != nil {
 		t.Fatal(err)

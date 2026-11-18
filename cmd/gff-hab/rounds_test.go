@@ -259,6 +259,7 @@ func TestRoundEveryMinute(t *testing.T) {
 // TestRoundSurvivesRestarts: one run lives through three gff-hab restarts (planned and killed)
 // and still ends succeeded, with one run record and one session.
 func TestRoundSurvivesRestarts(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	gate := filepath.Join(e.work, "go")
@@ -300,6 +301,7 @@ func TestRoundSurvivesRestarts(t *testing.T) {
 // timed_out; typing into a run pane, or closing it, ends taken_over and keeps the session;
 // round.run with a live run answers conflict.
 func TestRoundEnds(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	mustRound(t, e, "add", "fails", "-manual", "-project", repo, "-command", "--", "/bin/sh", "-c", "exit 1")
@@ -363,6 +365,7 @@ func TestRoundEnds(t *testing.T) {
 // TestRoundHostRestarted: a run live when its holder ends (a host reboot) fails "host
 // restarted" at the next gff-hab start.
 func TestRoundHostRestarted(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	mustRound(t, e, "add", "reboot", "-manual", "-project", repo, "-command", "--", "/bin/sh", "-c", "sleep 60")
@@ -386,6 +389,7 @@ func TestRoundHostRestarted(t *testing.T) {
 // TestRoundExportApply: export then apply of the same file changes nothing; an edited file
 // shows its diff, changes nothing on no, and applies on yes.
 func TestRoundExportApply(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	mustRound(t, e, "add", "nightly", "-cron", "0 3 * * *", "-tz", "UTC", "-project", repo, "-command", "--", "make", "check")
@@ -458,6 +462,7 @@ func TestRoundExportApply(t *testing.T) {
 // TestRoundPaneDoor: `gff-hab round add -target self` from inside a pane names that pane's
 // session, and the round's created_by is the session.
 func TestRoundPaneDoor(t *testing.T) {
+	t.Parallel()
 	e, _ := newRoundEnv(t)
 	c := e.control()
 	outFile := filepath.Join(e.work, "add-out")
@@ -492,6 +497,7 @@ func gatedRound(t *testing.T, e *habEnv, c *control.Client, repo, name, gate str
 // TestRoundHolderDies: the holder dies while gff-hab runs; once a new holder is up and the link
 // has reached every holder, the run fails "host restarted" in seconds, not at its timeout.
 func TestRoundHolderDies(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	run := gatedRound(t, e, c, repo, "crash", filepath.Join(e.work, "never"), "-timeout", "10m")
@@ -507,6 +513,7 @@ func TestRoundHolderDies(t *testing.T) {
 // TestRoundHolderConnectionDrops: the link's connection to a living holder drops (another
 // client takes the holder) and comes back; the run goes on and ends by its exit.
 func TestRoundHolderConnectionDrops(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	gate := filepath.Join(e.work, "go")
@@ -539,6 +546,7 @@ func TestRoundHolderConnectionDrops(t *testing.T) {
 // next gff-hab finds the session by its Session.round, watches it, refuses a second run, and
 // ends the run by its exit.
 func TestRoundLostStart(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	gate := filepath.Join(e.work, "go")
 	mark := filepath.Join(e.work, "started")
@@ -594,6 +602,7 @@ const fakeAgentRun = `stty raw -echo; printf '\033]7501;state=idle:app=claude\03
 // send the adapter refuses takes nothing over; on_finish keep leaves a succeeded run's pane;
 // the second run sees GFF_ROUND_LAST_OK, the first run's start.
 func TestRoundSendAndKeep(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	mustRound(t, e, "add", "agent", "-manual", "-project", repo, "-command", "--", "/bin/sh", "-c", fakeAgentRun)
@@ -655,6 +664,7 @@ func TestRoundSendAndKeep(t *testing.T) {
 // TestRoundCLIRefusals: add with -via and no -project names the problem; edit -paused points
 // at pause and unpause.
 func TestRoundCLIRefusals(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	out, err := roundCLI(e, "", "add", "far", "-via", bin+" connect -socket "+e.sock, "-manual", "-command", "--", "true")
 	if err == nil || !strings.Contains(out, "needs -project") {
@@ -673,6 +683,7 @@ func TestRoundCLIRefusals(t *testing.T) {
 // TestRoundApplyReplans: a revision raised between the plan and the answer still applies, with
 // the new revisions; a plan that changed is shown again and asked again.
 func TestRoundApplyReplans(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	mustRound(t, e, "add", "steady", "-manual", "-project", repo, "-timeout", "5m", "-command", "--", "true")

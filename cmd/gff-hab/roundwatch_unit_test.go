@@ -180,6 +180,7 @@ func (f *watchFakes) crash(pane string) {
 }
 
 func TestWatchSupWakeAndBackoff(t *testing.T) {
+	t.Parallel()
 	lim := rounds.DefaultWatchLimits()
 	lim.BackoffMax, lim.PauseAfter, lim.QuickExit = 10*time.Second, 0, time.Minute
 	svc, f, clk, project := newWatchSupTest(t, lim)
@@ -236,6 +237,7 @@ func TestWatchSupWakeAndBackoff(t *testing.T) {
 }
 
 func TestWatchSupPauseAfter(t *testing.T) {
+	t.Parallel()
 	lim := rounds.DefaultWatchLimits()
 	lim.PauseAfter = 2
 	svc, f, clk, project := newWatchSupTest(t, lim)
@@ -272,6 +274,7 @@ func TestWatchSupPauseAfter(t *testing.T) {
 // the round.updated that exitDone publishes first) starts nothing: the watcher waits for the
 // pause, then stays stopped with the crash as its last exit.
 func TestWatchSupPauseInFlight(t *testing.T) {
+	t.Parallel()
 	lim := rounds.DefaultWatchLimits()
 	lim.PauseAfter = 1
 	var svcp atomic.Pointer[roundsService]
@@ -317,6 +320,7 @@ func TestWatchSupPauseInFlight(t *testing.T) {
 // one is logged once by its key and the default runs, and a bad set is left out with a log
 // line that holds no value.
 func TestWatchSettings(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "hab.toml")
 	writeFile(t, p, "[rounds]\nmax_watchers = 3\nwatch_backoff_max = \"30s\"\nwatch_backoff_reset = \"5m\"\nwatch_pause_after = 2\n"+
 		"watch_quick_exit = \"10s\"\nwatch_buffer_lines = 50\nwatch_buffer_bytes = 65536\nwatch_rate = 10\nwatch_burst = 4\n"+
@@ -366,6 +370,7 @@ func TestWatchSettings(t *testing.T) {
 // secretValues: vars in name order, then the command's NAME=value lines (comments and blank
 // lines skipped); a failure names a line number or the exit, never a value.
 func TestSecretValues(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	good := filepath.Join(d, "good")
 	writeFile(t, good, "# comment\n\nB_TOKEN=cmd-value-4f4f\r\nC=with=equals\n")

@@ -174,6 +174,7 @@ func (k *lockRig) phase(id string) harnessPhase {
 // TestLockGuardUnderClaim (finding 6, M01): client input that comes after the lock's check and
 // before the paste is refused under the send's claim; the run waits for the lock again.
 func TestLockGuardUnderClaim(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	ss := k.session(t, "target", "pane-1")
 	k.agent("pane-1", api.AgentStatusIdle, "n1")
@@ -200,6 +201,7 @@ func TestLockGuardUnderClaim(t *testing.T) {
 // TestSendGuardedRefused (M02): a guard's error refuses the send before any write, and frees
 // the pane's claim.
 func TestSendGuardedRefused(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p"})})
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +234,7 @@ func TestSendGuardedRefused(t *testing.T) {
 // TestLockSendHeld (M06): a target with another message still starting its turn makes the run
 // wait.
 func TestLockSendHeld(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	ss := k.session(t, "target", "pane-1")
 	k.agent("pane-1", api.AgentStatusIdle, "n1")
@@ -252,6 +255,7 @@ func TestLockSendHeld(t *testing.T) {
 // TestLockRoundHandOff (M07): a run that holds the target's pane makes a second run wait, even
 // with the agent idle; once the first ends, the second takes the pane.
 func TestLockRoundHandOff(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	ss := k.session(t, "target", "pane-1")
 	k.agent("pane-1", api.AgentStatusIdle, "n1")
@@ -283,6 +287,7 @@ func (a stubAgents) Send(context.Context, string, api.SessionSendParams) error {
 // TestClientSendInUse (M08): a client's session.send, delivered or refused, makes the session
 // in use.
 func TestClientSendInUse(t *testing.T) {
+	t.Parallel()
 	for _, refused := range []bool{false, true} {
 		k := newLockRig(t, nil)
 		ss := k.session(t, "target", "pane-1")
@@ -304,6 +309,7 @@ func TestClientSendInUse(t *testing.T) {
 // pane is in use, under the send's guard too: a client may have typed or watched while
 // gff-hab restarted.
 func TestLockQuietAfterStart(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, func(c *roundsConfig) { c.quiet = time.Hour })
 	ss := k.session(t, "target", "pane-1")
 	k.agent("pane-1", api.AgentStatusIdle, "n1")
@@ -326,6 +332,7 @@ func TestLockQuietAfterStart(t *testing.T) {
 // nothing, and a run still waiting on the old target after a re-target neither overwrites nor
 // reads the new target's memo.
 func TestTargetMemo(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	a := k.session(t, "a", "pane-1")
 	k.agent("pane-1", api.AgentStatusWorking, "na")
@@ -375,6 +382,7 @@ func TestTargetMemo(t *testing.T) {
 // TestForkMemoRefusedEdit (finding 3a): a fork round's edit runs the target check before the
 // revision check; a refused edit leaves the memo naming the old target.
 func TestForkMemoRefusedEdit(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	a := k.session(t, "a", "pane-1")
 	b := k.session(t, "b", "pane-2")
@@ -415,6 +423,7 @@ func (k *lockRig) exitedTarget(t *testing.T) (api.Session, rounds.Round) {
 // TestLockConversationElsewhere (finding 4): an exited target whose conversation runs on in
 // another pane is not started again: the run waits.
 func TestLockConversationElsewhere(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	_, r := k.exitedTarget(t)
 	k.agent("pane-2", api.AgentStatusIdle, "nx") // the user resumed it there
@@ -440,6 +449,7 @@ func TestLockConversationElsewhere(t *testing.T) {
 // TestLockResumeConflict (finding 5): a resume refused because another run started the target
 // first sends the run back to the lock; it does not fail.
 func TestLockResumeConflict(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	_, r := k.exitedTarget(t)
 	k.resume = func(session string) (string, error) {
@@ -476,6 +486,7 @@ func TestLockResumeConflict(t *testing.T) {
 // TestLockEndedDuringResume (finding 8): a run that ends while its exited target starts again
 // leaves the target alone: nothing watches it, nothing is sent.
 func TestLockEndedDuringResume(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	_, r := k.exitedTarget(t)
 	in, out := make(chan struct{}), make(chan struct{})
@@ -501,6 +512,7 @@ func TestLockEndedDuringResume(t *testing.T) {
 // TestTakeOverBeforePrompt (finding 9): input to a resumed target before the prompt went in
 // sends the run back to the lock; closing the pane still takes it over.
 func TestTakeOverBeforePrompt(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	ss := k.session(t, "target", "pane-1")
 	r := k.round(t, "r", ss.ID)
@@ -529,6 +541,7 @@ func TestTakeOverBeforePrompt(t *testing.T) {
 // TestAdoptedTurnMarker: with a marker, only the user message that holds it is the run's
 // prompt; earlier turns of the target's own do not count.
 func TestAdoptedTurnMarker(t *testing.T) {
+	t.Parallel()
 	m := envelopeMarker("run-7")
 	user := func(s string) api.ChatMessage { return api.ChatMessage{Kind: api.ChatKindUser, Text: s} }
 	agent := func(s string) api.ChatMessage { return api.ChatMessage{Kind: api.ChatKindAgent, Text: s} }
@@ -553,6 +566,7 @@ func TestAdoptedTurnMarker(t *testing.T) {
 // TestLockTimeoutKeepsUsersTurn (M13): a resume run past its timeout before its prompt went in
 // never interrupts the target's turn: that turn is the user's.
 func TestLockTimeoutKeepsUsersTurn(t *testing.T) {
+	t.Parallel()
 	interrupts := 0
 	k := newLockRig(t, func(c *roundsConfig) {
 		c.interrupt = func(context.Context, string) error { interrupts++; return nil }
@@ -577,6 +591,7 @@ func TestLockTimeoutKeepsUsersTurn(t *testing.T) {
 // TestLockPauseFirst (M15): a waiting run whose move to running the scheduler refuses (a pause
 // ended it first) sends nothing.
 func TestLockPauseFirst(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, nil)
 	ss := k.session(t, "target", "pane-1")
 	k.agent("pane-1", api.AgentStatusIdle, "n1")
@@ -608,6 +623,7 @@ func TestLockPauseFirst(t *testing.T) {
 // in its target's conversation waits for the lock again; it does not wait for the next idle as
 // a fresh run would.
 func TestAdoptResumeNotDelivered(t *testing.T) {
+	t.Parallel()
 	k := newLockRig(t, func(c *roundsConfig) {
 		c.messages = func(context.Context, string, string, string) ([]api.ChatMessage, error) {
 			return []api.ChatMessage{{Kind: api.ChatKindUser, Text: "fix the bug"}, {Kind: api.ChatKindAgent, Text: "Fixed."}}, nil

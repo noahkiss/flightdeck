@@ -178,6 +178,7 @@ func waitRunWhy(t *testing.T, c *control.Client, name string, state api.RoundRun
 // envelope, with the run's values in it; the run ends with the reply, and the target's pane
 // stays: resume mode never closes it.
 func TestRoundLockWorking(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "target")
 	order(t, work, "target", "working")
@@ -217,6 +218,7 @@ func TestRoundLockWorking(t *testing.T) {
 // make the run wait; a target busy past wait ends the run skipped with the reason, and never
 // gets a byte from the round. Pausing the round ends a waiting run skipped, "paused".
 func TestRoundLockInUse(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	short := func(s *api.RoundSpec) { s.WaitMS = 1500 }
 
@@ -269,6 +271,7 @@ func TestRoundLockInUse(t *testing.T) {
 // TestRoundLockTwoRounds: two rounds on one target take turns, one send at a time: each
 // prompt goes in whole after the other's turn ended.
 func TestRoundLockTwoRounds(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "shared")
 	order(t, work, "shared", "working")
@@ -300,6 +303,7 @@ func TestRoundLockTwoRounds(t *testing.T) {
 // TestRoundLockTakeOver: typing into the target after the prompt went in ends the run taken
 // over, and nothing else changes: the session runs on.
 func TestRoundLockTakeOver(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "mine")
 	order(t, work, "mine", "hold")
@@ -318,6 +322,7 @@ func TestRoundLockTakeOver(t *testing.T) {
 // TestRoundLockExited: an exited target is started again in a new pane of the same session,
 // with its own session id, then gets the prompt.
 func TestRoundLockExited(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "gone")
 	sid := agentStates(t, e.sock)[tgt.Pane].Session
@@ -356,8 +361,14 @@ func argvOf(t *testing.T, work, tag string) string {
 // TestRoundForkClaude and TestRoundForkCodex: a fork run starts a new session from the
 // target's conversation in the target's folder; the fork gets the prompt, the target's
 // transcript stays byte-identical and its pane gets nothing.
-func TestRoundForkClaude(t *testing.T) { testRoundFork(t, "claude") }
-func TestRoundForkCodex(t *testing.T)  { testRoundFork(t, "codex") }
+func TestRoundForkClaude(t *testing.T) {
+	t.Parallel()
+	testRoundFork(t, "claude")
+}
+func TestRoundForkCodex(t *testing.T) {
+	t.Parallel()
+	testRoundFork(t, "codex")
+}
 
 func testRoundFork(t *testing.T, app string) {
 	e, c, repo, work := lockEnv(t)
@@ -407,6 +418,7 @@ func testRoundFork(t *testing.T, app string) {
 // TestRoundLockTargetGone: a round whose target's record is removed completes, and its run
 // ends skipped.
 func TestRoundLockTargetGone(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "old")
 	addLockRound(t, c, "orphan", api.RoundModeResume, tgt.Session, nil)
@@ -426,6 +438,7 @@ func TestRoundLockTargetGone(t *testing.T) {
 // its turn; the turn ends done, the run succeeds, and the target's pane stays open: only a
 // session the run made is ever closed.
 func TestRoundLockDeletedKeepsTarget(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "mine")
 	order(t, work, "mine", "hold")
@@ -447,6 +460,7 @@ func TestRoundLockDeletedKeepsTarget(t *testing.T) {
 // prompt. The waiting one waits out the quiet window after the start, saying why, though its
 // target is idle: a client may have typed while gff-hab was down. Each target gets one paste.
 func TestRoundLockRestart(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	sent := startTarget(t, e, c, repo, work, "claude", "sent")
 	order(t, work, "sent", "hold")
@@ -487,6 +501,7 @@ func TestRoundLockRestart(t *testing.T) {
 // starts it again; the other's start is refused, so it waits for the lock and takes its turn.
 // Both succeed, and the target was started once.
 func TestRoundLockTwoExited(t *testing.T) {
+	t.Parallel()
 	e, c, repo, work := lockEnv(t)
 	tgt := startTarget(t, e, c, repo, work, "claude", "gone")
 	addLockRound(t, c, "one", api.RoundModeResume, tgt.Session, nil)

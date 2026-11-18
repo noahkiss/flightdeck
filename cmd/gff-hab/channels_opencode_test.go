@@ -23,6 +23,7 @@ import (
 // pane's server (the fake opencode): the server gets the enveloped text once, as one prompt,
 // and the sender sees delivered.
 func TestChannelsOpencode(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	fake := buildFakeOpencode(t)
@@ -82,6 +83,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.05; done
 // TestChannelsOpencodeNoServer: an opencode pane whose server gff-hab does not follow cannot
 // take channel mail: the message is refused, not held, and nothing reaches the pane.
 func TestChannelsOpencodeNoServer(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	addr := startSender(t, e)

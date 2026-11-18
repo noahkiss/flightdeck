@@ -180,8 +180,9 @@ input. Without the flags, a cache miss would build a native-CPU libghostty and s
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
 binaries. `make race` runs the race list `RACE_COUNT` times, 3 by default. Both pass a 30-minute
-`-timeout` (`TEST_TIMEOUT`, `RACE_TIMEOUT`): `cmd/gff-hab` in one process runs past go test's
-10-minute default on a hosted macOS runner, about 11 minutes in November 2026.
+`-timeout` (`TEST_TIMEOUT`, `RACE_TIMEOUT`), and `make test-pure` passes `TEST_TIMEOUT` too:
+`cmd/gff-hab` once ran past go test's 10-minute default on a hosted macOS runner, when its tests
+ran one after another.
 
 **A pull request runs the race list once.** `ci.yml` passes `RACE_COUNT=1` on a `pull_request`
 event and 3 on every other event; `nightly.yml` runs the full set in the same five shards with the default 3. Repeats
@@ -191,9 +192,10 @@ three passes: a direct push runs them, and a merged pull request's push runs the
 nightly run (3.6) gives it three passes that night. The holder packages on macOS keep
 `-count=3` on every event (3.5).
 
-**The full set runs as five jobs.** `cmd/gff-hab` holds the end-to-end tests, about 400 of them,
-one after another: on one runner it took 8 minutes of `make test` and 28 of the 33 minutes of
-`make race` (November 2026), and the job ran 36 to 45 minutes. The `go` job is a matrix over
+**The full set runs as five jobs.** `cmd/gff-hab` holds the end-to-end tests, about 460 of them.
+Run one after another, they took 8 minutes of `make test` and 28 of the 33 minutes of `make race`
+on one runner (November 2026), and the job ran 36 to 45 minutes. They now run in parallel
+(`testing.md`, Principles), and the shards stay. The `go` job is a matrix over
 `GO_TEST_SHARD`, one runner each, through go-ci's `concurrency-key` input: `0/4` runs gofmt, the
 generate check, `check-pure`, `vet`, and `test` and `race` over every package but `cmd/gff-hab`;
 `1/4` to `4/4` each run `make test race` over a quarter of `cmd/gff-hab`'s top-level tests

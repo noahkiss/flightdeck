@@ -15,6 +15,7 @@ import (
 // TestWorktreeRoot: the flag, then $GFF_HAB_WORKTREES, then ~/.gff/worktrees; ~/ expands; a
 // relative folder is refused.
 func TestWorktreeRoot(t *testing.T) {
+	t.Parallel()
 	env := func(v string) func(string) string { return func(string) string { return v } }
 	for _, c := range []struct {
 		flag, env, want string
@@ -39,6 +40,7 @@ func TestWorktreeRoot(t *testing.T) {
 // worktree.remove refuses uncommitted changes without force, runs the teardown script, keeps the
 // branch, and never removes the main working tree.
 func TestWorktrees(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

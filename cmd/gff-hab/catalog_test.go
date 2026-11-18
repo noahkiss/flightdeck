@@ -39,6 +39,7 @@ func waitCatalog(t *testing.T, sock, what string, ok func(api.CatalogList) bool)
 // TestCatalogDetectOff: with $GFF_HAB_DETECT=off, as every test hab runs, the catalog runs no
 // program from PATH; a stand-in claude that would leave a mark is never run.
 func TestCatalogDetectOff(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	binDir, mark := filepath.Join(d, "bin"), filepath.Join(d, "ran")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
@@ -67,6 +68,7 @@ func TestCatalogDetectOff(t *testing.T) {
 // other's catalog, with the declared facts from each one's own config file; when one stops,
 // the other keeps its copy, stale.
 func TestCatalogOverSSH(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sockA, sockB := filepath.Join(d, "a.sock"), filepath.Join(d, "b.sock")
 	standIn := sshStandIn(t, map[string]string{"hab-a": sockA, "hab-b": sockB})

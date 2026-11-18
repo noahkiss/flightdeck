@@ -19,6 +19,7 @@ import (
 // the child killed by its pid fails the next call with a HostError, and after the restart the
 // module answers again with the state it kept.
 func TestModuleHostProcess(t *testing.T) {
+	t.Parallel()
 	h := modhost.NewHost(modhost.HostOptions{
 		Command:    func() *exec.Cmd { return exec.Command(bin, "module-host") },
 		BackoffMin: 100 * time.Millisecond,

@@ -17,6 +17,7 @@ import (
 )
 
 func TestEscapedSweepNotices(t *testing.T) {
+	t.Parallel()
 	s := newEscapedSweeps(hook.NewTokens([]byte("test-secret"), nil), t.Logf)
 	defer s.Close()
 	got := make(chan string, 8)
@@ -44,6 +45,7 @@ func TestEscapedSweepNotices(t *testing.T) {
 // A child outside the pane's session retains its token and dies on release. A
 // detached process with another environment survives; the sweep never signals groups.
 func TestEscapedProcessRelease(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("real macOS environment reader; Linux reader has procfs fixtures")
 	}

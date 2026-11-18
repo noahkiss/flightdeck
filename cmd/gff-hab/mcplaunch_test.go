@@ -32,6 +32,7 @@ func rot13Lower(s string) string {
 // helper prints the secret header, and the invented value is nowhere on disk or in any output
 // a harness would log.
 func TestMCPLaunchCLI(t *testing.T) {
+	t.Parallel()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

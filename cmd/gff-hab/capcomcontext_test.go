@@ -82,6 +82,7 @@ func dividersOf(items []api.CapcomItem) []api.CapcomItem {
 // compaction adds a divider; "New conversation" adds one divider with an empty summary and
 // counts the proposals that wait.
 func TestCapcomServiceContext(t *testing.T) {
+	t.Parallel()
 	for _, kind := range engineKinds {
 		t.Run(kind, func(t *testing.T) { testCapcomServiceContext(t, kind) })
 	}
@@ -267,6 +268,7 @@ func testCapcomServiceContext(t *testing.T, kind string) {
 // seed holds the guide, the thread keeps its earlier items under one summary divider, the next
 // message gets its reply, and the new session is recorded as the Codex engine's.
 func TestCapcomServiceSwitch(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnvFor(t, "claude", "")
 	e.serve()
 	c := e.control()

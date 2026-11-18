@@ -24,6 +24,7 @@ func testWatchPane(rate, burst, lines, size int) (*watchPane, *bytes.Buffer, *ti
 }
 
 func TestWatchPaneRate(t *testing.T) {
+	t.Parallel()
 	w, out, now := testWatchPane(60, 5, 100, 1<<20)
 	for i := 0; i < 6; i++ {
 		w.add(`{"title":"e"}`)
@@ -56,6 +57,7 @@ func TestWatchPaneRate(t *testing.T) {
 // While gff-hab does not answer the queue holds buffer_lines and buffer_bytes; the oldest lines
 // go first.
 func TestWatchPaneBuffer(t *testing.T) {
+	t.Parallel()
 	w, _, _ := testWatchPane(6000, 6000, 3, 1<<20)
 	for _, l := range []string{"1", "2", "3", "4", "5"} {
 		w.add(l)
@@ -74,6 +76,7 @@ func TestWatchPaneBuffer(t *testing.T) {
 
 // A line over the 64 KiB ceiling is dropped whole, up to its newline; the next line is read.
 func TestWatchPaneLongLine(t *testing.T) {
+	t.Parallel()
 	w, out, _ := testWatchPane(6000, 6000, 100, 1<<20)
 	in := strings.Repeat("x", rounds.MaxWatchLine+10) + "\n" + `{"title":"next"}` + "\r\n" + `{"title":"last, no newline"}`
 	w.read(strings.NewReader(in))
@@ -86,6 +89,7 @@ func TestWatchPaneLongLine(t *testing.T) {
 }
 
 func TestPaneSafe(t *testing.T) {
+	t.Parallel()
 	if got := paneSafe("Re: \x1b]52;c;aGk=\x07 bill\x9b2J ok é"); got != "Re: �]52;c;aGk=� bill�2J ok é" {
 		t.Fatalf("%q", got)
 	}
@@ -93,6 +97,7 @@ func TestPaneSafe(t *testing.T) {
 
 // The page being sent is never trimmed by the buffer bound, so its answer removes exactly it.
 func TestWatchPaneInflight(t *testing.T) {
+	t.Parallel()
 	w, _, _ := testWatchPane(6000, 6000, 2, 1<<20)
 	w.add("a")
 	w.add("b")
@@ -109,6 +114,7 @@ func TestWatchPaneInflight(t *testing.T) {
 
 // Cursor lines take no rate token.
 func TestWatchPaneCursorRate(t *testing.T) {
+	t.Parallel()
 	w, _, _ := testWatchPane(60, 2, 100, 1<<20)
 	for _, l := range []string{`{"title":"1"}`, `{"cursor":"c1"}`, `{"title":"2"}`, `{"cursor":"c2"}`, `{"title":"3"}`} {
 		w.add(l)

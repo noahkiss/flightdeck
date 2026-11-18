@@ -75,6 +75,7 @@ func roundItems(t *testing.T, p *peerRoundEnv) []api.CapcomItem {
 }
 
 func TestRoundCapcomPeers(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -212,6 +213,7 @@ func TestRoundCapcomPeers(t *testing.T) {
 // the message is delivered there in the round envelope, once; while the coordinator works, the
 // round lock holds the message until its deadline, and the run skips with its batch kept.
 func TestRoundGroupPeers(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -275,6 +277,7 @@ func TestRoundGroupPeers(t *testing.T) {
 // run does not end "queued for Capcom" (rounds.md 5.2, the outbox for a sleeping home host). The
 // outcome travels back the same way.
 func TestRoundCapcomOneWay(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

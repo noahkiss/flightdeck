@@ -41,6 +41,7 @@ func roundMsg(id string, level string) api.ChannelMessage {
 }
 
 func TestDeliverRound(t *testing.T) {
+	t.Parallel()
 	set := map[string]string{}
 	e := eventsEngine(t, set)
 	if st, r := e.DeliverRound(roundMsg("m1", "")); st != api.ChannelStateAccepted || r != "" {
@@ -78,6 +79,7 @@ func TestDeliverRound(t *testing.T) {
 }
 
 func TestObserveNotices(t *testing.T) {
+	t.Parallel()
 	set := map[string]string{}
 	e := eventsEngine(t, set)
 	raise := func(id string, n api.Notice) {
@@ -117,6 +119,7 @@ func TestObserveNotices(t *testing.T) {
 }
 
 func TestEventLimitsFromSettings(t *testing.T) {
+	t.Parallel()
 	e := eventsEngine(t, map[string]string{settings.CapcomQuietHours: `"23:15-06:45"`, settings.CapcomDailyTurns: `5`,
 		settings.CapcomBatchWindow: `30`, settings.CapcomBatchMax: `7`})
 	l := e.eventLimits()

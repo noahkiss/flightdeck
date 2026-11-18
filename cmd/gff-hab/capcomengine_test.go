@@ -20,6 +20,7 @@ import (
 // gff-hab uninstall stops a plain-process engine the pid file names, and leaves alone a process
 // whose command line is not the engine's (a pid reused since the file was written).
 func TestUninstallStopsEngine(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, capcomFolders), 0o700); err != nil {
 		t.Fatal(err)
@@ -100,6 +101,7 @@ func TestMCPClearsCredential(t *testing.T) {
 
 // Only Capcom's own messages push (capcom-service.md 7.6).
 func TestCapcomPushesMessage(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		it   capcomthread.Item
 		want bool

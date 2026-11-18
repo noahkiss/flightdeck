@@ -17,6 +17,7 @@ import (
 )
 
 func TestCapcomJobsE2E(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

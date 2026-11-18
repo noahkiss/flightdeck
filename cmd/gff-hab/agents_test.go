@@ -102,6 +102,7 @@ func waitState(t *testing.T, sock, pane, what string, ok func(api.AgentState) bo
 // then answers the open one by keys and returns once the request closed; the program's exit
 // leaves the pane exited.
 func TestClaudeAdapter(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))
@@ -171,6 +172,7 @@ func TestClaudeAdapter(t *testing.T) {
 // an app client that subscribed is connected, and approval.answer reaches it as Claude's
 // structured decision, and returns once the harness goes on; no key reaches the pane.
 func TestBlockingPermissionHook(t *testing.T) {
+	t.Parallel()
 	t.Run("flag", func(t *testing.T) { blockingPermissionHook(t, false) })
 	// The hab-side setting hab.permission_wait, written by the app, turns the hook on with no
 	// flag and no restart (app.md 20.4, 20.5).
@@ -255,6 +257,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 // idle, sent well after the interrupt grace, must not end a permission block a hook reported,
 // so session.send, whose Enter would approve the dialog, stays refused.
 func TestForgedIdleKeepsDialog(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))
@@ -299,6 +302,7 @@ const (
 // with Codex payloads. session.send lands as a bracketed paste plus Enter once it is idle, and
 // approval.answer answers the hook-opened request with the dialog's first option.
 func TestCodexAdapter(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))

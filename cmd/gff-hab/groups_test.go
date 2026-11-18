@@ -14,6 +14,7 @@ import (
 // The refresh admits an unlisted agent only as a worker or reviewer on a plan item, on a plan
 // host and in a plan harness, so a session outside the envelope never counts as a worker.
 func TestGroupNonMemberStart(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"),
 		Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p1"}, structure.HolderPane{ID: "p2"})})
 	if err != nil {
@@ -75,6 +76,7 @@ func TestGroupNonMemberStart(t *testing.T) {
 // older push changes nothing; a push from another hab, or with another hab's envelope, is
 // refused.
 func TestGroupSync(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"),
 		Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p1"}, structure.HolderPane{ID: "p2"})})
 	if err != nil {

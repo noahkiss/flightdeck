@@ -12,6 +12,7 @@ import (
 // generation or a later one, or a tombstone of another move. An old copy of the old home, from
 // before the freeze, changes nothing.
 func TestPendingVerdict(t *testing.T) {
+	t.Parallel()
 	s := &groupsService{cfg: groupsConfig{self: "B"}}
 	pd := &api.Group{ID: "g", Generation: 3, Pending: true, From: &api.GroupFrom{Device: "A", Catalog: 10}}
 	host := func(dev string, gen uint64, gs ...api.CatalogGroup) api.CatalogEntry {

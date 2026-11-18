@@ -108,6 +108,7 @@ func runTool(t *testing.T, c caller, name string, a toolArgs) string {
 // TestReadToolsCatalog: the catalog tools on fake catalog data list hosts, projects and the
 // running agents on two hosts.
 func TestReadToolsCatalog(t *testing.T) {
+	t.Parallel()
 	f := twoHosts()
 	agents := runTool(t, f, "agents", toolArgs{})
 	for _, want := range []string{"host-a/app-ui: claude, working, project app", "devbox/api-fix: codex, idle, project api"} {
@@ -136,6 +137,7 @@ func TestReadToolsCatalog(t *testing.T) {
 // TestReadToolRefusesWrite: a write through a read tool is refused before anything reaches
 // the hab, and the file stays as it was.
 func TestReadToolRefusesWrite(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	target := filepath.Join(d, "notes.txt")
 	if err := os.WriteFile(target, []byte("before\n"), 0o644); err != nil {
@@ -215,6 +217,7 @@ func mcpSession(t *testing.T, m *mcpServer, lines ...string) map[string]mcpAnswe
 }
 
 func TestMCPProtocol(t *testing.T) {
+	t.Parallel()
 	f := twoHosts()
 	m := &mcpServer{dial: func(context.Context) (caller, func(), error) { return f, func() {}, nil }}
 	a := mcpSession(t, m,
@@ -271,6 +274,7 @@ func TestMCPProtocol(t *testing.T) {
 // TestMCPSkillMatchesTools: the printed manual names exactly the tools the MCP server lists,
 // with each argument, and the rules the initialize answer carries.
 func TestMCPSkillMatchesTools(t *testing.T) {
+	t.Parallel()
 	s := skillText()
 	var listed []string
 	for _, m := range regexp.MustCompile(`(?m)^### (\S+)$`).FindAllStringSubmatch(s, -1) {
@@ -321,6 +325,7 @@ func TestMCPSkillMatchesTools(t *testing.T) {
 // `gff-hab -h` lists, with its verb. `gff round` runs `gff-hab round` (rounds.md 13), and
 // `gff agent` is `gff-hab agent`, so both are read as gff-hab's.
 func TestSkillShellMatchesHelp(t *testing.T) {
+	t.Parallel()
 	help := regexp.MustCompile(`(?m)^  gff-hab ([a-z-]+)(?: ([a-z|-]+))?`).FindAllStringSubmatch(usage, -1)
 	verbs := map[string][]string{} // command: the verbs its usage lines name
 	for _, h := range help {
@@ -442,6 +447,7 @@ func (c *mcpClient) tool(name string, args map[string]any) *mcpResult {
 // TestReadToolsOverSSH: `gff-hab mcp` on one hab searches the transcripts of two habs linked
 // over the ssh stand-in, each under its own read scope, and reads a file on the other host.
 func TestReadToolsOverSSH(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sockA, sockB := filepath.Join(d, "a.sock"), filepath.Join(d, "b.sock")
 	standIn := sshStandIn(t, map[string]string{"hab-a": sockA, "hab-b": sockB})

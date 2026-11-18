@@ -31,6 +31,7 @@ func threadItem(items []api.CapcomItem, f func(api.CapcomItem) bool) (api.Capcom
 // After the yes, the lead's seed names capcom as its coordinator, the lead's report reaches the
 // thread as an agent item and starts a turn, and a user's close sends Capcom the result.
 func TestCapcomGroup(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	// Events reach Capcom at once and at any hour: an event turn comes from a real notice.

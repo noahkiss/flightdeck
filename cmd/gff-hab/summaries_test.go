@@ -24,6 +24,7 @@ import (
 // is in no log line. A request in a folder the read scope denies, and a hab with no section,
 // send nothing to the endpoint and keep today's title.
 func TestPushSummaries(t *testing.T) {
+	t.Parallel()
 	secret := "fake" + strings.Repeat("key", 12)
 	var mu sync.Mutex
 	var bodies []string

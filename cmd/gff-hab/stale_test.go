@@ -19,6 +19,7 @@ import (
 // session is never flagged; a flightrules.list agrees; after a restart only a load since then
 // counts; an ended session loses the flag.
 func TestStaleWatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "flightrules", "testdata", "claude-2.1.327.jsonl"))
 	if err != nil {

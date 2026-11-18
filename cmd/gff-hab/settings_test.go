@@ -60,6 +60,7 @@ func setErr(t *testing.T, c *control.Client, rows ...api.SettingWrite) (api.Erro
 // a stale revision refused with data.id, the event to a host subscriber only, the value after a
 // restart, and -permission-wait as a lock.
 func TestSettingsServe(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	state := filepath.Join(d, "state")
@@ -183,6 +184,7 @@ func TestSettingsServe(t *testing.T) {
 // TestPermissionWaitLock: the flag or the environment locks hab.permission_wait in whole
 // seconds; neither leaves it to the app.
 func TestPermissionWaitLock(t *testing.T) {
+	t.Parallel()
 	env := func(v string) func(string) string { return func(string) string { return v } }
 	cases := []struct {
 		flag  time.Duration

@@ -129,6 +129,7 @@ func readLog(work string) string {
 // prints one line saying how many are ahead; the command's output and exit code pass through;
 // heavy.status lists the holder and the waiters in order.
 func TestHeavyArrivalOrder(t *testing.T) {
+	t.Parallel()
 	sock, _, work, _, _ := heavyHab(t, `restart_hold = "0s"`, nil)
 	if w := welcome(t, sock); !slices.Contains(w.Capabilities, "heavy") {
 		t.Fatalf("capabilities %v lack heavy", w.Capabilities)
@@ -177,6 +178,7 @@ func TestHeavyArrivalOrder(t *testing.T) {
 // TestHeavyKilledCLI: a holder's CLI killed with SIGKILL drops its connection, and the lock goes
 // to the next run. The command it ran is not the hab's concern.
 func TestHeavyKilledCLI(t *testing.T) {
+	t.Parallel()
 	sock, _, work, _, _ := heavyHab(t, `restart_hold = "0s"`, nil)
 	a := startHeavyRun(t, sock, work, "a", heavyScript(0))
 	waitUntil(t, "a holds", func() bool { return readLog(work) == "start-a" })
@@ -194,6 +196,7 @@ func TestHeavyKilledCLI(t *testing.T) {
 // order ahead of a run that asked after the restart, and nothing is granted during the
 // restart hold. When the holder ends, the first waiter runs.
 func TestHeavyRestartKeepsPlace(t *testing.T) {
+	t.Parallel()
 	sock, state, work, _, s := heavyHab(t, `restart_hold = "5s"`, nil)
 	a := startHeavyRun(t, sock, work, "a", heavyScript(0))
 	waitUntil(t, "a holds", func() bool { return readLog(work) == "start-a" })
@@ -249,6 +252,7 @@ func TestHeavyRestartKeepsPlace(t *testing.T) {
 // TestHeavyPaneClose: `gff-hab heavy` in a pane finds the hab through the pane's GFF_HAB, and
 // heavy.status names its session; closing the pane releases the lock to the next run.
 func TestHeavyPaneClose(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir := filepath.Join(d, "h")
 	os.MkdirAll(hdir, 0o700)
@@ -275,6 +279,7 @@ func TestHeavyPaneClose(t *testing.T) {
 // sends the coordinator exactly one message; the catalog shows the low state and both volumes;
 // free space back above the threshold and the margin grants the run.
 func TestHeavyLowDisk(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir := filepath.Join(d, "h")
 	os.MkdirAll(hdir, 0o700)
@@ -334,6 +339,7 @@ func TestHeavyLowDisk(t *testing.T) {
 // TestHeavyNoHab: with no gff-hab listening the command runs without the lock, says so once,
 // and its exit code passes through.
 func TestHeavyNoHab(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	cmd := exec.Command(bin, "heavy", "-socket", filepath.Join(d, "none.sock"), "--", "/bin/sh", "-c", "echo hi; exit 3")
 	cmd.Env = append(os.Environ(), "GFF_HAB=", noRaceExitSleep)
@@ -352,6 +358,7 @@ func TestHeavyNoHab(t *testing.T) {
 // TestHeavySignalWhileHabDown: a waiting CLI whose gff-hab is down still ends on SIGINT, at once,
 // with 128 plus the signal, and never runs its command.
 func TestHeavySignalWhileHabDown(t *testing.T) {
+	t.Parallel()
 	sock, _, work, _, s := heavyHab(t, `restart_hold = "0s"`, nil)
 	startHeavyRun(t, sock, work, "a", heavyScript(0))
 	waitUntil(t, "a holds", func() bool { return readLog(work) == "start-a" })

@@ -21,6 +21,7 @@ import (
 // link's answer wins over the set: a pane the link reports lost or gone is refused even while
 // its uuid is in the set.
 func TestPaneLiveSpawning(t *testing.T) {
+	t.Parallel()
 	u := newUUID()
 	known := map[hp.UUID]link.PaneStatus{}
 	lookup := func(x hp.UUID) (link.PaneStatus, bool) { st, ok := known[x]; return st, ok }
@@ -87,6 +88,7 @@ func spawned(_ context.Context, _ string, s hp.Spawn) (link.PaneStatus, error) {
 // by the same spawn again, with a deadline of its own, when the current holder lists it; a pane
 // on another holder is not spawned again (that would start a second program).
 func TestCreateSpawnErrors(t *testing.T) {
+	t.Parallel()
 	refused := &holderclient.RequestError{Ref: hp.KindSpawn, Code: hp.CodeDraining, Message: "holder is draining"}
 	for _, c := range []struct {
 		name      string
@@ -160,6 +162,7 @@ func TestCreateSpawnErrors(t *testing.T) {
 // TestUnnamedCreatesAtOnce: two unnamed creates of the same program pick the same free name
 // at once; the second to file it picks again and gets the next name, not conflict.
 func TestUnnamedCreatesAtOnce(t *testing.T) {
+	t.Parallel()
 	a, st := fakeActions(t, spawned, nil)
 	var mu sync.Mutex
 	arrived := 0

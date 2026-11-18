@@ -12,6 +12,7 @@ import (
 )
 
 func TestLsofName(t *testing.T) {
+	t.Parallel()
 	if got := lsofName([]byte("p42\nfcwd\nn/work/my dir\n")); got != "/work/my dir" {
 		t.Fatalf("lsofName: %q", got)
 	}
@@ -23,6 +24,7 @@ func TestLsofName(t *testing.T) {
 // TestCreateCwdOf: session.create with cwd_of starts in the folder the other pane's program is
 // in, filed in that pane's project; cwd wins over it; an unknown pane falls back to the default.
 func TestCreateCwdOf(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	e.serve()
 	c := e.control()

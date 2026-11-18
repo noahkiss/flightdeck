@@ -43,6 +43,7 @@ func testAdopter(t *testing.T, env map[string]string, procs []outsideProc, alive
 // TestAdoptPlan: the harness found by id, an id under both harnesses, a bad id, opencode, a
 // folder gone and the cwd override.
 func TestAdoptPlan(t *testing.T) {
+	t.Parallel()
 	cfg, home, work := t.TempDir(), t.TempDir(), t.TempDir()
 	env := map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CODEX_HOME": home}
 	adoptWrite(t, filepath.Join(cfg, "projects", transcript.ClaudeProjectDir(work), "c1.jsonl"), adoptTranscript(work))
@@ -90,6 +91,7 @@ func TestAdoptPlan(t *testing.T) {
 // TestAdoptLive: a session in the book, Claude Code's registry with a live pid, and a process
 // whose arguments hold the id each refuse; a dead pid, gff-hab itself and a grep do not.
 func TestAdoptLive(t *testing.T) {
+	t.Parallel()
 	cfg, work := t.TempDir(), t.TempDir()
 	env := map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CODEX_HOME": t.TempDir()}
 	adoptWrite(t, filepath.Join(cfg, "projects", transcript.ClaudeProjectDir(work), "c1.jsonl"), adoptTranscript(work))
@@ -134,6 +136,7 @@ func TestAdoptLive(t *testing.T) {
 // differs from the pid's start) frees the conversation; the same start, a start that does not
 // read and an entry with no start keep it live.
 func TestAdoptReusedPid(t *testing.T) {
+	t.Parallel()
 	cfg := t.TempDir()
 	env := map[string]string{"CLAUDE_CONFIG_DIR": cfg, "CODEX_HOME": t.TempDir()}
 	adoptWrite(t, filepath.Join(cfg, "sessions", "300.json"), `{"pid":300,"sessionId":"c1","procStart":"Fri Nov  6 05:36:59 2026"}`)
@@ -173,6 +176,7 @@ func TestAdoptReusedPid(t *testing.T) {
 // TestAdoptStartsDiffer: only two starts of one kind that both parse and differ free a
 // conversation; another locale, another clock or a local-time lstart never do.
 func TestAdoptStartsDiffer(t *testing.T) {
+	t.Parallel()
 	local := time.Date(2026, 11, 6, 5, 36, 59, 0, time.UTC).In(time.Local).Format(time.ANSIC)
 	for _, tc := range []struct {
 		recorded, now string
@@ -197,6 +201,7 @@ func TestAdoptStartsDiffer(t *testing.T) {
 
 // TestAdoptFork: a fork of the conversation is no second writer; a resume is.
 func TestAdoptFork(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		harness, args string
 		want          bool
@@ -217,6 +222,7 @@ func TestAdoptFork(t *testing.T) {
 // TestAdoptProcfs: the process list from a hand-made procfs: arguments joined, kernel threads
 // and other names skipped; an empty or missing root is an error, so ps is asked instead.
 func TestAdoptProcfs(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	adoptWrite(t, filepath.Join(root, "42", "cmdline"), "node\x00/opt/claude/cli.js\x00--resume\x00c1\x00")
 	adoptWrite(t, filepath.Join(root, "2", "cmdline"), "") // a kernel thread
@@ -243,6 +249,7 @@ func TestAdoptProcfs(t *testing.T) {
 // TestAdoptProcStart: the start read for this test's own process in the registry's form: on
 // macOS ps's lstart in UTC, on Linux the start tick of /proc/<pid>/stat; and the stat parser.
 func TestAdoptProcStart(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		line, want string
 		ok         bool
@@ -289,6 +296,7 @@ func TestAdoptProcStart(t *testing.T) {
 }
 
 func TestAdoptParseProcs(t *testing.T) {
+	t.Parallel()
 	got := parseProcs([]byte("  1 /sbin/launchd\n 42 codex resume r1\nbad line\n 0 x\n"))
 	if len(got) != 2 || got[1].pid != 42 || got[1].args != "codex resume r1" {
 		t.Fatalf("procs: %+v", got)
@@ -304,6 +312,7 @@ func TestAdoptParseProcs(t *testing.T) {
 // leaves it out; after the pane closes, session.resume starts it again; the transcript is
 // unchanged. An id Claude Code's registry shows live is refused; an unknown id is not found.
 func TestSessionAdopt(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	fake := shortDir(t)
 	writeFile(t, filepath.Join(fake, "claude"), fakeResumable)

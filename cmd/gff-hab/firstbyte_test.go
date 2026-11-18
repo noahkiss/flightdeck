@@ -51,6 +51,7 @@ func callBackAtOnce(t *testing.T, e *habEnv, name, script string) (api.SessionCr
 // TestShowAtFirstByte: a pane whose program runs `gff-hab show` as its very first act names
 // its session by the pane token, even when that call lands before gff-hab follows the pane.
 func TestShowAtFirstByte(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	e.env = []string{spawnDelay}
 	e.serve()
@@ -69,6 +70,7 @@ func TestShowAtFirstByte(t *testing.T) {
 // as its own session through the channels pane door, even when that call lands before gff-hab
 // follows the pane.
 func TestSendAtFirstByte(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	e.env = []string{spawnDelay}
 	e.serve()
@@ -88,6 +90,7 @@ func TestSendAtFirstByte(t *testing.T) {
 // the spawn fails (here: no holder runs), the call answers unavailable, session.deleted follows
 // the record's session.updated, no session is left, and the name is free.
 func TestFailedSpawnLeavesNoSession(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir := filepath.Join(d, "h")
 	if err := os.MkdirAll(hdir, 0o700); err != nil {
@@ -212,6 +215,7 @@ func TestFailedSpawnLeavesNoSession(t *testing.T) {
 // state file holds a session whose pane never ran. The next gff-hab drops it at start, and the
 // name is free.
 func TestNeverSpawnedSessionDropped(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	st, err := structure.Open(structure.Config{Dir: e.state, Holders: structure.NewFakeHolder()})
 	if err != nil {

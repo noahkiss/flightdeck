@@ -94,6 +94,7 @@ func replyTo(t *testing.T, e *serviceEnv, c interface {
 // The personal tools end to end (capcom-service.md 8, 18 A5) with the stub engine calling the
 // route as gff-hab mcp does, and fake Apple services.
 func TestCapcomPersonalTools(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := fakeApple(t, &hits)
 	keyDir := shortDir(t)

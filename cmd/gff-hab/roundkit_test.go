@@ -115,6 +115,7 @@ func confirmations(t *testing.T, c *control.Client) []api.Confirmation {
 // session itself and a fresh command round, at once and with no card; the session is their
 // creator; another's round is refused; `gff round rm "$GFF_ROUND"` (the round's id) removes it.
 func TestRoundAgentKit(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	gff := buildGff(t)
 	c := e.control()
@@ -182,6 +183,7 @@ exec sleep 60`
 // waits, nothing is made, a cancel makes nothing; a confirm makes it; a round on the agent's own
 // hab still makes no card. A pane's -host reaches no other verb.
 func TestRoundElsewhere(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

@@ -51,6 +51,7 @@ func buildSleeper(t *testing.T, dir string) {
 // rule with the region it read; it finds the pane by pane id, session id and session name, and
 // refuses bad names. The CLI prints the same as text and as JSON.
 func TestDetectExplain(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	buildSleeper(t, e.work)
 	writeFile(t, filepath.Join(e.work, "screen"), detectScreen)
@@ -180,6 +181,7 @@ func (s stubPanes) Foreground(context.Context, hp.UUID) (int, error) {
 // the screen part, and the process part says which step timed out and sets timed_out. A
 // terminal with no foreground group is a whole answer: it does not set timed_out.
 func TestExplainPartial(t *testing.T) {
+	t.Parallel()
 	const pane = "00000000-0000-0000-0000-0000000000aa"
 	agents := harness.NewStore(harness.Config{})
 	agents.Apply(pane, "claude", api.StateSourceOsc, 1, harness.Update{State: api.AgentStatusWorking})
@@ -226,6 +228,7 @@ func TestExplainPartial(t *testing.T) {
 // TestSetProcessErr: a step that ends on the budget's deadline is timed out; any other error
 // keeps its own words and is not.
 func TestSetProcessErr(t *testing.T) {
+	t.Parallel()
 	var out api.DetectProcess
 	setProcessErr(&out, "foreground group", fmt.Errorf("link: %w", context.DeadlineExceeded), 5*time.Second)
 	if out.Error != "foreground group: timed out after 5s" || !out.TimedOut {
@@ -240,6 +243,7 @@ func TestSetProcessErr(t *testing.T) {
 
 // TestExplainVerdict covers the verdict's cases without a hab.
 func TestExplainVerdict(t *testing.T) {
+	t.Parallel()
 	working := &api.AgentState{Harness: "claude", State: api.AgentStatusWorking, Source: api.StateSourceHook}
 	tests := []struct {
 		r    api.DetectExplain
@@ -264,6 +268,7 @@ func TestExplainVerdict(t *testing.T) {
 }
 
 func TestRegionTail(t *testing.T) {
+	t.Parallel()
 	if s, cut := regionTail("abc", 5); s != "abc" || cut {
 		t.Errorf("short: %q %v", s, cut)
 	}
@@ -297,6 +302,7 @@ var staleDialog = `● I'll remove the build directory.
 // dialog in scrollback, above a cleared screen, does not make the screen say blocked, and the
 // rules read one line.
 func TestDetectExplainVisibleOnly(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	buildSleeper(t, e.work)
 	writeFile(t, filepath.Join(e.work, "screen"), staleDialog)

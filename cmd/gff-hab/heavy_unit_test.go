@@ -17,6 +17,7 @@ import (
 // wrong type, an unknown key and a file that does not parse are each logged once and the
 // default runs; the example file sets the defaults with nothing logged.
 func TestHeavySettings(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	load := func(body string) (heavySettings, []string) {
 		p := filepath.Join(d, "hab.toml")
@@ -61,6 +62,7 @@ func TestHeavySettings(t *testing.T) {
 // TestHeavyValues: the lock reads heavy.slots, heavy.disk_min_free and heavy.long_hold from the
 // hab-side settings, in their units.
 func TestHeavyValues(t *testing.T) {
+	t.Parallel()
 	vals := map[string]string{settings.HeavySlots: "3", settings.HeavyDiskMinFree: "0", settings.HeavyLongHold: "5"}
 	hv := heavyValues{value: func(id string) json.RawMessage { return json.RawMessage(vals[id]) }}
 	if hv.slots() != 3 || hv.minFree() != 0 || hv.longHold() != 5*time.Minute {

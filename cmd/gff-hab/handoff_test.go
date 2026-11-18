@@ -65,6 +65,7 @@ func runAction(t *testing.T, c caller, name string, a toolArgs) (any, string, er
 // named, else an idle one, else the most recently active, sends to its address and says why;
 // with no agent it sends nothing and points at suggest_host and start_session.
 func TestHandOffPick(t *testing.T) {
+	t.Parallel()
 	f := &fakeChannelHab{fakeReadHab: twoHosts()}
 	cl := &f.catalog
 	withHostProjects(cl)
@@ -143,6 +144,7 @@ func withHostProjects(cl *api.CatalogList) {
 // it. A host that names the project differently still offers its agent; two projects that
 // share a name never mix, and a bare name that two projects share sends nothing.
 func TestHandOffProjectIdentity(t *testing.T) {
+	t.Parallel()
 	cl := api.CatalogList{
 		Hosts: []api.CatalogEntry{
 			{Own: true, Catalog: api.Catalog{DeviceID: "dev-a", Host: "host-a",
@@ -193,6 +195,7 @@ func TestHandOffProjectIdentity(t *testing.T) {
 // TestHandOffSkipsSelf: the calling session is never the pick, though it is the newest busy
 // agent on the project; the next one gets the message, and with no other agent nothing is sent.
 func TestHandOffSkipsSelf(t *testing.T) {
+	t.Parallel()
 	f := &fakeChannelHab{fakeReadHab: twoHosts(), self: "app-ui"}
 	cl := &f.catalog
 	withHostProjects(cl)
@@ -223,6 +226,7 @@ func TestHandOffSkipsSelf(t *testing.T) {
 // TestHandOffNamedTwice: a bare agent name that runs on two hosts sends nothing and lists both
 // full addresses; host/name picks one.
 func TestHandOffNamedTwice(t *testing.T) {
+	t.Parallel()
 	f := &fakeChannelHab{fakeReadHab: twoHosts()}
 	cl := &f.catalog
 	withHostProjects(cl)
@@ -242,6 +246,7 @@ func TestHandOffNamedTwice(t *testing.T) {
 // TestHandOffOutsidePane: through the control socket, where no session is the caller, hand_off
 // refuses at once with a clear message and reads nothing.
 func TestHandOffOutsidePane(t *testing.T) {
+	t.Parallel()
 	f := twoHosts() // a plain control-socket caller
 	_, _, err := runAction(t, f, "hand_off", toolArgs{"project": "app", "message": "x"})
 	if errKind(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "hand_off needs to run from a session's pane") || len(f.calls) != 0 {
@@ -252,6 +257,7 @@ func TestHandOffOutsidePane(t *testing.T) {
 // TestHandOffPickOrder: the order among candidates of one tier is the most recent first, and
 // an online busy agent goes before one on an offline host.
 func TestHandOffPickOrder(t *testing.T) {
+	t.Parallel()
 	ts := []handOffTarget{
 		{Address: "a", Offline: true, CatalogAgent: api.CatalogAgent{State: api.AgentStatusIdle, Since: "2026-03-01T12:00:00Z"}},
 		{Address: "b", CatalogAgent: api.CatalogAgent{State: api.AgentStatusWorking, Since: "2026-03-01T10:00:00Z"}},
@@ -329,6 +335,7 @@ func (f *fakeLogbookHab) Call(ctx context.Context, method string, params, result
 // hab that has Logbook, the record lands as a pending proposal with the quote as its source,
 // never as a record.
 func TestFileRecord(t *testing.T) {
+	t.Parallel()
 	plain := twoHosts()
 	args := toolArgs{"type": "task", "title": "Cache the catalog", "quote": "note that we should cache the catalog", "project": "app", "body": "From the Capcom talk."}
 	_, _, err := runAction(t, plain, "file_record", args)
@@ -381,6 +388,7 @@ func TestFileRecord(t *testing.T) {
 // TestFileRecordRetry: a retry of the same draft from the same pane carries the same key, so it
 // is one proposal; a changed draft, or the same draft from another pane, is a new one.
 func TestFileRecordRetry(t *testing.T) {
+	t.Parallel()
 	lb := &fakeLogbookHab{fakeReadHab: twoHosts(), pane: "/run/hook.sock#token-a"}
 	args := toolArgs{"type": "finding", "title": "The cache is cold at start", "quote": "note that the cache starts cold"}
 	for i := 0; i < 2; i++ {
@@ -418,6 +426,7 @@ func startProjectReceiver(t *testing.T, e *habEnv, repo, start string, wants ...
 // arrives in the agent envelope once the agent is idle; to the idle agent it is delivered at
 // once, with no confirmation.
 func TestHandOffEndToEnd(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -535,6 +544,7 @@ func (k *keyRecorder) Call(_ context.Context, method string, params, result any)
 // TestLogbookWriteKeys: logbook_write's calls are separate writes, so mark doing, mark blocked,
 // mark doing makes three; a call with the caller's key keeps it, so a retry is one write.
 func TestLogbookWriteKeys(t *testing.T) {
+	t.Parallel()
 	k := &keyRecorder{}
 	for _, st := range []string{"doing", "blocked", "doing"} {
 		if _, _, err := runLogbookWrite(context.Background(), k, toolArgs{"action": "mark", "id": "task-k3m9q2xz", "status": st}); err != nil {

@@ -13,6 +13,7 @@ import (
 // standing pointer with them. When the structure state did not load (a file from a newer build),
 // the store is empty, so nothing is pruned and capcom.json is left as it was.
 func TestCapcomPrune(t *testing.T) {
+	t.Parallel()
 	saved := capcom.State{Assignment: 2, Home: "dev-a", Standing: "s-gone",
 		Sessions: []capcom.Session{{ID: "s-gone", Dir: "/nowhere", Harness: capcom.Claude}}}
 	open := func(t *testing.T, dir string) *structure.Store {

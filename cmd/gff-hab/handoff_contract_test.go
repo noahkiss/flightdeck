@@ -40,6 +40,7 @@ func (f *contractHab) Call(ctx context.Context, method string, params, result an
 // the answer against the app's patterns: the lead word and "who" on the first line, then the
 // why, the other candidates and the message line, and nothing the card cannot place.
 func TestHandOffAnswerContract(t *testing.T) {
+	t.Parallel()
 	const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	cases := []struct {
 		name    string
@@ -110,6 +111,7 @@ func TestHandOffAnswerContract(t *testing.T) {
 // TestFileRecordAnswerContract: the proposed and filed answers start with the words the app's
 // proposal line reads, and the proposal id is found even when the title holds the same words.
 func TestFileRecordAnswerContract(t *testing.T) {
+	t.Parallel()
 	lb := &fakeLogbookHab{fakeReadHab: twoHosts()}
 	_, text, err := runAction(t, lb, "file_record", toolArgs{"type": "task", "title": "Rename as proposal X. later", "quote": "q"})
 	if err != nil {

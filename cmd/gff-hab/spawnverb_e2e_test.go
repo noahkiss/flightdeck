@@ -18,16 +18,17 @@ import (
 	"github.com/noahkiss/flightdeck/internal/channels"
 )
 
-// fakeTeammate stands in for Codex (or Claude Code) started by a spawn. It saves its argv,
-// folder and session id, reports working over OSC 7501 and idle by the SessionStart hook,
+// fakeTeammate stands in for Codex (or Claude Code) started by a spawn. It saves its folder,
+// then its argv and session id (the argv file appears whole and last, so a test that finds it
+// can read the folder), reports working over OSC 7501 and idle by the SessionStart hook,
 // reads one paste of the length in seed-len, then runs one turn: UserPromptSubmit, its
 // rollout (the transcript file with the final message), Stop. It then waits for the end file.
 const fakeTeammate = `#!/bin/sh
 D=@DIR@
 app=$(basename "$0")
 sid=019a0000-0000-7000-8000-$(printf '%012d' $$)
-echo "$*" > "$D/argv-$sid"
 pwd -P > "$D/cwd-$sid"
+echo "$*" > "$D/argv-$sid.tmp" && mv "$D/argv-$sid.tmp" "$D/argv-$sid"
 p() { printf '{"session_id":"%s","cwd":"/work/app","hook_event_name":"%s"%s}' "$sid" "$1" "$2"; }
 hook() { p "$1" "$2" | "$GFF_HAB_BIN" hook "$app" "$1"; }
 stty raw -echo
@@ -117,6 +118,9 @@ func teammateRun(t *testing.T, work, want string) string {
 	waitUntil(t, "a teammate started with "+want, func() bool {
 		files, _ := filepath.Glob(filepath.Join(work, "argv-*"))
 		for _, f := range files {
+			if strings.HasSuffix(f, ".tmp") {
+				continue
+			}
 			if b, _ := os.ReadFile(f); strings.Contains(string(b), want) {
 				sid = strings.TrimPrefix(filepath.Base(f), "argv-")
 				return true
@@ -134,6 +138,7 @@ func teammateRun(t *testing.T, work, want string) string {
 // detached spawn reports nothing. The teammate's native session id is known, so a plain
 // terminal resumes it with codex resume, like any other session.
 func TestSpawnEndToEnd(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -217,6 +222,7 @@ func TestSpawnEndToEnd(t *testing.T) {
 // teammate runs there, and its review comes back over the mesh to the spawner, addressed by the
 // link's own hello.
 func TestSpawnOnPeer(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

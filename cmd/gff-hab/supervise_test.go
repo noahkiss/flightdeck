@@ -207,6 +207,7 @@ func waitSup(t *testing.T, what string, ok func() bool) {
 // progress ask with its percentage, then a compaction whose follow-up names the item and its
 // task, counted on the member. The reading drops after it, so no second one follows.
 func TestSuperviseCompactOnce(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "claude")
 	f.pct = pctOf(39)
 	f.sup.Start()
@@ -233,6 +234,7 @@ func TestSuperviseCompactOnce(t *testing.T) {
 // compacts asks for a hand-off note, waits for it and the turn's end, then starts a fresh
 // session whose seed names the item's task.
 func TestSuperviseFreshAfterCompacts(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "claude")
 	f.settings[settings.GroupFreshAfterCompacts] = "4"
 	f.ss.Compacts, f.note = 4, true
@@ -271,6 +273,7 @@ func TestSuperviseFreshAfterCompacts(t *testing.T) {
 // TestSuperviseHandoffNoNote: with no note within [groups] handoff_note_wait, the fresh session
 // starts anyway and the action says so.
 func TestSuperviseHandoffNoNote(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "claude")
 	f.ss.Compacts = 4
 	f.pct = pctOf(45)
@@ -289,6 +292,7 @@ func TestSuperviseHandoffNoNote(t *testing.T) {
 // TestSuperviseCodexFresh (groups.md 9.1, 9.2): a Codex member, which this hab cannot compact,
 // goes to a fresh session at group.handoff_at, read from its rollout's token_count.
 func TestSuperviseCodexFresh(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "codex")
 	dir := t.TempDir()
 	roll := filepath.Join(dir, "rollout.jsonl")
@@ -320,6 +324,7 @@ func TestSuperviseCodexFresh(t *testing.T) {
 // waits up to [groups] sibling_wait, then ends skipped with the reason, and the asker hears it.
 // A second request while one runs gets conflict.
 func TestSiblingWaitsThenSkips(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "claude")
 	f.inUse = "working"
 	f.pct = pctOf(10)
@@ -354,6 +359,7 @@ func TestSiblingWaitsThenSkips(t *testing.T) {
 // TestSuperviseCountsEveryCompact (groups.md 9.1): a member's own compaction counts; ours is
 // counted once, at its end.
 func TestSuperviseCountsEveryCompact(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "claude")
 	bySession := func(string) (api.Session, bool) { f.mu.Lock(); defer f.mu.Unlock(); return f.ss, true }
 	hook := harness.Envelope{Harness: "claude", Event: "SessionStart", Payload: json.RawMessage(`{"source":"compact"}`)}
@@ -374,6 +380,7 @@ func TestSuperviseCountsEveryCompact(t *testing.T) {
 
 // TestNudgeOffForMembers (groups.md 9.1): the context nudge says nothing to a member.
 func TestNudgeOffForMembers(t *testing.T) {
+	t.Parallel()
 	n := newNudgeService(func(id string) json.RawMessage {
 		if id == settings.ContextNudge {
 			return json.RawMessage(`10`)
@@ -397,6 +404,7 @@ func TestNudgeOffForMembers(t *testing.T) {
 // TestCodexContext reads the rollout's last token_count over the window, and the window from a
 // task_started when the token_count has none.
 func TestCodexContext(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "r.jsonl")
 	os.WriteFile(p, []byte(strings.Join([]string{
@@ -420,6 +428,7 @@ func strconvItoa(n int) string { b, _ := json.Marshal(n); return string(b) }
 // count, and a member whose turn does not end within [groups] handoff_note_wait is never
 // swapped: the action fails, and the next automatic try backs off.
 func TestSuperviseHandoffNeverMidTurn(t *testing.T) {
+	t.Parallel()
 	f := newSupFake(t, "claude")
 	f.ss.Compacts, f.stuck = 4, true
 	f.pct = pctOf(45)

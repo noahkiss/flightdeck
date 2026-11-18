@@ -39,6 +39,7 @@ func (f *fakeLinkCaller) Call(_ context.Context, method string, params, result a
 // key and the seed's sender; an offline peer, an unknown one and one without the confirm
 // capability are refused before a card opens; a lost answer is unknown, a refusal a failure.
 func TestConfirmRunnerPeers(t *testing.T) {
+	t.Parallel()
 	link := &fakeLinkCaller{}
 	links := []confirmLink{
 		{Label: "devbox", Online: true, Caps: []string{"confirm"}, Caller: link},
@@ -117,6 +118,7 @@ func TestConfirmRunnerPeers(t *testing.T) {
 // TestMCPCancelled: notifications/cancelled ends that call's hab call, and the cancelled
 // request gets no answer.
 func TestMCPCancelled(t *testing.T) {
+	t.Parallel()
 	entered := make(chan struct{})
 	ended := make(chan error, 1)
 	blocking := callerFunc(func(ctx context.Context, method string, _, _ any) error {
@@ -156,6 +158,7 @@ func TestMCPCancelled(t *testing.T) {
 // TestSnapshotOpenOnly: the host snapshot carries only open confirmations; a running one has
 // its answer already.
 func TestSnapshotOpenOnly(t *testing.T) {
+	t.Parallel()
 	got := openOnly([]api.Confirmation{{ID: "a", State: "open"}, {ID: "b", State: "running"}, {ID: "c", State: "open"}})
 	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {
 		t.Fatalf("%+v", got)
@@ -171,6 +174,7 @@ func (f callerFunc) Call(ctx context.Context, method string, params, result any)
 // TestActionToolText: the start tool's text tells the agent to wait for the message, never to
 // ask again, and names the session after a start.
 func TestActionToolText(t *testing.T) {
+	t.Parallel()
 	st := &api.ConfirmStart{Host: "devbox", Folder: "/srv/app", Harness: "codex", Name: "codex-abc123", Seed: "x"}
 	open := confirmationText(api.Confirmation{ID: "c1", State: "open", Start: st})
 	if !strings.Contains(open, "Still waiting") || !strings.Contains(open, "Do not ask again") {

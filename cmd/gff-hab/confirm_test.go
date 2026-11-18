@@ -52,6 +52,7 @@ func sessionCount(t *testing.T, c *control.Client) int {
 // asks for over its link opens a confirmation there and starts nothing here until the answer;
 // the edited seed runs, the second answer gets conflict, and the requester hears the outcome.
 func TestConfirmStart(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

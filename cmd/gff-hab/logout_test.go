@@ -37,6 +37,7 @@ done
 // system orders nothing, so each order is tried: both at once, the holder 1 s first (gff-hab sees
 // every program end), gff-hab 1 s first.
 func TestLogoutCheckpoint(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                string
 		holderLead, habLead time.Duration
@@ -132,6 +133,7 @@ func waitErr(ch chan error) <-chan struct{} {
 
 // The watchdog logs and exits once its deadline passes, and never when stopped first.
 func TestShutdownWatchdog(t *testing.T) {
+	t.Parallel()
 	codes := make(chan int, 1)
 	lines := make(chan string, 1)
 	shutdownWatchdog(20*time.Millisecond, func(f string, a ...any) { lines <- fmt.Sprintf(f, a...) }, func(c int) { codes <- c })
@@ -150,6 +152,7 @@ func TestShutdownWatchdog(t *testing.T) {
 
 // flush writes a pending agent state at once, with the book still open.
 func TestResumeBookFlush(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	b := openResumeBook(d, func(string) (string, bool) { return "s1", true }, t.Logf)
 	defer b.Close()

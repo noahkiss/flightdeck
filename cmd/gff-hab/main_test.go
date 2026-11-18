@@ -178,6 +178,7 @@ func welcome(t *testing.T, sock string) api.Welcome {
 
 // TestNoTCPListener: in single-machine mode gff-hab holds no TCP or UDP socket at all.
 func TestNoTCPListener(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	s := startServe(t, filepath.Join(d, "run", "hab.sock"), filepath.Join(d, "state"))
 	pid := s.cmd.Process.Pid
@@ -242,6 +243,7 @@ func linuxInetSockets(t *testing.T, pid int) []string {
 // TestRestartNewEpochCLI: `gff-hab events` sees closing (shutdown) when the hab stops; the next
 // hab has a new epoch and the stored structure.
 func TestRestartNewEpochCLI(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock, state := filepath.Join(d, "run", "hab.sock"), filepath.Join(d, "state")
 	s1 := startServe(t, sock, state)
@@ -302,6 +304,7 @@ func TestRestartNewEpochCLI(t *testing.T) {
 }
 
 func TestAPICallErrors(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	startServe(t, sock, filepath.Join(d, "state"))
@@ -327,6 +330,7 @@ type pipeConn struct {
 // pair, as `ssh <host> gff-hab connect` would carry it: hello, subscribe, live events, a
 // request with the seq rule, and a clean end when the client closes its side.
 func TestConnectCarriesFullSession(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	holder := structure.NewFakeHolder()
@@ -432,6 +436,7 @@ func TestConnectCarriesFullSession(t *testing.T) {
 // TestVia runs `api call -via` through `gff-hab connect`, the shape of a call over ssh. It runs
 // several times: under -race the binary is a race build, and a race in it fails the call.
 func TestVia(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	startServe(t, sock, filepath.Join(d, "state"))
@@ -460,6 +465,7 @@ func TestVia(t *testing.T) {
 // TestViaSSH runs the call through the system sshd to this machine. It skips unless key-based
 // ssh to localhost already works; it changes no ssh configuration.
 func TestViaSSH(t *testing.T) {
+	t.Parallel()
 	if err := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "localhost", "true").Run(); err != nil {
 		t.Skipf("ssh to localhost is not set up: %v", err)
 	}
@@ -475,6 +481,7 @@ func TestViaSSH(t *testing.T) {
 
 // TestEventsFailsWithoutClosing: a hab that dies without closing makes `gff-hab events` fail.
 func TestEventsFailsWithoutClosing(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	s := startServe(t, sock, filepath.Join(d, "state"))
@@ -510,6 +517,7 @@ func TestEventsFailsWithoutClosing(t *testing.T) {
 // supervisor would restart it every second). Once the folder is private it starts; SIGTERM
 // during the wait ends it cleanly.
 func TestServeWaitsForPrivateSocketDir(t *testing.T) {
+	t.Parallel()
 	for _, fix := range []bool{true, false} {
 		t.Run(fmt.Sprintf("fixed=%v", fix), func(t *testing.T) {
 			d := shortDir(t)

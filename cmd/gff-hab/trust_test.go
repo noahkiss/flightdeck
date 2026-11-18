@@ -124,6 +124,7 @@ func trustAnswer(c *control.Client, pane string, choice api.TrustChoice) (api.Tr
 // and Enter as two writes; the agent starts, and the start message goes in. A second answer
 // finds no prompt and gets conflict.
 func TestTrustCardTrust(t *testing.T) {
+	t.Parallel()
 	e, c := trustEnv(t)
 	made, _ := startTrust(t, e, c, "demo")
 	time.Sleep(1500 * time.Millisecond)
@@ -155,6 +156,7 @@ func TestTrustCardTrust(t *testing.T) {
 // TestTrustCardExit: trust.answer with exit sends Esc; the agent exits, the start message is
 // refused with the owner's reason, and the result counts it.
 func TestTrustCardExit(t *testing.T) {
+	t.Parallel()
 	e, c := trustEnv(t)
 	made, _ := startTrust(t, e, c, "nope")
 	out, err := trustAnswer(c, made.Pane, api.TrustChoiceExit)
@@ -177,6 +179,7 @@ func TestTrustCardExit(t *testing.T) {
 // state once the dialog stays gone, and a late trust.answer gets conflict and sends nothing.
 // An answer right after typing in the pane is refused: the pane is not quiet.
 func TestTrustCardAnsweredInTerminal(t *testing.T) {
+	t.Parallel()
 	e, c := trustEnv(t)
 	made, _ := startTrust(t, e, c, "term")
 	call(t, c, "pane.input", api.InputParams{Pane: made.Pane, Text: "\x1b[B"}, nil)
@@ -202,6 +205,7 @@ func TestTrustCardAnsweredInTerminal(t *testing.T) {
 // TestTrustAnswerCLIInPane: gff-hab api call trust.answer refuses to run in an agent's pane, as
 // confirm.answer does.
 func TestTrustAnswerCLIInPane(t *testing.T) {
+	t.Parallel()
 	cmd := exec.Command(bin, "api", "call", "-socket", filepath.Join(t.TempDir(), "none.sock"), "trust.answer", `{"pane":"p","choice":"trust"}`)
 	cmd.Env = append(os.Environ(), "GFF_HAB=unix:/nowhere#token")
 	out, err := cmd.CombinedOutput()

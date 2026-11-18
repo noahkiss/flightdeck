@@ -67,6 +67,7 @@ func pendingRefs(items []api.CapcomContextItem) []string {
 // after carries the text alone. Eight items wait at most; the pending list survives a gff-hab
 // restart.
 func TestCapcomContext(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	binDir := filepath.Join(e.work, "bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
@@ -363,6 +364,7 @@ func TestCapcomContext(t *testing.T) {
 // resumes nothing, so it needs no store or holder; a session with no record is invalid, and an
 // empty list is an empty array.
 func TestCapcomPending(t *testing.T) {
+	t.Parallel()
 	cc := &capcomService{state: t.TempDir(), host: "boxa", self: "dev-a", logf: t.Logf}
 	cc.st.Sessions = []capcom.Session{
 		{ID: "s1", Pending: []capcom.Item{{Kind: capcom.KindNotification, Ref: "n1", Host: "bee", Title: "Build failed"}}},
@@ -414,6 +416,7 @@ func (s *sendRecorder) Send(ctx context.Context, client string, p api.SessionSen
 // carries it; an item attached while a send is on its way waits for the one after; a send to
 // another session is untouched.
 func TestCapcomContextSendFails(t *testing.T) {
+	t.Parallel()
 	cc := &capcomService{state: t.TempDir(), logf: t.Logf}
 	n := capcom.Item{Kind: capcom.KindNotification, Ref: "n1", Host: "box", Title: "Build failed"}
 	cc.st.Sessions = []capcom.Session{{ID: "s1", Pending: []capcom.Item{n}}}
@@ -449,6 +452,7 @@ func TestCapcomContextSendFails(t *testing.T) {
 // TestCapcomContextSaveFails: an attach whose capcom.json write fails answers unavailable and
 // keeps nothing.
 func TestCapcomContextSaveFails(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cc := &capcomService{state: dir, logf: t.Logf}
 	cc.st.Sessions = []capcom.Session{{ID: "s1"}}
@@ -472,6 +476,7 @@ func TestCapcomContextSaveFails(t *testing.T) {
 // TestCapcomDetachByDeviceID: a peer's notice attached by its device id, as a banner names it,
 // is held under the peer's label; a detach by the same device id finds it (capcom.md 8.5).
 func TestCapcomDetachByDeviceID(t *testing.T) {
+	t.Parallel()
 	cc := &capcomService{state: t.TempDir(), host: "boxa", self: "dev-a", logf: t.Logf,
 		links: func() []catalog.Link {
 			// One hab under two labels; the item holds the online one, which comes second.
@@ -489,6 +494,7 @@ func TestCapcomDetachByDeviceID(t *testing.T) {
 // banner's context item (the notice id, this hab's device id as the host) resolves it into a
 // block that a context-only send delivers to the stub Capcom.
 func TestCapcomAskAfterRestart(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	binDir := filepath.Join(e.work, "bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {

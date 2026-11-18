@@ -293,6 +293,7 @@ func TestRoundHostRefusals(t *testing.T) {
 // no project needed, an event filter's project by remote, a filter that names a session
 // refused, and the pending batch read after the pause and carried in the create.
 func TestRoundMoveStage9(t *testing.T) {
+	t.Parallel()
 	notFound := fail(control.Errorf(api.ErrorKindNotFound, "no round nightly on this hab"))
 	event := func() api.Round {
 		return api.Round{ID: "r1", Pending: 2, RoundSpec: api.RoundSpec{Name: "nightly", Mode: api.RoundModeCapcom,

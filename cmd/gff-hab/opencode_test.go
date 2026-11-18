@@ -18,6 +18,7 @@ import (
 // API; chat.page reads the messages from the server; a gff-hab restart finds the server again
 // from its record; closing the pane ends the server and removes the record.
 func TestOpencodeAdapter(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	fake := buildFakeOpencode(t)
 	c := e.control()

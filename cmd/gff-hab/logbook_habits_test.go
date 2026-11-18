@@ -86,6 +86,7 @@ func setHabit(t *testing.T, c *control.Client, id string, on bool) {
 // the brief still prints from the file within the hook's budget, under the same switches, and
 // the reminder and closeout print nothing.
 func TestLogbookHabits(t *testing.T) {
+	t.Parallel()
 	g := newGitRepos(t)
 	e := newHolderEnv(t, 0)
 	cfg := filepath.Join(e.work, "hab.toml")

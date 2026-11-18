@@ -10,6 +10,7 @@ import (
 
 // TestHabStats asks the real hab for its resources without a holder or client-side reader.
 func TestHabStats(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	if w := welcome(t, e.sock); !slices.Contains(w.Capabilities, "host-stats") {
 		t.Fatalf("capabilities %v", w.Capabilities)

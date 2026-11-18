@@ -370,6 +370,7 @@ sleep 60`
 // `gff-hab connect`. Its bytes equal the holder's ring with the queries left out: no gap, no
 // repeat, no snapshot.
 func TestDataResumeAfterDrop(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	cc := e.control()
 	pane := e.spawn(cc, printer)
@@ -405,6 +406,7 @@ func TestDataResumeAfterDrop(t *testing.T) {
 // stored offset after a planned gff-hab restart and after a SIGKILL, with no snapshot, no gap
 // and no repeat.
 func TestDataResumeAcrossRestart(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	cc := e.control()
 	pane := e.spawn(cc, strings.Replace(printer, "${LINES_N:-3000}", "6000", 1))
@@ -448,6 +450,7 @@ func TestDataResumeAcrossRestart(t *testing.T) {
 // empties gff-hab's buffer (the new one starts at its checkpoint); a 64 KiB ring cannot hold
 // the 400 kB the program printed.
 func TestDataSnapshotWhenBytesGone(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 64<<10)
 	cc := e.control()
 	pane := e.spawn(cc, `stty raw -echo
@@ -510,6 +513,7 @@ func paneOffset(t *testing.T, c *control.Client, pane string) uint64 {
 // TestDataFakeFrames is acceptance test 4: a program prints bytes that look like frames and a
 // control message. The client gets them as output, inside bytes frames, and nothing else.
 func TestDataFakeFrames(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	cc := e.control()
 	fake := "\x06\x00\x00\x00\x13{\"cols\":1,\"rows\":1}\x07\x00\x00\x00\x02{}" +
@@ -542,6 +546,7 @@ sleep 60`)
 // observer, see the same bytes, and the program's cursor position query gets exactly one answer:
 // gff-hab's, from its parser. Neither client sees the query.
 func TestDataTwoClientsOneAnswer(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	cc := e.control()
 	pane := e.spawn(cc, `stty raw -echo min 0 time 0
@@ -599,6 +604,7 @@ sleep 60`)
 // the stalled client is more than 4 MiB behind it gets a fresh snapshot instead of the
 // backlog, after at most its 256 KiB of credit.
 func TestDataSlowClient(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	cc := e.control()
 	pane := e.spawn(cc, `stty raw -echo

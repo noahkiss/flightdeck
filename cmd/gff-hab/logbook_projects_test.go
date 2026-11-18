@@ -116,6 +116,7 @@ func lbListIDs(t *testing.T, c *control.Client, project string) []string {
 // is left out of a pane's reads, and the user still sees it. The remote is renamed and gff-hab
 // restarted: the folder's new identity joins the project, and its records stay.
 func TestLogbookProjects(t *testing.T) {
+	t.Parallel()
 	g := newGitRepos(t)
 	e := newHolderEnv(t, 0)
 	e.env = g.env
@@ -189,6 +190,7 @@ func TestLogbookProjects(t *testing.T) {
 // HTTPS files P2, each with a task. Once both run, both habs show one project: P1, the older,
 // keeps its id, P2 is joined into it, and both tasks list under either id.
 func TestLogbookProjectsTwoHabs(t *testing.T) {
+	t.Parallel()
 	g := newGitRepos(t)
 	m := newMeshPair(t)
 	m.b.stopHab(false)

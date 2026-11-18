@@ -12,6 +12,7 @@ import (
 // in the config's write list. Every harness folder, the home folder and the state folder are
 // temporary, and a stand-in claude is named with -claude-bin.
 func TestMCPRenderCLI(t *testing.T) {
+	t.Parallel()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
