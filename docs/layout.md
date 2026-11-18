@@ -144,9 +144,13 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
   changed patch rebuilds the library. On a `GHOSTTY_COMMIT` bump, drop a patch the new commit
   makes unneeded; `make libghostty` stops when one no longer applies.
 - **Zig 0.17.0** builds libghostty-vt (pinned in `mise.toml`; the Ghostty commit's
-  `minimum_zig_version`). `make libghostty` fetches the pinned commit into `build/ghostty-src` and
-  runs `zig build -Demit-lib-vt` into `build/libghostty-vt`. The first build takes a few minutes;
-  later builds are skipped by a stamp file. CMake is not needed.
+  `minimum_zig_version`). `make libghostty` fetches the pinned commit into `build/ghostty-src`.
+  It fetches the library's dependencies into `build/ghostty-pkgs` with Ghostty's
+  `nix/build-support/fetch-zig-cache.sh deps/libghostty-vt.txt`, then runs
+  `zig build --system build/ghostty-pkgs/p -Demit-lib-vt` into `build/libghostty-vt`, which
+  fetches nothing. When zig build fetches the dependencies itself, zig 0.17 crashes on hosted CI
+  runners. The first build takes a few minutes; later builds are skipped by a stamp file. CMake
+  is not needed.
 - **The `ghostty` build tag.** Only `internal/vt/ghostty` uses cgo, and only with `-tags ghostty`.
   Without the tag, `go build ./...` and `go test ./...` skip that package and work on any machine,
   with or without the library. `make build`, `make vet` and `make test` build the library first,

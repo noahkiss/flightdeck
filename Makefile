@@ -6,6 +6,9 @@ ZIG ?= zig
 GHOSTTY_COMMIT := 5813c9461d5af78b6307a1254d00b1bc190eaccd
 GHOSTTY_SRC := build/ghostty-src
 GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
+# Ghostty's dependencies, fetched before the build, and the zig cache of the offline build.
+GHOSTTY_PKGS := $(CURDIR)/build/ghostty-pkgs
+GHOSTTY_ZIGCACHE := $(CURDIR)/build/ghostty-zig-cache
 # Our patches to that commit (third_party/ghostty/patches), applied in name order. Their id is in
 # the stamp and in CI's cache key (`make ghostty-id`), so a changed patch rebuilds the library.
 GHOSTTY_PATCHES := $(sort $(wildcard third_party/ghostty/patches/*.patch))
@@ -13,7 +16,10 @@ GHOSTTY_PATCH_ID := $(if $(GHOSTTY_PATCHES),$(shell cat $(GHOSTTY_PATCHES) | git
 ifeq ($(GHOSTTY_PATCH_ID),)
 $(error cannot compute the id of $(GHOSTTY_PATCHES): git hash-object failed)
 endif
-GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
+# The build id: the commit, the patch id and how the library is built (`offline`: dependencies
+# fetched first, then zig build --system). A new build method changes it, so CI rebuilds.
+GHOSTTY_ID := $(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)-offline
+GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_ID)
 # Extra zig build flags for libghostty. CI and releases pass a fixed target and the baseline CPU
 # (docs/specs/ci-release.md 7.3); empty builds for this machine. The stamp does not record them:
 # run `make clean-libghostty` before building with other flags.
@@ -95,22 +101,31 @@ $(GHOSTTY_STAMP):
 	$(GHOSTTY_GIT) fetch -q --depth 1 origin $(GHOSTTY_COMMIT)
 	$(GHOSTTY_GIT) checkout -q -f --detach $(GHOSTTY_COMMIT)
 	$(GHOSTTY_GIT) clean -fdq
+	rm -rf $(GHOSTTY_SRC)/zig-pkg $(GHOSTTY_PKGS) $(GHOSTTY_ZIGCACHE)
 	$(foreach p,$(GHOSTTY_PATCHES),$(GHOSTTY_GIT) apply $(CURDIR)/$(p) &&) true
 	@rm -f $(GHOSTTY_PREFIX)/.built-*
-	cd $(GHOSTTY_SRC) && $(ZIG) build -Demit-lib-vt -Demit-xcframework=false \
+	@# Fetch the library's dependencies first, with Ghostty's own script, then build offline
+	@# (--system) in an empty zig cache. When zig build fetches them itself, zig 0.17 crashes on
+	@# hosted CI runners. The -fno-sys flags keep simdutf and highway built in, as without --system.
+	cd $(GHOSTTY_SRC) && PATH="$$(dirname "$$(command -v $(ZIG))"):$$PATH" \
+		ZIG_GLOBAL_CACHE_DIR=$(GHOSTTY_PKGS) sh nix/build-support/fetch-zig-cache.sh deps/libghostty-vt.txt
+	cd $(GHOSTTY_SRC) && ZIG_GLOBAL_CACHE_DIR=$(GHOSTTY_ZIGCACHE) $(ZIG) build \
+		--system $(GHOSTTY_PKGS)/p -fno-sys=simdutf -fno-sys=highway \
+		-Demit-lib-vt -Demit-xcframework=false \
 		-Doptimize=ReleaseFast $(GHOSTTY_ZIGFLAGS) --prefix $(GHOSTTY_PREFIX)
+	rm -rf $(GHOSTTY_ZIGCACHE)
 	@# zig writes the absolute prefix into the pkg-config files. Point them at their own folder
 	@# instead, so a build/ copied or restored into another checkout still links its own library.
 	@for pc in $(GHOSTTY_PREFIX)/lib/pkgconfig/*.pc; do \
 		sed 's|^prefix=.*|prefix=$${pcfiledir}/../..|' "$$pc" > "$$pc.tmp" && mv "$$pc.tmp" "$$pc"; done
 	@touch $@
 
-# Print the pinned commit and the patch id: what CI keys its libghostty cache on.
+# Print the build id: what CI keys its libghostty cache on.
 ghostty-id:
-	@echo $(GHOSTTY_COMMIT)-$(GHOSTTY_PATCH_ID)
+	@echo $(GHOSTTY_ID)
 
 clean-libghostty:
-	rm -rf $(GHOSTTY_SRC) $(GHOSTTY_PREFIX)
+	rm -rf $(GHOSTTY_SRC) $(GHOSTTY_PREFIX) $(GHOSTTY_PKGS) $(GHOSTTY_ZIGCACHE)
 
 # Fetch sherpa-onnx's static C library and its C API header into build/ (ignored by git), check
 # both checksums, and write a pkg-config file for them. Needs curl, tar with bzip2.
