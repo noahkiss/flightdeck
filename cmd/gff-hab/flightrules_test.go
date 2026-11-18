@@ -50,6 +50,12 @@ func TestFlightRulesService(t *testing.T) {
 		return ""
 	}
 
+	// A read that runs out of time answers with what it read and a warning.
+	cut, cancel := context.WithCancel(ctx)
+	cancel()
+	if r, err := f.List(cut, api.FlightRulesParams{Session: "s1"}); err != nil || len(r.Entries) != 0 || len(r.Warnings) != 1 {
+		t.Fatalf("cut read: %+v %v", r, err)
+	}
 	r, err := f.List(ctx, api.FlightRulesParams{Session: "s1"})
 	if err != nil || r.Harness != "claude" || len(r.Entries) != 17 || len(r.Warnings) != 1 {
 		t.Fatalf("list: %d entries, %v", len(r.Entries), err)

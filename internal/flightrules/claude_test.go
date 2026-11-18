@@ -277,3 +277,60 @@ func appendFile(t *testing.T, path, data string) {
 		t.Fatal(err)
 	}
 }
+
+// TestLedgerRemoveAllVersions: a removal marks every text of the source gone, not only the
+// newest, and a later load brings back only the text it carries.
+func TestLedgerRemoveAllVersions(t *testing.T) {
+	l := NewLedger()
+	obs := func(text, at string) {
+		l.Observe(Observation{Kind: api.FlightRuleInstruction, Source: "/p/CLAUDE.md", Text: text, At: at, Attribution: api.FlightRecorded})
+	}
+	obs("v1", "t1")
+	obs("v2", "t2")
+	l.Remove(Removal{Kinds: fileKinds, Source: "/p/CLAUDE.md", At: "t3"})
+	es := l.Entries()
+	if es[0].Gone != "t3" || es[1].Gone != "t3" {
+		t.Fatalf("%+v", es)
+	}
+	obs("v2", "t4")
+	es = l.Entries()
+	if es[0].Gone != "t3" || es[1].Gone != "" || es[1].LastSeen != "t4" {
+		t.Errorf("%+v", es)
+	}
+}
+
+// TestLedgerHookCap: hook entries have their own bound, so a hook that changes its text on
+// every call never crowds out instruction files.
+func TestLedgerHookCap(t *testing.T) {
+	l := NewLedger()
+	for i := 0; i < MaxHookEntries+5; i++ {
+		l.Observe(Observation{Kind: api.FlightRuleHook, Source: "PostToolUse", Text: strings.Repeat("x", i+1)})
+	}
+	l.Observe(Observation{Kind: api.FlightRuleInstruction, Source: "/p/CLAUDE.md", Text: "rules"})
+	es := l.Entries()
+	if len(es) != MaxHookEntries+1 || es[len(es)-1].Source != "/p/CLAUDE.md" {
+		t.Errorf("%d entries", len(es))
+	}
+	if w := l.Warnings(); len(w) != 1 || !strings.Contains(w[0], "hook entries") {
+		t.Errorf("warnings %q", w)
+	}
+}
+
+// TestClaudeUnnamedSources: a file, skill or server the record does not name is unknown.
+func TestClaudeUnnamedSources(t *testing.T) {
+	path := writeLines(t,
+		`{"type":"attachment","attachment":{"type":"instructions","files":[{"path":"","type":"User","content":"a"}]}}`,
+		`{"type":"attachment","attachment":{"type":"nested_memory","content":{"type":"Project","content":"b"}}}`,
+		`{"type":"attachment","attachment":{"type":"invoked_skills","skills":[{"name":"","content":"c"}]}}`,
+		`{"type":"attachment","attachment":{"type":"mcp_instructions_delta","addedNames":[""],"addedBlocks":["d"]}}`,
+	)
+	es, _, err := NewSession(NewClaude(path), nil).List(context.Background())
+	if err != nil || len(es) != 4 {
+		t.Fatalf("%+v %v", es, err)
+	}
+	for _, e := range es {
+		if e.Attribution != api.FlightUnknown || e.Source == "" || !strings.Contains(e.Note, "without naming it") {
+			t.Errorf("%+v", e)
+		}
+	}
+}

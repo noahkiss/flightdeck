@@ -612,7 +612,8 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
 - **Shape.** A `Ledger` keeps entries, oldest first, and never their text. A `Source` per harness
   feeds it observations and finds an entry's text again on request. A `Session` pairs one ledger
   with one source. A Codex or opencode source plugs in as a new `Source` with the attribution it
-  can prove (`computed`, `matched`); the ledger, the API and the hab service stay as they are.
+  can prove (`computed`, `matched`), plus one case in the hab service's source choice; the
+  ledger and the API stay as they are. `Text` may run while `Update` reads.
 - **Entry.** The fields of 11.1, with these changes. `configured_sources` is a list, since one
   rendered file holds several sources. `event` holds a hook's event apart from its name. `path`
   names the file behind an invoked skill. `gone` is the time the harness recorded that a file or
@@ -620,7 +621,10 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   `compaction`). `note` says why an entry is unknown, or that only the start of a file was sent.
   `quote` is left for the memory proposals stage. `digest` is hex SHA-256 of the recorded text.
 - **Id.** Each entry's id comes from its kind, source and digest. A repeat of the same text moves
-  `last_seen` and clears `gone`. A new text from the same source is a new entry (11.3).
+  `last_seen` and clears `gone`. A new text from the same source is a new entry (11.3). A
+  removal marks every text of the source gone, earlier ones included.
+- **Unnamed sources.** A file with no path, a skill or server with no name, or hook context with
+  neither hook name nor event is attribution `unknown`, with a note. The text still counts.
 - **Claude records read.** Attachment records only, in place, from the offset the last read
   ended; a partial last line waits. Shapes were checked against Claude Code 2.1.327 (field names
   only):
@@ -629,7 +633,8 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
     map to those scopes, kind `instruction`; `AutoMem` and `AutoMemPinned` map to kind and scope
     `memory`. `startOnly` and `cutForRoom` become a note. The older shape, text with no file,
     is one entry with attribution `unknown`.
-  - `nested_memory`: one file, its content an object with `type` and `content`.
+  - `nested_memory`: one file, its content an object with `type` and `content`. A plain string
+    content is read too, with no scope.
   - `skill_listing`: one `skills` entry per listing text, with the skill count in its note.
   - `invoked_skills`: one `skill` entry per skill, with its file in `path`.
   - `mcp_instructions_delta`: one `mcp` entry per added server; a removed name marks it gone.
@@ -644,15 +649,20 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
 - **Configured sources.** The instruction renderer's state record keeps the configured sources
   it took text from (`roots`). An instruction entry at the record's target whose header digest
   equals the record's digest names those sources. A record from before `roots` names its depth-0
-  files that read. A rendered file whose digest differs names none; the stale-render check is a
+  files that read, except a Claude record, which names none: its roots mix in Claude's own
+  files. A rendered file whose digest differs names none; the stale-render check is a
   later stage.
-- **Limits.** A line over 32 MiB is skipped with a warning. A ledger holds at most 5000 entries.
+- **Limits.** A line over 32 MiB is skipped with a warning. A ledger holds at most 4000 entries
+  besides hooks, and 1000 hook entries, so a busy hook never crowds out instruction files.
   `flightrules.text` returns at most 1 MiB, cut on a character boundary, with the whole size.
-  A transcript that shrinks or is replaced is read again from the start, with a warning. A
+  A transcript that shrinks or is replaced is read again from the start, with a warning; one cut
+  and grown back past the last read between two calls is not seen. A
   record from a Claude Code version outside 2.1.310 to 2.1.327 reads, with a warning.
 - **Hab.** The ledger of a session opens from the transcript its agent's native session id
   names, as the chat view does, and stays readable after the agent leaves. A transcript not
-  written yet is an empty ledger. A session of another harness answers `unavailable`. A ledger
+  written yet is an empty ledger. A session of another harness answers `unavailable`. A read
+  that runs out of the call's time answers with what it read and a warning; the next call goes on
+  from there. A ledger
   unused for 10 minutes, or whose session is gone, is dropped and read again on the next call.
 - **Not built.** Codex, opencode and pi sources; the stale-render check (13); the app and `gff`
   views (11.3).

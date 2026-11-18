@@ -34,10 +34,11 @@ func (s *Session) List(ctx context.Context) (entries []api.FlightRule, warnings 
 }
 
 // Text returns the text of one entry, cut at MaxText, and its whole size. An id the ledger does
-// not hold, or a placeholder, is ErrNoEntry.
+// not hold, or a placeholder, is ErrNoEntry. The source reads without the ledger's lock, so a
+// List goes on meanwhile.
 func (s *Session) Text(ctx context.Context, id string) (text string, size int64, truncated bool, err error) {
 	s.mu.Lock()
-	known := s.l.Has(id)
+	known := s.l.HasText(id)
 	s.mu.Unlock()
 	if !known {
 		return "", 0, false, ErrNoEntry

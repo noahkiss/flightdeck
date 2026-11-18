@@ -91,7 +91,8 @@ const welcomeTime = "2006-01-02T15:04:05.000Z07:00"
 // maxWaitingInput bounds the pane.input calls one connection may have waiting.
 const maxWaitingInput = 256
 
-// maxRunningChat bounds the chat.page calls one connection may have running.
+// maxRunningChat bounds the transcript reads one connection may have running: chat.page,
+// flightrules.list and flightrules.text together.
 const maxRunningChat = 16
 
 // maxRunningOutput bounds the command.output calls one connection may have running. Each holds

@@ -274,7 +274,7 @@ func claudeLine(line []byte, warn func(key, format string, args ...any), observe
 			if !ok {
 				o.Note = joinNote(fmt.Sprintf("Claude Code gave the file type %q, which Flightdeck does not know", f.Type), o.Note)
 			}
-			observe(o)
+			observe(unnamed(o, "instructions", "an instruction file"))
 		}
 		for _, p := range a.Removed {
 			remove(Removal{Kinds: fileKinds, Source: p, At: at})
@@ -290,9 +290,9 @@ func claudeLine(line []byte, warn func(key, format string, args ...any), observe
 			f.Path = a.Path
 		}
 		kind, scope, _ := claudeScope(f.Type)
-		observe(Observation{Kind: kind, Scope: scope, Source: f.Path, Text: f.Content, At: at,
+		observe(unnamed(Observation{Kind: kind, Scope: scope, Source: f.Path, Text: f.Content, At: at,
 			Attribution: api.FlightRecorded,
-			Note:        joinNote("Loaded when the agent worked in this file's folder", fileNote(f))})
+			Note:        joinNote("Loaded when the agent worked in this file's folder", fileNote(f))}, "nested memory", "a nested file"))
 	case "skill_listing":
 		note := fmt.Sprintf("%d skills", a.SkillCount)
 		if a.Shortened {
@@ -302,15 +302,15 @@ func claudeLine(line []byte, warn func(key, format string, args ...any), observe
 			Text: contentText(a.Content), At: at, Attribution: api.FlightRecorded, Note: note})
 	case "invoked_skills":
 		for _, s := range a.Skills {
-			observe(Observation{Kind: api.FlightRuleSkill, Scope: api.FlightScopeSkill, Source: s.Name, Path: s.Path,
-				Text: s.Content, At: at, Attribution: api.FlightRecorded})
+			observe(unnamed(Observation{Kind: api.FlightRuleSkill, Scope: api.FlightScopeSkill, Source: s.Name, Path: s.Path,
+				Text: s.Content, At: at, Attribution: api.FlightRecorded}, "skill", "an invoked skill"))
 		}
 	case "mcp_instructions_delta":
 		for i, name := range a.AddedNames {
 			var block string
 			if i < len(a.AddedBlocks) && json.Unmarshal(a.AddedBlocks[i], &block) == nil {
-				observe(Observation{Kind: api.FlightRuleMCP, Scope: api.FlightScopeMCP, Source: name, Text: block,
-					At: at, Attribution: api.FlightRecorded})
+				observe(unnamed(Observation{Kind: api.FlightRuleMCP, Scope: api.FlightScopeMCP, Source: name, Text: block,
+					At: at, Attribution: api.FlightRecorded}, "mcp server", "MCP server instructions"))
 				continue
 			}
 			observe(Observation{Kind: api.FlightRuleMCP, Scope: api.FlightScopeMCP, Source: name, Placeholder: true,
@@ -338,6 +338,17 @@ func claudeLine(line []byte, warn func(key, format string, args ...any), observe
 		warn("attachment:"+a.Type, "Claude Code recorded %q attachments; the ledger shows them as placeholders", a.Type)
 		observe(placeholder(a.Type, at))
 	}
+}
+
+// unnamed makes an observation whose record named no source an unknown one: the text reached
+// the agent, but nothing proves where it came from.
+func unnamed(o Observation, source, what string) Observation {
+	if o.Source != "" {
+		return o
+	}
+	o.Source, o.Attribution = source, api.FlightUnknown
+	o.Note = joinNote(fmt.Sprintf("Claude Code recorded %s without naming it", what), o.Note)
+	return o
 }
 
 // placeholder is the entry of an attachment type the ledger does not read.

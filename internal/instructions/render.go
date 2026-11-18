@@ -544,9 +544,10 @@ func ReadRendered(stateDir string, h Harness) (r Rendered, ok bool, err error) {
 		return Rendered{}, false, fmt.Errorf("%s: %w", Env{StateDir: stateDir}.RecordPath(h), err)
 	}
 	r = Rendered{Target: rec.Target, Digest: rec.Digest, Sources: rec.Roots}
-	if len(r.Sources) == 0 {
-		// A record from before roots were kept: its root files read. For Claude these may
-		// include its own native files, which were expanded without output.
+	if len(r.Sources) == 0 && h != Claude {
+		// A record from before roots were kept: its root files that read. Not for Claude:
+		// there the roots also hold Claude's own files, expanded without output, and nothing
+		// tells them apart.
 		for _, v := range rec.Sources {
 			if v.Depth == 0 && v.Marker == Read {
 				r.Sources = append(r.Sources, v.Path)

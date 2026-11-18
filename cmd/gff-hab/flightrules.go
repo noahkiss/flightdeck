@@ -37,7 +37,8 @@ type sessionLedger struct {
 	used            time.Time
 }
 
-// source builds the ledger source of a harness, or nil when it has none yet.
+// source builds the ledger source of a harness, or nil when it has none yet. A new harness's
+// source is one more case here.
 func (f *flightRulesService) source(harness, path string) (flightrules.Source, func(string, string) []string) {
 	switch harness {
 	case detect.KindClaude:
@@ -76,7 +77,7 @@ func (f *flightRulesService) ledger(id string) (*sessionLedger, error) {
 		sl.used = now
 		return sl, nil
 	}
-	if harness != detect.KindClaude {
+	if src, _ := f.source(harness, ""); src == nil {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs %s, which has no flight rules reader yet", id, harness)
 	}
 	path, err := f.find(harness, native)
@@ -115,7 +116,12 @@ func (f *flightRulesService) List(ctx context.Context, p api.FlightRulesParams) 
 		return out, nil
 	}
 	out.Entries, out.Warnings, err = sl.s.List(ctx)
-	if err != nil {
+	switch {
+	case err != nil && ctx.Err() != nil:
+		// A long transcript's first read ran out of time. The source keeps its place, so the
+		// next list goes on from there; this one answers with what it read.
+		out.Warnings = append(out.Warnings, "the transcript was not read to the end in time; list again for the rest")
+	case err != nil:
 		return api.FlightRules{}, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", p.Session, err)
 	}
 	return out, nil

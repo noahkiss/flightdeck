@@ -74,6 +74,14 @@ func TestReadRenderedOldRecord(t *testing.T) {
 	if err != nil || !ok || r.Target != "/x/AGENTS.md" || !slices.Equal(r.Sources, []string{"/a.md"}) {
 		t.Errorf("%+v %v %v", r, ok, err)
 	}
+	// A Claude record from then names nothing: its roots mix in Claude's own files.
+	claude := strings.Replace(data, `"codex"`, `"claude"`, 1)
+	if err := os.WriteFile(filepath.Join(state, "instructions", "claude.json"), []byte(claude), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok, err := instructions.ReadRendered(state, instructions.Claude); err != nil || !ok || len(r.Sources) != 0 {
+		t.Errorf("old claude record: %+v %v %v", r, ok, err)
+	}
 	if _, ok, err := instructions.ReadRendered(state, instructions.Pi); ok || err != nil {
 		t.Errorf("no record: %v %v", ok, err)
 	}

@@ -14,14 +14,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// MaxEntries bounds one session's ledger. Past it, new entries are dropped with a warning; a
-// repeat of a known entry still updates it.
-const MaxEntries = 5000
+// MaxEntries bounds one session's ledger, hook entries apart. Past it, new entries are dropped
+// with a warning; a repeat of a known entry still updates it.
+const MaxEntries = 4000
+
+// MaxHookEntries bounds a ledger's hook entries on their own: a hook whose text changes on every
+// call fills this, never the room for instruction files.
+const MaxHookEntries = 1000
 
 // MaxText bounds what Text returns.
 const MaxText = 1 << 20
@@ -61,7 +66,7 @@ type Source interface {
 	// records were replaced calls l.Reset first and reads them again.
 	Update(ctx context.Context, l *Ledger) error
 	// Text returns the text of the observation whose entry id is id, read again from the
-	// records, or ErrNoEntry.
+	// records, or ErrNoEntry. It may run at the same time as Update.
 	Text(ctx context.Context, id string) (string, error)
 }
 
@@ -99,6 +104,7 @@ type Ledger struct {
 	entries  []*api.FlightRule
 	byID     map[string]*api.FlightRule
 	latest   map[string]*api.FlightRule // by kind and source: the newest entry of the source
+	hooks    int                        // hook entries, counted against MaxHookEntries
 	warnings []string
 	warned   map[string]bool
 }
@@ -115,6 +121,7 @@ func (l *Ledger) Reset() {
 	l.entries = nil
 	l.byID = map[string]*api.FlightRule{}
 	l.latest = map[string]*api.FlightRule{}
+	l.hooks = 0
 	l.warnings = nil
 	l.warned = map[string]bool{}
 }
@@ -144,9 +151,17 @@ func (l *Ledger) Observe(o Observation) {
 		l.latest[sourceKey(e.Kind, e.Source)] = e
 		return
 	}
-	if len(l.entries) >= MaxEntries {
-		l.Warn("full", "the ledger holds %d entries; later ones are left out", MaxEntries)
+	if o.Kind == api.FlightRuleHook {
+		if l.hooks >= MaxHookEntries {
+			l.Warn("full-hooks", "the ledger holds %d hook entries; later ones are left out", MaxHookEntries)
+			return
+		}
+	} else if len(l.entries)-l.hooks >= MaxEntries {
+		l.Warn("full", "the ledger holds %d entries besides hooks; later ones are left out", MaxEntries)
 		return
+	}
+	if o.Kind == api.FlightRuleHook {
+		l.hooks++
 	}
 	e := &api.FlightRule{
 		ID: id, Kind: o.Kind, Scope: o.Scope, Source: o.Source, Event: o.Event, Path: o.Path,
@@ -169,14 +184,15 @@ func (l *Ledger) Observe(o Observation) {
 	l.latest[sourceKey(e.Kind, e.Source)] = e
 }
 
-// Remove marks the newest entry of a source gone.
+// Remove marks every entry of a source gone: its newest text and any earlier one.
 func (l *Ledger) Remove(r Removal) {
-	for _, k := range r.Kinds {
-		if e := l.latest[sourceKey(k, r.Source)]; e != nil && e.Gone == "" {
-			e.Gone = r.At
-			if e.Gone == "" {
-				e.Gone = e.LastSeen
-			}
+	for _, e := range l.entries {
+		if e.Source != r.Source || e.Gone != "" || !slices.Contains(r.Kinds, e.Kind) {
+			continue
+		}
+		e.Gone = r.At
+		if e.Gone == "" {
+			e.Gone = e.LastSeen
 		}
 	}
 }
@@ -195,8 +211,8 @@ func (l *Ledger) Entries() []api.FlightRule {
 // Warnings returns a copy of the warnings, in the order they were raised.
 func (l *Ledger) Warnings() []string { return append([]string(nil), l.warnings...) }
 
-// Has says whether the ledger holds an entry with id.
-func (l *Ledger) Has(id string) bool { return l.byID[id] != nil }
+// HasText says whether the ledger holds an entry with id that has text: a placeholder has none.
+func (l *Ledger) HasText(id string) bool { e := l.byID[id]; return e != nil && e.Digest != "" }
 
 // Truncate cuts text to at most n bytes on a character boundary.
 func Truncate(text string, n int) (string, bool) {
