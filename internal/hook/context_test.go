@@ -30,7 +30,7 @@ type contextFixture struct {
 // fixture's output for the text the hab answers (logbook.md 11.3), and the hab's context handler
 // is asked only at a context event, after the sink took the envelope.
 func TestContextFixtures(t *testing.T) {
-	for _, h := range []string{"claude", "codex", "opencode"} {
+	for _, h := range []string{"claude", "codex"} {
 		t.Run(h, func(t *testing.T) {
 			b, err := os.ReadFile(filepath.Join("testdata", "context", h+".json"))
 			if err != nil {
@@ -91,7 +91,7 @@ func TestContextFixtures(t *testing.T) {
 					t.Errorf("case %d (%s): asked %v", i, c.Event, asked)
 				}
 				mu.Unlock()
-				if c.Output != "" && h != "opencode" && !json.Valid([]byte(c.Output)) {
+				if c.Output != "" && !json.Valid([]byte(c.Output)) {
 					t.Errorf("case %d: output is not JSON", i)
 				}
 			}
@@ -124,10 +124,6 @@ func TestContextHabDown(t *testing.T) {
 	}
 	if got := run("claude", "SessionStart", `{"session_id":"s","cwd":"/work/app"}`, fb); got != string(ContextOutput("claude", "SessionStart", "brief from the file\n")) {
 		t.Fatalf("claude brief from the file: %q", got)
-	}
-	// opencode's brief goes through its server (logbook.md 11.4): its hook never reads the file.
-	if got := run("opencode", "session.created", `{"type":"session.created","properties":{"info":{"id":"ses_1"}}}`, fb); got != "" {
-		t.Fatalf("opencode brief from the file: %q", got)
 	}
 	if len(dirs) != 1 || dirs[0] != "/work/app" {
 		t.Fatalf("folders %q", dirs)
@@ -162,11 +158,6 @@ func TestContextEvents(t *testing.T) {
 		if got != c.want || ok != c.ok {
 			t.Errorf("%s %s: %q %v", c.h, c.ev, got, ok)
 		}
-	}
-	// The opencode plugin only posts events: gff-hab adds the brief through the server.
-	js, _ := Config("opencode", "")
-	if strings.Contains(js, "client.session") || strings.Contains(js, "noReply") || !strings.Contains(js, `stdout: "ignore"`) {
-		t.Errorf("the opencode plugin still adds the brief:\n%s", js)
 	}
 }
 

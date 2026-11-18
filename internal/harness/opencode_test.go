@@ -108,6 +108,15 @@ func TestOpencodeServerRequest(t *testing.T) {
 	}
 }
 
+// TestOpencodeHookDropped: opencode state comes from its server only, so a hook post (from an
+// old plugin) is dropped as an unknown event and changes nothing.
+func TestOpencodeHookDropped(t *testing.T) {
+	env := Envelope{Harness: "opencode", Event: "session.created", T: 1, N: 1, Payload: json.RawMessage(`{"type":"session.created","properties":{"sessionID":"ses_1"}}`)}
+	if _, err := Normalise(env); !errors.Is(err, ErrUnknownEvent) {
+		t.Fatalf("opencode hook post: %v", err)
+	}
+}
+
 func bigString(n int) []byte {
 	b := make([]byte, n)
 	for i := range b {

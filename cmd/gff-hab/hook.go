@@ -38,7 +38,7 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	stamp := fs.Int64("t", 0, "the event's time in ms since the Unix epoch, when the caller stamps it (default: now)")
-	print := fs.String("print", "", "print the hook config for this harness (claude, codex, opencode) and exit")
+	print := fs.String("print", "", "print the hook config for this harness (claude, codex) and exit")
 	command := fs.String("command", "gff-hab", "with -print: how the harness should run gff-hab")
 	wait := fs.Bool("wait", false, "for claude and codex PermissionRequest: wait for the app's answer when gff-hab holds the hook, and print it")
 	// -context was a flag of the context nudge before it asked at every context event; a config

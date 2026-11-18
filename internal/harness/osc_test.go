@@ -551,6 +551,12 @@ func TestHooksMissing(t *testing.T) {
 	if st, _ := s.Get("p"); st.Hooks != "" {
 		t.Fatalf("marked although a hook arrived: %+v", st)
 	}
+	// opencode has no hooks (its server gives its state): a hookless turn never marks it.
+	s.Report("o", progstatus.Report{State: "working", App: "opencode"}, 1000, true)
+	s.Report("o", progstatus.Report{State: "done", App: "opencode"}, 2000, true)
+	if st, _ := s.Get("o"); st.Hooks != "" || st.State != api.AgentStatusDone {
+		t.Fatalf("opencode after a turn: %+v", st)
+	}
 	// A turn that passes precedence after a hook arrived: the owner's interrupt key resets the
 	// turn, so the next OSC turn is not dropped. The hook that arrived still counts.
 	s3 := newTestStore(&events)

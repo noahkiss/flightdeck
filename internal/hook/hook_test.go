@@ -112,12 +112,11 @@ func TestRunPostsEnvelope(t *testing.T) {
 		t.Fatalf("envelope %+v", e)
 	}
 
-	// The event named on the command line wins; opencode's event type is read when none is.
-	Run(ctx, Invocation{Harness: "codex", Event: "SessionStart", Stdin: strings.NewReader(`{"session_id":"x"}`), Getenv: env(map[string]string{Env: Addr(sock, tok)})})
-	Run(ctx, Invocation{Harness: "opencode", T: 777, Stdin: strings.NewReader(`{"type":"session.idle","properties":{}}`), Getenv: env(map[string]string{Env: Addr(sock, tok)})})
+	// The event named on the command line wins; the caller's -t stamps the envelope.
+	Run(ctx, Invocation{Harness: "codex", Event: "SessionStart", T: 777, Stdin: strings.NewReader(`{"session_id":"x","hook_event_name":"Stop"}`), Getenv: env(map[string]string{Env: Addr(sock, tok)})})
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	if len(rec.got) != 3 || rec.got[1].Event != "SessionStart" || rec.got[2].Event != "session.idle" || rec.got[2].T != 777 {
+	if len(rec.got) != 2 || rec.got[1].Event != "SessionStart" || rec.got[1].T != 777 {
 		t.Fatalf("events %+v", rec.got)
 	}
 }
@@ -251,9 +250,9 @@ func TestConfig(t *testing.T) {
 	if !strings.Contains(out, `h='/opt/my tools/gff-hab'`) {
 		t.Errorf("command with a space is not quoted:\n%s", out)
 	}
-	js, err := Config("opencode", "")
-	if err != nil || !strings.Contains(js, `"hook", "-t", String(Date.now()), "opencode", event.type`) || !strings.Contains(js, "permission.asked") {
-		t.Errorf("opencode plugin: %v\n%s", err, js)
+	// opencode has no hook config: gff-hab follows its server.
+	if _, err := Config("opencode", ""); err == nil || !strings.Contains(err.Error(), "follows the server") {
+		t.Errorf("config for opencode: %v", err)
 	}
 	if _, err := Config("nonesuch", ""); err == nil {
 		t.Error("config for an unknown harness")
