@@ -149,6 +149,9 @@ type Cell struct {
 	// which a client skips when it draws.
 	Wide, Spacer bool
 	Style        Style
+	// Link is the URI of the OSC 8 hyperlink the cell is part of; empty for none. A parser that
+	// does not keep links leaves it empty.
+	Link string
 }
 
 // Screen is the active screen as cells, row by row: the cell at column x of row y is

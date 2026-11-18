@@ -470,6 +470,10 @@ func (f *fakeTimer) fire(t *testing.T) {
 	}
 }
 
+// paneParser is the pane parser of the gff that startGFF runs. A test that needs libghostty's
+// cells sets it, and sets it back when it ends.
+var paneParser vt.Parser = vt.Fake{}
+
 // gff is the client under test, run in this process.
 type gff struct {
 	rec   *recorder
@@ -506,7 +510,7 @@ func startGFFRec(t *testing.T, h *hab, hst *host, rec *recorder, split Split, pa
 	}
 	g := &gff{rec: rec, conn: conn, host: hst, timer: &fakeTimer{c: make(chan time.Time)}, done: make(chan error, 1)}
 	go func() {
-		g.done <- Run(ctx, Config{Conn: conn, Parser: vt.Fake{}, Panes: panes, Split: split,
+		g.done <- Run(ctx, Config{Conn: conn, Parser: paneParser, Panes: panes, Split: split,
 			In: hst.inR, Out: hst, Size: hst.size, Resized: hst.resized,
 			NewTimer: func() Timer { return g.timer }, Logf: t.Logf})
 	}()

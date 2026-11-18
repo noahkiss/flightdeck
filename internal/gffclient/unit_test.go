@@ -295,7 +295,7 @@ func TestCanvas(t *testing.T) {
 	s.Cells[3] = vt.Cell{Spacer: true}
 	var c canvas
 	c.resize(3, 1)
-	c.pane(&s, rect{0, 0, 3, 1}, false)
+	c.pane(&s, rect{0, 0, 3, 1}, false, "p")
 	var out bytes.Buffer
 	c.flush(&out)
 	if !strings.Contains(out.String(), "a") || strings.Contains(out.String(), "界") {
@@ -303,14 +303,14 @@ func TestCanvas(t *testing.T) {
 	}
 	out.Reset()
 	c.clear()
-	c.pane(&s, rect{0, 0, 3, 1}, false)
+	c.pane(&s, rect{0, 0, 3, 1}, false, "p")
 	c.flush(&out)
 	if out.Len() != 0 {
 		t.Errorf("an unchanged frame wrote %q", out.String())
 	}
 	s.Cells[0].Text = "b"
 	c.clear()
-	c.pane(&s, rect{0, 0, 3, 1}, false)
+	c.pane(&s, rect{0, 0, 3, 1}, false, "p")
 	c.flush(&out)
 	if got := out.String(); got != "\x1b[1;1Hb" {
 		t.Errorf("one changed cell wrote %q", got)

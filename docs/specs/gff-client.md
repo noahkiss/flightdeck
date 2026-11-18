@@ -183,8 +183,9 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
   straight to the host terminal. It starts from a `snapshot-vt` (`hab-logic-api.md` 5.5, Q6).
   It leaves pass-through the moment a bar, a split or a resize would need composing.
 - **Host terminal features.** `gff` asks the host terminal for the kitty keyboard protocol, mouse
-  reporting, bracketed paste, OSC 8 links, styled underlines and true colour, and falls back when
-  the host lacks one.
+  reporting, bracketed paste, styled underlines and true colour, and falls back when the host
+  lacks one. It writes a pane's OSC 8 links to the host around the linked cells; a host without
+  links ignores the sequence and shows the text (3.4).
 - **Terminal title.** `gff` sets the host window title to `<host> · <workspace> | <pane title>`.
   An empty part drops with its separator.
 - **Theme.** Chrome uses theme tokens. The default theme maps the tokens to the host terminal's
@@ -213,9 +214,10 @@ single-hab view; the workspace with several habs, tabs, the sidebar and the stat
 default keymap is modes with Ctrl leaders (8.4).
 
 **Parser.** libghostty through `internal/vt` (3.2, 15.1). `vt.Terminal.ReadScreen` gives the
-composed view the active screen as cells: each cell's grapheme, width and style (palette colours
-stay indexes, so they draw in the host's own theme), plus the cursor and whether it shows.
-libghostty reads them through its render state; `vt.Fake` gives text in the default style.
+composed view the active screen as cells: each cell's grapheme, width, style (palette colours
+stay indexes, so they draw in the host's own theme) and OSC 8 link URI, plus the cursor and
+whether it shows. libghostty reads them through its render state, and a linked cell's URI
+through a grid reference; `vt.Fake` gives text in the default style and no links.
 
 **Layout.** Built as one row or column of panes: side by side with a separator column, or
 top to bottom (`-split columns|rows`). Nested splits and stacks came later (5.4); `-split`
@@ -250,6 +252,16 @@ the view is composed.
 - On exit gff sets back every mode it or a pane set, and leaves the alternate screen the way
   the pane entered it (1049, 1047 or 47). After pass-through the screen keeps what the pane
   drew.
+
+**Links (OSC 8).** The composed view keeps a pane's hyperlinks, as tmux does. Each cell carries
+the URI of its link. gff opens a link on the host (`OSC 8 ; id=<id> ; <URI> ST`) before the
+first cell of a linked run and closes it (`OSC 8 ; ; ST`) before the next cell that is not in
+the same link. It also closes the link before each cursor move and at the end of each frame.
+So a link ends at a line end, at a pane's edge, before a separator or frame, and before
+another pane's cells. Like tmux, gff gives each link its own id, made from the pane and the URI:
+cells of one link join on hover, and the same URI in two panes stays two links. A URI with a
+control byte, or longer than 4 KiB, draws as plain text. In pass-through the pane's own OSC 8
+sequences reach the host unchanged.
 
 **Terminal queries.** gff sends no query of its own to the host terminal, and its parsers never
 answer one: the `vt` wrapper gives libghostty no reply callback. In pass-through, a filter runs
@@ -347,6 +359,9 @@ request, and a debounce timer the test fires.
 | `TestCrashRestoresTerminal` | The `gff` binary in a pty, composed, killed with SIGQUIT (no deferred call runs, as in a panic): the guard puts back the terminal's settings and leaves the alternate screen |
 | `TestNewSnapshotResetsModes` | A new snapshot at a size that no longer fits ends pass-through; the mode reset comes before the composed view |
 | `TestRestoreLeavesAltScreen`, `TestResetPaneModes` | Exit leaves the alternate screen by 1049, 1047 or 47, as the pane entered it; the reset holds 2026, modifyOtherKeys and the G0 charset |
+| `TestCanvasLinks` | The canvas opens a link with its id right before the linked cells and closes it at a run's end, a line end, a pane's edge and a frame's end; the same URI in two panes gets two ids; a URI with a control byte is no link |
+| `TestLinkSurvivesComposing` (`-tags ghostty`) | Two panes side by side, one prints an OSC 8 link: the host output wraps exactly the linked cells in the link, and opens no other |
+| `TestReadScreenLinks` (`internal/vt/ghostty`) | libghostty's cells carry their link URI, also after a `snapshot-vt` restore |
 | `TestSplitsRedrawAfterResize` | The `gff` binary in a pty starts vim and a full-screen script side by side, each at its view's size; after the terminal resizes, both draw at their new sizes and gff composes them; detach exits 0. Skips without vim |
 | Unit tests | The filter from any read split, a long string streams, the key reader (legacy, kitty and modifyOtherKeys prefix, key releases and modifier keys after the prefix, split reads), the layout, the canvas writes only changed cells and clips a wide cell |
 
@@ -359,6 +374,7 @@ request, and a debounce timer the test fires.
 | Kitty graphics and other APC strings are dropped in pass-through | The host would answer them; images are a later stage |
 | Window titles | Built: pane OSC 0/2 titles appear in frames and the configurable host title follows focus |
 | The cursor style (DECSCUSR) is not mirrored in the composed view | Cosmetic |
+| A link's OSC 8 id from the program is not kept: libghostty's API gives the URI only, so gff makes the id from the pane and the URI. Two links with one URI in one pane join on hover | They lead to the same place |
 | With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
 | A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |

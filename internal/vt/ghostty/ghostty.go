@@ -412,6 +412,9 @@ func (t *terminal) ReadScreen(dst *vt.Screen) error {
 				return err
 			}
 			c.Text = string(text)
+			if linked, _ := raw.HasHyperlink(); linked {
+				c.Link = t.linkAt(x, y)
+			}
 			if styled, _ := raw.HasStyling(); styled {
 				st, err := t.rc.Style()
 				if err != nil {
@@ -430,6 +433,20 @@ func (t *terminal) ReadScreen(dst *vt.Screen) error {
 		dst.CursorX, dst.CursorY = int(cur.ViewportX), int(cur.ViewportY)
 	}
 	return nil
+}
+
+// linkAt returns the hyperlink URI of the viewport cell at x, y, or "" when libghostty cannot
+// say. libghostty keeps the link's OSC 8 id too, but its API gives only the URI.
+func (t *terminal) linkAt(x, y int) string {
+	ref, err := t.t.GridRef(libghostty.Point{Tag: libghostty.PointTagViewport, X: uint16(x), Y: uint32(y)})
+	if err != nil {
+		return ""
+	}
+	uri, err := ref.HyperlinkURI()
+	if err != nil {
+		return ""
+	}
+	return uri
 }
 
 func vtStyle(s *libghostty.Style) vt.Style {

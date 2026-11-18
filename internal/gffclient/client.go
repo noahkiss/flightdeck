@@ -1203,7 +1203,7 @@ func (c *client) compose(a arrangement) {
 					}
 					v.dirty = false
 				}
-				c.canvas.pane(&v.screen, s.content, !v.h.online || !v.live())
+				c.canvas.pane(&v.screen, s.content, !v.h.online || !v.live(), v.h.label+"\x00"+v.spec.ID)
 				if focused && paneFocus && v.live() && v.screen.CursorVisible {
 					x := v.screen.CursorX - clampOrigin(v.screen.CursorX, v.screen.Cols, s.content.w)
 					y := v.screen.CursorY - clampOrigin(v.screen.CursorY, v.screen.Rows, s.content.h)
