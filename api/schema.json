@@ -8769,6 +8769,10 @@
             "items": {
               "$ref": "#/components/schemas/DetectProc"
             }
+          },
+          "timed_out": {
+            "type": "boolean",
+            "description": "The process budget ran out before this part was read: the answer is partial, and Error names the step."
           }
         },
         "required": [

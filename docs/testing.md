@@ -242,7 +242,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/cmdmarks/ && go test -race -run TestCommandMarks ./cmd/gff-hab` | OSC 133 commands |
 | `go test -race ./internal/opencode/ ./internal/harness/ ./internal/transcript/ && go test -race -run Opencode ./cmd/gff-hab` | opencode 2.x |
 | `go test ./internal/detect/...` | Detection tests |
-| `go test -race -run 'TestDetectExplain\|TestExplainVerdict\|TestRegionTail' ./cmd/gff-hab` | `detect.explain` end to end |
+| `go test -race -run 'TestDetectExplain\|TestExplainVerdict\|TestExplainPartial\|TestSetProcessErr\|TestRegionTail' ./cmd/gff-hab` | `detect.explain` end to end |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests |
 | `go test ./internal/link/` | Holder link end-to-end tests |
 | `go test -race ./internal/habconn/` | Connection library suite over the Unix socket, an in-process pipe, `SSHTransport` with a stand-in `ssh`, and the real `ssh` to localhost |

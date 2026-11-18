@@ -670,6 +670,9 @@ type DetectProcess struct {
 	MatchPID  int          `json:"match_pid,omitempty" doc:"The process that matched."`
 	MatchName string       `json:"match_name,omitempty" doc:"The name that matched."`
 	Error     string       `json:"error,omitempty" doc:"Why the group or its processes could not be read."`
+	// TimedOut was added within revision 1, so a client tells a partial answer from a group
+	// that is not there without reading Error (harness-adapters.md, Detection).
+	TimedOut bool `json:"timed_out,omitempty" doc:"The process budget ran out before this part was read: the answer is partial, and Error names the step."`
 }
 
 // DetectProc is one process of the foreground group.

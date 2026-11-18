@@ -199,8 +199,10 @@ Built choices (`internal/detect`, `gff-hab manifests`):
   - **Process budget.** The process part (the foreground query and the listing) gets 5 s of the
     call's 15 s. When the budget runs out, the process part's error names the step that timed
     out (`foreground group: timed out after 5s`, or `processes of group N: timed out after
-    5s`). The call still answers the rest: the agent state, and the screen part with the
-    manifest the agent state picks. If the call itself passes 15 s, the reply is an
+    5s`), and the part sets `timed_out`. A client reads `timed_out` to tell a partial answer
+    from a whole one; it never matches the error text. Any other process error, such as a
+    terminal with no foreground group, leaves `timed_out` unset. The call still answers the
+    rest: the agent state, and the screen part with the manifest the agent state picks. If the call itself passes 15 s, the reply is an
     `unavailable` error 500 ms later, never silence. A client waits longer than 15 s:
     `gff-hab detect explain` waits 20 s by default (`-timeout`).
   - **No reused pids.** Where `ps` runs, it runs three times: all groups, then names, then argv
