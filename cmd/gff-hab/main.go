@@ -116,6 +116,7 @@ import (
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/hoststats"
+	"github.com/noahkiss/flightdeck/internal/instructions"
 	"github.com/noahkiss/flightdeck/internal/lbcli"
 	"github.com/noahkiss/flightdeck/internal/lbextra"
 	"github.com/noahkiss/flightdeck/internal/lbsync"
@@ -766,7 +767,9 @@ func serve(args []string) error {
 		// Flight rules (instructions-mcp-flight-rules.md 11): the context each session's
 		// harness recorded, read from the same transcripts.
 		flightRules = &flightRulesService{session: store.Session, agent: agents.Get, find: findTranscript,
-			state: absState, now: time.Now, ledgers: map[string]*sessionLedger{}}
+			opencode: ocs.Client, codexHome: codexHome, home: home,
+			opencodeDir: instructions.EnvFrom(os.Getenv, home, absState).OpencodeDir,
+			state:       absState, now: time.Now, ledgers: map[string]*sessionLedger{}}
 		caps = append(caps, "flight-rules")
 		// Rich content (app.md 4.7): references to files a session showed or touched.
 		contentSvc, err := newContent(dir, content.Config{

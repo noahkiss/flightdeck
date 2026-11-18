@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/instructions"
 )
 
 // MaxEntries bounds one session's ledger, hook entries apart. Past it, new entries are dropped
@@ -61,6 +62,8 @@ type Removal struct {
 	Kinds  []api.FlightRuleKind
 	Source string
 	At     string
+	// ID, when set, marks only that entry gone, not every text of the source.
+	ID string
 }
 
 // Source reads one session's records for one harness.
@@ -113,7 +116,9 @@ type Ledger struct {
 	byID     map[string]*api.FlightRule
 	latest   map[string]*api.FlightRule // by kind and source: the newest entry of the source
 	hooks    int                        // hook entries, counted against MaxHookEntries
+	headers  map[string]string          // by entry id: the render digest in a rendered file's header
 	warnings []string
+	warnKeys []string // the key of each warning, for Unwarn
 	warned   map[string]bool
 }
 
@@ -130,7 +135,8 @@ func (l *Ledger) Reset() {
 	l.byID = map[string]*api.FlightRule{}
 	l.latest = map[string]*api.FlightRule{}
 	l.hooks = 0
-	l.warnings = nil
+	l.headers = map[string]string{}
+	l.warnings, l.warnKeys = nil, nil
 	l.warned = map[string]bool{}
 }
 
@@ -141,6 +147,7 @@ func (l *Ledger) Warn(key, format string, args ...any) {
 	}
 	l.warned[key] = true
 	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+	l.warnKeys = append(l.warnKeys, key)
 }
 
 func sourceKey(kind api.FlightRuleKind, source string) string {
@@ -188,8 +195,13 @@ func (l *Ledger) Observe(o Observation) {
 	} else {
 		e.Digest = Digest(o.Text)
 		e.Bytes = int64(len(o.Text))
-		if l.Configured != nil && (o.Kind == api.FlightRuleInstruction || o.Kind == api.FlightRuleMemory) {
-			e.ConfiguredSources = l.Configured(o.Source, o.Text)
+		if o.Kind == api.FlightRuleInstruction || o.Kind == api.FlightRuleMemory {
+			if l.Configured != nil {
+				e.ConfiguredSources = l.Configured(o.Source, o.Text)
+			}
+			if d := instructions.HeaderDigest(o.Text); d != "" {
+				l.headers[id] = d
+			}
 		}
 	}
 	if e.Attribution == "" {
@@ -203,13 +215,27 @@ func (l *Ledger) Observe(o Observation) {
 // Remove marks every entry of a source gone: its newest text and any earlier one.
 func (l *Ledger) Remove(r Removal) {
 	for _, e := range l.entries {
-		if e.Source != r.Source || e.Gone != "" || !slices.Contains(r.Kinds, e.Kind) {
+		if e.Source != r.Source || e.Gone != "" || !slices.Contains(r.Kinds, e.Kind) || r.ID != "" && e.ID != r.ID {
 			continue
 		}
 		e.Gone = r.At
 		if e.Gone == "" {
 			e.Gone = e.LastSeen
 		}
+	}
+}
+
+// MarkStale sets each entry's stale flag against the last render of one target (spec 11.4):
+// the newest entry of the target's source, still in the context, whose header digest differs
+// from the render's. Every other entry is not stale. ok false clears every flag.
+func (l *Ledger) MarkStale(r instructions.Rendered, ok bool) {
+	for _, e := range l.entries {
+		e.Stale = false
+		d := l.headers[e.ID]
+		if !ok || d == "" || e.Gone != "" || l.latest[sourceKey(e.Kind, e.Source)] != e {
+			continue
+		}
+		e.Stale = d != r.Digest && samePath(e.Source, r.Target)
 	}
 }
 
@@ -223,6 +249,20 @@ func (l *Ledger) Entries() []api.FlightRule {
 	}
 	return out
 }
+
+// Unwarn drops the warning of a key, for a condition that has passed.
+func (l *Ledger) Unwarn(key string) {
+	if !l.warned[key] {
+		return
+	}
+	delete(l.warned, key)
+	i := slices.Index(l.warnKeys, key)
+	l.warnings = slices.Delete(l.warnings, i, i+1)
+	l.warnKeys = slices.Delete(l.warnKeys, i, i+1)
+}
+
+// Has says whether the ledger holds an entry with id.
+func (l *Ledger) Has(id string) bool { return l.byID[id] != nil }
 
 // Warnings returns a copy of the warnings, in the order they were raised.
 func (l *Ledger) Warnings() []string { return append([]string(nil), l.warnings...) }

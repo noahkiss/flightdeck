@@ -59,6 +59,34 @@ func TestConfiguredSources(t *testing.T) {
 	}
 }
 
+// TestClaudeStale: the fixture's rendered rules file carries render ab…. A render record of
+// another digest makes that entry stale; the matching one does not.
+func TestClaudeStale(t *testing.T) {
+	const target = "/home/user/.claude/rules/flightdeck.md"
+	state := t.TempDir()
+	stale := func() (out []string) {
+		s := NewSession(NewClaude(fixture), nil).CheckStale(Current(state, instructions.Claude))
+		es, _, err := s.List(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range es {
+			if e.Stale {
+				out = append(out, e.Source)
+			}
+		}
+		return out
+	}
+	writeRenderRecord(t, state, instructions.Claude, target, strings.Repeat("cd", 32))
+	if got := stale(); !slices.Equal(got, []string{target}) {
+		t.Errorf("older copy loaded: stale %v", got)
+	}
+	writeRenderRecord(t, state, instructions.Claude, target, strings.Repeat("ab", 32))
+	if got := stale(); len(got) != 0 {
+		t.Errorf("current copy loaded: stale %v", got)
+	}
+}
+
 // TestReadRenderedOldRecord: a record written before roots were kept names its root files that
 // read.
 func TestReadRenderedOldRecord(t *testing.T) {

@@ -1,13 +1,11 @@
 package flightrules
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"strconv"
@@ -22,9 +20,6 @@ const (
 	ClaudeTestedMin = "2.1.310"
 	ClaudeTestedMax = "2.1.327"
 )
-
-// maxLine bounds one transcript line. A longer line is skipped with a warning.
-var maxLine = 32 << 20
 
 // claudeIgnored lists attachment types that carry conversation, tool or UI state rather than
 // context the harness loaded: files the user mentioned, queued input, reminders, hook results
@@ -68,49 +63,21 @@ const dataNote = "Claude Code recorded the data it writes this block from; the d
 // skills, MCP server instructions and hook context (spec 10, 11.2).
 type Claude struct {
 	path string
-	info fs.FileInfo // the file read so far, to see a replacement
-	off  int64       // bytes read: the end of the last complete line
+	t    tail
 }
 
 // NewClaude returns a source that reads the Claude Code transcript at path. A file that does not
 // exist yet reads as an empty ledger.
-func NewClaude(path string) *Claude { return &Claude{path: path} }
+func NewClaude(path string) *Claude {
+	return &Claude{path: path, t: tail{path: path, what: "transcript"}}
+}
 
 // Harness implements Source.
 func (c *Claude) Harness() string { return "claude" }
 
 // Update implements Source: it reads the lines added since the last call.
 func (c *Claude) Update(ctx context.Context, l *Ledger) error {
-	f, err := os.Open(c.path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	if c.info != nil && (!os.SameFile(c.info, info) || info.Size() < c.off) {
-		l.Reset()
-		c.off = 0
-		l.Warn("replaced", "the transcript was replaced or cut; the ledger was read again from the start")
-	}
-	c.info = info
-	if _, err := f.Seek(c.off, io.SeekStart); err != nil {
-		return err
-	}
-	n, err := scanLines(ctx, f, c.off, func(line []byte, end int64) {
-		if line == nil {
-			l.Warn("oversize:"+strconv.FormatInt(end, 10), "a transcript line ending at byte %d is longer than %d bytes and was skipped", end, maxLine)
-			return
-		}
-		claudeLine(line, l.Warn, l.Observe, l.Remove)
-	})
-	c.off = n
-	return err
+	return c.t.read(ctx, l, nil, func(line []byte) { claudeLine(line, l.Warn, l.Observe, l.Remove) })
 }
 
 // Text implements Source: it reads the transcript again and returns the first text whose entry
@@ -147,47 +114,6 @@ func (c *Claude) Text(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	return "", ErrNoEntry
-}
-
-// scanLines reads complete lines from r, which starts at offset from, and calls fn with each
-// line and the offset just past its newline; fn gets nil for a line over maxLine. It returns
-// the offset after the last complete line: a partial last line is left for the next read.
-func scanLines(ctx context.Context, r io.Reader, from int64, fn func(line []byte, end int64)) (int64, error) {
-	br := bufio.NewReaderSize(r, 256<<10)
-	off := from
-	var buf []byte
-	var n int64 // bytes of the current line so far
-	over := false
-	for {
-		if err := ctx.Err(); err != nil {
-			return off, err
-		}
-		chunk, err := br.ReadSlice('\n')
-		n += int64(len(chunk))
-		if !over {
-			if len(buf)+len(chunk) > maxLine {
-				over, buf = true, nil
-			} else {
-				buf = append(buf, chunk...)
-			}
-		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		if err == io.EOF {
-			return off, nil // a partial last line waits for the next read
-		}
-		if err != nil {
-			return off, err
-		}
-		off += n
-		if over {
-			fn(nil, off)
-		} else {
-			fn(buf, off)
-		}
-		buf, n, over = buf[:0], 0, false
-	}
 }
 
 // claudeRecord is the part of a transcript record the ledger reads.
@@ -490,13 +416,18 @@ func joinNote(a, b string) string {
 
 // checkClaudeVersion warns once per version outside the tested range.
 func checkClaudeVersion(v string, warn func(key, format string, args ...any)) {
-	lo, ok1 := compareVersions(v, ClaudeTestedMin)
-	hi, ok2 := compareVersions(v, ClaudeTestedMax)
+	checkVersion("Claude Code", v, ClaudeTestedMin, ClaudeTestedMax, warn)
+}
+
+// checkVersion warns once per version of a harness outside its tested range.
+func checkVersion(harness, v, lo, hi string, warn func(key, format string, args ...any)) {
+	a, ok1 := compareVersions(v, lo)
+	b, ok2 := compareVersions(v, hi)
 	switch {
 	case !ok1 || !ok2:
-		warn("version:"+v, "Claude Code version %q is unreadable; reading its records in tolerant mode", v)
-	case lo < 0 || hi > 0:
-		warn("version:"+v, "Claude Code %s is outside the tested range %s to %s; reading its records in tolerant mode", v, ClaudeTestedMin, ClaudeTestedMax)
+		warn("version:"+v, "%s version %q is unreadable; reading its records in tolerant mode", harness, v)
+	case a < 0 || b > 0:
+		warn("version:"+v, "%s %s is outside the tested range %s to %s; reading its records in tolerant mode", harness, v, lo, hi)
 	}
 }
 

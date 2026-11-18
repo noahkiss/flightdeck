@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,39 @@ func TestFlightRulesService(t *testing.T) {
 	}
 	if _, err := f.List(ctx, api.FlightRulesParams{Session: "s4"}); kind(err) != api.ErrorKindUnavailable {
 		t.Errorf("pi: %v", err)
+	}
+
+	// A Codex session reads its rollout; an opencode session whose server is not running is
+	// an empty ledger with a warning.
+	rollout, err := os.ReadFile(filepath.Join("..", "..", "internal", "flightrules", "testdata", "codex-0.169.0.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "native-5.jsonl"), rollout, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.codexHome = t.TempDir()
+	agents["p5"], sessions["s5"] = api.AgentState{Harness: "codex", Session: "native-5"}, api.Session{ID: "s5", Pane: "p5"}
+	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s5"}); err != nil || r.Harness != "codex" || len(r.Entries) == 0 {
+		t.Errorf("codex: %+v %v", r, err)
+	}
+	agents["p6"], sessions["s6"] = api.AgentState{Harness: "opencode", Session: "ses_01"}, api.Session{ID: "s6", Pane: "p6"}
+	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s6"}); err != nil || r.Harness != "opencode" || len(r.Entries) != 0 || len(r.Warnings) != 1 {
+		t.Errorf("opencode with no server: %+v %v", r, err)
+	}
+
+	// A render record of another digest than the fixture's rendered rules file makes the
+	// Claude session stale.
+	rec := `{"harness":"claude","target":"/home/user/.claude/rules/flightdeck.md","digest":"` + strings.Repeat("cd", 32) + `","renderer":1,"sources":[]}`
+	if err := os.MkdirAll(filepath.Join(f.state, "instructions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.state, "instructions", "claude.json"), []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agents["p1"] = api.AgentState{Harness: "claude", Session: "native-1"}
+	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s1"}); err != nil || !r.Stale {
+		t.Errorf("stale claude session: stale %v, %v", r.Stale, err)
 	}
 	if _, err := f.List(ctx, api.FlightRulesParams{Session: "nope"}); kind(err) != api.ErrorKindNotFound {
 		t.Errorf("unknown session: %v", err)

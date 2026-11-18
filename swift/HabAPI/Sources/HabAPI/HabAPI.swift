@@ -3891,6 +3891,8 @@ public struct FlightRule: Codable, Sendable, Hashable {
     public var scope: String?
     /// A file path, a hook name, a skill name, an MCP server name, or what the record is when nothing names a source.
     public var source: String
+    /// A file Flightdeck rendered, still in the context, whose loaded copy differs from the last render of the same target: the agent works from an older render. Absent from an older hab.
+    public var stale: Bool?
 
     enum CodingKeys: String, CodingKey {
         case attribution = "attribution"
@@ -3909,9 +3911,10 @@ public struct FlightRule: Codable, Sendable, Hashable {
         case reason = "reason"
         case scope = "scope"
         case source = "source"
+        case stale = "stale"
     }
 
-    public init(attribution: String, bytes: Int, configuredSources: [String]? = nil, count: Int? = nil, digest: String? = nil, event: String? = nil, firstSeen: String, gone: String? = nil, id: String, kind: String, lastSeen: String, note: String? = nil, path: String? = nil, reason: String? = nil, scope: String? = nil, source: String) {
+    public init(attribution: String, bytes: Int, configuredSources: [String]? = nil, count: Int? = nil, digest: String? = nil, event: String? = nil, firstSeen: String, gone: String? = nil, id: String, kind: String, lastSeen: String, note: String? = nil, path: String? = nil, reason: String? = nil, scope: String? = nil, source: String, stale: Bool? = nil) {
         self.attribution = attribution
         self.bytes = bytes
         self.configuredSources = configuredSources
@@ -3928,6 +3931,7 @@ public struct FlightRule: Codable, Sendable, Hashable {
         self.reason = reason
         self.scope = scope
         self.source = source
+        self.stale = stale
     }
 }
 
@@ -3981,6 +3985,8 @@ public struct FlightRules: Codable, Sendable, Hashable {
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     public var session: String
+    /// An entry is stale: the session loaded a rendered file that a later render replaced. Absent from an older hab.
+    public var stale: Bool?
     /// Records the reader could not read, or read as placeholders.
     public var warnings: [String]?
 
@@ -3989,14 +3995,16 @@ public struct FlightRules: Codable, Sendable, Hashable {
         case harness = "harness"
         case seq = "seq"
         case session = "session"
+        case stale = "stale"
         case warnings = "warnings"
     }
 
-    public init(entries: [FlightRule], harness: String? = nil, seq: UInt64, session: String, warnings: [String]? = nil) {
+    public init(entries: [FlightRule], harness: String? = nil, seq: UInt64, session: String, stale: Bool? = nil, warnings: [String]? = nil) {
         self.entries = entries
         self.harness = harness
         self.seq = seq
         self.session = session
+        self.stale = stale
         self.warnings = warnings
     }
 }
