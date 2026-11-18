@@ -21,6 +21,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
 	"github.com/noahkiss/flightdeck/internal/capcomevents"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
+	"github.com/noahkiss/flightdeck/internal/confirm"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/harness"
@@ -79,6 +80,16 @@ type capcomEngine struct {
 	started atomic.Value
 	// personal is the personal tools and the device context (8).
 	personal *capcomPersonal
+	// confirmAction opens a kind action confirmation, and dispatch runs a route call past the
+	// guard once the user confirmed it (9.6, ask). Set in serve before the hook server runs;
+	// nil: an ask call is refused.
+	confirmAction func(ctx context.Context, from string, a api.ConfirmAction, ttl time.Duration, run confirm.ActionRun) (api.Confirmation, error)
+	dispatch      func(ctx context.Context, pane, method string, params json.RawMessage) (json.RawMessage, error)
+	// localJob reads a Capcom job's words as its round holds them now, when the round runs on
+	// this hab (host is this hab's host id); local false for another host's job. Nil: none local.
+	localJob func(host, name string) (words []string, local bool)
+	// turnNow stands in for the link's turn state in tests; nil: the link's.
+	turnNow func() capcomengine.Status
 
 	mu      sync.Mutex
 	session string // the service session's id, while this hab holds the mark
@@ -236,6 +247,8 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		EngineKind:  func() string { return config().Engine },
 		ToolSummary: e.personal.toolSummary,
 		Attribution: e.personal.attribution,
+		EventGate:   e.eventGate,
+		Actions:     e.batchActions,
 		Events:      q,
 	})
 	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, host: s.host, dir: capcomengine.EngineDir(dir),

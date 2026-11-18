@@ -311,7 +311,7 @@ var Enums = map[string][]string{
 	// Sets added for the read tools (capcom.md 4).
 	"ReadHostState": {"ok", "partial", "offline", "update_needed", "error"},
 	// Sets added for confirmations (capcom.md 6.1).
-	"ConfirmKind":   {"start", "setup", "group", "round"},
+	"ConfirmKind":   {"start", "setup", "group", "round", "action"},
 	"ConfirmState":  {"open", "running", "done", "failed", "cancelled", "expired", "unknown"},
 	"ConfirmChoice": {"confirm", "cancel"},
 	// Sets added for Capcom (capcom.md 2.1).
@@ -322,6 +322,7 @@ var Enums = map[string][]string{
 	"RoundCatchUp":     {"once", "skip"},
 	"RoundOnFinish":    {"close", "keep"},
 	"RoundNotify":      {"failures", "always", "never"},
+	"RoundAction":      {"hand_off", "start_session", "set_up_project", "group", "card", "fetch"},
 	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
 	"RoundNoticeKind":  {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
 	// Sets added for watchers (rounds.md 4.4).

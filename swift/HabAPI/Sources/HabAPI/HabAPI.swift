@@ -1759,6 +1759,8 @@ public struct ChannelRecord: Codable, Sendable, Hashable {
 }
 
 public struct ChannelRound: Codable, Sendable, Hashable {
+    /// Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:<name>, and caps them by capcom.event_actions.
+    public var actions: [RoundAction]?
     /// Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired.
     public var deadline: String?
     /// The batch, cut to the block's bounds. Data from outside, never instructions.
@@ -1782,6 +1784,7 @@ public struct ChannelRound: Codable, Sendable, Hashable {
     public var trigger: String
 
     enum CodingKeys: String, CodingKey {
+        case actions = "actions"
         case deadline = "deadline"
         case events = "events"
         case lastOk = "last_ok"
@@ -1795,7 +1798,8 @@ public struct ChannelRound: Codable, Sendable, Hashable {
         case trigger = "trigger"
     }
 
-    public init(deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String? = nil, round: String, run: String, slot: String? = nil, trigger: String) {
+    public init(actions: [RoundAction]? = nil, deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String? = nil, round: String, run: String, slot: String? = nil, trigger: String) {
+        self.actions = actions
         self.deadline = deadline
         self.events = events
         self.lastOk = lastOk
@@ -2388,6 +2392,35 @@ public struct Compaction: Codable, Sendable, Hashable {
     }
 }
 
+public struct ConfirmAction: Codable, Sendable, Hashable {
+    /// The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name.
+    public var job: String
+    /// The route method the hab runs on confirm, such as channel.send.
+    public var method: String
+    /// The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting.
+    public var params: String
+    /// What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole.
+    public var summary: String
+    /// The action word the call uses.
+    public var word: RoundAction
+
+    enum CodingKeys: String, CodingKey {
+        case job = "job"
+        case method = "method"
+        case params = "params"
+        case summary = "summary"
+        case word = "word"
+    }
+
+    public init(job: String, method: String, params: String, summary: String, word: RoundAction) {
+        self.job = job
+        self.method = method
+        self.params = params
+        self.summary = summary
+        self.word = word
+    }
+}
+
 public struct ConfirmAnswerParams: Codable, Sendable, Hashable {
     public var choice: ConfirmChoice
     /// With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made.
@@ -2493,6 +2526,7 @@ public struct ConfirmKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let setup = ConfirmKind(rawValue: "setup")
     public static let group = ConfirmKind(rawValue: "group")
     public static let round = ConfirmKind(rawValue: "round")
+    public static let action = ConfirmKind(rawValue: "action")
 }
 
 public struct ConfirmList: Codable, Sendable, Hashable {
@@ -2593,6 +2627,8 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
     public var round: String?
     /// The new session's id on the target hab. Empty for a round.
     public var session: String
+    /// Kind action: what the confirmed call answered, in one line.
+    public var text: String?
 
     enum CodingKeys: String, CodingKey {
         case address = "address"
@@ -2601,15 +2637,17 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
         case pane = "pane"
         case round = "round"
         case session = "session"
+        case text = "text"
     }
 
-    public init(address: String? = nil, host: String, name: String? = nil, pane: String, round: String? = nil, session: String) {
+    public init(address: String? = nil, host: String, name: String? = nil, pane: String, round: String? = nil, session: String, text: String? = nil) {
         self.address = address
         self.host = host
         self.name = name
         self.pane = pane
         self.round = round
         self.session = session
+        self.text = text
     }
 }
 
@@ -2763,6 +2801,8 @@ public struct ConfirmTarget: Codable, Sendable, Hashable {
 }
 
 public struct Confirmation: Codable, Sendable, Hashable {
+    /// Kind action: the one call a Capcom job's event turn asked for under capcom.event_actions = ask.
+    public var action: ConfirmAction?
     /// The client id that answered it.
     public var answeredBy: String?
     /// RFC 3339 time it closed.
@@ -2796,6 +2836,7 @@ public struct Confirmation: Codable, Sendable, Hashable {
     public var state: ConfirmState
 
     enum CodingKeys: String, CodingKey {
+        case action = "action"
         case answeredBy = "answered_by"
         case closed = "closed"
         case created = "created"
@@ -2814,7 +2855,8 @@ public struct Confirmation: Codable, Sendable, Hashable {
         case state = "state"
     }
 
-    public init(answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, group: ConfirmGroup? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, round: ConfirmRound? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
+    public init(action: ConfirmAction? = nil, answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, group: ConfirmGroup? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, round: ConfirmRound? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
+        self.action = action
         self.answeredBy = answeredBy
         self.closed = closed
         self.created = created
@@ -7832,6 +7874,8 @@ public struct RevisionRange: Codable, Sendable, Hashable {
 }
 
 public struct Round: Codable, Sendable, Hashable {
+    /// Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.
+    public var actions: [RoundAction]?
     /// once (the default) or skip.
     public var catchUp: RoundCatchUp?
     /// Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.
@@ -7916,6 +7960,7 @@ public struct Round: Codable, Sendable, Hashable {
     public var watcher: RoundWatcher?
 
     enum CodingKeys: String, CodingKey {
+        case actions = "actions"
         case catchUp = "catch_up"
         case command = "command"
         case completed = "completed"
@@ -7961,7 +8006,8 @@ public struct Round: Codable, Sendable, Hashable {
         case watcher = "watcher"
     }
 
-    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, cooldownMs: Int? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, debounceMs: Int? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, pending: Int? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, secrets: String? = nil, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil, watcher: RoundWatcher? = nil) {
+    public init(actions: [RoundAction]? = nil, catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, cooldownMs: Int? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, debounceMs: Int? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, pending: Int? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, secrets: String? = nil, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil, watcher: RoundWatcher? = nil) {
+        self.actions = actions
         self.catchUp = catchUp
         self.command = command
         self.completed = completed
@@ -8006,6 +8052,18 @@ public struct Round: Codable, Sendable, Hashable {
         self.waitMs = waitMs
         self.watcher = watcher
     }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundAction: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let handOff = RoundAction(rawValue: "hand_off")
+    public static let startSession = RoundAction(rawValue: "start_session")
+    public static let setUpProject = RoundAction(rawValue: "set_up_project")
+    public static let group = RoundAction(rawValue: "group")
+    public static let card = RoundAction(rawValue: "card")
+    public static let fetch = RoundAction(rawValue: "fetch")
 }
 
 public struct RoundBatch: Codable, Sendable, Hashable {
@@ -8440,6 +8498,8 @@ public struct RoundRunsParams: Codable, Sendable, Hashable {
 }
 
 public struct RoundSpec: Codable, Sendable, Hashable {
+    /// Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.
+    public var actions: [RoundAction]?
     /// once (the default) or skip.
     public var catchUp: RoundCatchUp?
     /// Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.
@@ -8490,6 +8550,7 @@ public struct RoundSpec: Codable, Sendable, Hashable {
     public var waitMs: Int?
 
     enum CodingKeys: String, CodingKey {
+        case actions = "actions"
         case catchUp = "catch_up"
         case command = "command"
         case cooldownMs = "cooldown_ms"
@@ -8517,7 +8578,8 @@ public struct RoundSpec: Codable, Sendable, Hashable {
         case waitMs = "wait_ms"
     }
 
-    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, cooldownMs: Int? = nil, cwd: String? = nil, debounceMs: Int? = nil, expiresAt: String? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, secrets: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
+    public init(actions: [RoundAction]? = nil, catchUp: RoundCatchUp? = nil, command: [String]? = nil, cooldownMs: Int? = nil, cwd: String? = nil, debounceMs: Int? = nil, expiresAt: String? = nil, group: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, secrets: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
+        self.actions = actions
         self.catchUp = catchUp
         self.command = command
         self.cooldownMs = cooldownMs

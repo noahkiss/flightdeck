@@ -106,10 +106,53 @@ func TestLinkBatchWaitsForTurn(t *testing.T) {
 	if m := e.next(); m.Type != TInput || !strings.HasPrefix(inputID(m), "b") {
 		t.Fatalf("after the turn: %+v", m)
 	}
-	// A reconnect while a user turn runs keeps it a user turn.
+	// A reconnect while a user turn runs keeps it a user turn, when the engine says so (an origin
+	// of user alone is not enough: TestLinkUserTurnFailsClosed).
 	e2, _ := h.connect()
 	r := readyMsg()
-	r.Turn = json.RawMessage(`{"turn":"t2","origin":"user"}`)
+	r.Turn = json.RawMessage(`{"turn":"t2","origin":"user","user":true}`)
 	e2.send(r)
 	waitFor(t, "the user turn after a reconnect", func() bool { s := h.link.Status(); return s.Turn == "t2" && s.UserTurn })
+}
+
+// Two released batches go one at a time: the second waits until the first one's turn started
+// and ended, so they never share a turn (capcom-service.md 9.8).
+func TestLinkOneBatchPerTurn(t *testing.T) {
+	var q *capcomevents.Queue
+	h := newHarnessWith(t, func(c *LinkConfig) {
+		var err error
+		q, err = capcomevents.Open(capcomevents.Config{Path: filepath.Join(t.TempDir(), capcomevents.File), Now: c.Now, After: c.After,
+			Limits: func() capcomevents.Limits {
+				return capcomevents.Limits{DailyTurns: 100, BatchWindow: time.Hour, BatchMax: 1}
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Events = q
+	})
+	q.Start()
+	for _, text := range []string{"job one", "job two"} {
+		ev, _, _ := h.thread.Add(capcomthread.Item{Kind: capcomthread.KindEvent, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: text})
+		q.Add(capcomevents.Event{Item: ev.ID, Solo: true})
+	}
+	if n := len(q.Released()); n != 2 {
+		t.Fatalf("released %d", n)
+	}
+	e, _ := h.connect()
+	e.send(readyMsg())
+	first := e.next()
+	if first.Type != TInput || !strings.HasPrefix(inputID(first), "b") {
+		t.Fatalf("first %+v", first)
+	}
+	h.link.Kick()
+	select {
+	case m := <-e.in:
+		t.Fatalf("a second batch went before the first one's turn: %+v", m)
+	case <-time.After(150 * time.Millisecond):
+	}
+	e.send(Message{Type: TTurnStarted, Turn: StrTurn("t1"), Origin: "event", Items: []string{inputID(first)}})
+	e.send(Message{Type: TTurnEnded, Turn: StrTurn("t1"), Result: ResultSuccess})
+	if m := e.next(); m.Type != TInput || !strings.HasPrefix(inputID(m), "b") || inputID(m) == inputID(first) {
+		t.Fatalf("second %+v", m)
+	}
 }

@@ -18,6 +18,10 @@ type RoundOnFinish string
 // RoundNotify says which run ends raise a notification (rounds.md 10.2).
 type RoundNotify string
 
+// RoundAction is an action word of a Capcom job (capcom-service.md 9.6): what the event turn
+// that takes the round's message may do. The client sends it, so the set is closed.
+type RoundAction string
+
 // RoundRunState is a run's state (rounds.md 7.1). The server sends it, so the set is open: a
 // client shows an unknown word as given.
 type RoundRunState string
@@ -106,6 +110,8 @@ type RoundSpec struct {
 	CooldownMS int64  `json:"cooldown_ms,omitempty" doc:"Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."`
 	// Secrets was added by stage 11 (rounds.md 4.4).
 	Secrets string `json:"secrets,omitempty" doc:"Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."`
+	// Actions was added by Part 14 stage A9 (capcom-service.md 9.6, rounds.md 3).
+	Actions []RoundAction `json:"actions,omitempty" doc:"Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by."`
 }
 
 // Round is one round as the hab holds it: its definition and where its schedule stands.

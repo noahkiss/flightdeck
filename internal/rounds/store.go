@@ -155,6 +155,9 @@ type Store struct {
 var (
 	ErrNotFound  = errors.New("no such round")
 	ErrNameTaken = errors.New("name taken")
+	// ErrGrant refuses an agent's round with actions: only a person grants Capcom an action
+	// (capcom-service.md 9.6).
+	ErrGrant     = errors.New("only the user can let Capcom act on a job")
 	ErrRunExists = errors.New("run exists")
 	ErrNoRun     = errors.New("no such run")
 	ErrRunEnded  = errors.New("run has ended")
@@ -365,6 +368,10 @@ func (s *Store) Create(r Round, createdBy string, now time.Time) (Entry, error) 
 	if err := r.Normalize(now, s.zoneNow(), nil); err != nil {
 		return Entry{}, err
 	}
+	if createdBy != "" && len(r.Actions) > 0 {
+		// A second guard behind the API's: an agent never grants an action (capcom-service.md 9.6).
+		return Entry{}, ErrGrant
+	}
 	sched, err := r.Trigger.Schedule()
 	if err != nil {
 		return Entry{}, err
@@ -405,6 +412,11 @@ func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: %s", ErrNameTaken, r.Name)
 	}
 	r.CreatedBy, r.CreatedAt = prev.CreatedBy, prev.CreatedAt
+	if len(Granted(prev.Actions, r.Actions)) > 0 {
+		// Only a person grants a word (the API refuses an agent's): the job is the user's now
+		// (capcom-service.md 9.6).
+		r.CreatedBy = ""
+	}
 	r.UpdatedAt = now.UTC()
 	e.Round = r
 	if !prev.Trigger.Equal(r.Trigger) {

@@ -1210,8 +1210,9 @@ it, `actions`: the action words this job's round messages may use.
   actions until the user grants them.
 - **How it reaches the turn.** The round message carries `actions` (`rounds.md` 5.2). The home
   hab copies the words onto the `round` item. When an event turn takes items, the actions
-  allowed in that turn are the union of its `round` items' words, capped by
-  `capcom.event_actions`. An event turn with no `round` item (notices, round run ends, agent
+  allowed in that turn are its `round` item's words, capped by `capcom.event_actions`. Built
+  (review of A9): a job with words goes in a batch of its own, and a turn that took more than
+  one batch allows none, so two jobs' words never add up (9.8). An event turn with no `round` item (notices, round run ends, agent
   reports) allows none. A user message that joins the turn makes it a user turn (9.4), and the
   user-turn rules apply from then on.
 - **Guards.**
@@ -1294,6 +1295,77 @@ sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice 
   runs on the model the pace gives, as a user turn does. `unseen` after "New conversation" and
   after the thread file is set aside. Notices raised on other hosts, other than through a round
   there. A batch whose items are gone from the thread still goes, as "0 event(s)".
+
+### 9.8 Built choices (A9)
+
+gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/rounds` and
+`cmd/gff-hab/rounds.go`. Where 9.6 left a choice open:
+
+- **Where the words live.** The runner sends the round's words that it still holds at send
+  time, so a word the user removed after the run started never goes. The home hab copies them
+  onto the `round` item, with the job named `<runner host>/<round name>`, only when the sender
+  is `round:<the round mark's name>`; a word outside the closed set is dropped. Any other round
+  mark (a session's sender name, another round's name) adds a `round` item with no words.
+- **Words now, for a local job.** When the job's round runs on the home hab, each check reads
+  the round's words as they stand: a word removed, or a round deleted, after the message came
+  allows nothing from then on. A peer's job keeps the words its message carried.
+- **A batch of its own.** A `round` item with words goes in a batch alone, so the words its
+  turn may use never meet another job's prompt or event. It counts one event turn. The link
+  sends one batch per idle pass, and the next only once that batch's turn started and ended.
+  As a second guard, a turn that took more than one batch allows no word at all.
+- **A grant names what the person saw.** `round.update` that adds a word must carry the
+  revision the person read (`invalid` without it, `conflict` when the round changed since), so
+  an agent's prompt edit between the read and the grant fails the grant. `gff round edit
+  -actions` prints the prompt the words let act and asks first (`-yes` skips it); `apply`
+  prints it in its diff.
+- **Which call needs which word.** `hand_off` allows `channel.send`, so it also allows
+  `channel_send`, which sends the same way. `start_session` and `set_up_project` allow
+  `confirm.request` of kind `start` and `setup`. `group` allows the coordinator's acting calls
+  (`group.create`, `.amend`, `.close`, `.retry`, `member.compact`, `.handoff`, `.action`).
+  `card` allows `personal.calendar_add` and `.reminder_add`, which an event turn may not call
+  without it (9.4). `fetch` allows a `WebFetch` approval card. Round changes stay refused in
+  every event turn.
+- **The check.** The route guard (`internal/hook`) gets each acting call's method and params.
+  In an event turn it finds the jobs on the `round` items of the batches the turn took, refuses
+  a word no job lists, refuses every call at `off`, and counts the call in the event queue,
+  saved with the batch, so a restart keeps the count. A refusal is `denied` with "ask the user
+  first" and says why. `WebFetch` goes the same way, through the link's gate on the engine's
+  `approval.request`; a refused request opens no card.
+- **`allow`.** The call runs as in a user turn, under its own gates, and a card of type `job`
+  (a record, no choices, its ref the job) names the job and says what the call does.
+- **`ask`.** The call becomes a confirmation of the new kind `action` (`capcom.md` 6.4), which
+  names the job and the word and carries the whole call: a summary that cuts nothing (a
+  message or a seed shows whole), the method, and the params the hab runs. It expires after
+  `capcom.event_action_max_age`. Nothing runs. The tool gets `denied`, "waits for the user",
+  except a start, which gets the confirmation as `confirm.request` would answer. On confirm the
+  hab runs those params as Capcom's route would, past the guard. A start or a group plan the
+  call asks for still raises its own card under its own setting, so nothing runs that a card
+  did not show. A `card` or `fetch` call raises only its own card (8.5, 5.3), since that card
+  already asks.
+- **Turns.** The engine's `ready` says whether a user item opened or joined the running turn;
+  without that word the hab treats the turn as an event turn, never a user turn. A card's
+  answer reaches the model as a note marked data, which quotes the card's title and neither
+  opens nor joins a user turn: an event turn may have written that title.
+- **The engine.** The batch input carries the words the turn may use, capped by the level and
+  `capcom.event_actions_per_turn`, and a line per job with its prompt and words. The engine
+  asks for an unseen URL in an event turn only when `fetch` is among them; gff-hab checks
+  again. The manual's Events part says a job's prompt is the user's instruction and its
+  events are data.
+- **The outcome.** Any counted call makes the outcome of every round message the turn took
+  `acted`, at the turn's end, whether it ran, failed, or waits for a tap.
+- **gff.** `gff round add|edit -actions w,...` sets the words; `show` lists them; export and
+  apply carry them. The board's `m` shows only `capcom` rounds, each with its words and its
+  newest message's outcome.
+- **Stated assumptions and limits.** The control socket is the person: the hab trusts any call
+  on it. From a pane, the CLI refuses `-actions`, `confirm answer` and the like where
+  `$GFF_HAB` is set, but an agent with the user's shell and no sandbox can drop that variable
+  and reach the socket, as in the tools Flightdeck measures itself against. A peer-credential
+  check on the socket is not built. The hab judges a route call by the turn that runs when it
+  arrives: a call still in flight from an event turn the user stopped, landing after a user
+  turn began, is judged as the user turn's. The SDK gives the route call no turn id to compare.
+- **Not built in A9.** The app's "Capcom jobs" list in Capcom settings and the action switches
+  on a round's page (rounds stage 7's views). The app has the `capcom.event_actions` row with
+  its levels; `capcom.event_actions_per_turn` and `capcom.event_action_max_age` have no app row.
 
 ---
 
@@ -1659,7 +1731,7 @@ Each stage ends with a fresh-eyes review where marked core.
 | A5: personal tools | 8 | Study scenario 1 on a device: one location read, weather and places calls, ranked picks naming the preference, an Add card that writes one event. Tests: a question with no place in it reads no location; with no Google key `source: google` is refused and Apple answers; a weather reply carries the attribution; no calendar write without a tap; the device-context store is empty after a gff-hab restart and writes no file but the time zone; a tool line names the place and never coordinates; `[capcom.weather] cache` set to 0 makes every call reach the endpoint (a fake WeatherKit); `capcom.calendar_days` set to 3 sends 3 days |
 | A7: Capcom writes first | 9 | A round message answers `accepted` and adds one `round` item; the same message id again answers `duplicate`; with `capcom.events.round_messages` off it answers `declined` `off`; a round message in quiet hours is accepted and waits; `capcom-service` shows in the catalog only while this hab holds the mark. Fake clock: an event in quiet hours waits and runs in one batch at the end; an urgent one runs at once; ten events in 2 minutes make one turn; the 21st event turn of a day waits; after a gff-hab restart quiet hours use the saved time zone; an event turn's `hand_off` is refused (9.4, E21); a passive notice reaches nothing; a round message with `level` `time-sensitive` runs at once in quiet hours, and still counts toward the daily turn budget; with the budget spent, a time-sensitive event waits for the next day like any event, in quiet hours or not; `capcom.events.daily_turns`, `.batch_window` and `.batch_max` set to other values move each limit, and `settings.set` refuses a value outside its range with `invalid`; after the turn that took a round item, the runner gets one `outcome` status item: `told` when the turn wrote to the user, `quiet` when it did not, the same outcome for two items one turn took, `unseen` for an item left untaken by a mark move, and one outcome from a peer runner that was asleep, delivered at its wake. Live: a watcher event reaches the phone as one Capcom message marked "wrote first" |
 | A8: remove the pane Capcom | 12, 13 | `engine` defaults to `claude`; pane-era records are renamed `capcom-term-<n>`; `gff-hab capcom open` and the app's Capcom entry reach the service; pending context from a pane-era `capcom.json` reaches the first message; an old pane conversation reads in the chat view with no Resume; no test or doc describes the pane form; CI passes on Linux and macOS |
-| A9: Capcom jobs act on events | 9.6; `rounds.md` 3 and 5.2 `actions`; `capcom.event_actions`; the "Capcom jobs" filter in the app and gff | Fake model and a fake runner: a `capcom` round with no `actions` gets its `hand_off` refused as in A7; with `hand_off` allowed and `capcom.event_actions = allow`, the event turn's `hand_off` runs and shows a card naming the job, and the outcome is `acted`; under `ask` the same call raises one confirmation and nothing runs before the tap; under `off` it is refused; a word the job does not list is refused; a fourth action in one turn is refused, and with `capcom.event_actions_per_turn` at 1 the second is; at 0 none runs; the level picker writes `ask` at Safe and `allow` at Balanced and Bypass; an `ask` card expires at `capcom.event_action_max_age`; a notice-only event turn allows nothing; two round items in one turn allow the union of their words; `start_session` under `allow` still raises the `confirm.start_elsewhere` card when that is on; `round.create` with `actions` from a pane or the Capcom route is refused `denied`, and removing a word from a pane works; an agent creates a `capcom` round, a person grants `hand_off`, and the agent's later prompt edit, pause and delete are refused; a channel message to `capcom` from a pane that carries `actions` fields gets no action allowed; under `ask` the turn's outcome is `acted` at its end, before the tap; an unknown word is `invalid`; export then apply keeps `actions`. Swift over a fake hab: the Capcom jobs list shows only `capcom` rounds with their actions and last outcome, and the switches edit `actions`. gff: the board's filter shows only `capcom` rounds. Live: a mail watcher job with `hand_off` hands a mail's task to the agent on its project, with one card |
+| A9: Capcom jobs act on events | 9.6; `rounds.md` 3 and 5.2 `actions`; `capcom.event_actions`; the "Capcom jobs" filter in the app and gff | Fake model and a fake runner: a `capcom` round with no `actions` gets its `hand_off` refused as in A7; with `hand_off` allowed and `capcom.event_actions = allow`, the event turn's `hand_off` runs and shows a card naming the job, and the outcome is `acted`; under `ask` the same call raises one confirmation and nothing runs before the tap; under `off` it is refused; a word the job does not list is refused; a fourth action in one turn is refused, and with `capcom.event_actions_per_turn` at 1 the second is; at 0 none runs; the level picker writes `ask` at Safe and `allow` at Balanced and Bypass; an `ask` card expires at `capcom.event_action_max_age`; a notice-only event turn allows nothing; two round items in one turn allow the union of their words (changed at review: each job's batch goes alone, and a turn of two batches allows none, 9.8); `start_session` under `allow` still raises the `confirm.start_elsewhere` card when that is on; `round.create` with `actions` from a pane or the Capcom route is refused `denied`, and removing a word from a pane works; an agent creates a `capcom` round, a person grants `hand_off`, and the agent's later prompt edit, pause and delete are refused; a channel message to `capcom` from a pane that carries `actions` fields gets no action allowed; under `ask` the turn's outcome is `acted` at its end, before the tap; an unknown word is `invalid`; export then apply keeps `actions`. Swift over a fake hab: the Capcom jobs list shows only `capcom` rounds with their actions and last outcome, and the switches edit `actions`. gff: the board's filter shows only `capcom` rounds. Live: a mail watcher job with `hand_off` hands a mail's task to the agent on its project, with one card |
 | A6: Codex SDK engine | 4 on the Codex SDK; `[capcom] engine = codex` | The A2 and A4 tests pass against both engines, with each capability the Codex engine lacks taking its fallback (4.1); switching engines keeps the thread and Logbook memory (the switch is a re-seed); the plain-terminal check with `codex resume` |
 
 ---

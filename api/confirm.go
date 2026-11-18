@@ -62,6 +62,18 @@ type ConfirmResult struct {
 	Round   string `json:"round,omitempty" doc:"Kind round: the new round's id on the runner."`
 	// Address comes with the spawn verb. Optional, so a newer client reads an older hab.
 	Address string `json:"address,omitempty" doc:"The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."`
+	// Text comes with Part 14 stage A9 (capcom-service.md 9.6).
+	Text string `json:"text,omitempty" doc:"Kind action: what the confirmed call answered, in one line."`
+}
+
+// ConfirmAction is the one call a Capcom job's event turn asked for while capcom.event_actions is
+// ask (capcom-service.md 9.6). Only gff-hab raises it: confirm.request refuses kind action.
+type ConfirmAction struct {
+	Job     string      `json:"job" doc:"The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name."`
+	Word    RoundAction `json:"word" doc:"The action word the call uses."`
+	Summary string      `json:"summary" doc:"What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole."`
+	Method  string      `json:"method" doc:"The route method the hab runs on confirm, such as channel.send."`
+	Params  string      `json:"params" doc:"The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting."`
 }
 
 // Confirmation is one start, set-up or round an agent asked for: an open question to the user, or,
@@ -76,8 +88,11 @@ type Confirmation struct {
 	Setup  *ConfirmSetup `json:"setup,omitempty" doc:"Kind setup: the set-up as it will run."`
 	// Group comes with stage B3 of agent groups (groups.md 3.2). Optional, so an older client
 	// shows a kind group card as an action.
-	Group      *ConfirmGroup  `json:"group,omitempty" doc:"Kind group: the plan the confirmation starts, or the change an amend adds."`
-	Round      *ConfirmRound  `json:"round,omitempty" doc:"Kind round: the round as it will be made, or was."`
+	Group *ConfirmGroup `json:"group,omitempty" doc:"Kind group: the plan the confirmation starts, or the change an amend adds."`
+	Round *ConfirmRound `json:"round,omitempty" doc:"Kind round: the round as it will be made, or was."`
+	// Action comes with Part 14 stage A9 (capcom-service.md 9.6). Optional, so an older client
+	// shows a kind action card as an action.
+	Action     *ConfirmAction `json:"action,omitempty" doc:"Kind action: the one call a Capcom job's event turn asked for under capcom.event_actions = ask."`
 	Created    string         `json:"created" doc:"RFC 3339 time the hab took the request."`
 	ExpiresAt  string         `json:"expires_at,omitempty" doc:"RFC 3339 time an open confirmation expires, 60 minutes after it opened. An expired one never runs."`
 	Closed     string         `json:"closed,omitempty" doc:"RFC 3339 time it closed."`

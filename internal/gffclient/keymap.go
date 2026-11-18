@@ -97,6 +97,8 @@ const (
 	actRunSessions = "run-sessions"
 	actRunNow      = "run-now"
 	actPause       = "pause"
+	// actCapcomJobs shows only capcom rounds on the board: the Capcom jobs (capcom-service.md 9.6).
+	actCapcomJobs = "capcom-jobs"
 	// Focus moves by direction, as zellij's Alt keys. Left and right fall to the previous or
 	// next tab at the edge (zellij's MoveFocusOrTab); up and down stop there.
 	actFocusLeft  = "focus-left"
@@ -121,7 +123,7 @@ var actionLabels = map[string]string{
 	actOpenTab: "open in new tab", actNew: "new", actRename: "rename", actClose: "close", actFilter: "filter",
 	actGroup: "group", actFocusLeft: "move focus", actFocusRight: "move focus", actFocusUp: "move focus",
 	actFocusDown: "move focus", actMoveTabLeft: "move tab", actMoveTabRight: "move tab",
-	actRunSessions: "run sessions", actRunNow: "run now", actPause: "pause",
+	actRunSessions: "run sessions", actRunNow: "run now", actPause: "pause", actCapcomJobs: "Capcom jobs",
 }
 
 func init() {
@@ -136,7 +138,7 @@ func modeAllows(m Mode, act string) bool {
 	switch act {
 	case actUp, actDown, actOpen, actOpenTab, actNew, actRename, actClose, actFilter, actGroup:
 		return m == ModeSidebar || m == ModeBoard && (act == actUp || act == actDown || act == actOpen || act == actOpenTab)
-	case actRunNow, actPause:
+	case actRunNow, actPause, actCapcomJobs:
 		return m == ModeBoard
 	case actRunSessions:
 		return m != ModeLocked
@@ -344,7 +346,7 @@ func DefaultKeymap() *Keymap {
 		"n", actNew, "r", actRename, "x", actClose, "/", actFilter, "p", actGroup, "R", actRunSessions,
 		"esc", actBack, "q", actBack)
 	add(ModeBoard, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
-		"r", actRunNow, "p", actPause, "R", actRunSessions, "esc", actBack, "q", actBack)
+		"r", actRunNow, "p", actPause, "m", actCapcomJobs, "R", actRunSessions, "esc", actBack, "q", actBack)
 	return km
 }
 

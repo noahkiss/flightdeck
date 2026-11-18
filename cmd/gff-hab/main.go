@@ -1994,7 +1994,24 @@ func serve(args []string) error {
 	if capcomEng != nil {
 		hooks.SetEngine(capcomEng)
 		hooks.SetPersonal(capcomEng.personal.hook)
-		hooks.SetGuard(capcomEng.routeGuard) // an event turn reads and messages only (9.4)
+		// An event turn reads and messages only (9.4), unless a Capcom job allows the call (9.6);
+		// under ask the call becomes a confirmation, run past the guard once confirmed.
+		capcomEng.confirmAction = cfSvc.RequestAction
+		if roundsSvc != nil {
+			// A job whose round runs here: its words as the round holds them now.
+			capcomEng.localJob = func(host, name string) ([]string, bool) {
+				if host != *hostID {
+					return nil, false
+				}
+				r, err := roundsSvc.Get(api.RoundRef{Name: name})
+				if err != nil || r.Mode != api.RoundModeCapcom {
+					return nil, true // gone: it allows nothing now
+				}
+				return actionWords(r.Actions), true
+			}
+		}
+		capcomEng.dispatch = hooks.Dispatch
+		hooks.SetGuard(capcomEng.routeGuard)
 	}
 	var names renamer
 	if sessionActs != nil {
@@ -2009,7 +2026,8 @@ func serve(args []string) error {
 	hooks.SetConfirm(confirmHook(store, cfSvc, folders.fill))
 	if groupsSvc != nil {
 		hooks.SetGroups(groupHook(store, groupsSvc, folders.folderOf, func(pane string) bool {
-			return capcomEng != nil && pane == capcomRoute && capcomEng.eventTurn()
+			// The route guard let a Capcom job's group call through, and counted it (9.6).
+			return capcomEng != nil && pane == capcomRoute && capcomEng.eventTurn() && !capcomEng.turnAllows("group")
 		}))
 	}
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote, capcomEng))

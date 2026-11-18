@@ -79,6 +79,7 @@ type workspaceUI struct {
 
 	// Rounds (rounds.go).
 	showRuns bool             // run sessions show; off hides those that do not need the owner
+	jobsOnly bool             // the board's Rounds list shows only capcom rounds (Capcom jobs)
 	rounds   []board.RoundRow // every round on every host, ordered
 	groups   []board.GroupRow // every group on every home host, ordered (groups.go)
 	onRound  bool             // the board's selection is on a round row
@@ -789,6 +790,8 @@ func (u *workspaceUI) key(k key) {
 		}
 	case actRunNow:
 		u.runNow()
+	case actCapcomJobs:
+		u.toggleJobs()
 	case actPause:
 		u.pauseRound()
 	case actRunSessions:

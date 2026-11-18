@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 	"unicode/utf8"
 )
@@ -30,6 +31,39 @@ const (
 // Messages reports whether a mode's run hands a message to a destination instead of starting
 // or using a session (rounds.md 5.2).
 func (m Mode) Messages() bool { return m == ModeCapcom || m == ModeGroup }
+
+// Actions is the closed set of a Capcom job's action words (capcom-service.md 9.6), in the
+// order a round stores them.
+var Actions = []string{"hand_off", "start_session", "set_up_project", "group", "card", "fetch"}
+
+// NormalActions returns words in the order of Actions, each once, or an error naming the first
+// word outside the set.
+func NormalActions(words []string) ([]string, error) {
+	var out []string
+	for _, w := range words {
+		if !slices.Contains(Actions, w) {
+			return nil, fieldErr("actions", "%q is not one of %v", w, Actions)
+		}
+	}
+	for _, a := range Actions {
+		if slices.Contains(words, a) {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+// Granted returns the words of next that prev lacks: what an edit grants (capcom-service.md
+// 9.6). Only a person may grant a word.
+func Granted(prev, next []string) []string {
+	var out []string
+	for _, w := range next {
+		if !slices.Contains(prev, w) && !slices.Contains(out, w) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
 
 // CatchUp says what a round does with slots missed while the runner slept (rounds.md 8.2).
 type CatchUp string
@@ -120,6 +154,9 @@ type Round struct {
 	// Secrets names a secret set of the hab's config, for a watch round's watcher (rounds.md
 	// 4.4). Never a value.
 	Secrets string `json:"secrets,omitempty"`
+	// Actions are a Capcom job's action words (capcom-service.md 9.6): capcom rounds only, from
+	// the closed set Actions. Only a person grants one; a grant clears CreatedBy.
+	Actions []string `json:"actions,omitempty"`
 	// MaxRuns completes the round after this many finished runs; 0 is no limit.
 	MaxRuns   int        `json:"max_runs,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -191,6 +228,18 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 	}
 	if t.Kind != TriggerWatch && t.Watch != nil {
 		return fieldErr("trigger", "watch is for a watch trigger only")
+	}
+	if len(r.Actions) > 0 {
+		if r.Mode != ModeCapcom {
+			return fieldErr("actions", "for capcom rounds only")
+		}
+		a, err := NormalActions(r.Actions)
+		if err != nil {
+			return err
+		}
+		r.Actions = a
+	} else {
+		r.Actions = nil
 	}
 	if r.Secrets != "" && t.Kind != TriggerWatch {
 		return fieldErr("secrets", "for watch triggers only")

@@ -288,8 +288,18 @@ func (s *roundsService) roundMark(r rounds.Round, run rounds.Run, capcom bool) a
 	if run.Slot != nil {
 		m.Slot = run.Slot.UTC().Format(time.RFC3339)
 	}
-	if e, ok := s.store.Get(r.ID); ok && e.State.LastOK != nil {
+	e, stored := s.store.Get(r.ID)
+	if stored && e.State.LastOK != nil {
 		m.LastOK = e.State.LastOK.UTC().Format(time.RFC3339)
+	}
+	if capcom && stored {
+		// A Capcom job's words (capcom-service.md 9.6): those the run started with that the
+		// round still has, so a word the user removed since never goes.
+		for _, w := range r.Actions {
+			if slices.Contains(e.Round.Actions, w) {
+				m.Actions = append(m.Actions, api.RoundAction(w))
+			}
+		}
 	}
 	if !capcom {
 		start := time.Now()

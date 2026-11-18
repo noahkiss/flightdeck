@@ -7130,6 +7130,13 @@
       "ChannelRound": {
         "type": "object",
         "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:\u003cname\u003e, and caps them by capcom.event_actions.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
           "deadline": {
             "type": "string",
             "description": "Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired."
@@ -7804,6 +7811,38 @@
           "at"
         ]
       },
+      "ConfirmAction": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name."
+          },
+          "method": {
+            "type": "string",
+            "description": "The route method the hab runs on confirm, such as channel.send."
+          },
+          "params": {
+            "type": "string",
+            "description": "The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting."
+          },
+          "summary": {
+            "type": "string",
+            "description": "What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole."
+          },
+          "word": {
+            "$ref": "#/components/schemas/RoundAction",
+            "description": "The action word the call uses."
+          }
+        },
+        "required": [
+          "job",
+          "word",
+          "summary",
+          "method",
+          "params"
+        ]
+      },
       "ConfirmAnswerParams": {
         "type": "object",
         "properties": {
@@ -7905,7 +7944,8 @@
           "start",
           "setup",
           "group",
-          "round"
+          "round",
+          "action"
         ]
       },
       "ConfirmList": {
@@ -8023,6 +8063,10 @@
           "session": {
             "type": "string",
             "description": "The new session's id on the target hab. Empty for a round."
+          },
+          "text": {
+            "type": "string",
+            "description": "Kind action: what the confirmed call answered, in one line."
           }
         },
         "required": [
@@ -8182,6 +8226,10 @@
       "Confirmation": {
         "type": "object",
         "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ConfirmAction",
+            "description": "Kind action: the one call a Capcom job's event turn asked for under capcom.event_actions = ask."
+          },
           "answered_by": {
             "type": "string",
             "description": "The client id that answered it."
@@ -13632,6 +13680,13 @@
       "Round": {
         "type": "object",
         "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
           "catch_up": {
             "$ref": "#/components/schemas/RoundCatchUp",
             "description": "once (the default) or skip."
@@ -13824,6 +13879,17 @@
           "trigger",
           "created_at",
           "updated_at"
+        ]
+      },
+      "RoundAction": {
+        "type": "string",
+        "x-known-values": [
+          "hand_off",
+          "start_session",
+          "set_up_project",
+          "group",
+          "card",
+          "fetch"
         ]
       },
       "RoundBatch": {
@@ -14265,6 +14331,13 @@
       "RoundSpec": {
         "type": "object",
         "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
           "catch_up": {
             "$ref": "#/components/schemas/RoundCatchUp",
             "description": "once (the default) or skip."

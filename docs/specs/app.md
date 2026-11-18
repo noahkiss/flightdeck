@@ -3509,6 +3509,7 @@ every key, so a change never makes a new key.
 | `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2); B3 reads it on the home hab for each plan and amend; the app row is built (`groups.md` 5.9) | `groups.md` 3.2, 13 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
+| `capcom.event_actions` | Capcom jobs may act | Agents | `"off"`, `"ask"` or `"allow"`; `off` by hand only | `"ask"` | `"allow"` | `"allow"` | Hab, every hab; the Capcom home hab enforces it (A9) | `capcom-service.md` 9.6, 19.1 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
 | `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 |
 
@@ -3563,6 +3564,8 @@ picker never changes them.
 | `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 1 to 1000 | 20 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
 | `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
+| `capcom.event_actions_per_turn` | Capcom job actions in one look, at most | Capcom | integer 0 to 20; 0 allows none | 3 | Hab, the home hab (no app row yet) | `capcom-service.md` 9.6, 19.1 |
+| `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, the home hab (no app row yet) | `capcom-service.md` 9.6, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
 | `group.max_workers` | Workers per lead | Agents | integer 0 to 5 | 2 | Hab, every hab; copied into each member's envelope | `groups.md` 3.3 |
@@ -3778,6 +3781,10 @@ The page is `Views/SettingsViews.swift`.
 - **`gff lb status`** waits for Logbook.
 - **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
   usage thresholds are not sent yet.
+- **Capcom jobs** (`capcom-service.md` 9.6): `capcom.event_actions` is a levelled row, and the
+  hab enforces all three `capcom.event_action*` settings. The "Capcom jobs" list in Capcom
+  settings, with the action switches on a round's page, is not built, and
+  `capcom.event_actions_per_turn` and `capcom.event_action_max_age` have no app row yet.
 
 ---
 

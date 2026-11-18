@@ -47,6 +47,10 @@ func (r *confirmRunner) CheckRound(c api.ConfirmRound) (api.ConfirmRound, error)
 		return c, control.Errorf(api.ErrorKindInvalid, "a round on another host is not a resume or fork round: its target is a session on this hab, so make it here")
 	case len(s.Prompt) > rounds.MaxPromptBytes:
 		return c, control.Errorf(api.ErrorKindInvalid, "prompt: %d bytes; the limit is %d", len(s.Prompt), rounds.MaxPromptBytes)
+	case len(s.Actions) > 0:
+		// An agent asks for this round: the runner's round.create over the link would take
+		// the words as a person's (capcom-service.md 9.6).
+		return c, errGrant("round on " + c.Host)
 	}
 	l, ok := r.link(c.Host)
 	switch {

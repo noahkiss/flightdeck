@@ -67,6 +67,9 @@ interface Turn {
   interrupted: boolean;
   urls: UrlSet; // URLs seen in tool and search results of this turn
   approved: UrlSet; // URLs the user allowed through a card this turn
+  // actions: the words a Capcom job's batch lets an event turn use (9.6). Only an event batch
+  // from gff-hab adds them; with fetch, an unseen URL raises a card that gff-hab may refuse.
+  actions: Set<string>;
   lastContext: number;
   authFailed: boolean;
 }
@@ -208,7 +211,7 @@ export class Engine {
     }
     const ready: Record<string, unknown> = { engine: 'claude', version: ENGINE_VERSION, sdk_version: SDK_VERSION, capabilities: CAPABILITIES };
     // An engine that outlived a gff-hab restart says which turn runs.
-    if (this.turn) ready.turn = { turn: this.turn.id, origin: this.turn.origin };
+    if (this.turn) ready.turn = { turn: this.turn.id, origin: this.turn.origin, user: this.turn.user }; // user: a reconnect knows (9.4)
     return ready;
   }
 
@@ -334,7 +337,8 @@ export class Engine {
     this.untaken.add(msg.uuid!);
     if (isUserKind(item.kind)) this.userUrls.addText(item.text ?? '');
     if (!this.turn) this.beginTurn(this.nextOrigin ?? originOf(item), [item]);
-    else if (opensUserTurn(item.kind)) this.turn.user = true; // a user message joins: a user turn from here (9.4)
+    else if (opensUserTurn(item.kind, item.data)) this.turn.user = true; // a user message joins: a user turn from here (9.4)
+    if (item.kind === 'event') for (const w of item.actions ?? []) this.turn!.actions.add(String(w));
     this.nextOrigin = undefined;
     this.input.push(msg);
   }
@@ -369,11 +373,12 @@ export class Engine {
     this.turn = {
       id: newTurnId(),
       origin,
-      user: items.some((i) => opensUserTurn(i.kind)),
+      user: items.some((i) => opensUserTurn(i.kind, i.data)),
       part: 0,
       interrupted: false,
       urls: new UrlSet(),
       approved: new UrlSet(),
+      actions: new Set(),
       lastContext: 0,
       authFailed: false,
     };
@@ -911,8 +916,9 @@ export class Engine {
     if (url && this.urlSeen(url)) {
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } };
     }
-    if (this.turn && !this.turn.user) {
-      // An event turn asks the user nothing: no card, the call is refused (9.4).
+    if (this.turn && !this.turn.user && !this.turn.actions.has('fetch')) {
+      // An event turn asks the user nothing: no card, the call is refused (9.4), unless a
+      // Capcom job allows fetch (9.6); gff-hab decides that card too.
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: EVENT_FETCH_REFUSAL } };
     }
     return {
@@ -937,7 +943,7 @@ export class Engine {
     const url = String((input as any)?.url ?? '');
     if (url && this.urlSeen(url)) return { behavior: 'allow', updatedInput: input };
     if (!this.turn) return { behavior: 'deny', message: 'No turn is running.' };
-    if (!this.turn.user) return { behavior: 'deny', message: EVENT_FETCH_REFUSAL };
+    if (!this.turn.user && !this.turn.actions.has('fetch')) return { behavior: 'deny', message: EVENT_FETCH_REFUSAL };
     let shown = url;
     try {
       const u = new URL(url);

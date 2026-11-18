@@ -141,6 +141,11 @@ func confirmationCard(c api.Confirmation) string {
 			fmt.Fprintf(&b, "  seed:\n%s\n", indent(s.Seed))
 		}
 	}
+	if a := c.Action; a != nil {
+		// The whole call the hab runs on confirm (capcom-service.md 9.8): nothing is cut.
+		fmt.Fprintf(&b, "  job:       %s\n  word:      %s\n  call:      %s\n", a.Job, a.Word, a.Method)
+		fmt.Fprintf(&b, "  does:\n%s\n  params:\n%s\n", indent(a.Summary), indent(a.Params))
+	}
 	if r := c.Round; r != nil {
 		s := r.Round
 		fmt.Fprintf(&b, "  runner:    %s\n  round:     %s\n  mode:      %s\n  trigger:   %s\n", r.Host, s.Name, orNone(string(s.Mode)), orNone(r.Trigger))

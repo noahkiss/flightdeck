@@ -155,12 +155,21 @@ type InputItem struct {
 	// SendNow runs the item now on the small model, with the items waiting before it, while
 	// the pace makes user turns wait (10.1, "Send now").
 	SendNow bool `json:"send_now,omitempty"`
+	// Actions are the action words an event batch's turn may use (capcom-service.md 9.6),
+	// already capped by the level. The engine asks for no other; gff-hab checks every call.
+	Actions []string `json:"actions,omitempty"`
+	// Data: a note that quotes what an event turn wrote; it neither opens nor joins a user
+	// turn in the engine either (capcom-service.md 9.6).
+	Data bool `json:"data,omitempty"`
 }
 
 // TurnRef names a running turn.
 type TurnRef struct {
 	Turn   string `json:"turn"`
 	Origin string `json:"origin"`
+	// User: a user item opened the turn or joined it (9.4). Sent in ready's running turn, so a
+	// reconnect knows; absent reads as an event turn.
+	User bool `json:"user,omitempty"`
 }
 
 // Message is one line of the wire format: the envelope and every field any type uses. Item is

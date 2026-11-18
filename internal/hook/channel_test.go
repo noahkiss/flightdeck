@@ -166,3 +166,65 @@ func TestReadRoute(t *testing.T) {
 		t.Fatalf("a write method on the route: %v", err)
 	}
 }
+
+// TestChannelRouteGuard: the guard sees the pane, the method and the params of each non-read
+// call. An error refuses the call; a result answers it and the handler never runs. Dispatch
+// runs a call past the guard, as the Capcom service does for an action the user confirmed
+// (capcom-service.md 9.6).
+func TestChannelRouteGuard(t *testing.T) {
+	reg := newTestPanes()
+	sock := filepath.Join(shortDir(t), "hook.sock")
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(reg, func(string, harness.Envelope) string { return "" }, t.Logf)
+	var ran []string
+	s.SetChannels(func(_ context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
+		ran = append(ran, pane+" "+string(params))
+		return api.ChannelSent{ID: "m1", To: "web", State: "handed"}, nil, nil
+	})
+	var seen []string
+	s.SetGuard(func(_ context.Context, pane, method string, params json.RawMessage) (json.RawMessage, error) {
+		seen = append(seen, pane+" "+method+" "+string(params))
+		var p api.ChannelSendParams
+		json.Unmarshal(params, &p)
+		switch p.Text {
+		case "refuse":
+			return nil, control.Errorf(api.ErrorKindDenied, "ask the user first")
+		case "answer":
+			return json.RawMessage(`{"id":"from-guard","to":"web","state":"queued"}`), nil
+		}
+		return nil, nil
+	})
+	go s.Serve(l)
+	t.Cleanup(func() { s.Close() })
+	addr := Addr(sock, reg.mint("pane-3"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var ce *control.Error
+	if err := Call(ctx, addr, "channel.send", api.ChannelSendParams{To: "web", Text: "refuse"}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindDenied {
+		t.Fatalf("refused: %v", err)
+	}
+	var sent api.ChannelSent
+	if err := Call(ctx, addr, "channel.send", api.ChannelSendParams{To: "web", Text: "answer"}, &sent); err != nil || sent.ID != "from-guard" {
+		t.Fatalf("answered by the guard: %+v %v", sent, err)
+	}
+	if len(ran) != 0 {
+		t.Fatalf("the handler ran: %v", ran)
+	}
+	if err := Call(ctx, addr, "channel.send", api.ChannelSendParams{To: "web", Text: "go"}, &sent); err != nil || sent.ID != "m1" || len(ran) != 1 {
+		t.Fatalf("passed: %+v %v %v", sent, err, ran)
+	}
+	if len(seen) != 3 || !strings.HasPrefix(seen[0], "pane-3 channel.send ") || !strings.Contains(seen[0], `"text":"refuse"`) {
+		t.Fatalf("the guard saw %v", seen)
+	}
+	// Dispatch skips the guard.
+	b, err := s.Dispatch(ctx, "pane-9", "channel.send", json.RawMessage(`{"to":"web","text":"refuse"}`))
+	if err != nil || !strings.Contains(string(b), `"m1"`) || len(seen) != 3 || len(ran) != 2 || !strings.HasPrefix(ran[1], "pane-9 ") {
+		t.Fatalf("dispatch: %s %v seen %v ran %v", b, err, seen, ran)
+	}
+	if _, err := s.Dispatch(ctx, "pane-9", "session.send", nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid {
+		t.Fatalf("dispatch of a method off the route: %v", err)
+	}
+}

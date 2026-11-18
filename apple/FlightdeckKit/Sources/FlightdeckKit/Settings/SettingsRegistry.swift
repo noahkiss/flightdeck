@@ -106,6 +106,7 @@ public enum SettingsRegistry {
     public static let groupMaxLeads = "group.max_leads"
     public static let groupMaxWorkers = "group.max_workers"
     public static let groupCloseMembers = "group.close_members"
+    public static let capcomEventActions = "capcom.event_actions"
 
     /// The levelled settings, in registry order (app.md 20.3).
     public static let levelled: [SettingDef] = [
@@ -118,6 +119,11 @@ public enum SettingsRegistry {
         SettingDef(id: logbookApproval, title: "Require approval for memories", area: .agents,
                    kind: .word([(word: "off", title: "Off"), (word: "agents", title: "Agents")]), store: .everyHab,
                    levels: [.safe: .string("agents"), .balanced: .string("off"), .bypass: .string("off")]),
+        // What a Capcom job may do on its own (capcom-service.md 9.6): ask at Safe, allow at
+        // Balanced and Bypass; off is picked by hand. It acts on the Capcom home hab; every hab keeps it.
+        SettingDef(id: capcomEventActions, title: "Capcom jobs may act", area: .agents,
+                   kind: .word([(word: "off", title: "Off"), (word: "ask", title: "Ask first"), (word: "allow", title: "Allow")]), store: .everyHab,
+                   levels: [.safe: .string("ask"), .balanced: .string("allow"), .bypass: .string("allow")]),
         SettingDef(id: voiceYesAllows, title: "\"Yes\" counts as Allow", area: .voice, kind: .bool, store: .app,
                    levels: [.safe: .bool(false), .balanced: .bool(true), .bypass: .bool(true)]),
         SettingDef(id: sshRequireFaceID, title: "Require Face ID for SSH keys", area: .security, kind: .bool, store: .app,

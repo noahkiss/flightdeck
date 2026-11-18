@@ -97,6 +97,9 @@ type Item struct {
 	// Model marks a note the model gets as input (a card answered, a confirmation outcome; 4.2).
 	// User messages, agent reports and round items always go to the model.
 	Model bool `json:"model,omitempty"`
+	// Data marks a Model note whose text quotes what an event turn wrote (a calendar card's
+	// title): the model gets it, but it neither opens nor joins a user turn (capcom-service.md 9.6).
+	Data bool `json:"data,omitempty"`
 	// Read is when the engine took the message (input.taken, 7.3). Zero: not read yet.
 	Read time.Time `json:"read,omitzero"`
 	// SendNow marks a user message sent with "Send now": it runs on the small model while the
@@ -104,6 +107,11 @@ type Item struct {
 	SendNow bool `json:"send_now,omitempty"`
 	// Attribution is the data sources' marks a Capcom message shows (8.3).
 	Attribution []Attribution `json:"attribution,omitempty"`
+	// Job and Actions are a round item's Capcom job (capcom-service.md 9.6): the round's name,
+	// and the action words its message carried. The hab sets them only from a round message
+	// whose sender is round:<name>.
+	Job     string   `json:"job,omitempty"`
+	Actions []string `json:"actions,omitempty"`
 }
 
 // Card is a card item's content: what kind of card, and the choices it offers.

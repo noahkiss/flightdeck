@@ -52,6 +52,12 @@ const (
 	CapcomDailyTurns          = "capcom.events.daily_turns"
 	CapcomBatchWindow         = "capcom.events.batch_window"
 	CapcomBatchMax            = "capcom.events.batch_max"
+	// Capcom jobs (capcom-service.md 9.6, 19.1): the level cap on what a job's event turn may
+	// do (off, ask, allow; levelled: Safe ask, Balanced and Bypass allow), the most actions in
+	// one event turn, and the age in minutes at which an ask card expires.
+	CapcomEventActions        = "capcom.event_actions"
+	CapcomEventActionsPerTurn = "capcom.event_actions_per_turn"
+	CapcomEventActionMaxAge   = "capcom.event_action_max_age"
 	// Agent groups' caps (groups.md 15.3), each on every hab.
 	GroupConfirmMaxAge = "group.confirm_max_age" // minutes
 	GroupMaxLeads      = "group.max_leads"
@@ -103,6 +109,9 @@ var Defs = []Def{
 	{ID: CapcomDailyTurns, Default: json.RawMessage(`20`), check: checkInt(1, 1000), integer: true},
 	{ID: CapcomBatchWindow, Default: json.RawMessage(`120`), check: checkInt(10, 3600), integer: true},
 	{ID: CapcomBatchMax, Default: json.RawMessage(`20`), check: checkInt(1, 200), integer: true},
+	{ID: CapcomEventActions, Default: json.RawMessage(`"allow"`), check: checkWord("off", "ask", "allow")},
+	{ID: CapcomEventActionsPerTurn, Default: json.RawMessage(`3`), check: checkInt(0, 20), integer: true},
+	{ID: CapcomEventActionMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: GroupConfirmMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: GroupMaxLeads, Default: json.RawMessage(`3`), check: checkInt(1, 10), integer: true},
 	{ID: GroupMaxWorkers, Default: json.RawMessage(`2`), check: checkInt(0, 5), integer: true},

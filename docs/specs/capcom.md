@@ -567,6 +567,14 @@ takes edits and answers (`app.md` 7.9).
   With no host left it says why: every fitting host offline, or the missing capability, or no
   host at all. When the project is on no fitting host it names the best fitting host for a
   set-up. It scores nothing (`mesh.md` 7): the rules are fixed and every reason is shown.
+- **Kind `action`** (`capcom-service.md` 9.6, 9.8, stage A9): one call a Capcom job's event
+  turn made while `capcom.event_actions` is `ask`. Only gff-hab raises it: `confirm.request`
+  refuses kind `action` with `denied`. It always asks, names the job and the word, carries
+  the whole call (a summary that cuts nothing, the method and the params), takes confirm or
+  cancel with no edits, and expires after `capcom.event_action_max_age`. On confirm the hab
+  runs those params as Capcom's route would; a start or a group plan the call asks for still
+  raises its own card under its own setting. The outcome note reaches Capcom as any late
+  answer does.
 - **Set-up.** `set_up_project` and the `setup` kind exist; the hab answers `unavailable` until the
   mesh's set-up stage builds the action. The `ConfirmSetup` shape is reserved
   for its card.

@@ -286,3 +286,28 @@ func TestRoundTextTriggerError(t *testing.T) {
 		t.Fatalf("row text %q", text)
 	}
 }
+
+// TestBoardCapcomJobs: m on the board shows only capcom rounds, the Capcom jobs, with their
+// action words and the last message's outcome; m again shows every round (capcom-service.md 9.6).
+func TestBoardCapcomJobs(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	now := time.Now()
+	a.PutRound(cronRound("ra", "alpha", now.Add(2*time.Hour)))
+	job := cronRound("rj", "mailjob", now.Add(time.Hour))
+	job.Mode = api.RoundModeCapcom
+	job.Actions = []api.RoundAction{"hand_off", "fetch"}
+	job.LastRun = &api.RoundRun{ID: "run1", State: api.RoundRunStateSucceeded, Outcome: &api.RoundRunOutcome{Word: "acted"}}
+	a.PutRound(job)
+	hst := newHost(t, 160, 30, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("both rounds", func(s string) bool { return line(s, "  alpha ") > 0 && line(s, "  mailjob ") > 0 })
+	hst.typ("m")
+	hst.waitScreen("Capcom jobs only", func(s string) bool {
+		l := line(s, "  mailjob ")
+		return line(s, "  alpha ") < 0 && l > 0 && strings.Contains(strings.Split(s, "\n")[l], "acts: hand_off,fetch · acted")
+	})
+	hst.typ("m")
+	hst.waitScreen("every round again", func(s string) bool { return line(s, "  alpha ") > 0 && line(s, "  mailjob ") > 0 })
+}

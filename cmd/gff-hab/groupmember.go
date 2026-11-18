@@ -239,7 +239,9 @@ func groupHook(store *structure.Store, svc *groupsService, folderOf func(ctx con
 		if !ok {
 			return nil, nil, control.Errorf(api.ErrorKindInvalid, "this pane is not a session; a group's calls come from a session")
 		}
-		if groupWrite(method) && eventTurn != nil && eventTurn(pane) {
+		// A call the user confirmed as a Capcom job's (capcom-service.md 9.6) runs whatever turn
+		// runs now.
+		if groupWrite(method) && !confirm.Answered(ctx) && eventTurn != nil && eventTurn(pane) {
 			return nil, nil, control.Errorf(api.ErrorKindDenied, "%s is refused in a turn an event started: ask the user first", method)
 		}
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }

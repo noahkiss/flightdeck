@@ -128,6 +128,11 @@ struct ConfirmCardView: View {
             }
         } else if let g = c.group {
             groupFacts(g)
+        } else if let a = c.action {
+            // The whole call, never clamped: the hab runs exactly these params on confirm.
+            factGrid(ConfirmCardContent.actionFacts(a))
+            longText(a.summary, label: "What it does", clamp: false)
+            longText(a.params, label: "Params", clamp: false)
         }
     }
 
