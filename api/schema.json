@@ -7816,7 +7816,7 @@
         "properties": {
           "job": {
             "type": "string",
-            "description": "The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas."
+            "description": "The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name."
           },
           "method": {
             "type": "string",

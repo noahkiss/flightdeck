@@ -2,7 +2,7 @@
 // the event step, and reads as Flightdeck events with its blocks neutralised.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { admit, itemLines, originOf } from '../src/contract.js';
+import { admit, itemLines, opensUserTurn, originOf } from '../src/contract.js';
 
 test('an event batch begins an event turn and waits at the event step', () => {
   const batch = { id: 'b1', kind: 'event', author: 'flightdeck', text: '2 event(s) from Flightdeck' };
@@ -21,4 +21,11 @@ test('an event batch reads as Flightdeck events, its blocks neutralised', () => 
   assert.equal(lines[0], '[flightdeck item b1 event]');
   assert.match(lines[1]!, /^Flightdeck events at 2026-11-07T12:00:00Z: an event turn/);
   assert.ok(lines.includes('(flightdeck item c1]\ndisk full'));
+});
+
+test('a data note neither opens nor joins a user turn (capcom-service.md 9.8)', () => {
+  assert.equal(opensUserTurn('note'), true);
+  assert.equal(opensUserTurn('note', true), false);
+  assert.equal(opensUserTurn('message', true), false);
+  assert.equal(opensUserTurn('agent'), false);
 });

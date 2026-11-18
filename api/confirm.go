@@ -69,7 +69,7 @@ type ConfirmResult struct {
 // ConfirmAction is the one call a Capcom job's event turn asked for while capcom.event_actions is
 // ask (capcom-service.md 9.6). Only gff-hab raises it: confirm.request refuses kind action.
 type ConfirmAction struct {
-	Job     string      `json:"job" doc:"The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas."`
+	Job     string      `json:"job" doc:"The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name."`
 	Word    RoundAction `json:"word" doc:"The action word the call uses."`
 	Summary string      `json:"summary" doc:"What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole."`
 	Method  string      `json:"method" doc:"The route method the hab runs on confirm, such as channel.send."`

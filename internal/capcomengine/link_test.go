@@ -638,3 +638,12 @@ func TestLinkUserTurnFailsClosed(t *testing.T) {
 		t.Fatalf("a data note opened a user turn: %+v", st)
 	}
 }
+
+// TestDataNoteInput: a data note reaches the engine marked data, so it never opens or joins a
+// user turn there either (capcom-service.md 9.8).
+func TestDataNoteInput(t *testing.T) {
+	var in InputItem
+	if err := json.Unmarshal(inputJSON(capcomthread.Item{ID: "c1", Kind: capcomthread.KindNote, Text: "x", Model: true, Data: true}, true), &in); err != nil || !in.Data {
+		t.Fatalf("%+v %v", in, err)
+	}
+}

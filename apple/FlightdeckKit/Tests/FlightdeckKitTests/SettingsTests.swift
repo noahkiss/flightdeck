@@ -66,6 +66,14 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(sent.contains(SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask"))))
     }
 
+    /// A Capcom job's action card names the job, the word and the call (capcom-service.md 9.8).
+    func testActionCardFacts() {
+        let a = ConfirmAction(job: "host-b/mail", method: "channel.send", params: "{\"to\":\"web\"}", summary: "message web: fix it", word: .handOff)
+        let facts = ConfirmCardContent.actionFacts(a)
+        XCTAssertEqual(facts.map(\.label), ["Job", "Action", "Call"])
+        XCTAssertEqual(facts.map(\.value), ["host-b/mail", "hand_off", "channel.send"])
+    }
+
     /// The four group caps are preferences kept on every hab, with the hab's ranges (groups.md 15.3).
     func testGroupPreferenceRows() throws {
         let want: [(String, SettingKind)] = [

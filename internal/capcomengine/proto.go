@@ -158,6 +158,9 @@ type InputItem struct {
 	// Actions are the action words an event batch's turn may use (capcom-service.md 9.6),
 	// already capped by the level. The engine asks for no other; gff-hab checks every call.
 	Actions []string `json:"actions,omitempty"`
+	// Data: a note that quotes what an event turn wrote; it neither opens nor joins a user
+	// turn in the engine either (capcom-service.md 9.6).
+	Data bool `json:"data,omitempty"`
 }
 
 // TurnRef names a running turn.

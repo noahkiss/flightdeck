@@ -27,6 +27,9 @@ export interface Item {
   // An event batch's action words (capcom-service.md 9.6): what its turn may ask gff-hab for,
   // already capped by the level. gff-hab checks every call again.
   actions?: string[];
+  // data: a note that quotes what an event turn wrote (a card's title). The model gets it, but
+  // it neither opens nor joins a user turn (capcom-service.md 9.6).
+  data?: boolean;
 }
 
 // hello's settings, with 19.2's defaults where hello carries none.
@@ -98,8 +101,8 @@ export function isUserKind(kind: string | undefined): boolean {
 
 // opensUserTurn: an item that makes its turn a user turn for what it may do (9.4): the user's
 // message, or a Flightdeck note the model gets. An event batch or an agent report does not.
-export function opensUserTurn(kind: string | undefined): boolean {
-  return isUserKind(kind) || kind === 'note';
+export function opensUserTurn(kind: string | undefined, data = false): boolean {
+  return !data && (isUserKind(kind) || kind === 'note');
 }
 
 // The refusal of a WebFetch of an unseen URL in an event turn: no card (9.4).

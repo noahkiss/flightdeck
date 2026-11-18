@@ -2393,7 +2393,7 @@ public struct Compaction: Codable, Sendable, Hashable {
 }
 
 public struct ConfirmAction: Codable, Sendable, Hashable {
-    /// The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas.
+    /// The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name.
     public var job: String
     /// The route method the hab runs on confirm, such as channel.send.
     public var method: String

@@ -337,7 +337,7 @@ export class Engine {
     this.untaken.add(msg.uuid!);
     if (isUserKind(item.kind)) this.userUrls.addText(item.text ?? '');
     if (!this.turn) this.beginTurn(this.nextOrigin ?? originOf(item), [item]);
-    else if (opensUserTurn(item.kind)) this.turn.user = true; // a user message joins: a user turn from here (9.4)
+    else if (opensUserTurn(item.kind, item.data)) this.turn.user = true; // a user message joins: a user turn from here (9.4)
     if (item.kind === 'event') for (const w of item.actions ?? []) this.turn!.actions.add(String(w));
     this.nextOrigin = undefined;
     this.input.push(msg);
@@ -373,7 +373,7 @@ export class Engine {
     this.turn = {
       id: newTurnId(),
       origin,
-      user: items.some((i) => opensUserTurn(i.kind)),
+      user: items.some((i) => opensUserTurn(i.kind, i.data)),
       part: 0,
       interrupted: false,
       urls: new UrlSet(),

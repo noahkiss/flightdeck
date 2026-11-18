@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -231,25 +230,23 @@ func TestCapcomJobsLimitsAndLevels(t *testing.T) {
 		t.Fatalf("a notice-only turn: %v", err)
 	}
 
-	// Two round items in one turn allow the union of their words.
+	// Two jobs never add up their words (review fix, capcom-service.md 9.8): each job's batch
+	// goes alone, and a turn that took two batches lets neither act.
 	h.job(t, "m6", "mail", "t6", "hand_off")
-	h.job(t, "m7", "calendar", "t6", "card")
 	if _, err := h.handOff(); err != nil {
-		t.Fatalf("hand_off under the union: %v", err)
+		t.Fatalf("hand_off in its job's own turn: %v", err)
 	}
-	if _, err := h.call("personal.calendar_add", map[string]string{"title": "dentist"}); err != nil {
-		t.Fatalf("card under the union: %v", err)
-	}
-	b := h.e.events.TurnBatches("t6")
-	var words []string
-	for _, x := range b {
-		words = append(words, h.e.batchActions(x)...)
-	}
-	if !slices.Contains(words, "hand_off") || !slices.Contains(words, "card") {
-		t.Fatalf("batch words %v", words)
-	}
-	if !h.e.turnAllows("card") || h.e.turnAllows("group") {
+	if !h.e.turnAllows("hand_off") || h.e.turnAllows("card") {
 		t.Fatal("turnAllows")
+	}
+	h.job(t, "m7", "calendar", "t6", "card")
+	if _, err := h.call("personal.calendar_add", map[string]string{"title": "dentist"}); errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("card in a turn that took two jobs' batches: %v", err)
+	}
+	for _, x := range h.e.events.TurnBatches("t6") {
+		if len(x.Items) != 1 {
+			t.Fatalf("a job shares its batch: %+v", x)
+		}
 	}
 }
 
@@ -445,3 +442,35 @@ func TestCardAnswerNoteIsData(t *testing.T) {
 		t.Fatalf("notes %+v", notes)
 	}
 }
+
+// TestCapcomJobsSecondReview: a turn that took two batches lets no job act, since the engine
+// may join a second batch to a running turn; the CLI's card shows an action confirmation's
+// whole call.
+func TestCapcomJobsSecondReview(t *testing.T) {
+	h := newJobsHarness(t)
+	h.set[settings.CapcomEventActions] = `"allow"`
+	h.job(t, "m1", "mail", "t1", "hand_off")
+	h.job(t, "m2", "web", "t1", "fetch") // joined the running turn
+	if b := h.e.events.TurnBatches("t1"); len(b) != 2 {
+		t.Fatalf("batches %d", len(b))
+	}
+	if _, err := h.handOff(); errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("two batches in one turn: %v", err)
+	}
+	if _, err := h.e.eventGate("t1", "WebFetch"); err == nil {
+		t.Fatal("fetch allowed in a turn of two batches")
+	}
+	if h.e.turnAllows("hand_off") {
+		t.Fatal("turnAllows in a turn of two batches")
+	}
+
+	c := api.Confirmation{ID: "c1", Kind: "action", State: "open", From: "capcom", Action: &api.ConfirmAction{Job: "host-b/mail", Word: "hand_off",
+		Summary: "message web: fix it\nthen push", Method: "channel.send", Params: `{"to":"web","text":"fix it\nthen push"}`}}
+	out := confirmationCard(c)
+	for _, w := range []string{"job:       host-b/mail", "word:      hand_off", "call:      channel.send", "then push", `"to":"web"`} {
+		if !strings.Contains(out, w) {
+			t.Errorf("card lacks %q:\n%s", w, out)
+		}
+	}
+}
+

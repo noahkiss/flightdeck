@@ -34,11 +34,24 @@ public enum ConfirmCardContent {
         switch c.kind {
         case .setup: return record ? "Project set-up" : "Set up a project?"
         case .round: return record ? "Round" : "Make a round?"
+        case .action: return record ? "Capcom job action" : "Let Capcom act for a job?"
         case .group:
             if c.group?.amend == true { return record ? "Group change" : "Change the group?" }
             return record ? "Group start" : "Start a group?"
         default: return record ? "Session start" : "Start a session?"
         }
+    }
+
+    // MARK: - Capcom job action
+
+    /// A Capcom job's action card rows (capcom-service.md 9.6, 9.8): the job, the word and the
+    /// call. The view adds what the call does and its params, whole: the hab runs exactly those.
+    public static func actionFacts(_ a: ConfirmAction) -> [Fact] {
+        var out: [Fact] = []
+        add(&out, "Job", a.job, mono: true)
+        add(&out, "Action", a.word.rawValue)
+        add(&out, "Call", a.method, mono: true)
+        return out
     }
 
     // MARK: - Round

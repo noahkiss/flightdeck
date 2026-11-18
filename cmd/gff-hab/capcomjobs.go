@@ -126,6 +126,11 @@ func (e *capcomEngine) turnJobs(turn, word string) []string {
 		time.Sleep(25 * time.Millisecond)
 		bs = e.events.TurnBatches(turn)
 	}
+	if len(bs) != 1 {
+		// A job's words count only in a turn that took its batch alone: the engine may join a
+		// second batch to a running turn, and its jobs' words must not add up (9.6).
+		return nil
+	}
 	var jobs []string
 	for _, b := range bs {
 		for _, j := range e.batchJobs(b, word) {
@@ -288,12 +293,8 @@ func (e *capcomEngine) turnAllows(word string) bool {
 	if st.Turn == "" || e.eventActionsLevel() == eventActionsOff || e.events == nil {
 		return false
 	}
-	for _, b := range e.events.TurnBatches(st.Turn) {
-		if len(e.batchJobs(b, word)) > 0 {
-			return true
-		}
-	}
-	return false
+	bs := e.events.TurnBatches(st.Turn)
+	return len(bs) == 1 && len(e.batchJobs(bs[0], word)) > 0
 }
 
 // jobCard adds the card of a job's action to the thread (9.6): a record with no choices.

@@ -825,7 +825,7 @@ func eventBlock(it capcomthread.Item) ContextBlock {
 // inputJSON is one item for the model. For an engine with no images capability each image goes
 // in as its path with a note (4.1).
 func inputJSON(it capcomthread.Item, images bool) json.RawMessage {
-	in := InputItem{ID: it.ID, Kind: it.Kind, Time: it.Time, TZ: it.TZ, Text: it.Text, Images: it.Images, SendNow: it.SendNow}
+	in := InputItem{ID: it.ID, Kind: it.Kind, Time: it.Time, TZ: it.TZ, Text: it.Text, Images: it.Images, SendNow: it.SendNow, Data: it.Data}
 	if !images && len(it.Images) > 0 {
 		in.Images = nil
 		for _, p := range it.Images {
