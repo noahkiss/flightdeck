@@ -984,6 +984,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var rounds: [CatalogRound]?
     /// Services the user declared for this host.
     public var services: [CatalogService]
+    /// The names of this host's sessions with no running agent (a shell, or an agent that exited), sorted. Absent with none.
+    public var shellSessions: [String]?
     public var system: CatalogSystem
     /// Tools found on PATH, with their versions.
     public var toolchains: [CatalogTool]
@@ -1008,12 +1010,13 @@ public struct Catalog: Codable, Sendable, Hashable {
         case projects = "projects"
         case rounds = "rounds"
         case services = "services"
+        case shellSessions = "shell_sessions"
         case system = "system"
         case toolchains = "toolchains"
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, governor: CatalogGovernor? = nil, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, governor: CatalogGovernor? = nil, groups: [CatalogGroup]? = nil, harnesses: [CatalogTool], heavy: CatalogHeavy? = nil, host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], shellSessions: [String]? = nil, system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -1031,6 +1034,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.projects = projects
         self.rounds = rounds
         self.services = services
+        self.shellSessions = shellSessions
         self.system = system
         self.toolchains = toolchains
         self.watches = watches

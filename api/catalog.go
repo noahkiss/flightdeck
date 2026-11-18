@@ -29,6 +29,9 @@ type Catalog struct {
 	Groups []CatalogGroup `json:"groups,omitempty" doc:"The groups this hab is the home of: the short form (groups.md 5.1). Absent with none."`
 	// Governor was added within revision 1 by the usage governor (capcom-service.md 10.1).
 	Governor *CatalogGovernor `json:"governor,omitempty" doc:"The usage governor's answer for each consumer this hab paces. Absent with none."`
+	// ShellSessions was added within revision 1 so that a shell session's name clashes across
+	// peers (mesh.md 6.5). Optional, so a copy from an older hab names none.
+	ShellSessions []string `json:"shell_sessions,omitempty" doc:"The names of this host's sessions with no running agent (a shell, or an agent that exited), sorted. Absent with none."`
 }
 
 // CatalogGovernor is the usage governor's state on the publishing hab (capcom-service.md 10.1,

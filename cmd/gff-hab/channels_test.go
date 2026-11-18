@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -417,6 +418,37 @@ func TestChannelsNameClash(t *testing.T) {
 	}
 	if names[picked.Session] != "bob-2" || names[cleaned.Session] != "my-prog-x" {
 		t.Fatalf("picked names %q and %q, want bob-2 and my-prog-x", names[picked.Session], names[cleaned.Session])
+	}
+}
+
+// TestChannelsShellNameClash: a name a peer holds for a shell session (no agent) clashes too,
+// at create and at rename (mesh.md 6.5).
+func TestChannelsShellNameClash(t *testing.T) {
+	p := newMeshPair(t)
+	shell := []string{"/bin/sh", "-c", "while [ ! -e \"$DIR/end\" ]; do sleep 0.05; done"}
+	createSession(t, p.b.sock, api.SessionCreateParams{Name: "sheila", Argv: shell, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + p.b.work}})
+	self := welcome(t, p.a.sock).DeviceID
+	l := waitCatalog(t, p.a.sock, "a's copy of b lists sheila", func(l api.CatalogList) bool { return channels.ClashLabel(l, self, "sheila") == "bee" })
+	for _, e := range l.Hosts {
+		if e.Label == "bee" && slices.ContainsFunc(e.Catalog.Agents, func(a api.CatalogAgent) bool { return a.Session == "sheila" }) {
+			t.Fatalf("sheila is listed as an agent: %+v", e.Catalog.Agents)
+		}
+	}
+
+	c := p.a.control()
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(10*time.Second))
+	defer cancel()
+	err := c.Call(ctx, "session.create", api.SessionCreateParams{Name: "sheila", Argv: shell, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + p.a.work}}, &api.SessionCreated{})
+	if errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "in use on bee") {
+		t.Fatalf("create sheila on a: %v", err)
+	}
+	ss := createSession(t, p.a.sock, api.SessionCreateParams{Name: "sam", Argv: shell, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + p.a.work}})
+	err = c.Call(ctx, "session.rename", api.SessionRenameParams{Session: ss.Session, Name: "sheila"}, nil)
+	if errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "in use on bee") {
+		t.Fatalf("rename to sheila on a: %v", err)
 	}
 }
 
