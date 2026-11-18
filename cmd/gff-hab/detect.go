@@ -143,20 +143,22 @@ func (d *detectService) process(ctx context.Context, u hp.UUID, set *detect.Set)
 	case <-ctx.Done():
 		out := api.DetectProcess{Pgid: int(pgid.Load())}
 		if out.Pgid == 0 {
-			out.Error = "foreground group: " + budgetErr(ctx.Err(), budget)
+			setProcessErr(&out, "foreground group", ctx.Err(), budget)
 		} else {
-			out.Error = fmt.Sprintf("processes of group %d: %s", out.Pgid, budgetErr(ctx.Err(), budget))
+			setProcessErr(&out, fmt.Sprintf("processes of group %d", out.Pgid), ctx.Err(), budget)
 		}
 		return out
 	}
 }
 
-// budgetErr words err for a process part with this budget.
-func budgetErr(err error, budget time.Duration) string {
+// setProcessErr words err for the step of a process part with this budget, and marks a part
+// the budget ended as timed out.
+func setProcessErr(out *api.DetectProcess, step string, err error, budget time.Duration) {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "timed out after " + budget.String()
+		out.Error, out.TimedOut = step+": timed out after "+budget.String(), true
+		return
 	}
-	return err.Error()
+	out.Error = step + ": " + err.Error()
 }
 
 // readProcess is the process part: the holder's answer for the foreground group, stored in
@@ -165,7 +167,7 @@ func (d *detectService) readProcess(ctx context.Context, u hp.UUID, set *detect.
 	var out api.DetectProcess
 	pgid, err := d.lk.Foreground(ctx, u)
 	if err != nil {
-		out.Error = "foreground group: " + budgetErr(err, budget)
+		setProcessErr(&out, "foreground group", err, budget)
 		return out
 	}
 	out.Pgid = pgid
@@ -176,7 +178,7 @@ func (d *detectService) readProcess(ctx context.Context, u hp.UUID, set *detect.
 	}
 	fg, err := d.group(ctx, pgid)
 	if err != nil {
-		out.Error = fmt.Sprintf("processes of group %d: %s", pgid, budgetErr(err, budget))
+		setProcessErr(&out, fmt.Sprintf("processes of group %d", pgid), err, budget)
 		return out
 	}
 	trace, det, err := set.ExplainProcess(fg)

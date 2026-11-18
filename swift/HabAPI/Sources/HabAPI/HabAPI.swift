@@ -3368,6 +3368,8 @@ public struct DetectProcess: Codable, Sendable, Hashable {
     public var pgid: Int
     /// The group's processes in the order they are tried: the leader first, then the others by pid.
     public var processes: [DetectProc]
+    /// The process budget ran out before this part was read: the answer is partial, and Error names the step.
+    public var timedOut: Bool?
 
     enum CodingKeys: String, CodingKey {
         case error = "error"
@@ -3376,15 +3378,17 @@ public struct DetectProcess: Codable, Sendable, Hashable {
         case matchPid = "match_pid"
         case pgid = "pgid"
         case processes = "processes"
+        case timedOut = "timed_out"
     }
 
-    public init(error: String? = nil, match: String? = nil, matchName: String? = nil, matchPid: Int? = nil, pgid: Int, processes: [DetectProc]) {
+    public init(error: String? = nil, match: String? = nil, matchName: String? = nil, matchPid: Int? = nil, pgid: Int, processes: [DetectProc], timedOut: Bool? = nil) {
         self.error = error
         self.match = match
         self.matchName = matchName
         self.matchPid = matchPid
         self.pgid = pgid
         self.processes = processes
+        self.timedOut = timedOut
     }
 }
 

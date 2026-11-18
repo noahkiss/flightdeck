@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -175,7 +177,8 @@ func (s stubPanes) Foreground(context.Context, hp.UUID) (int, error) {
 
 // TestExplainPartial: when the process part hangs past its budget, ignoring its context (a
 // listing stuck on a loaded machine), explain still answers in time with the agent state and
-// the screen part, and the process part says which step timed out.
+// the screen part, and the process part says which step timed out and sets timed_out. A
+// terminal with no foreground group is a whole answer: it does not set timed_out.
 func TestExplainPartial(t *testing.T) {
 	const pane = "00000000-0000-0000-0000-0000000000aa"
 	agents := harness.NewStore(harness.Config{})
@@ -184,12 +187,14 @@ func TestExplainPartial(t *testing.T) {
 	defer close(hang)
 	set := detect.Vendored()
 	for _, tc := range []struct {
-		name  string
-		panes stubPanes
-		want  string
+		name     string
+		panes    stubPanes
+		want     string
+		timedOut bool
 	}{
-		{"listing", stubPanes{rows: strings.Split(detectScreen, "\n"), pgid: 42}, "processes of group 42: timed out after 100ms"},
-		{"foreground", stubPanes{rows: strings.Split(detectScreen, "\n"), fgDone: hang}, "foreground group: timed out after 100ms"},
+		{"listing", stubPanes{rows: strings.Split(detectScreen, "\n"), pgid: 42}, "processes of group 42: timed out after 100ms", true},
+		{"foreground", stubPanes{rows: strings.Split(detectScreen, "\n"), fgDone: hang}, "foreground group: timed out after 100ms", true},
+		{"no group", stubPanes{rows: strings.Split(detectScreen, "\n")}, "the terminal has no foreground process group", false},
 	} {
 		d := &detectService{lk: tc.panes, agents: agents, manifests: func() *detect.Set { return set }, budget: 100 * time.Millisecond,
 			group: func(context.Context, int) (detect.Foreground, error) { <-hang; return detect.Foreground{}, nil }}
@@ -206,12 +211,30 @@ func TestExplainPartial(t *testing.T) {
 		if res.Process.Error != tc.want {
 			t.Errorf("%s: process error %q, want %q", tc.name, res.Process.Error, tc.want)
 		}
+		if res.Process.TimedOut != tc.timedOut {
+			t.Errorf("%s: timed_out %v, want %v", tc.name, res.Process.TimedOut, tc.timedOut)
+		}
 		if res.Agent == nil || res.Agent.Harness != "claude" {
 			t.Errorf("%s: agent %+v", tc.name, res.Agent)
 		}
 		if m := res.Manifest; m == nil || m.ChosenBy != "agent" || res.Screen == nil || res.Screen.Rule != "live_prompt_box" {
 			t.Errorf("%s: manifest %+v, screen %+v; want the screen part chosen by the agent", tc.name, m, res.Screen)
 		}
+	}
+}
+
+// TestSetProcessErr: a step that ends on the budget's deadline is timed out; any other error
+// keeps its own words and is not.
+func TestSetProcessErr(t *testing.T) {
+	var out api.DetectProcess
+	setProcessErr(&out, "foreground group", fmt.Errorf("link: %w", context.DeadlineExceeded), 5*time.Second)
+	if out.Error != "foreground group: timed out after 5s" || !out.TimedOut {
+		t.Errorf("deadline: %+v", out)
+	}
+	out = api.DetectProcess{}
+	setProcessErr(&out, "processes of group 7", errors.New("an earlier listing has not returned"), 5*time.Second)
+	if out.Error != "processes of group 7: an earlier listing has not returned" || out.TimedOut {
+		t.Errorf("other error: %+v", out)
 	}
 }
 
