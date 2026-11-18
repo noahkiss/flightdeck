@@ -24,12 +24,13 @@ Every claim about a harness names its source in [Sources](#sources).
 10. [Usage](#usage)
 11. [Input delivery](#input-delivery)
 12. [Self-compact and the context nudge](#self-compact-and-the-context-nudge)
-13. [Spawn](#spawn)
-14. [Permission answers](#permission-answers)
-15. [Edge cases](#edge-cases)
-16. [Fixtures](#fixtures)
-17. [Open decisions](#open-decisions)
-18. [Sources](#sources)
+13. [Agent kit](#agent-kit)
+14. [Spawn](#spawn)
+15. [Permission answers](#permission-answers)
+16. [Edge cases](#edge-cases)
+17. [Fixtures](#fixtures)
+18. [Open decisions](#open-decisions)
+19. [Sources](#sources)
 
 ## Terms
 
@@ -266,6 +267,21 @@ Inheritance rules:
 - When the holder restores a pane after a host restart, it drops `AGENT_SESSION_ID` and the
   harness's own session variables from the respawn environment. A resumed harness sets fresh
   ones.
+
+Built choices:
+
+- `GFF_HAB` goes into every pane gff-hab spawns, with `GFF_HAB_STATE` and `GFF_HAB_CONFIG`
+  when gff-hab has them (`paneEnv`).
+- `AGENT_KIND` goes into the pane when `session.create` names the harness (`harnessStart`),
+  and into Capcom's panes. A pane started from a plain argv gets it only from Claude Code's
+  start hook, below.
+- Claude Code: `gff-hab hook claude` at `SessionStart` appends `export AGENT_KIND=claude` and
+  `export AGENT_SESSION_ID=<id>` to `CLAUDE_ENV_FILE` (`hook.exportSession`). A later start in
+  the same process (`/clear`, a resume, a compaction) appends again; the last line wins. It
+  writes only with `GFF_HAB` set, only for the interactive TUI (the nested-run guard), and only
+  an id of letters, digits, `-` and `_`, so no value needs quoting. The variables reach the
+  session's tool commands, not the pane's own environment, so a restored pane carries none.
+- Codex and opencode: no `AGENT_SESSION_ID`, as the table says.
 
 ## Hook endpoint
 
@@ -1220,6 +1236,41 @@ gff agent compact with a follow-up that points at it."
 - **Off.** With `agent.context_nudge` at 0 the nudge adds nothing to a context event's answer.
 - **Group members.** The nudge adds nothing for a group member's pane: context supervision
   runs its context (`groups.md` 9.1). Supervision reads the same percentage.
+
+## Agent kit
+
+Every pane gff-hab starts carries what an agent needs to name itself, message other agents in
+any harness, and see the connected hosts. Nothing in it needs a tool outside Flightdeck.
+
+| Part | Where |
+|---|---|
+| Environment | [Environment contract](#environment-contract) |
+| Name itself | `gff agent name <name>` (`gff-hab agent name` is the same), MCP tool `channel_name` |
+| Send and wait | `gff-hab send`, `gff-hab wait`, MCP tools `channel_send` and `channel_wait` (`mesh.md` 6.5, 6.6) |
+| Who runs where | Read tools `agents`, `hosts`, `projects`, `suggest_host` (`gff-hab read`, `gff-hab mcp`; `capcom.md` 5.5) |
+| Envelope and delivery | [Input delivery](#input-delivery) and `mesh.md` 6.5 |
+| Manual | `gff-hab mcp --skill` prints it, made from the tool list of the binary that prints it |
+
+**Name itself.** Method `agent.name {name}` on the pane route (`POST /channel/<token>`, as
+`agent.compact`). The pane's token names the session to rename, so an agent names only
+itself. It takes `session.rename`'s rules: the name charset, the Capcom names, and no clash
+on this host or in a peer's catalog copy (`mesh.md` 6.5). Its own name again is no change. It
+answers the renamed `Session`. A pane with no session is refused `invalid`. The name is the
+agent's channel address from then on: mail already handed to the old name is refused
+"replaced or renamed" (`mesh.md` 6.5, Delivery).
+
+**The manual.** Each tool in it names its shell command. A test holds every one of those to a
+command and verb that `gff-hab -h` lists (`TestSkillShellMatchesHelp`), and the tool list to
+the MCP server's (`TestMCPSkillMatchesTools`).
+
+Where this differs from the plan's first text:
+
+- The plan asked for `gff agent name|send|wait|list` and `gff --skill`. Send, wait and the
+  lists were built first under other names (`gff-hab send`, `gff-hab wait`, the read tools,
+  `gff-hab mcp --skill`); `mesh.md` 6.5 lets the agent kit keep them. Only naming is under
+  `gff agent`, beside `compact`.
+- The plan said to refuse while blocked unless forced. Agent messages hold while blocked and
+  are never forced (`mesh.md` 6.2): the sender is not watching the dialog.
 
 ## Spawn
 
