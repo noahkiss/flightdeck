@@ -40,6 +40,7 @@ exec sleep 600
 // usage.list answers each account: a status-line input with no rate limits and an opencode hook
 // add none. The hab says it has the usage capability.
 func TestUsageAdapters(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	codexHome := filepath.Join(e.work, "codex")
 	rollout := filepath.Join(codexHome, "sessions", "2026", "01", "01", "rollout-2026-01-01T10-00-00-019a-codex-usage.jsonl")
@@ -187,6 +188,7 @@ func TestUsageAdapters(t *testing.T) {
 // statusline` still prints the wrapped command's output at once; with no command it prints
 // nothing and exits 0; -print gives the setting.
 func TestStatuslineOutsidePane(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	base := []string{"PATH=" + os.Getenv("PATH"), noRaceExitSleep}
 	run := func(env []string, args ...string) (string, int, time.Duration) {

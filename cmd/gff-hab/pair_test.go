@@ -186,6 +186,7 @@ func typed(lines ...string) func(string) []string { return func(string) []string
 func theCode(code string) []string { return []string{code} }
 
 func TestPairCommand(t *testing.T) {
+	t.Parallel()
 	r := pairRun(t, pairOpts{replies: theCode})
 	if r.err != nil {
 		t.Fatal(r.err)
@@ -210,6 +211,7 @@ func TestPairCommand(t *testing.T) {
 }
 
 func TestPairCommandDeclined(t *testing.T) {
+	t.Parallel()
 	r := pairRun(t, pairOpts{replies: typed("")})
 	if r.err == nil || !strings.Contains(r.err.Error(), "declined") || r.last.Reason != pairing.ReasonDeclined || r.added != "" {
 		t.Fatalf("err %v, answer %+v, added %q", r.err, r.last, r.added)
@@ -219,6 +221,7 @@ func TestPairCommandDeclined(t *testing.T) {
 // TestPairCommandNeedsTheCode: y is not an answer; three wrong codes decline, and a right code
 // after a wrong one pairs.
 func TestPairCommandNeedsTheCode(t *testing.T) {
+	t.Parallel()
 	r := pairRun(t, pairOpts{replies: typed("y", "yes", "zzzz")})
 	if r.err == nil || r.last.Reason != pairing.ReasonDeclined || r.added != "" || !strings.Contains(r.out, "does not match the phone's key; declined") {
 		t.Fatalf("err %v, answer %+v, added %q\n%s", r.err, r.last, r.added, r.out)
@@ -232,6 +235,7 @@ func TestPairCommandNeedsTheCode(t *testing.T) {
 // TestPairCommandIgnoresEarlyInput: the right code typed before the question is drained, never
 // taken as the answer.
 func TestPairCommandIgnoresEarlyInput(t *testing.T) {
+	t.Parallel()
 	r := pairRun(t, pairOpts{early: func(code string) string { return code }, replies: typed("")})
 	if r.err == nil || r.last.Reason != pairing.ReasonDeclined || r.added != "" {
 		t.Fatalf("err %v, answer %+v, added %q", r.err, r.last, r.added)
@@ -241,6 +245,7 @@ func TestPairCommandIgnoresEarlyInput(t *testing.T) {
 // TestPairCommandKeyAlreadyThere: a line that already holds the phone's key (here with no
 // restriction) is not a forced-command pairing: pair refuses, records nothing and says why.
 func TestPairCommandKeyAlreadyThere(t *testing.T) {
+	t.Parallel()
 	r := pairRun(t, pairOpts{replies: theCode, existing: func(k string) string { return k + " phone-by-hand" }})
 	if r.err == nil || r.last.Reason != pairing.ReasonFailed || r.added != "" || !strings.Contains(r.out, "already on another line") {
 		t.Fatalf("err %v, answer %+v, added %q\n%s", r.err, r.last, r.added, r.out)
@@ -254,6 +259,7 @@ func TestPairCommandKeyAlreadyThere(t *testing.T) {
 // TestPairCommandNoLinkByDefault: without -link the terminal shows the QR code only, never the
 // token in text.
 func TestPairCommandNoLinkByDefault(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	in, inW := io.Pipe()
 	defer inW.Close()
@@ -266,6 +272,7 @@ func TestPairCommandNoLinkByDefault(t *testing.T) {
 }
 
 func TestStrictModesWarnings(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), ".ssh")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -282,6 +289,7 @@ func TestStrictModesWarnings(t *testing.T) {
 
 // TestPairCommandRefusesAPipe: with stdin not a terminal and no -no-tty, pair opens no window.
 func TestPairCommandRefusesAPipe(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var out bytes.Buffer
 	err := pairCmd([]string{"-state", filepath.Join(dir, "state"), "-listen", "127.0.0.1", "-authorized-keys", filepath.Join(dir, "ak")},
@@ -295,6 +303,7 @@ func TestPairCommandRefusesAPipe(t *testing.T) {
 }
 
 func TestPairAddrsAndCommand(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"0.0.0.0", "::", "203.0.113.5", "nonsense"} {
 		if _, err := pairAddrs([]string{bad}); err == nil {
 			t.Errorf("-listen %s accepted", bad)

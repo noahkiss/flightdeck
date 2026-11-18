@@ -49,6 +49,7 @@ func setSetting(c *control.Client, id, value string) error {
 // while a user turn's are not; a capcom round on this hab is accepted, its outcome told or quiet;
 // with round messages off it is declined off; settings.set refuses a value outside a range.
 func TestCapcomWritesFirst(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

@@ -43,6 +43,7 @@ func groupWorktree(t *testing.T, branch string, marked bool) (repo, wt string) {
 // under the group's prefix, for the cover's harness; a folder below the worktree's top counts.
 // Every other folder gets a reason, so the card shows.
 func TestCoverCheck(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -102,6 +103,7 @@ func TestCoverCheck(t *testing.T) {
 // never from any other client, and its fields must be well formed and name the create's
 // harness.
 func TestCoverParams(t *testing.T) {
+	t.Parallel()
 	good := api.SessionCreateParams{Harness: "codex", TrustCover: &api.TrustCover{Group: "g1", Confirmation: "none", Harness: "codex", BranchPrefix: "group/g1/"}}
 	listed := func(dev string) bool { return dev == "dev-b" }
 	peer := func(dev string) context.Context {
@@ -151,6 +153,7 @@ func TestCoverParams(t *testing.T) {
 // TestTrustHoldConfig: [groups] trust_hold takes a duration from 1 s to 60 s; anything else is
 // logged and 10 s runs.
 func TestTrustHoldConfig(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	var logs []string
 	logf := func(f string, a ...any) { logs = append(logs, f) }

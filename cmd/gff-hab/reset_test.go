@@ -24,6 +24,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 // checkpoint past the bytes that held Claude's last OSC 7501 report, the pane still has its
 // agent state, and session.send goes through with no hook in between.
 func TestAgentStateSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	c := e.control()
 	text := "after the restart"
@@ -64,6 +65,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 // A permission request then denied through approval.answer by keys, which Claude follows with no
 // hook and only an OSC idle, returns the pane to idle, and session.send goes through.
 func TestInterruptAndDenyByKeys(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))

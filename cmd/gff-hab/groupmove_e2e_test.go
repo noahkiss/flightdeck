@@ -134,6 +134,7 @@ func startGroup(t *testing.T, e *habEnv, addr string, plan api.GroupPlan) string
 // coordinator; after c's catalog points at b, the lead's next report reaches b with a stopped.
 // An ended group does not move.
 func TestGroupMove(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	m := newMeshTrio(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
@@ -244,6 +245,7 @@ func moveConfig(t *testing.T) string {
 // unavailable, then commits from the tombstone in its catalog copy and runs the group; the old
 // home sends the commit again at its start.
 func TestGroupMoveCrashes(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),
@@ -327,6 +329,7 @@ func TestGroupMoveCrashes(t *testing.T) {
 // TestGroupMoveQueued (groups.md 16.2 B9): a move asked while the home is stopped is queued on
 // the target, a second request replaces the first, and it runs once when the home is back.
 func TestGroupMoveQueued(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin, "GFF_HAB_WORKTREES="+filepath.Join(shortDir(t), "wt"),

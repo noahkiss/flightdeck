@@ -71,6 +71,7 @@ func (p *eventProber) settle() {
 }
 
 func TestRoundMatcher(t *testing.T) {
+	t.Parallel()
 	catalog := api.CatalogList{Hosts: []api.CatalogEntry{{Catalog: api.Catalog{DeviceID: testSelf,
 		Capabilities: []api.CatalogCapability{{Name: capCapcomService}, {Name: capRoundLock}},
 		Capcom:       &api.CatalogCapcom{Home: testSelf, Assignment: 1, Service: "capcom-actor"}}}}}
@@ -192,6 +193,7 @@ func TestRoundMatcher(t *testing.T) {
 // a status change counts for a status filter and a title change does not, a peer's op folded
 // later counts once, and a private project's record is told as a count only.
 func TestRoundMatcherLogbook(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	lst, err := logbook.Open(ctx, filepath.Join(t.TempDir(), "logbook.db"), logbook.Options{Origin: "SHA256:habA"})
 	if err != nil {
@@ -310,6 +312,7 @@ func waitMsgRun(t *testing.T, svc *roundsService, roundID string, state rounds.R
 }
 
 func TestRoundMessageRuns(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	group := api.CatalogGroup{ID: "g1", State: "running", Coordinator: &api.CatalogMember{Device: "SHA256:old", Name: "lead"}}
 	withCapcom := true
@@ -442,6 +445,7 @@ func TestRoundMessageRuns(t *testing.T) {
 // filter's project goes by remote both ways, and round.get with batch reads it back; a batch
 // for a round with no event trigger, or with a bad event, is refused.
 func TestRoundBatchCarried(t *testing.T) {
+	t.Parallel()
 	svc, st := fakeRoundsServiceWith(t, t.TempDir(), structure.NewFakeHolder(), nil)
 	proj, err := st.CreateProject("app", "example.com/team/app", "")
 	if err != nil {
@@ -493,6 +497,7 @@ func TestRoundBatchCarried(t *testing.T) {
 
 // TestRoundsExampleSettings: the [rounds] keys of docs/examples/hab.toml load with no complaint.
 func TestRoundsExampleSettings(t *testing.T) {
+	t.Parallel()
 	var logged []string
 	s, err := loadRoundsSettings(filepath.Join("..", "..", "docs", "examples", "hab.toml"), func(f string, a ...any) { logged = append(logged, f) })
 	if err != nil || len(logged) > 0 {

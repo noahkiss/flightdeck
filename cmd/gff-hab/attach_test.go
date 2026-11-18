@@ -35,6 +35,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 // ignores itself; attachment.get returns a thumbnail; session.send with the id delivers the text
 // and the path as one paste plus Enter; a send with an id of another session is not_found.
 func TestAttachmentEndToEnd(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	if w := welcome(t, e.sock); !slices.Contains(w.Capabilities, "attachments") {
 		t.Fatalf("capabilities %v lack attachments", w.Capabilities)
@@ -118,6 +119,7 @@ func evalDir(t *testing.T, p string) string {
 // shows its text and their ids; other messages, and paths of files the hab did not store, stay
 // as they are; the reader's own slice is never changed.
 func TestChatAttachments(t *testing.T) {
+	t.Parallel()
 	p := "/w/proj/.flightdeck/attachments/0123456789ab-shot.png"
 	c := &chatService{chatConfig: chatConfig{attachment: func(id string) bool { return id == "0123456789ab" }}}
 	in := []api.ChatMessage{

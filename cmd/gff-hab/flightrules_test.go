@@ -19,6 +19,7 @@ import (
 // ledger; a harness with no reader, an unknown session and an unknown entry answer with their
 // error kinds.
 func TestFlightRulesService(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "flightrules", "testdata", "claude-2.1.327.jsonl"))
 	if err != nil {

@@ -112,6 +112,7 @@ func hasRound(c *control.Client, name string) bool {
 }
 
 func TestRoundPeers(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}

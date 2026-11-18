@@ -46,6 +46,7 @@ func commitIn(t *testing.T, dir, file, text string) string {
 // record says so. A submit from the reviewer, and a verdict from the lead or a control
 // connection, are refused.
 func TestGroupReview(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := groupFakes(t)
 	codex := "#!/bin/sh\nD=" + work + "\nstty raw -echo\n" + strings.ReplaceAll(fakeMemberBody, "app=claude", "app=codex")
@@ -221,6 +222,7 @@ func TestGroupReview(t *testing.T) {
 // over a link only from a peer the peer list pins, never one claiming this hab's own device
 // id; group.message only from the hab whose own catalog lists itself as the group's home.
 func TestGroupPeerCalls(t *testing.T) {
+	t.Parallel()
 	cl := api.CatalogList{Hosts: []api.CatalogEntry{
 		{Label: "bee", Catalog: api.Catalog{DeviceID: "dev-bee", Groups: []api.CatalogGroup{{ID: "g1", Home: "dev-bee"}}}},
 		{Label: "wasp", Catalog: api.Catalog{DeviceID: "dev-wasp", Groups: []api.CatalogGroup{{ID: "g1", Home: "dev-wasp"}, {ID: "g2", Home: "dev-bee"}}}},

@@ -17,6 +17,7 @@ func (f *fakeGroupsCapcom) GroupCard(string, string) {}
 // back files a new record, and the new record coordinates (groups.md 12.1). Other groups keep
 // their session.
 func TestCapcomCoordinatorFollowsService(t *testing.T) {
+	t.Parallel()
 	cc := &fakeGroupsCapcom{session: "s-old"}
 	s := &groupsService{cfg: groupsConfig{capcom: cc}}
 	g := api.Group{Coordinator: api.GroupCoordinator{Session: "s-old", Name: "capcom", Address: groups.CapcomAddress}}

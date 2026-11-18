@@ -24,6 +24,7 @@ import (
 // TestProbePane runs probes in real panes of a real holder: the result line comes back through
 // the pane's bytes, the pane is released after, and the structure never lists it.
 func TestProbePane(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir, state := filepath.Join(d, "h"), filepath.Join(d, "state")
 	os.MkdirAll(hdir, 0o700)
@@ -119,6 +120,7 @@ var _ probeLink = (*link.Link)(nil)
 // TestProbePaneAfterRestart: gff-hab restarts while a probe pane runs. The holder keeps the pane;
 // the new gff-hab must still hide it, and close it.
 func TestProbePaneAfterRestart(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir, state := filepath.Join(d, "h"), filepath.Join(d, "state")
 	os.MkdirAll(hdir, 0o700)
@@ -180,6 +182,7 @@ func TestProbePaneAfterRestart(t *testing.T) {
 // TestHiddenPanesRetryClose: a probe pane whose release failed (the holder connection dropped)
 // stays hidden, and is closed when the holder lists it again.
 func TestHiddenPanesRetryClose(t *testing.T) {
+	t.Parallel()
 	list := filepath.Join(t.TempDir(), "macos", probePanesFile)
 	hide := newHiddenPanes(list, t.Logf)
 	closed := make(chan string, 4)
@@ -237,6 +240,7 @@ func TestHiddenPanesRetryClose(t *testing.T) {
 // TestPermissionsCall calls hab.permissions on a served hab. On Linux the rows are the systemd
 // ones; with no init system there is one note, and the call passes.
 func TestPermissionsCall(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir, state := filepath.Join(d, "h"), filepath.Join(d, "state")
 	os.MkdirAll(hdir, 0o700)
@@ -264,6 +268,7 @@ func TestPermissionsCall(t *testing.T) {
 }
 
 func TestProbeCmdUsage(t *testing.T) {
+	t.Parallel()
 	if code := probeCmd([]string{"-checks", "domain"}); code != 64 {
 		t.Errorf("no nonce: exit %d", code)
 	}
@@ -272,6 +277,7 @@ func TestProbeCmdUsage(t *testing.T) {
 // TestGrantsNotice: install names a typo in GFF_MACOS_GRANTS, and says when it keeps the last
 // install's list.
 func TestGrantsNotice(t *testing.T) {
+	t.Parallel()
 	c := service.Config{Init: service.Systemd, Prefix: "svctest", StateDir: t.TempDir(), Grants: "acessibility,screen-recording", GrantsSet: true}
 	var out strings.Builder
 	if err := grantsNotice(&c, &out); err != nil {
@@ -292,6 +298,7 @@ func TestGrantsNotice(t *testing.T) {
 }
 
 func TestMacosGrants(t *testing.T) {
+	t.Parallel()
 	got := macosGrants(func(string) string { return "accessibility, automation:com.apple.Terminal,,screen-recording" })
 	if !slices.Equal(got, []string{"accessibility", "automation:com.apple.Terminal", "screen-recording"}) {
 		t.Errorf("%q", got)

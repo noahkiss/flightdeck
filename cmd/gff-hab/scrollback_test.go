@@ -12,6 +12,7 @@ import (
 // TestScrollbackFlag: the cap comes from -scrollback-mib, else $GFF_HAB_SCROLLBACK_MIB, else the
 // default; a value under 1 MiB is an error.
 func TestScrollbackFlag(t *testing.T) {
+	t.Parallel()
 	env := func(v string) func(string) string {
 		return func(k string) string {
 			if k == "GFF_HAB_SCROLLBACK_MIB" {
@@ -50,6 +51,7 @@ func TestScrollbackFlag(t *testing.T) {
 // TestScrollbackBudgetFlag: the budget comes from -scrollback-budget-mib, else
 // $GFF_HAB_SCROLLBACK_BUDGET_MIB, else the default.
 func TestScrollbackBudgetFlag(t *testing.T) {
+	t.Parallel()
 	env := func(v string) func(string) string {
 		return func(k string) string {
 			if k == "GFF_HAB_SCROLLBACK_BUDGET_MIB" {
@@ -85,6 +87,7 @@ func TestScrollbackBudgetFlag(t *testing.T) {
 
 // TestRetiredDaysFlag: the TTL comes from -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days.
 func TestRetiredDaysFlag(t *testing.T) {
+	t.Parallel()
 	env := func(v string) func(string) string {
 		return func(k string) string {
 			if k == "GFF_HAB_RETIRED_DAYS" {
@@ -124,6 +127,7 @@ func TestRetiredDaysFlag(t *testing.T) {
 // checkpoint keeps the same scrollback as one that parsed every byte, well past libghostty's
 // own default of about 10 kB. Under `make test` the parser is libghostty.
 func TestScrollbackRestoreMatches(t *testing.T) {
+	t.Parallel()
 	sb, err := scrollbackBytes(0, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)

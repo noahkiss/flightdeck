@@ -47,6 +47,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 // follow-up goes in only after SessionStart compact; each step is an agent.compact event; after
 // the compaction the nudge has no reading and stays quiet.
 func TestCompactClaude(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(60*time.Second))

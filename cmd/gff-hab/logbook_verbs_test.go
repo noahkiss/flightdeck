@@ -74,6 +74,7 @@ func waitLogbookEvent(t *testing.T, c *control.Client, typ api.EventType, id str
 // reaching subscribers; a repeated key applied once; the CLI writing while gff-hab is stopped and
 // gff-hab serving those ops after its start; the read tools and file_record against it.
 func TestLogbookServe(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	state := filepath.Join(d, "state")
@@ -198,6 +199,7 @@ while [ ! -e "$DIR/end" ]; do sleep 0.05; done
 // TestLogbookPaneWrites: a write through a pane's token records the pane's harness, session and
 // host; the pane's 61st write in a minute is refused; logbook_write and file_record from the pane.
 func TestLogbookPaneWrites(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	made := createSession(t, e.sock, api.SessionCreateParams{Name: "worker", Argv: []string{"/bin/sh", "-c", fakeAgent}, Cwd: "/",
@@ -310,6 +312,7 @@ exec cat >> in.log
 // (capcom.md D3, D14) through the CLI and logbook_write, refuses its resolve, and no pane
 // decides a proposal: a set of its status is refused and the proposal stays pending.
 func TestLogbookCapcomPane(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	binDir := filepath.Join(e.work, "bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
@@ -369,6 +372,7 @@ func TestLogbookCapcomPane(t *testing.T) {
 // hook's file brief reads the habit switches the hab enforces (logbook.md 11.4). Without -config
 // the pane keeps what it inherits ($GFF_HAB_CONFIG of gff-hab's environment, here the test's).
 func TestLogbookPaneConfigEnv(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	const script = `printf '%s|%s' "${GFF_HAB_CONFIG-unset}" "$GFF_HAB_STATE" > "$DIR/$NAME.tmp" && mv "$DIR/$NAME.tmp" "$DIR/$NAME"

@@ -17,6 +17,7 @@ import (
 // edits" by its label on screen, never "1"; with no such row, or no screen, nothing is sent.
 // Deny stays Esc ("No, keep planning"), and other requests keep their keys.
 func TestPlanAnswerKeys(t *testing.T) {
+	t.Parallel()
 	dialog := []string{"│ Would you like to proceed? │", "│ ❯ 1. Yes, clear context and auto-accept edits (shift+tab) │",
 		"│   2. Yes, auto-accept edits │", "│   3. Yes, manually approve edits │", "│   4. No, keep planning │"}
 	plan := api.AgentState{Harness: "claude", Request: &api.PermissionRequest{ID: "r", Tool: harness.ToolPlan}}
@@ -80,6 +81,7 @@ func holdingService(t *testing.T) (a *agentService, keys *keyLog, request string
 // its hook, so it cannot take over the wait of the request the pane is blocked on, and the
 // owner's answer reaches the hook that asked.
 func TestHoldOnlyOwnRequest(t *testing.T) {
+	t.Parallel()
 	a, _, request := holdingService(t)
 	hold := a.holdPermission(func(string) int { return 1 })
 	envA := claudeEnv("PermissionRequest", `{}`, 2)
@@ -115,6 +117,7 @@ func TestHoldOnlyOwnRequest(t *testing.T) {
 // TestAnswerLostByHook: when the hook cannot write the decision (it gave up at that instant),
 // approval.answer reports unavailable, never success, and sends no keys of its own.
 func TestAnswerLostByHook(t *testing.T) {
+	t.Parallel()
 	a, keys, request := holdingService(t)
 	go func() {
 		_, written, ok := a.gate.Wait(context.Background(), "p", request)
@@ -138,6 +141,7 @@ func TestAnswerLostByHook(t *testing.T) {
 // state change, so an answer that comes before the hook starts waiting still reaches it as a
 // decision, never as keys.
 func TestHoldRegistersBeforePublish(t *testing.T) {
+	t.Parallel()
 	keys := &keyLog{}
 	a := &agentService{agents: harness.NewStore(harness.Config{}), gate: harness.NewGate(time.Minute), input: keys, logf: t.Logf}
 	a.agents.Hook("p", claudeEnv("SessionStart", `{"session_id":"a","hook_event_name":"SessionStart"}`, 1))
@@ -164,6 +168,7 @@ func TestHoldRegistersBeforePublish(t *testing.T) {
 // TestApproversDropReleasesHook: when the last client that can answer goes away, the waiting
 // hook ends with no decision at once, so Claude shows its own dialog.
 func TestApproversDropReleasesHook(t *testing.T) {
+	t.Parallel()
 	a, _, request := holdingService(t)
 	approvers := 1
 	wait := a.holdPermission(func(string) int { return approvers })("p", claudeEnv("PermissionRequest", `{}`, 2), func() string { return request })
@@ -191,6 +196,7 @@ func TestApproversDropReleasesHook(t *testing.T) {
 // TestConcurrentAnswers: while one answer to a request is on its way, a second gets conflict and
 // sends no keys; after the first was sent, the request takes no other answer.
 func TestConcurrentAnswers(t *testing.T) {
+	t.Parallel()
 	a, keys, request := holdingService(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

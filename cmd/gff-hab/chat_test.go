@@ -70,6 +70,7 @@ func kindOf(err error) api.ErrorKind {
 // A transcript written after a client paged it empty sends its messages with no new page; one
 // that existed at the first page sends none for it.
 func TestChatService(t *testing.T) {
+	t.Parallel()
 	native := "11111111-2222-4333-8444-555555555555"
 	w := &chatWorld{
 		dir:      t.TempDir(),
@@ -182,6 +183,7 @@ func TestChatService(t *testing.T) {
 // gets its session's events, or when its agent is gone and the file has stopped growing. One
 // with a subscriber and a running agent stays open.
 func TestChatEvict(t *testing.T) {
+	t.Parallel()
 	native := "11111111-2222-4333-8444-555555555555"
 	w := &chatWorld{
 		dir:      t.TempDir(),
@@ -252,6 +254,7 @@ func TestChatEvict(t *testing.T) {
 // TestChatCodex: a Codex pane's conversation comes from its rollout under the Codex home, named
 // by the session id its hooks reported; what Codex appends goes out as chat.message events.
 func TestChatCodex(t *testing.T) {
+	t.Parallel()
 	native := "019a0000-0000-7000-8000-000000000001"
 	w := &chatWorld{
 		dir:      t.TempDir(),

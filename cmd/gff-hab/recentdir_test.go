@@ -12,6 +12,7 @@ import (
 // used folder that still exists, skipping one that is gone; a project with no folders, or none
 // that exist, leaves the choice to the caller (the hab's home).
 func TestRecentDir(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(d, "structure"), Holders: structure.NewFakeHolder()})
 	if err != nil {

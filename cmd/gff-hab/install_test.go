@@ -48,6 +48,7 @@ func TestInstallDefaultSocket(t *testing.T) {
 // TestClientSource: the gff a macOS install copies is -gff-bin (a file, not a folder), else the
 // gff beside GFF Hab.app, else none.
 func TestClientSource(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	macos := filepath.Join(dir, "gff-macos", service.HabBundle, "Contents", "MacOS")
 	if err := os.MkdirAll(macos, 0o755); err != nil {

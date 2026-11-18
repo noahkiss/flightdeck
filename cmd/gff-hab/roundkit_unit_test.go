@@ -22,6 +22,7 @@ func roundCard(state api.ConfirmState) api.Confirmation {
 // TestRoundConfirmationText: confirmation_read's text for a round card in every state, never
 // the start's words (a round card has no start); a card of an unknown kind with no start.
 func TestRoundConfirmationText(t *testing.T) {
+	t.Parallel()
 	for _, st := range []api.ConfirmState{"open", "running", "done", "failed", "cancelled", "expired", "unknown"} {
 		got := confirmationText(roundCard(st))
 		if !strings.Contains(strings.ToLower(got), "round nightly (every 1h in utc) on bee") || !strings.Contains(got, "c1") {
@@ -38,6 +39,7 @@ func TestRoundConfirmationText(t *testing.T) {
 
 // TestRoundConfirmationCard: gff-hab confirm show prints what a round card would make.
 func TestRoundConfirmationCard(t *testing.T) {
+	t.Parallel()
 	c := roundCard("open")
 	c.Round.Round.Prompt, c.Round.Round.Command, c.Round.Round.Harness = "check the build", nil, "claude"
 	got := confirmationCard(c)
@@ -54,6 +56,7 @@ func TestRoundConfirmationCard(t *testing.T) {
 
 // TestRoundToolNulls: a null argument is no argument.
 func TestRoundToolNulls(t *testing.T) {
+	t.Parallel()
 	spec := api.RoundSpec{Name: "x", Mode: api.RoundModeFresh, Prompt: "keep me", ProjectDir: "/work/app",
 		Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual}}
 	named, err := roundSpecArgs(&spec, toolArgs{"prompt": nil, "project": nil, "command": nil, "every": nil, "manual": nil, "max_runs": nil}, true)
@@ -82,6 +85,7 @@ func TestRoundHostFromPane(t *testing.T) {
 // TestRoundToolEvents: the round tools take stage 9's event trigger and message modes as the
 // CLI's -on, -where, -debounce, -cooldown, -mode and -group do.
 func TestRoundToolEvents(t *testing.T) {
+	t.Parallel()
 	spec := api.RoundSpec{Name: "x", Mode: api.RoundModeFresh}
 	if _, err := roundSpecArgs(&spec, toolArgs{"on": "logbook.updated", "where": []any{"status=done,dropped"},
 		"debounce": "10s", "cooldown": "2m", "mode": "group", "group": "g-1", "prompt": "look"}, false); err != nil {

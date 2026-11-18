@@ -10,6 +10,7 @@ import (
 // TestBellScanner: a BEL rings outside control strings only, from any read split. A BEL that
 // ends an OSC (a title) does not ring; one inside a DCS or APC string does not either.
 func TestBellScanner(t *testing.T) {
+	t.Parallel()
 	in := "a\x07b\x1b]0;title\x07c\x07\x1bPq\x07x\x1b\\\x07\x1b_G\x07\x1b\\d\x1b]2;t\x1b\\\x07"
 	const want = 4
 	for split := 1; split <= len(in); split++ {
@@ -30,6 +31,7 @@ func TestBellScanner(t *testing.T) {
 // so the program prints dots until a key comes: the test types only once a pane.output shows
 // the hab follows it, else the bells could go by before it does.
 func TestActivityEvents(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	cc := e.control()
 	pane := e.spawn(cc, "stty -icanon min 0 time 1; while [ -z \"$(dd bs=1 count=1 2>/dev/null)\" ]; do printf .; done; "+

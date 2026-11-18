@@ -32,6 +32,7 @@ type consoleFixture struct {
 // times, gives the commands and outputs in <name>.commands.json: one command.output answer per
 // command, oldest first, holding the command's whole output. -update-console rewrites them.
 func TestConsoleFixtures(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob(filepath.Join("testdata", "console", "*.marks.json"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no console fixtures: %v", err)

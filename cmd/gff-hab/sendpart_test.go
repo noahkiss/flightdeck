@@ -36,6 +36,7 @@ func (f *failFrom) QueueInputs(_ context.Context, _ string, data ...[]byte) []fu
 // Partial error, so an idempotency key keeps it and a retry pastes nothing (hab-logic-api.md
 // 3.9). A send whose first write failed answers a plain error, which a retry may run again.
 func TestSendDeliveredInPart(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p"})})
 	if err != nil {
 		t.Fatal(err)

@@ -37,6 +37,7 @@ func notify(t *testing.T, e *habEnv, title string) {
 }
 
 func TestRoundEvents(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnvWith(t, "GFF_TEST_ROUND_MIN_BATCH=500ms")
 	writeFile(t, filepath.Join(e.work, "hab.toml"), "[rounds]\nwake_settle = \"0s\"\nmax_running = 4\nstate_save_every = \"1s\"\n")
 	e.restart(false)

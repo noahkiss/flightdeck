@@ -131,6 +131,7 @@ func waitWatcher(t *testing.T, c *control.Client, name string, state api.RoundWa
 }
 
 func TestWatchRound(t *testing.T) {
+	t.Parallel()
 	logBuf := &syncBuffer{}
 	e, repo := newRoundEnvWith(t, "GFF_TEST_ROUND_MIN_BATCH=500ms")
 	e.stderr = logBuf
@@ -315,6 +316,7 @@ func TestWatchRound(t *testing.T) {
 // TestWatchPaneRefused: the wrapper in a pane that is not the round's watcher pane gets its
 // lines refused (round.watch_event, denied), and says so in its pane.
 func TestWatchPaneRefused(t *testing.T) {
+	t.Parallel()
 	e, repo := newRoundEnv(t)
 	c := e.control()
 	mustRound(t, e, "add", "w", "-watch", "-project", repo, "-command", "--", "/bin/sleep", "60", "--", "/bin/true")

@@ -12,6 +12,7 @@ import (
 // manifest lands in the state directory and `manifests list` shows it in force. The catalogue is
 // a local directory, so the test needs no network.
 func TestManifestsRefreshCLI(t *testing.T) {
+	t.Parallel()
 	cat := t.TempDir()
 	state := t.TempDir()
 	files := map[string]string{

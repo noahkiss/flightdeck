@@ -121,6 +121,7 @@ func writePeers(t *testing.T, path, label, endpoint string) {
 // stand-in. Each lists the other as online, pinned, at its ssh endpoint; when one stops, the
 // other lists it as offline (task acceptance 1).
 func TestPeersOverSSH(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sockA, sockB := filepath.Join(d, "a.sock"), filepath.Join(d, "b.sock")
 	standIn := sshStandIn(t, map[string]string{"hab-a": sockA, "hab-b": sockB})
@@ -157,6 +158,7 @@ func TestPeersOverSSH(t *testing.T) {
 // state directory was lost). The link is refused with both ids; `gff-hab peers accept` shows
 // both and admits the new id (task acceptance 2).
 func TestPeerRefusedKey(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sockA, sockB := filepath.Join(d, "a.sock"), filepath.Join(d, "b.sock")
 	standIn := sshStandIn(t, map[string]string{"hab-b": sockB})

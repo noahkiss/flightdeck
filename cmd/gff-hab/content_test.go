@@ -17,6 +17,7 @@ import (
 // lists both files, content.read returns their bytes, and an id the session never referenced
 // answers not_found. A show of a directory fails with exit 3.
 func TestShowEndToEnd(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir, state, work := filepath.Join(d, "h"), filepath.Join(d, "state"), filepath.Join(d, "w")
 	for _, dir := range []string{hdir, work} {

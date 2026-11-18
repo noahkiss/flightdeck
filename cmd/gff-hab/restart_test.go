@@ -90,6 +90,7 @@ func (g *restartRig) sent() []hp.Sig {
 // unknown id, one that cannot start again, and a second restart while one runs. A refused
 // restart sends no signal and starts nothing.
 func TestRestartRefused(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct {
 		name string
@@ -169,6 +170,7 @@ func TestRestartRefused(t *testing.T) {
 // keeps running, and nothing starts. A start that fails after the exit says the conversation is
 // untouched and keeps its error kind.
 func TestRestartExitsThenResumes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	g := newRestartRig(t)
 	var heard []string
@@ -218,6 +220,7 @@ func TestRestartExitsThenResumes(t *testing.T) {
 // `claude --resume <id>` in a new pane of the same session and folder; the transcript is
 // byte-identical; the session runs again under the same id and name.
 func TestSessionRestart(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	fake := shortDir(t)
 	writeFile(t, filepath.Join(fake, "claude"), fakeResumable)

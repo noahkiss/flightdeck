@@ -14,6 +14,7 @@ import (
 // TestNoticeStore: the saved store of recent notices (capcom.md 8.5) reads back after a
 // reopen, keeps the last 500 within 7 days, cuts long text, and sets a broken file aside.
 func TestNoticeStore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }

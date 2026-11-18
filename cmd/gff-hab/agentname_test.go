@@ -29,6 +29,7 @@ func agentFromPane(addr string, args ...string) (string, int) {
 // at once, in the envelope, from the new name. A taken name or one outside the charset is
 // refused and changes nothing.
 func TestAgentNameFromPane(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	addr := startSender(t, e)

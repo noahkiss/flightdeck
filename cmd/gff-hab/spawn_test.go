@@ -115,6 +115,7 @@ func createSession(t *testing.T, sock string, p api.SessionCreateParams) api.Ses
 // panes end and their holder drains, gff-hab releases them, the holder exits, and their tokens
 // are refused.
 func TestSpawnHookTokens(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	hdir, state, work := filepath.Join(d, "h"), filepath.Join(d, "state"), filepath.Join(d, "w")
 	for _, dir := range []string{hdir, work} {
@@ -253,6 +254,7 @@ func must[T any](v T, err error) T {
 // TestNewHookKeyWarning: a hook key made while live panes exist is logged loudly with the count;
 // a key made with no panes, or an existing key, logs nothing.
 func TestNewHookKeyWarning(t *testing.T) {
+	t.Parallel()
 	if m := newHookKeyWarning(true, 3); !strings.Contains(m, "WARNING") || !strings.Contains(m, "3 live pane(s)") {
 		t.Errorf("new key with panes: %q", m)
 	}
@@ -284,6 +286,7 @@ func callErr(t *testing.T, sock, method string, params any) string {
 // and refuses a taken name; pane.close hangs up a running program and releases an ended pane on
 // the current holder. Both panes leave the structure and their sessions are exited.
 func TestSessionCreateAndClose(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -419,6 +422,7 @@ func TestSessionCreateAndClose(t *testing.T) {
 // adds the flag only once, and sets AGENT_KIND. claude starts `claude`, with a model as
 // --model. Other harnesses are refused.
 func TestHarnessStart(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ argv, want []string }{
 		{nil, []string{"codex", "--no-daemon"}},
 		{[]string{"/opt/bin/codex", "resume", "abc"}, []string{"/opt/bin/codex", "--no-daemon", "resume", "abc"}},
@@ -444,6 +448,7 @@ func TestHarnessStart(t *testing.T) {
 
 // TestPaneEnvConfig: paneEnv sets GFF_HAB_CONFIG only with a config, in place of any the env had.
 func TestPaneEnvConfig(t *testing.T) {
+	t.Parallel()
 	in := []string{"A=1", "GFF_HAB_CONFIG=/work/old.toml", "GFF_HAB_STATE=/work/old"}
 	got := strings.Join(paneEnv(in, "addr", "/work/state", "/work/hab.toml"), " ")
 	if got != "A=1 GFF_HAB=addr GFF_HAB_STATE=/work/state GFF_HAB_CONFIG=/work/hab.toml" {

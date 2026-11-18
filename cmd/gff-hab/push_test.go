@@ -108,6 +108,7 @@ func (l *lockedLog) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l
 // gff-hab starts without waiting for it. A command that works turns push on in the background.
 // No log line holds the key.
 func TestPushKeyCommand(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder()})
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +173,7 @@ func TestPushKeyCommand(t *testing.T) {
 // can only come from the answer itself (Answered). A second answer to the same request id is
 // refused with conflict and sends no keys.
 func TestAnswerWithdrawsBanner(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	writePushConfig(t, state)
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(state, "structure"), Holders: structure.NewFakeHolder()})
@@ -247,6 +249,7 @@ func TestAnswerWithdrawsBanner(t *testing.T) {
 // raises no notice.raised event. A request in a folder the read scope denies is kept without
 // its command. A device that registered no Ask feature gets the old categories.
 func TestPushAskContext(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	writePushConfig(t, state)
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(state, "structure"), Holders: structure.NewFakeHolder()})
@@ -351,6 +354,7 @@ func TestPushAskContext(t *testing.T) {
 // valid config the capability is on and tokens register. Nothing contacts Apple: no push is
 // sent in either case.
 func TestServePush(t *testing.T) {
+	t.Parallel()
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	state := filepath.Join(d, "state")
@@ -395,6 +399,7 @@ func TestServePush(t *testing.T) {
 // is accepted, so the client can clear its focus after a delete; active true still answers
 // not_found.
 func TestFocusGoneSession(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(state, "structure"), Holders: structure.NewFakeHolder()})
 	if err != nil {

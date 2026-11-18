@@ -331,6 +331,7 @@ const perm1 = `{"id":"per_1","sessionID":"ses_1","action":"shell","resources":["
 // session waits on a permission request keeps the pane blocked on that request; the answer
 // still resolves it. A request answered while the stream was down ends on reconnect.
 func TestOpencodeReconnectKeepsRequest(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	x.follow()
 	x.working()
@@ -362,6 +363,7 @@ func TestOpencodeReconnectKeepsRequest(t *testing.T) {
 // TestOpencodeResyncStamp (review S1): a turn that ends between the subscription and resync's
 // reads shows done: resync's own updates are older than every event the stream delivers.
 func TestOpencodeResyncStamp(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	x.follow()
 	x.working()
@@ -384,6 +386,7 @@ func TestOpencodeResyncStamp(t *testing.T) {
 // TestOpencodeTurnEndWhileDown: a turn that ended while the stream was down shows how it ended,
 // from the session's newest message: done, error, or idle.
 func TestOpencodeTurnEndWhileDown(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		last string
 		want api.AgentStatus
@@ -408,6 +411,7 @@ func TestOpencodeTurnEndWhileDown(t *testing.T) {
 // follower never sends the password to whoever takes its port, whether the wrapper reported
 // the end or was killed first; and it stops when another process answers at the URL.
 func TestOpencodeFollowerSquatter(t *testing.T) {
+	t.Parallel()
 	deadPID := func() int {
 		c := exec.Command("true")
 		if err := c.Run(); err != nil {
@@ -469,6 +473,7 @@ func TestOpencodeFollowerSquatter(t *testing.T) {
 // not know yet and follows it once the link reports the pane; it removes the records of
 // servers that ended, and of a pane whose wrapper never reported long after.
 func TestOpencodeLoad(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	if err := x.o.writeRecord(x.pane, ocRecord{Session: "ses_1"}); err != nil {
 		t.Fatal(err)
@@ -511,6 +516,7 @@ func TestOpencodeLoad(t *testing.T) {
 // TestOpencodeDocFetchError (review S4): an OpenAPI document that cannot be read is logged as an
 // error once, not on every reconnect, and not silently.
 func TestOpencodeDocFetchError(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	x.f.set(func(f *ocFake) { f.docFail = true })
 	x.follow()
@@ -546,6 +552,7 @@ func TestOpencodeChildLookup(t *testing.T) {
 // TestOpencodeRequestSessions (review S8): an answered request is forgotten, and past the bound
 // the oldest goes first, so an open child request keeps its session.
 func TestOpencodeRequestSessions(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	p := &ocPane{children: map[string]bool{"ses_c": true, "ses_1": false}, running: map[string]bool{}, requests: map[string]string{},
 		cancel: func() {}, done: make(chan struct{})}
@@ -583,6 +590,7 @@ func TestOpencodeRequestSessions(t *testing.T) {
 // TestOpencodeAnswerErrors (review S3): only a 404 tagged as a missing session or request is a
 // conflict; a 404 from a route the server lacks is unavailable and says the API drifted.
 func TestOpencodeAnswerErrors(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		switch {
@@ -623,6 +631,7 @@ func TestOpencodeAnswerErrors(t *testing.T) {
 // TestOpencodeStartArgv (review N3): opencode's argv may not name the server in either form,
 // nor be empty; the wrapper gets the server file to report in.
 func TestOpencodeStartArgv(t *testing.T) {
+	t.Parallel()
 	o := newOpencodeServers(t.TempDir(), []byte("k"), harness.NewStore(harness.Config{}), nil)
 	a := &actions{opencode: o, exe: "/bin/gff-hab"}
 	for _, argv := range [][]string{{"opencode", "--server", "http://127.0.0.1:1"}, {"opencode", "--server=http://127.0.0.1:1"}, {""}} {
@@ -756,6 +765,7 @@ func TestOpencodePaneReport(t *testing.T) {
 // created event or after a reconnect, not to a child session, nothing when the brief is empty (a
 // round's run session, the habit off), and a failed post is logged once and not tried again.
 func TestOpencodeBrief(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	var mu sync.Mutex
 	asked := map[string]int{}
@@ -821,6 +831,7 @@ func TestOpencodeBrief(t *testing.T) {
 // record, so neither a replaced follower nor a gff-hab restart posts a brief again or retries
 // a failed post.
 func TestOpencodeBriefOnceAcrossFollowers(t *testing.T) {
+	t.Parallel()
 	x := newOcTest(t)
 	brief := func(context.Context, string) string { return "the brief" }
 	x.o.SetBrief(brief)
@@ -878,6 +889,7 @@ func TestOpencodeBriefOnceAcrossFollowers(t *testing.T) {
 // TestOpencodeBriefSkippedUnrecorded: a brief whose session cannot be written to the pane's
 // record is skipped, not posted: after a restart nothing would stop a second post.
 func TestOpencodeBriefSkippedUnrecorded(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root writes into a read-only folder")
 	}

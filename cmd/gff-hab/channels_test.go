@@ -162,6 +162,7 @@ func channelStatus(t *testing.T, sock, id string, waitMS int) api.ChannelRecord 
 // envelope, by label/name and then by a bare name the catalog resolves; its delivered state
 // comes back to A (task acceptance 1).
 func TestChannelsAcrossHabs(t *testing.T) {
+	t.Parallel()
 	p := newMeshPair(t)
 	m1, m2 := pasted("ay/alice", "hello bob"), pasted("ay/alice", "second line\nby name")
 	startReceiver(t, p.b, "idle", m1, m2)
@@ -201,6 +202,7 @@ func TestChannelsAcrossHabs(t *testing.T) {
 // B comes back; the message arrives exactly once: the next message is the next thing bob reads
 // (task acceptance 2).
 func TestChannelsTargetRestart(t *testing.T) {
+	t.Parallel()
 	p := newMeshPair(t)
 	m1, m2 := pasted("ay/alice", "while you slept"), pasted("ay/alice", "and after")
 	startReceiver(t, p.b, "idle", m1, m2)
@@ -229,6 +231,7 @@ func TestChannelsTargetRestart(t *testing.T) {
 // outbox for A to pull. B sends mesh.changed over A's link and A pulls at once: the message
 // arrives well inside A's 15 s mail round (mesh.md 6.5).
 func TestChannelsOneWayWake(t *testing.T) {
+	t.Parallel()
 	a, b := newHolderEnv(t, 0), newHolderEnv(t, 0)
 	d := shortDir(t)
 	standIn := sshStandIn(t, map[string]string{"hab-b": b.sock}) // nothing reaches a
@@ -275,6 +278,7 @@ func TestChannelsOneWayWake(t *testing.T) {
 // TestChannelsWaitForIdle: a message to a working agent is handed over but waits in B's inbox
 // until the agent reports idle (task acceptance 3).
 func TestChannelsWaitForIdle(t *testing.T) {
+	t.Parallel()
 	p := newMeshPair(t)
 	m1 := pasted("ay/alice", "when you are free")
 	startReceiver(t, p.b, "working", m1)
@@ -296,6 +300,7 @@ func TestChannelsWaitForIdle(t *testing.T) {
 // on an agent on hab b and returns at its state change; from alice's pane on a, the MCP tools
 // send to that agent and wait, by a bare name, for it to exit (mesh.md 6.6).
 func TestChannelsWaitPeerAgent(t *testing.T) {
+	t.Parallel()
 	p := newMeshPair(t)
 	m1 := pasted("ay/alice", "over the tool")
 	startReceiver(t, p.b, "working", m1)
@@ -362,6 +367,7 @@ func TestChannelsWaitPeerAgent(t *testing.T) {
 // TestChannelsNameClash: creating, or renaming to, a name an agent holds on a peer fails
 // (task acceptance 4).
 func TestChannelsNameClash(t *testing.T) {
+	t.Parallel()
 	p := newMeshPair(t)
 	startReceiver(t, p.b, "idle")
 	self := welcome(t, p.a.sock).DeviceID
@@ -424,6 +430,7 @@ func TestChannelsNameClash(t *testing.T) {
 // TestChannelsShellNameClash: a name a peer holds for a shell session (no agent) clashes too,
 // at create and at rename (mesh.md 6.5).
 func TestChannelsShellNameClash(t *testing.T) {
+	t.Parallel()
 	p := newMeshPair(t)
 	shell := []string{"/bin/sh", "-c", "while [ ! -e \"$DIR/end\" ]; do sleep 0.05; done"}
 	createSession(t, p.b.sock, api.SessionCreateParams{Name: "sheila", Argv: shell, Cwd: "/", Cols: 80, Rows: 24,
@@ -455,6 +462,7 @@ func TestChannelsShellNameClash(t *testing.T) {
 // TestChannelsPaneIdentity: the pane door sends and waits as the pane's own session, whatever
 // the params name.
 func TestChannelsPaneIdentity(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	addr := startSender(t, e)
@@ -483,6 +491,7 @@ func TestChannelsPaneIdentity(t *testing.T) {
 // TestChannelsWaitCommand: on one hab, gff-hab wait from the receiving pane takes the message
 // that a working agent's PTY would hold, and the sender sees it delivered.
 func TestChannelsWaitCommand(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	addr := startSender(t, e)
@@ -532,6 +541,7 @@ func TestChannelsWaitCommand(t *testing.T) {
 }
 
 func TestWaitTimeoutDefault(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		set, control, inPane bool
 		want                 time.Duration
@@ -571,6 +581,7 @@ func (f *fakeChannels) WaitTake(_ context.Context, p api.ChannelWaitParams, def 
 // under a harness's 2 minute tool limit), as the pane's own session; the route's write result
 // reaches the service.
 func TestChannelHookWait(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p"})})
 	if err != nil {
 		t.Fatal(err)

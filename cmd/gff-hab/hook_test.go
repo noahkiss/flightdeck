@@ -55,6 +55,7 @@ func runHook(t *testing.T, env []string, payload string, args ...string) (stdout
 // TestHookNeverBlocks: with gff-hab stopped, with an unknown pane token, and outside any pane,
 // `gff-hab hook` exits 0 within 200 ms and prints nothing.
 func TestHookNeverBlocks(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	sock := filepath.Join(dir, "hab.sock")
 	payload := `{"session_id":"s1","hook_event_name":"Stop"}`
@@ -84,6 +85,7 @@ func TestHookNeverBlocks(t *testing.T) {
 // TestHookStdinNeverCloses: a harness that never closes stdin cannot hold the hook past its
 // budget.
 func TestHookStdinNeverCloses(t *testing.T) {
+	t.Parallel()
 	cmd := exec.Command(bin, "hook", "claude", "Stop")
 	cmd.Env = []string{noRaceExitSleep, hook.Env + "=" + hook.Addr("/nonexistent/hook.sock", strings.Repeat("ab", 16))}
 	w, err := cmd.StdinPipe()
@@ -104,6 +106,7 @@ func TestHookStdinNeverCloses(t *testing.T) {
 }
 
 func TestHookPrint(t *testing.T) {
+	t.Parallel()
 	out := run(t, "hook", "-print", "claude")
 	var cfg map[string]map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &cfg); err != nil {

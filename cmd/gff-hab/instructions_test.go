@@ -12,6 +12,7 @@ import (
 // nothing; -write writes only a target in the config's write list. Every harness directory,
 // the home directory and the state directory are temporary.
 func TestInstructionsRenderCLI(t *testing.T) {
+	t.Parallel()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

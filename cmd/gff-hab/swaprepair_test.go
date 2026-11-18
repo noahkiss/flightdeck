@@ -67,6 +67,7 @@ func (c *swapCalls) unhold(id string) {
 // TestSwapCreateTimeoutKeepsSuccessor: a create that answers an error after it made the fresh
 // session does not undo the swap: the group keeps exactly one session with the member's name.
 func TestSwapCreateTimeoutKeepsSuccessor(t *testing.T) {
+	t.Parallel()
 	st := swapStore(t, filepath.Join(t.TempDir(), "structure"))
 	defer st.Close()
 	old, err := st.CreateSession(structure.SessionSpec{Name: "lead-a", Pane: "p1", Index: -1})
@@ -138,6 +139,7 @@ func swapCutShort(t *testing.T, dir string, fresh bool) (oldID, freshID string) 
 // TestSwapRepairUndo: a swap cut short before the fresh session was made is undone at start:
 // the old session has its name and group back, and the mark is gone.
 func TestSwapRepairUndo(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "structure")
 	oldID, _ := swapCutShort(t, dir, false)
 	st := swapStore(t, dir)
@@ -158,6 +160,7 @@ func TestSwapRepairUndo(t *testing.T) {
 // the old session's deliveries are held until its messages moved, its pane closes, and exactly
 // one grouped session holds the name.
 func TestSwapRepairFinish(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "structure")
 	oldID, freshID := swapCutShort(t, dir, true)
 	st := swapStore(t, dir)

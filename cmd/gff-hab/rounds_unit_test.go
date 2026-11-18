@@ -25,6 +25,7 @@ import (
 )
 
 func TestRoundSettings(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	p := filepath.Join(d, "hab.toml")
 	def, err := loadRoundsSettings(p, nil)
@@ -51,6 +52,7 @@ func TestRoundSettings(t *testing.T) {
 // The limits of rounds.md 4.7 that stage 9 adds: a good value is taken; a value outside its
 // range or of the wrong type is logged once and the default runs.
 func TestRoundLimitSettings(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "hab.toml")
 	writeFile(t, p, "[rounds]\nbatch_max_events = 5\nbatch_max_bytes = 20000\nevent_files_keep = 0\nblock_max_events = 2\n"+
 		"block_max_bytes = 2048\nblock_data_max = 0\nstate_save_every = \"1s\"\noutcome_wait = \"1d\"\n")
@@ -126,6 +128,7 @@ func fakeRoundsServiceWith(t *testing.T, state string, holder *structure.FakeHol
 }
 
 func TestRoundStateSetAside(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(d, "rounds"), 0o700); err != nil {
 		t.Fatal(err)
@@ -157,6 +160,7 @@ func TestRoundStateSetAside(t *testing.T) {
 // project field, a target that must exist, a stale revision, a prompt round whose run fails as
 // not built yet, and the error kinds.
 func TestRoundServiceChecks(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	var notices []string
 	svc := fakeRoundsService(t, d, &notices)
@@ -304,6 +308,7 @@ func TestRoundServiceChecks(t *testing.T) {
 // TestRoundPlan: the export of a round, read back, plans nothing; defaults written or left out
 // compare equal; each change is planned once.
 func TestRoundPlan(t *testing.T) {
+	t.Parallel()
 	have := []api.Round{{ID: "round-1", Revision: 3, RoundSpec: api.RoundSpec{
 		Name: "nightly", Mode: api.RoundModeFresh, Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindCron, Cron: "0 3 * * *", Zone: "Europe/Berlin"},
 		Command: []string{"make", "check"}, Project: "p-1", ProjectRemote: "example.com/team/app", TimeoutMS: 3600000,
@@ -351,6 +356,7 @@ func decodeTOML(b []byte, v any) (toml.MetaData, error) { return toml.Decode(str
 // TestRoundHookRoute: the round methods on the pane route take the pane's session as the
 // creator and as target self; a pane with no session creates as a user and cannot say self.
 func TestRoundHookRoute(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	var notices []string
 	svc := fakeRoundsService(t, d, &notices)

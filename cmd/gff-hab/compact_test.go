@@ -132,6 +132,7 @@ func hookEnv(event, payload string) harness.Envelope {
 
 // TestCompactRefusals: each refusal at the call, with its kind.
 func TestCompactRefusals(t *testing.T) {
+	t.Parallel()
 	r := newCompactRig(t)
 	kind := func(err error) api.ErrorKind {
 		var ce *control.Error
@@ -179,6 +180,7 @@ func TestCompactRefusals(t *testing.T) {
 // ours; PreCompact starts it, SessionStart compact ends it, and the follow-up goes in once the
 // agent is at its prompt.
 func TestCompactByHooks(t *testing.T) {
+	t.Parallel()
 	r := newCompactRig(t)
 	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
 	c, err := r.svc.Request("p1", api.CompactParams{FollowUp: "read handoff.md and continue"})
@@ -231,6 +233,7 @@ func TestCompactByHooks(t *testing.T) {
 // TestCompactByTranscript: with no PreCompact hook, a compact_boundary record the transcript
 // gains after /compact starts and ends it; one that was there before does not.
 func TestCompactByTranscript(t *testing.T) {
+	t.Parallel()
 	r := newCompactRig(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.jsonl")
@@ -264,6 +267,7 @@ func TestCompactByTranscript(t *testing.T) {
 // TestCompactWaitsForTyping: while a client types into the pane, neither /compact nor the
 // follow-up goes in (a draft would take the paste); once the input stops, each does.
 func TestCompactWaitsForTyping(t *testing.T) {
+	t.Parallel()
 	r := newCompactRig(t)
 	var mu sync.Mutex
 	typing := true
@@ -306,6 +310,7 @@ func TestCompactWaitsForTyping(t *testing.T) {
 
 // TestCompactFailures: no start in time; the agent leaving the pane.
 func TestCompactFailures(t *testing.T) {
+	t.Parallel()
 	r := newCompactRig(t)
 	r.svc.limits.start = 200 * time.Millisecond
 	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusIdle})
@@ -330,6 +335,7 @@ func TestCompactFailures(t *testing.T) {
 // TestCompactClose: Close ends a pending compaction as failed before it returns, and refuses
 // the next request.
 func TestCompactClose(t *testing.T) {
+	t.Parallel()
 	r := newCompactRig(t)
 	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
 	if _, err := r.svc.Request("p1", api.CompactParams{}); err != nil {
@@ -356,6 +362,7 @@ func TestCompactClose(t *testing.T) {
 // TestNudgeLevels: the first level, each step above it below 100, one note per level, several
 // levels at once in one note, a reset by compaction, a new session and a drop under the first.
 func TestNudgeLevels(t *testing.T) {
+	t.Parallel()
 	vals := map[string]string{settings.ContextNudge: "0", settings.ContextNudgeStep: "10", settings.ContextNudgeText: `"at {percent}%"`}
 	var mu sync.Mutex
 	n := newNudgeService(func(id string) json.RawMessage {
@@ -425,6 +432,7 @@ func TestNudgeLevels(t *testing.T) {
 // TestNudgeTranscript: with no status line, the last main-thread assistant usage over 200,000
 // tokens; a compact_boundary after it gives no reading; the default text.
 func TestNudgeTranscript(t *testing.T) {
+	t.Parallel()
 	n := newNudgeService(func(id string) json.RawMessage {
 		if id == settings.ContextNudge {
 			return json.RawMessage(`60`)
@@ -458,6 +466,7 @@ func TestNudgeTranscript(t *testing.T) {
 // TestJoinContext: the hook server's one context handler asks every part, the Logbook habit
 // first, and joins the texts that are due by a blank line; none due is "".
 func TestJoinContext(t *testing.T) {
+	t.Parallel()
 	var asked []string
 	part := func(name string, text *string) hook.ContextHandler {
 		return func(_ context.Context, pane string, env harness.Envelope) string {

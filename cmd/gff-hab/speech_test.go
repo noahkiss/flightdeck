@@ -35,6 +35,7 @@ func testExe(t *testing.T) string {
 // TestSpeechSetup: the engine runs only with a helper installed and the host setting on; the
 // default follows the host's memory; a broken config file is an error.
 func TestSpeechSetup(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	cfg := filepath.Join(d, "hab.toml")
 	exe := testExe(t)
@@ -76,6 +77,7 @@ func TestSpeechSetup(t *testing.T) {
 // TestSpeechVocab: a session's vocabulary is the file and folder names git lists in its
 // project's folder; a session with no project, or an unknown one, has none.
 func TestSpeechVocab(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
@@ -154,6 +156,7 @@ func tone(ms int) []byte {
 // transcribes through it; with the engine turned off in the config file it lists no capability
 // and the methods answer unavailable.
 func TestServeSpeech(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	state := filepath.Join(dir, "state")
 	installFakeModel(t, state)

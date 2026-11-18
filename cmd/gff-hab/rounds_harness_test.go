@@ -239,6 +239,7 @@ func paneOpen(t *testing.T, c *control.Client, session string) bool {
 // it failed with the harness's failure kind and keeps the pane; on_finish keep leaves a
 // succeeded run's pane open, and the run keeps only the first 4 KiB of its final message.
 func TestRoundHarnessEnds(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "ok", "claude", "success", func(s *api.RoundSpec) { s.Model = "model-x" })
@@ -310,6 +311,7 @@ func TestRoundHarnessEnds(t *testing.T) {
 // through approval.answer takes nothing over, the run shows running again and ends
 // succeeded.
 func TestRoundHarnessPermission(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "asks", "claude", "permission", nil)
@@ -335,6 +337,7 @@ func TestRoundHarnessPermission(t *testing.T) {
 // timed_out with its pane kept; a run blocked at its timeout ends timed_out with its request
 // left open and no key sent.
 func TestRoundHarnessTimeout(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	short := func(s *api.RoundSpec) { s.TimeoutMS = scaleTimeout(3 * time.Second).Milliseconds() }
@@ -370,6 +373,7 @@ func TestRoundHarnessTimeout(t *testing.T) {
 // TestRoundHarnessTakeOver: a client's session.send to a live run session ends the run
 // taken_over; the session stays the user's.
 func TestRoundHarnessTakeOver(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "mine", "claude", "takeover", nil)
@@ -401,6 +405,7 @@ func TestRoundHarnessTakeOver(t *testing.T) {
 // TestRoundHarnessCodex: a Codex run starts with --no-daemon and its arguments, and ends
 // succeeded with its final message read from the rollout through the chat reader.
 func TestRoundHarnessCodex(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "cx", "codex", "success", nil)
@@ -418,6 +423,7 @@ func TestRoundHarnessCodex(t *testing.T) {
 // TestRoundHarnessRefusals: a harness with no adapter, or one this host does not have, is
 // refused at creation; a harness that goes away later fails the run "harness not found".
 func TestRoundHarnessRefusals(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(10*time.Second))
@@ -457,6 +463,7 @@ func lookFake(t *testing.T, e *habEnv) string {
 // while the final message is still being read (the transcript trails the Stop), leaves the run
 // succeeded, with the message read once the transcript has it.
 func TestRoundHarnessTypedAfterDone(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "trail", "claude", "trail", nil)
@@ -474,6 +481,7 @@ func TestRoundHarnessTypedAfterDone(t *testing.T) {
 
 // TestRoundHarnessNeverReady: a harness that never reaches idle fails at the readiness limit.
 func TestRoundHarnessNeverReady(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t, "GFF_TEST_ROUND_READY=1s")
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "mute", "claude", "mute", nil)
@@ -486,6 +494,7 @@ func TestRoundHarnessNeverReady(t *testing.T) {
 // TestRoundHarnessExits: a harness that exits before its turn ends fails the run with its exit
 // status.
 func TestRoundHarnessExits(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "quits", "claude", "exit", nil)
@@ -500,6 +509,7 @@ func TestRoundHarnessExits(t *testing.T) {
 // take over: the run goes on and succeeds. Unanswered, the run ends timed_out with that reason,
 // and no key ever reaches the dialog from the round.
 func TestRoundHarnessTrust(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t, "GFF_TEST_ROUND_READY=1s")
 	c := e.control()
 	addHarnessRound(t, c, repo, work, "asks", "claude", "trust", nil)
@@ -541,6 +551,7 @@ func TestRoundHarnessTrust(t *testing.T) {
 // turn ended while gff-hab was down (idle, the transcript holding the answer) ends succeeded
 // at once. Claude Code's session id comes back from the program's arguments.
 func TestRoundHarnessAdopt(t *testing.T) {
+	t.Parallel()
 	e, repo, work := harnessRoundEnv(t)
 	c := e.control()
 	for _, m := range []string{"restart-turn", "restart-end", "restart-start"} {

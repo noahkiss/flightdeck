@@ -20,6 +20,7 @@ import (
 
 // TestHarnessStep drives harnessWatch.step one state at a time from a given watch.
 func TestHarnessStep(t *testing.T) {
+	t.Parallel()
 	st := func(rev uint64, s api.AgentStatus) api.AgentState {
 		return api.AgentState{Revision: rev, State: s, Harness: "claude", Session: "native-1"}
 	}
@@ -193,6 +194,7 @@ func (r *harnessRig) phase() harnessPhase {
 // TestHarnessTurnEndWins (finding 1): once the turn's end is seen, a take over, the pane's exit
 // and the timeout that come while the final message is read leave the end as it is.
 func TestHarnessTurnEndWins(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	rig := newHarnessRig(t, func(c *roundsConfig) {
 		c.result = func(context.Context, string, string, string) (string, error) {
@@ -216,6 +218,7 @@ func TestHarnessTurnEndWins(t *testing.T) {
 // TestHarnessBusyRetry: a send refused for a busy agent goes back to waiting, and the agent's
 // current state, applied again at the same revision, sends the prompt once more.
 func TestHarnessBusyRetry(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	sends := 0
 	rig := newHarnessRig(t, func(c *roundsConfig) {
@@ -242,6 +245,7 @@ func TestHarnessBusyRetry(t *testing.T) {
 // TestHarnessSendEndsWithRun (finding 3): a run that ends while its prompt is being sent
 // cancels the send, and the refused send fails nothing.
 func TestHarnessSendEndsWithRun(t *testing.T) {
+	t.Parallel()
 	sendErr := make(chan error, 1)
 	started := make(chan struct{})
 	rig := newHarnessRig(t, func(c *roundsConfig) {
@@ -279,6 +283,7 @@ func TestHarnessSendEndsWithRun(t *testing.T) {
 // TestHarnessNothingAfterClose (finding 5): after Close no state starts a send, no end is sent,
 // and no background work starts.
 func TestHarnessNothingAfterClose(t *testing.T) {
+	t.Parallel()
 	sent := make(chan struct{}, 1)
 	rig := newHarnessRig(t, func(c *roundsConfig) {
 		c.send = func(context.Context, string, string, func(string) error) error { sent <- struct{}{}; return nil }
@@ -302,6 +307,7 @@ func TestHarnessNothingAfterClose(t *testing.T) {
 
 // TestHarnessNetworkFlag: a StopFailure's sign-in kind reaches UpdateRun with the network flag.
 func TestHarnessNetworkFlag(t *testing.T) {
+	t.Parallel()
 	rig := newHarnessRig(t, nil)
 	rig.watch(phaseTurn)
 	rig.svc.agentState(api.AgentState{Pane: "pane-1", Revision: 1, State: api.AgentStatusError, Harness: "claude", Error: "authentication_failed"})
@@ -314,6 +320,7 @@ func TestHarnessNetworkFlag(t *testing.T) {
 // TestHarnessExitGrace: an exited state ends the run only when the pane's exit, which carries
 // the status, does not come first.
 func TestHarnessExitGrace(t *testing.T) {
+	t.Parallel()
 	rig := newHarnessRig(t, nil)
 	rig.watch(phaseTurn)
 	rig.state(1, api.AgentStatusExited)
@@ -330,6 +337,7 @@ func TestHarnessExitGrace(t *testing.T) {
 }
 
 func TestTrustDialog(t *testing.T) {
+	t.Parallel()
 	dialog := strings.Join([]string{
 		" Accessing workspace:",
 		"",
@@ -367,6 +375,7 @@ func TestTrustDialog(t *testing.T) {
 // blocked with a reason that names it, input to its pane is its answer, not a take over, and
 // it shows running again once the dialog goes; rounds never type into it.
 func TestHarnessTrustBlocks(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	screen := "Quick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit"
 	rig := newHarnessRig(t, func(c *roundsConfig) {
@@ -400,6 +409,7 @@ func TestHarnessTrustBlocks(t *testing.T) {
 }
 
 func TestAdoptedTurn(t *testing.T) {
+	t.Parallel()
 	user := api.ChatMessage{Kind: api.ChatKindUser, Text: "Do it."}
 	agent := api.ChatMessage{Kind: api.ChatKindAgent, Text: "Done."}
 	for _, tc := range []struct {

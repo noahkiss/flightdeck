@@ -25,6 +25,7 @@ func capcomCatalog() api.CatalogList {
 }
 
 func TestRoundActionsGrantRules(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	svc, st := fakeRoundsServiceWith(t, state, structure.NewFakeHolder(), func(c *roundsConfig) {
 		c.catalog = capcomCatalog
@@ -177,6 +178,7 @@ func TestRoundActionsGrantRules(t *testing.T) {
 // TestRoundActionsConfirmRound: an agent's round on another host (kind round confirmation)
 // carries no words: the runner's create over the link would take them as a person's.
 func TestRoundActionsConfirmRound(t *testing.T) {
+	t.Parallel()
 	r := &confirmRunner{host: "host-a"}
 	_, err := r.CheckRound(api.ConfirmRound{Host: "peer-b", Round: api.RoundSpec{Name: "j", Mode: api.RoundModeCapcom, Prompt: "p",
 		Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual}, Actions: []api.RoundAction{"hand_off"}}})
@@ -187,6 +189,7 @@ func TestRoundActionsConfirmRound(t *testing.T) {
 
 // TestRoundActionsNormal: the closed set, in a fixed order, each word once.
 func TestRoundActionsNormal(t *testing.T) {
+	t.Parallel()
 	got, err := rounds.NormalActions([]string{"fetch", "card", "hand_off", "card"})
 	if err != nil || !slices.Equal(got, []string{"hand_off", "card", "fetch"}) {
 		t.Fatalf("%v %v", got, err)

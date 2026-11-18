@@ -117,6 +117,7 @@ func waitFor(t *testing.T, what string, limit time.Duration, cond func() bool) t
 // rebuilt with a new key and an empty state folder: it gets its old ops back from A, as another
 // origin's ops (7.4).
 func TestLogbookSyncTwoHabs(t *testing.T) {
+	t.Parallel()
 	for _, tr := range []string{"stand-in", "ssh"} {
 		t.Run(tr, func(t *testing.T) { logbookTwoHabs(t, tr) })
 	}
@@ -227,6 +228,7 @@ func logbookTwoHabs(t *testing.T, tr string) {
 // with the old state folder) is set aside and its ops are copied into the new replica as the
 // old origin's ops (logbook.md 14, Built (stage 3)).
 func TestOpenLogbookSetAside(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	var logs []string
 	logf := func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
@@ -371,6 +373,7 @@ func TestOpenLogbookCopyAgain(t *testing.T) {
 // stays beside the new one. A set-aside cut short after the WAL moved is finished at the next
 // start: the file goes to the WAL's name before anything opens it.
 func TestSetAsideWAL(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	path := filepath.Join(d, logbookFile)
 	for _, ext := range []string{"", "-wal", "-shm"} {

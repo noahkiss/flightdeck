@@ -15,6 +15,7 @@ import (
 )
 
 func TestRoundCLIActions(t *testing.T) {
+	t.Parallel()
 	parse := func(args ...string) (api.RoundSpec, error) {
 		var d roundDef
 		fs := flag.NewFlagSet("x", flag.ContinueOnError)

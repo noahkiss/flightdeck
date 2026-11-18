@@ -43,6 +43,7 @@ func notesWith(items []api.CapcomItem, prefix string) int {
 // small and then wait as the engine's readings rise past the share, one "Pacing usage" note per
 // wait, the governor's state and today's tokens in the catalog, and a send-now message marked.
 func TestCapcomServicePace(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnv(t, "pace_daily_share = 10\n")
 	e.serve()
 	c := e.control()
@@ -102,6 +103,7 @@ func TestCapcomServicePace(t *testing.T) {
 // governor paces it by that account's weekly window. Under an API key the same reading paces
 // nothing: the plan basis is the login's.
 func TestCapcomCodexPace(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnvFor(t, "codex", "")
 	if err := os.WriteFile(e.config, []byte("[capcom]\nengine = \"codex\"\nauth = \"login\"\nrestart_delay = \"1s\"\npace_daily_share = 10\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -144,6 +146,7 @@ func TestCapcomCodexPace(t *testing.T) {
 // moves to the Codex account, which has no reading yet, so Capcom is unpaced until the Codex
 // engine's first reading; then usage.list holds both of Capcom's accounts.
 func TestCapcomPaceEngineSwitch(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnv(t, "pace_daily_share = 10\n")
 	e.serve()
 	c := e.control()
@@ -195,6 +198,7 @@ func TestCapcomPaceEngineSwitch(t *testing.T) {
 // rechecks with the config read again, so an edit that lifts the wait gives no pacing note; and
 // an edit alone reaches the engine once the file held for one check.
 func TestCapcomPaceRestartAndEdit(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnv(t, "pace_daily_share = 10\n")
 	e.serve()
 	run(t, "capcom", "assign", "-socket", e.sock, "self")

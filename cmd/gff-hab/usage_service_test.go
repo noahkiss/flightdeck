@@ -84,6 +84,7 @@ func (tu *testUsage) hook() {
 // TestUsageRolloutReads: the read takes the token_count far from the end of a big rollout, skips
 // a file whose size has not changed, and reads one that grew.
 func TestUsageRolloutReads(t *testing.T) {
+	t.Parallel()
 	tu := newTestUsage(t, time.Hour, time.Hour)
 	// The token_count is 100 KB before the end, inside the 256 KiB tail.
 	body := otherLines(300<<10) + tokenLine(10, 12) + otherLines(100<<10)
@@ -111,6 +112,7 @@ func TestUsageRolloutReads(t *testing.T) {
 // TestUsageDebounce: a burst of hooks is one read, after the last hook of the burst; a steady
 // stream of hooks still reads within the max wait.
 func TestUsageDebounce(t *testing.T) {
+	t.Parallel()
 	d := scaleTimeout(150 * time.Millisecond)
 	tu := newTestUsage(t, time.Hour, 2*time.Hour)
 	writeFile(t, tu.path, tokenLine(10, 12))
@@ -155,6 +157,7 @@ func since(ts []time.Time, from time.Time) []time.Duration {
 // TestUsageCutLastLine: a read that ends mid-line does not mark the file read, and is tried
 // again with no hook, so the token_count still being written is not lost.
 func TestUsageCutLastLine(t *testing.T) {
+	t.Parallel()
 	d := scaleTimeout(100 * time.Millisecond)
 	tu := newTestUsage(t, d, time.Hour)
 	next := tokenLine(20, 30)
@@ -179,6 +182,7 @@ func TestUsageCutLastLine(t *testing.T) {
 // TestUsageHookEnvelopes: a status-line envelope is consumed, whatever its harness; a Codex
 // hook is not; a version outside the tested range is logged once, one inside it is not.
 func TestUsageHookEnvelopes(t *testing.T) {
+	t.Parallel()
 	tu := newTestUsage(t, time.Hour, time.Hour)
 	status := func(version string) harness.Envelope {
 		return harness.Envelope{Harness: detect.KindClaude, Event: hook.StatusLineEvent, T: 1767261600000,
@@ -218,6 +222,7 @@ func TestUsageHookEnvelopes(t *testing.T) {
 // TestUsageDegraded: a status line whose rate_limits drifted marks its account degraded, with
 // no windows and a log line; the next good status line clears the mark and brings the window.
 func TestUsageDegraded(t *testing.T) {
+	t.Parallel()
 	tu := newTestUsage(t, time.Hour, time.Hour)
 	status := func(limits string) harness.Envelope {
 		return harness.Envelope{Harness: detect.KindClaude, Event: hook.StatusLineEvent, T: 1767261600000,
@@ -241,6 +246,7 @@ func TestUsageDegraded(t *testing.T) {
 
 // TestUsageWarnFull: past 256 distinct lines, a new line is dropped, not logged each time.
 func TestUsageWarnFull(t *testing.T) {
+	t.Parallel()
 	tu := newTestUsage(t, time.Hour, time.Hour)
 	for i := range 256 {
 		tu.warn("line %d", i)

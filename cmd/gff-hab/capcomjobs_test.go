@@ -125,6 +125,7 @@ func (h *jobsHarness) jobCards() []capcomthread.Item {
 }
 
 func TestCapcomJobsAllow(t *testing.T) {
+	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"allow"`
 
@@ -178,6 +179,7 @@ func TestCapcomJobsAllow(t *testing.T) {
 }
 
 func TestCapcomJobsLimitsAndLevels(t *testing.T) {
+	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"allow"`
 
@@ -251,6 +253,7 @@ func TestCapcomJobsLimitsAndLevels(t *testing.T) {
 }
 
 func TestCapcomJobsAsk(t *testing.T) {
+	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"ask"`
 	h.set[settings.CapcomEventActionMaxAge] = "1"
@@ -304,6 +307,7 @@ func TestCapcomJobsAsk(t *testing.T) {
 
 // TestCapcomJobsAskExpires: an ask card expires at capcom.event_action_max_age and never runs.
 func TestCapcomJobsAskExpires(t *testing.T) {
+	t.Parallel()
 	ran := false
 	cf, err := confirm.New(confirm.Config{Runner: noStarts{}})
 	if err != nil {
@@ -325,6 +329,7 @@ func TestCapcomJobsAskExpires(t *testing.T) {
 // from a sender that is not round:<name>, an agent's channel message that carries actions
 // fields, and event text that names actions all allow nothing.
 func TestCapcomJobsSmuggling(t *testing.T) {
+	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"allow"`
 
@@ -376,6 +381,7 @@ func TestCapcomJobsSmuggling(t *testing.T) {
 // round runs here allows only the words its round still has; a job's message goes in a batch
 // of its own; a card-answer note quoting a card's title never makes a user turn.
 func TestCapcomJobsReviewFixes(t *testing.T) {
+	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"ask"`
 	h.job(t, "m1", "mail", "t1", "hand_off")
@@ -427,6 +433,7 @@ func TestCapcomJobsReviewFixes(t *testing.T) {
 // TestCardAnswerNoteIsData: the note of a calendar card's answer quotes the card's title, which an
 // event turn may have written, as data, and is marked so it never makes a user turn.
 func TestCardAnswerNoteIsData(t *testing.T) {
+	t.Parallel()
 	e := eventsEngine(t, map[string]string{})
 	card, _, err := e.thread.Add(capcomthread.Item{Kind: capcomthread.KindCard, Author: capcomthread.Author{Kind: capcomthread.AuthorCapcom},
 		Text: "Add to reminders", Card: &capcomthread.Card{Type: capcomthread.CardReminder, Choices: []string{capcomthread.ChoiceAdd, capcomthread.ChoiceDismiss},
@@ -447,6 +454,7 @@ func TestCardAnswerNoteIsData(t *testing.T) {
 // may join a second batch to a running turn; the CLI's card shows an action confirmation's
 // whole call.
 func TestCapcomJobsSecondReview(t *testing.T) {
+	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"allow"`
 	h.job(t, "m1", "mail", "t1", "hand_off")

@@ -31,6 +31,7 @@ func (w *writeSignal) Write(b []byte) (int, error) {
 // answered the key before it depends on load here, so that is proven without timing at the link
 // (TestInputPipelined) and the control connection (TestInputLanePipelined).
 func TestTypingDuringQueryFlood(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	pane := e.spawn(e.control(), `stty -icanon -echo
 yes "$(printf '\033[5n')" | tr -d '\n' &

@@ -129,6 +129,7 @@ func (f *fakeLink) config(c *roundsConfig) {
 // while a holder is not reached; a pane that comes back is watched at once, well before the
 // periodic look; and with every holder reached and no pane, the run fails "host restarted".
 func TestRoundAdoptWaitsForHolders(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	const u1 = "11111111-2222-3333-4444-555555555555"
 	uid, _ := parseUUID(u1)
@@ -193,6 +194,7 @@ func seedRunSession(t *testing.T, state string, run rounds.Run, session string) 
 // TestRoundAdoptExitWhileDown: a pane the holder released while gff-hab was down, whose
 // session record holds the exit, ends the run by that exit at start.
 func TestRoundAdoptExitWhileDown(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	holder := structure.NewFakeHolder(hpane("p1"))
@@ -217,6 +219,7 @@ func TestRoundAdoptExitWhileDown(t *testing.T) {
 // names it (gff-hab stopped after the spawn), gets that session back and is watched; with no
 // such session it fails "start lost".
 func TestRoundLostStartAttach(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	holder := structure.NewFakeHolder(hpane("p1"))
@@ -246,6 +249,7 @@ func TestRoundLostStartAttach(t *testing.T) {
 // TestRoundFinishOnce: the first end of a run wins; a later exit, timeout or take over finds no
 // watch, so the run ends once.
 func TestRoundFinishOnce(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	holder := structure.NewFakeHolder(hpane("p1"))
@@ -285,6 +289,7 @@ func TestRoundFinishOnce(t *testing.T) {
 // TestRoundWatchAlreadyExited: a program that exited before its watch began (the exit notice
 // came first) ends its run at once, by its status.
 func TestRoundWatchAlreadyExited(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	holder := structure.NewFakeHolder(hpane("p1"))
@@ -310,6 +315,7 @@ func TestRoundWatchAlreadyExited(t *testing.T) {
 // TestRoundPruneKeepsLiveSessions: retention removes the session records of the runs it drops
 // only when they have exited; a live one (taken over, the user's now) stays.
 func TestRoundPruneKeepsLiveSessions(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	holder := structure.NewFakeHolder(hpane("p1"), hpane("p2"), hpane("p3"))
@@ -364,6 +370,7 @@ func TestRoundPruneKeepsLiveSessions(t *testing.T) {
 // drop (rounds.md 7.6). A failed run's session, a live one and a session the run did not make
 // stay; so do a keep round's.
 func TestRoundDropFinishedAtStart(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	rst, _, err := rounds.Open(state, rounds.Options{Zone: "UTC"})
@@ -440,6 +447,7 @@ func TestRoundDropFinishedAtStart(t *testing.T) {
 // still run (rounds.md 7.6). Once the follow-up round goes, and once the holder reports the
 // real exit, the record goes.
 func TestRoundDropKeepsTargetsAndLostPanes(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	holder := structure.NewFakeHolder(hpane("p1"), hpane("p2"))
@@ -533,6 +541,7 @@ func writeRuns(t *testing.T, state, roundID string, runs []rounds.Run) {
 
 // TestRoundDeletedEvent: a delete sends round.updated with deleted set, at the next revision.
 func TestRoundDeletedEvent(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	e := seedRound(t, state)
 	var mu sync.Mutex
@@ -561,6 +570,7 @@ func TestRoundDeletedEvent(t *testing.T) {
 // rounds that session created can be updated, deleted, paused, unpaused or run; each other
 // call is refused with denied. Reads stay open. The control socket keeps full access.
 func TestRoundPaneNarrowing(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
 	svc, st := fakeRoundsServiceWith(t, state, structure.NewFakeHolder(), nil)
 	me, _ := st.CreateSession(structure.SessionSpec{Name: "me", Pane: "pane-me", Index: -1, NewPane: true})

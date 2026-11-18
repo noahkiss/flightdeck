@@ -196,6 +196,7 @@ func needGit(t *testing.T) {
 // task named a Codex member; Codex trusts the whole repository, so it is not covered (groups.md
 // 4.2), and TestGroupTrustCases checks its card.
 func TestGroupTrustOnPeer(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := trustFakes(t)
 	m := newMeshPairEnv(t, fakes, "GFF_HAB_BIN="+bin,
@@ -271,6 +272,7 @@ func TestGroupTrustOnPeer(t *testing.T) {
 // main checkout) raises the card; a spawn outside a group raises the card in a group worktree
 // too; a Codex member's prompt raises the card in a group worktree.
 func TestGroupTrustCases(t *testing.T) {
+	t.Parallel()
 	needGit(t)
 	fakes, work := trustFakes(t)
 	e := newHolderEnv(t, 0)

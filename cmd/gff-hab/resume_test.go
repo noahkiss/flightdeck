@@ -21,6 +21,7 @@ import (
 // again under the same id); a model the session was created with stays with its harness; with
 // no id, the session starts as it was created; with nothing known there is no start.
 func TestResumeStart(t *testing.T) {
+	t.Parallel()
 	transcript := func(ok bool) func(string) bool { return func(string) bool { return ok } }
 	cases := []struct {
 		name string
@@ -60,6 +61,7 @@ func TestResumeStart(t *testing.T) {
 // with no adapter is ignored; a removed session is forgotten; a file that does not read is set
 // aside.
 func TestResumeBook(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	var mu sync.Mutex
 	panes := map[string]string{"p1": "s1", "p2": "s2"}
@@ -131,6 +133,7 @@ exec sleep 600
 // has no transcript, then with --resume once it has one, in the session's folder, and the shell
 // with the command it was created with. A running session refuses.
 func TestSessionResumeAfterHolderLoss(t *testing.T) {
+	t.Parallel()
 	e := newHolderEnv(t, 0)
 	fake := shortDir(t)
 	writeFile(t, filepath.Join(fake, "claude"), fakeResumable)
@@ -226,6 +229,7 @@ func TestSessionResumeAfterHolderLoss(t *testing.T) {
 
 // An agent can report its native id before session.create records the start.
 func TestResumeBookAgentBeforeStart(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	b := openResumeBook(d, func(string) (string, bool) { return "s1", true }, t.Logf)
 	b.agent(api.AgentState{Pane: "p1", Harness: "claude", Session: "native"})
@@ -243,6 +247,7 @@ func TestResumeBookAgentBeforeStart(t *testing.T) {
 
 // Concurrent starts and agent states must all survive the final write.
 func TestResumeBookConcurrentSaves(t *testing.T) {
+	t.Parallel()
 	d := t.TempDir()
 	b := openResumeBook(d, func(p string) (string, bool) { return p, true }, t.Logf)
 	var wg sync.WaitGroup
@@ -271,6 +276,7 @@ func TestResumeBookConcurrentSaves(t *testing.T) {
 // not read is unavailable and a process outside that runs the conversation is conflict, both
 // before anything starts; a session with no native id is not checked.
 func TestResumeLiveCheck(t *testing.T) {
+	t.Parallel()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"),
 		Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p1", Exit: &api.ExitStatus{}}, structure.HolderPane{ID: "p2", Exit: &api.ExitStatus{}})})
 	if err != nil {

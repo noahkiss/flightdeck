@@ -106,6 +106,7 @@ func programSizes(e *habEnv) []string {
 // change emits exactly one pane.owner event with its reason, and every data stream sees the
 // new size with the owner.
 func TestTypingTakesOwnership(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	a, aid := hello(t, e)
 	b, bid := hello(t, e)
@@ -183,6 +184,7 @@ func TestTypingTakesOwnership(t *testing.T) {
 // through an observer stream sets its view's size, and the PTY keeps its size. A client with a
 // full view then sets a size, which the PTY takes: that is the first size change any stream sees.
 func TestObserverNeverResizes(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	a, _ := hello(t, e)
 	obs, _ := hello(t, e)
@@ -241,6 +243,7 @@ func TestObserverNeverResizes(t *testing.T) {
 // writes no byte to the program's input. The snapshot goes to the asking client's stream only;
 // the nudge resizes the PTY one column narrower and back.
 func TestRedrawWritesNoInput(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 0)
 	a, _ := hello(t, e)
 	b, _ := hello(t, e)

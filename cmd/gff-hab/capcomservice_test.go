@@ -137,6 +137,7 @@ func countReplies(items []api.CapcomItem, text string) int {
 // adopts the engine and loses no reply, a crash that restarts with a new token and refuses the
 // old one, and interrupt.
 func TestCapcomServiceStub(t *testing.T) {
+	t.Parallel()
 	for _, kind := range engineKinds {
 		t.Run(kind, func(t *testing.T) { testCapcomServiceStub(t, kind) })
 	}
@@ -446,6 +447,7 @@ func testServiceRest(t *testing.T, e *serviceEnv, c *control.Client, st api.Capc
 // With no credential the engine does not start, and the row says why; the thread still takes
 // messages.
 func TestCapcomServiceNoToken(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnv(t, "")
 	e.env = e.env[:len(e.env)-1] // no CLAUDE_CODE_OAUTH_TOKEN
 	e.env = append(e.env, "CLAUDE_CODE_OAUTH_TOKEN=")
@@ -470,6 +472,7 @@ func TestCapcomServiceNoToken(t *testing.T) {
 // names (crash_limit 3); max_turns reaches the engine in hello; a value outside its range is
 // refused and the default runs (19.2). settings.set refuses capcom.approval_max_age 0 (19.1).
 func TestCapcomServiceCrashLimit(t *testing.T) {
+	t.Parallel()
 	e := newServiceEnv(t, "crash_limit = 3\nmax_turns = 9999\n")
 	os.WriteFile(filepath.Join(e.stubDir, "crashstart"), nil, 0o600)
 	e.serve()

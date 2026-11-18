@@ -176,6 +176,7 @@ func deref[T any](p *T) any {
 // list survives a planned restart, a SIGKILL of gff-hab and the loss of the checkpoint with the
 // same ids, and each command's start and end reach a subscriber as command.updated events.
 func TestCommandMarks(t *testing.T) {
+	t.Parallel()
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) { testCommandMarks(t, shell) })
 	}
@@ -365,6 +366,7 @@ func (e *habEnv) checkpointOffset() uint64 {
 // TestCommandEventsDropped: a flush sends a pane's newest maxCommandEvents changes, and the first
 // event it sends says how many older ones it left out. A flush that left none out says nothing.
 func TestCommandEventsDropped(t *testing.T) {
+	t.Parallel()
 	u := hp.UUID{1}
 	var pending []cmdmarks.Command
 	var sent []api.Command
@@ -405,6 +407,7 @@ func TestCommandEventsDropped(t *testing.T) {
 // when a job's child fails to set its process group. Those bytes are rightly the command's
 // output, but they change its length.
 func TestCommandMarksRing(t *testing.T) {
+	t.Parallel()
 	e := newHabEnv(t, 64<<10)
 	cc := e.control()
 	pane := e.markedShell(cc, "bash")

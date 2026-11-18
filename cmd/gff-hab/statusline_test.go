@@ -60,6 +60,7 @@ func runStatus(t *testing.T, env []string, args ...string) (stdout, stderr strin
 // TestStatuslineHungHab: a gff-hab that takes the connection and never answers holds the
 // status line no longer than the post budget, not the hook budget.
 func TestStatuslineHungHab(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	sock := filepath.Join(dir, "hook.sock")
 	l, err := net.Listen("unix", sock)
@@ -98,6 +99,7 @@ func TestStatuslineHungHab(t *testing.T) {
 // TestStatuslinePostBeside: the post runs while the command runs, and gff-hab waits for the
 // post before it exits.
 func TestStatuslinePostBeside(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	started := filepath.Join(dir, "started")
 	var got atomic.Int32
@@ -127,6 +129,7 @@ func TestStatuslinePostBeside(t *testing.T) {
 
 // TestStatuslineArgv: one word after -- is a shell string; several are the argv, quoting kept.
 func TestStatuslineArgv(t *testing.T) {
+	t.Parallel()
 	env := []string{"PATH=" + os.Getenv("PATH"), noRaceExitSleep}
 	if out, _, code, _ := runStatus(t, env, "claude", "--", "printf", "%s|", "a b", "c"); out != "a b|c|" || code != 0 {
 		t.Errorf("argv: %q, exit %d", out, code)
@@ -142,6 +145,7 @@ func TestStatuslineArgv(t *testing.T) {
 // TestStatuslineNoOrphan: SIGTERM to gff-hab ends the command and its children, and so does a
 // command that runs past -timeout.
 func TestStatuslineNoOrphan(t *testing.T) {
+	t.Parallel()
 	dir := shortDir(t)
 	env := []string{"PATH=" + os.Getenv("PATH"), noRaceExitSleep, "DIR=" + dir}
 	// Each command starts a child that would outlive it and writes the child's pid.
