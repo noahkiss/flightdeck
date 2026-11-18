@@ -217,6 +217,7 @@ struct CapcomScreen: View {
             if let m = center.standing {
                 VStack(spacing: 0) {
                     if let r = center.deviceContext { CapcomPermissionAsk(reporter: r) }
+                    CapcomPacingLine(center: center, usage: fleet.usage)
                     SessionView(model: m, compact: compact, close: close)
                 }
                     .id(m.target)
@@ -306,6 +307,40 @@ struct CapcomScreen: View {
             case .offline(let id):
                 ContentUnavailableView("\(center.habs.label(id)) is offline", systemImage: "wifi.slash",
                                        description: Text("Capcom runs on \(center.habs.label(id)). It opens when that hab is online."))
+            }
+        }
+    }
+}
+
+/// The usage governor's line above the Capcom thread (capcom-service.md 10.1), while Capcom is
+/// not at `ok`: "Pacing usage until 15:04 · 40% of the week used, share 30%". Nothing shows
+/// when the home's catalog has no governor section. A tap opens the usage sheet.
+struct CapcomPacingLine: View {
+    let center: CapcomCenter
+    let usage: UsageCenter?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            if let line = center.governorLine(now: ctx.date) {
+                Button {
+                    usage?.book.present(account: nil)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "gauge.with.dots.needle.67percent")
+                        Text(line)
+                            .lineLimit(2)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
+                }
+                .buttonStyle(.plain)
+                .disabled(usage == nil)
+                .accessibilityHint(usage == nil ? "" : "Opens usage")
             }
         }
     }

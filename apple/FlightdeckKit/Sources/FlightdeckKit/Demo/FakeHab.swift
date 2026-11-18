@@ -264,6 +264,9 @@ public actor FakeHab {
     }
     /// Every `capcom.assign` received, oldest first.
     public private(set) var capcomAssigns: [CapcomAssignParams] = []
+    /// The catalog's usage governor section (capcom-service.md 10.1); nil for none.
+    public private(set) var governor: CatalogGovernor?
+    public func setGovernor(_ g: CatalogGovernor?) { governor = g }
     /// The catalog's always-on mark (mesh.md 8).
     public private(set) var alwaysOn = false
     public func setAlwaysOn(_ on: Bool) { alwaysOn = on }
@@ -1543,7 +1546,7 @@ public actor FakeHab {
             }
         }
         return Catalog(actions: [], agents: [], alwaysOn: alwaysOn ? true : nil, at: Fixture.stamp(Date()), capabilities: [], capcom: cap, deviceId: deviceID,
-                       generation: catalogGeneration, harnesses: [], host: hostID, peers: [], projects: [], services: [],
+                       generation: catalogGeneration, governor: governor, harnesses: [], host: hostID, peers: [], projects: [], services: [],
                        system: CatalogSystem(arch: "arm64", cores: 8, os: "darwin"), toolchains: [], watches: [])
     }
 

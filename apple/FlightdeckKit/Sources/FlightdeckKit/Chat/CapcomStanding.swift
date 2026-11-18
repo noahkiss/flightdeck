@@ -91,6 +91,7 @@ extension CapcomCenter {
         guard await conn.has(capability: CapcomChip.capability) else {
             beliefs[habID] = CapcomBelief.none
             standingSessions[habID] = nil
+            governors[habID] = nil
             return
         }
         if !quiet { reading[habID, default: 0] += 1 }
@@ -109,6 +110,7 @@ extension CapcomCenter {
         // back, or another machine behind the same entry, is not skipped until it reconnects.
         if let r { catalogRead[habID] = quiet ? max(catalogRead[habID] ?? 0, r.generation) : r.generation }
         let cat = r?.catalog
+        governors[habID] = cat?.governor
         var next = CapcomBelief.none
         if let c = cat?.capcom, let home = c.home, !home.isEmpty {
             next = .home(assignment: c.assignment, device: home)
@@ -150,6 +152,7 @@ extension CapcomCenter {
         beliefs[habID] = nil
         reading[habID] = nil
         standingSessions[habID] = nil
+        governors[habID] = nil
         alwaysOn.remove(habID)
         catalogRead[habID] = nil
         fresh.remove(habID)
@@ -231,6 +234,29 @@ extension CapcomCenter {
     public func standingRow(in rows: [BoardRow]) -> BoardRow? {
         guard let t = standingTarget else { return nil }
         return rows.first { $0.target.habID == t.habID && $0.target.session == t.session }
+    }
+
+    // MARK: - The usage governor (capcom-service.md 10.1)
+
+    /// The Capcom screen's pacing line: the home's `capcom` consumer, when it is not at `ok`.
+    /// Nil while the home is not online or its catalog has no governor section.
+    public func governorLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String? {
+        guard case .ready(let id) = entry,
+              let k = governors[id]?.consumers.first(where: { $0.id == "capcom" }) else { return nil }
+        return GovernorText.line(k, now: now, calendar: calendar, locale: locale)
+    }
+
+    /// "Usage pacing" on the usage sheet: each consumer not at `ok` on each online hab, by hab
+    /// label, then consumer id. Empty when no hab's catalog has a governor section.
+    public func governorRows(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> [GovernorRow] {
+        var out: [GovernorRow] = []
+        for (id, g) in governors where habs.online(id) {
+            for k in g.consumers {
+                guard let t = GovernorText.line(k, now: now, calendar: calendar, locale: locale) else { continue }
+                out.append(GovernorRow(habID: id, habLabel: habs.label(id), consumer: k.id, text: t))
+            }
+        }
+        return out.sorted { ($0.habLabel, $0.consumer) < ($1.habLabel, $1.consumer) }
     }
 
     // MARK: - Host picker (capcom.md 7.3)
