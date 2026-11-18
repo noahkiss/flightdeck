@@ -823,7 +823,7 @@ request stays open with a comment that names the failure, and a maintainer takes
 | Pin | Where | Moves with | Validation before merge |
 |---|---|---|---|
 | Go bindings, `go.mitchellh.com/libghostty` | `go.mod` | Its newest version on the Go proxy | All of the libghostty row |
-| `GHOSTTY_COMMIT` | `Makefile` | The bindings' `CMakeLists.txt` `GIT_TAG` at their new revision; never past it | `make libghostty`, `make vet`, `make test`, the restart loop at 200 cycles, the pull request's checks, `nightly.yml` dispatched on the branch, a `release.yml` dry run on the branch head (7.6) |
+| `GHOSTTY_COMMIT` | `Makefile` | The bindings' `CMakeLists.txt` `GIT_TAG` at their new revision. Past it only to take an upstream fix, and only to a commit whose `include/` matches the `GIT_TAG`'s | `make libghostty`, `make vet`, `make test`, the restart loop at 200 cycles, the pull request's checks, `nightly.yml` dispatched on the branch, a `release.yml` dry run on the branch head (7.6) |
 | Our Ghostty patches | `third_party/ghostty/patches/` | Each `GHOSTTY_COMMIT` move: dropped when upstream fixed the bug, else rebased (context only) and refreshed so it applies clean | As `GHOSTTY_COMMIT` |
 | zig | `mise.toml` | The new Ghostty commit's `build.zig.zon` `minimum_zig_version` | As `GHOSTTY_COMMIT` |
 | `SHERPA_VERSION` and its sha256 lines | `Makefile` | sherpa-onnx releases | `make test-speech`, `make test`, the checks |
@@ -833,7 +833,9 @@ request stays open with a comment that names the failure, and a maintainer takes
 **A libghostty move, step by step.**
 
 1. Read the bindings' newest revision and the Ghostty commit in its `CMakeLists.txt`. Set both
-   pins. Set zig to that commit's `minimum_zig_version` when it differs.
+   pins. Set zig to that commit's `minimum_zig_version` when it differs. To take an upstream fix
+   the bindings' commit lacks, pin a later Ghostty commit whose `include/` has no change from it
+   (`git diff --stat <GIT_TAG> <commit> -- include/` prints nothing).
 2. For each patch: read its header (it names the bug). If upstream fixed it, delete the patch.
    Else apply it; when it fails or applies with an offset, rebase it in `build/ghostty-src` and
    write it again as its header plus `git diff`. A rebase that must change the fix's code is a
