@@ -81,12 +81,12 @@ func TestReadScreenStyles(t *testing.T) {
 
 // A restored terminal keeps writing into the bottom page it restored, so restarts cost no
 // memory: a terminal snapshotted, restored and written to many times holds the same pages and
-// the same scrollback as one that parsed the same bytes. Unpatched libghostty restores that page
-// full, so every cycle leaves one more mostly empty page behind: the memory check fails within a
-// few cycles, and later, at the cap, the chained terminal would drop scrollback the reference
-// keeps (the nightly restart loop's failure). third_party/ghostty/patches/0001 fixes it. The styled case
-// draws 40 true-colour cells a line, which grows the page's style capacity past a standard page;
-// such a page must get room too.
+// the same scrollback as one that parsed the same bytes. Ghostty before a622196c restored that
+// page full, so every cycle left one more mostly empty page behind: the memory check fails within
+// a few cycles, and later, at the cap, the chained terminal would drop scrollback the reference
+// keeps (the nightly restart loop's failure). Upstream fixed it in a622196c for a standard page.
+// The styled case draws 40 true-colour cells a line, which grows the page's style capacity past a
+// standard page; such a page must get room too, which third_party/ghostty/patches/0001 adds.
 func TestRestoreLeavesRoom(t *testing.T) {
 	plain := func(n int) string { return fmt.Sprintf("\x1b[3%dmline %d\x1b[0m \x1b[1m世界\x1b[0m\r\n", n%8, n) }
 	styled := func(n int) string {

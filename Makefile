@@ -1,16 +1,18 @@
 GO ?= go
 ZIG ?= zig
 
-# libghostty-vt, pinned to the exact Ghostty commit that the go.mitchellh.com/libghostty
-# version in go.mod was built against. Bump both together.
-GHOSTTY_COMMIT := 5813c9461d5af78b6307a1254d00b1bc190eaccd
+# libghostty-vt, pinned to the Ghostty commit that the go.mitchellh.com/libghostty version in
+# go.mod was built against, or a later one with the same C headers (docs/specs/ci-release.md 7.9).
+# Bump both together.
+GHOSTTY_COMMIT := a622196c930138f312884382ab784e45b9ab653b
 GHOSTTY_SRC := build/ghostty-src
 GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
 # Ghostty's dependencies, fetched before the build, and the zig cache of the offline build.
 GHOSTTY_PKGS := $(CURDIR)/build/ghostty-pkgs
 GHOSTTY_ZIGCACHE := $(CURDIR)/build/ghostty-zig-cache
-# Our patches to that commit (third_party/ghostty/patches), applied in name order. Their id is in
-# the stamp and in CI's cache key (`make ghostty-id`), so a changed patch rebuilds the library.
+# Our patches to that commit (third_party/ghostty/patches), applied in name order; there may be
+# none. Their id is in the stamp and in CI's cache key (`make ghostty-id`), so a changed patch
+# rebuilds the library.
 GHOSTTY_PATCHES := $(sort $(wildcard third_party/ghostty/patches/*.patch))
 GHOSTTY_PATCH_ID := $(if $(GHOSTTY_PATCHES),$(shell cat $(GHOSTTY_PATCHES) | git hash-object --stdin | cut -c1-12),none)
 ifeq ($(GHOSTTY_PATCH_ID),)
