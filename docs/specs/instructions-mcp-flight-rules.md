@@ -620,9 +620,18 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   server left the context. `reason` is the harness's load reason (`session_start`,
   `compaction`). `note` says why an entry is unknown, or that only the start of a file was sent.
   `quote` is left for the memory proposals stage. `digest` is hex SHA-256 of the recorded text.
+  `count` is how many records carried the entry.
 - **Id.** Each entry's id comes from its kind, source and digest. A repeat of the same text moves
   `last_seen` and clears `gone`. A new text from the same source is a new entry (11.3). A
   removal marks every text of the source gone, earlier ones included.
+- **Repeating sources.** A source whose text changes on every load for reasons that are not a
+  new source keeps one entry per kind, source and event: a hook that prints a clock or a usage
+  line, the date, an environment snapshot. The entry's digest and size are the latest text's,
+  `count` counts the loads, and `first_seen` and `last_seen` span them. `flightrules.text`
+  returns the latest text only; earlier texts are not kept. The rule is a flag on the
+  observation (`Repeats`), so a Codex or opencode source sets it for its own hooks. Every hook
+  entry repeats; so do the date, environment, session context, auto mode and silent turn
+  reminder entries below.
 - **Unnamed sources.** A file with no path, a skill or server with no name, or hook context with
   neither hook name nor event is attribution `unknown`, with a note. The text still counts.
 - **Claude records read.** Attachment records only, in place, from the offset the last read
@@ -640,9 +649,19 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   - `mcp_instructions_delta`: one `mcp` entry per added server; a removed name marks it gone.
   - `hook_additional_context`: one `hook` entry, source the hook name and `event` the hook
     event. A record with neither is attribution `unknown`.
+  - Context the model sees, as kind `system`, scope `session`, attribution `recorded`:
+    `model` (source `model identity`, its `text`), `agent_listing_delta` (`agent listing`, its
+    added lines; a record with only removals adds nothing), `silent_turn_reminder` (its
+    `text`), and `date` (its `date` value). Claude writes the block for `date`, `environment`
+    (`snapshot`), `session_context` (`context`), `auto_mode` (the whole record),
+    `deferred_tools_delta` (the whole record) and `prompt_snapshot` (`systemPrompt`, source
+    `system prompt`) from recorded data at send time. For these the digest covers the data as
+    compact JSON, not the words the model saw, and the note says so.
 - **Not read.** Sidechain records (a subagent's context). Attachment types that carry
   conversation or tool state rather than loaded context (mentioned files, reminders, hook
-  results that add no text, among others) are skipped by name. Any other type becomes one
+  results that add no text, among others) are skipped by name. So are `command_permissions`,
+  `credential_org`, `remote_session_change` (Claude builds other reminders from it),
+  `deferred_tools_record`, `edited_text_file` and `thinking_drop`. Any other type becomes one
   placeholder per type, kind `system`, attribution `unknown`, with a warning. Today that covers
   `relevant_memories`, `memory_update`, `dynamic_skill` and `hook_system_message`, among others.
   The `InstructionsLoaded` hook is not used yet.
@@ -653,7 +672,8 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   files. A rendered file whose digest differs names none; the stale-render check is a
   later stage.
 - **Limits.** A line over 32 MiB is skipped with a warning. A ledger holds at most 4000 entries
-  besides hooks, and 1000 hook entries, so a busy hook never crowds out instruction files.
+  besides hooks, and 1000 hook entries (one per hook source and event), so hooks never crowd out
+  instruction files.
   `flightrules.text` returns at most 1 MiB, cut on a character boundary, with the whole size.
   A transcript that shrinks or is replaced is read again from the start, with a warning; one cut
   and grown back past the last read between two calls is not seen. A
