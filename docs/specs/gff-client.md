@@ -1163,6 +1163,9 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
   runs the round now (`round.run`), `p` pauses it or unpauses a paused one, Enter (or `t`)
   opens its last run's session when that session is still listed. A stale row says "<host> is
   offline" and calls nothing.
+- **Capcom jobs.** `m` on the board shows only `capcom` rounds, the Capcom jobs
+  (`capcom-service.md` 9.6), and `m` again shows every round. A row with action words shows
+  them after its trigger, and its newest message's outcome (`told`, `quiet`, `acted`).
 - **Refusals** show on the bottom row in the hab's words: "run alpha: the round has a live
   run". gff checks nothing the hab checks.
 - **Run now opens the run.** As the app: when the run's session shows with a pane within 2
@@ -1181,6 +1184,7 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
 | `gffclient` `TestBoardMatchesRoundLs` | Real holder and gff-hab: rounds made with `gff-hab round add` and one paused; the board lists exactly the rounds of `gff-hab round ls -all -json`, with the same trigger words and marks |
 | `gffclient` `TestBoardScrollsToRound` | More sessions than the screen holds: `j` into the Rounds list scrolls the last round on screen, `r` runs it, `k` scrolls back to the top |
 | `gffclient` `TestKeepCatalog`, `TestRoundTextTriggerError` | A hab's own catalog entry and a device in no host's identity are not kept, the newest copy is; a round whose trigger no longer compiles shows "trigger error" and the reason after its trigger |
+| `gffclient` `TestBoardCapcomJobs` | `m` on the board shows only the `capcom` round, with its words and its newest outcome; `m` again shows every round |
 | `gffclient` `TestPrefixKeymapSample` | The one-prefix sample binds `R`, and on the board `r` and `p` |
 | `gffclient` `TestNextText` | Today, tomorrow and a date in this machine's zone; the round's clock beside it when it differs |
 
@@ -1217,7 +1221,7 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
   selection is not the target.
 - **Keys on a card.** While the selection is in a card, a button's key hint presses it and moves
   the selection to it. Enter presses the selected target; Space too. Key hints never take a
-  single-character key the board binds (`j`, `k`, `t`, `r`, `p`, `R`, `q` by default, or what
+  single-character key the board binds (`j`, `k`, `t`, `r`, `p`, `m`, `R`, `q` by default, or what
   `[keys.board]` sets), so the board's keys keep working everywhere. Design call: hints act on the
   card that holds the selection, so two cards may use the same letter. Only that card draws its
   hints; every other card shows `›` for its buttons, so a hint on screen always does what it

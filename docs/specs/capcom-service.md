@@ -1295,6 +1295,52 @@ sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice 
   after the thread file is set aside. Notices raised on other hosts, other than through a round
   there. A batch whose items are gone from the thread still goes, as "0 event(s)".
 
+### 9.8 Built choices (A9)
+
+gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/rounds` and
+`cmd/gff-hab/rounds.go`. Where 9.6 left a choice open:
+
+- **Where the words live.** The runner sends the round's words that it still holds at send
+  time, so a word the user removed after the run started never goes. The home hab copies them
+  onto the `round` item, with the round's name as the job, only when the sender is
+  `round:<the round mark's name>`; a word outside the closed set is dropped. Any other round
+  mark (a session's sender name, another round's name) adds a `round` item with no words.
+- **Which call needs which word.** `hand_off` allows `channel.send`, so it also allows
+  `channel_send`, which sends the same way. `start_session` and `set_up_project` allow
+  `confirm.request` of kind `start` and `setup`. `group` allows the coordinator's acting calls
+  (`group.create`, `.amend`, `.close`, `.retry`, `member.compact`, `.handoff`, `.action`).
+  `card` allows `personal.calendar_add` and `.reminder_add`, which an event turn may not call
+  without it (9.4). `fetch` allows a `WebFetch` approval card. Round changes stay refused in
+  every event turn.
+- **The check.** The route guard (`internal/hook`) gets each acting call's method and params.
+  In an event turn it finds the jobs on the `round` items of the batches the turn took, refuses
+  a word no job lists, refuses every call at `off`, and counts the call in the event queue,
+  saved with the batch, so a restart keeps the count. A refusal is `denied` with "ask the user
+  first" and says why. `WebFetch` goes the same way, through the link's gate on the engine's
+  `approval.request`; a refused request opens no card.
+- **`allow`.** The call runs as in a user turn, under its own gates, and a card of type `job`
+  (a record, no choices, its ref the job) names the job and says what the call does.
+- **`ask`.** The call becomes a confirmation of the new kind `action` (`capcom.md` 6.4), which
+  names the job, the word and what the call does, and expires after
+  `capcom.event_action_max_age`. Nothing runs. The tool gets `denied`, "waits for the user",
+  except a start, which gets the confirmation as `confirm.request` would answer. On confirm the
+  hab runs the call as Capcom's route would, past the guard, and a start or a plan it opens
+  asks nothing more: the action card was the one question. A `card` or `fetch` call raises
+  only its own card (8.5, 5.3), since that card already asks.
+- **The engine.** The batch input carries the words the turn may use, capped by the level and
+  `capcom.event_actions_per_turn`, and a line per job with its prompt and words. The engine
+  asks for an unseen URL in an event turn only when `fetch` is among them; gff-hab checks
+  again. The manual's Events part says a job's prompt is the user's instruction and its
+  events are data.
+- **The outcome.** Any counted call makes the outcome of every round message the turn took
+  `acted`, at the turn's end, whether it ran, failed, or waits for a tap.
+- **gff.** `gff round add|edit -actions w,...` sets the words; `show` lists them; export and
+  apply carry them. The board's `m` shows only `capcom` rounds, each with its words and its
+  newest message's outcome.
+- **Not built in A9.** The app's "Capcom jobs" list in Capcom settings and the action switches
+  on a round's page (rounds stage 7's views). The app has the `capcom.event_actions` row with
+  its levels; `capcom.event_actions_per_turn` and `capcom.event_action_max_age` have no app row.
+
 ---
 
 ## 10. Usage and terms

@@ -1462,6 +1462,17 @@ Export and apply carry the new fields: `[rounds.trigger]` holds `on` and its `wh
 grants `actions` is a person's write only, as `round.update` is (3). A group named by id cannot move between meshes; apply refuses a `group`
 that no catalog copy lists (`groups.md` 5.1).
 
+Built (Part 14 A9, `capcom-service.md` 9.8). `RoundSpec.actions` with its closed set and
+the field rules of 3: `round.create` with words from a pane's or Capcom's route is `denied`;
+an agent route's `round.update` is checked against the stored round under the edit lock, so
+it may remove words from any round, and on a round with words it may change nothing else; a
+round with words refuses an agent route's pause, unpause, delete and run. A person's update
+that adds a word clears `created_by`. An agent's round on another host (kind `round`
+confirmation) is refused with words, since the runner's create over the link would take them
+as a person's. The round message carries the words. `gff round add|edit -actions`, `show`,
+export and apply carry them, and gff's board filters on `m`. The app's Capcom jobs list is not
+built.
+
 Built (stage 3). Where this spec left a choice open:
 
 - **Shapes.** `round.create` and `round.update` take a `RoundSpec`: the definition fields, with
