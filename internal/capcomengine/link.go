@@ -798,10 +798,6 @@ func clip(s string, n int) string {
 
 func eventBlock(it capcomthread.Item) ContextBlock {
 	text := it.Text
-	if it.Kind == capcomthread.KindRound && it.Job != "" {
-		// The prompt is in the job list; the block holds the events only (9.6).
-		text = "Events of job " + it.Job + ":"
-	}
 	for _, c := range it.Context {
 		text += "\n- " + c.Title
 		if c.Text != "" {
@@ -815,6 +811,10 @@ func eventBlock(it capcomthread.Item) ContextBlock {
 	title := "notice at " + when
 	if it.Kind == capcomthread.KindRound {
 		title = "message from " + it.Author.Address + " at " + when
+		if it.Job != "" {
+			// The job list in the input's text says whose instruction the prompt is (9.6).
+			title = "job " + it.Job + ", " + title + ": its prompt, then its events"
+		}
 	}
 	return ContextBlock{Kind: it.Kind, Title: title, Text: text}
 }
