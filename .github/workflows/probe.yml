@@ -16,8 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: ubuntu-latest, zig: official, extra: 'fetchprobe' }
-          - { image: ubuntu-24.04-arm, zig: official, extra: 'fetchprobe' }
+          - { image: ubuntu-latest, zig: official, extra: 'disk' }
+          - { image: ubuntu-latest, zig: official, extra: 'shm' }
+          - { image: ubuntu-24.04-arm, zig: official, extra: 'shm' }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Environment
@@ -45,24 +46,14 @@ jobs:
           a=$(uname -m)
           flags="-Dtarget=$a-linux-gnu.2.31 -Dcpu=baseline"
           env | wc -c; env | wc -l; env | cut -d= -f1 | sort | tr '\n' ' '; echo
-          git init -q build/ghostty-src
-          git -C build/ghostty-src fetch -q --depth 1 https://github.com/ghostty-org/ghostty.git 5813c9461d5af78b6307a1254d00b1bc190eaccd
-          git -C build/ghostty-src checkout -q FETCH_HEAD
-          cd build/ghostty-src
-          echo "== URLs"
-          grep -rhoE 'https://[^"]+' --include=build.zig.zon . | sort -u > /tmp/urls.txt
-          wc -l < /tmp/urls.txt
-          while read -r u; do curl -sSL -o /dev/null --retry 0 -w "%{http_code} %{size_download} %{url_effective}\n" "$u" || echo "CURL-FAILED $u"; done < /tmp/urls.txt
-          echo "== zig fetch each"
-          while read -r u; do echo "-- $u"; timeout 120 zig fetch "$u" || echo "ZIG-FETCH-FAILED rc=$? $u"; done < /tmp/urls.txt
-          echo "== zig build --fetch"
-          zig build --fetch -Demit-lib-vt -Demit-xcframework=false || echo "FETCH-PHASE rc=$?"
-          ls zig-pkg ~/.cache/zig/p 2>/dev/null || true
-          echo "== zig build (configure only, -h)"
-          zig build -h -Demit-lib-vt >/dev/null || echo "HELP-PHASE rc=$?"
-          ls zig-pkg 2>/dev/null || true
-          echo "== zig build"
-          zig build -Demit-lib-vt -Demit-xcframework=false -Doptimize=ReleaseFast $flags --prefix /tmp/out || echo "BUILD rc=$?"
+          df -T "$HOME" /dev/shm "$RUNNER_TEMP" | cat
+          if [ "$EXTRA" = shm ]; then export ZIG_GLOBAL_CACHE_DIR=/dev/shm/zig; else export ZIG_GLOBAL_CACHE_DIR="$RUNNER_TEMP/zig"; fi
+          mkdir -p "$ZIG_GLOBAL_CACHE_DIR"
+          cd "$RUNNER_TEMP"
+          zig fetch https://deps.files.ghostty.org/aro-d0c8c4d9c55daa7ef6e40cf0f630a5b5e900989b.tar.gz || echo "FETCH rc=$?"
+          ls "$ZIG_GLOBAL_CACHE_DIR/p"; ls -la "$ZIG_GLOBAL_CACHE_DIR"/p/* | head -20
+          cd "$GITHUB_WORKSPACE"
+          make libghostty GHOSTTY_ZIGFLAGS="$flags"
       - name: On failure, the zig cache state
         if: failure()
         run: |
