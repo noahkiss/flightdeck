@@ -46,6 +46,26 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.groupPlan })
     }
 
+    /// capcom.event_actions: ask at Safe, allow at Balanced and Bypass, and a level pick writes it
+    /// (capcom-service.md 9.6, app.md 20.3).
+    @MainActor
+    func testCapcomEventActionsLevels() async throws {
+        let d = try XCTUnwrap(R.def(R.capcomEventActions))
+        XCTAssertEqual(d.levels?[.safe], .string("ask"))
+        XCTAssertEqual(d.levels?[.balanced], .string("allow"))
+        XCTAssertEqual(d.levels?[.bypass], .string("allow"))
+        XCTAssertEqual(d.store, .everyHab)
+        var sent: [SettingWrite] = []
+        let (c, _) = try center("SettingsTests.eventactions") { _, p in
+            sent += p.values
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
+        }
+        let h = balancedHab()
+        c.update(habID: h.habID, label: h.label, state: state(h))
+        await c.pick(.safe)
+        XCTAssertTrue(sent.contains(SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask"))))
+    }
+
     /// The four group caps are preferences kept on every hab, with the hab's ranges (groups.md 15.3).
     func testGroupPreferenceRows() throws {
         let want: [(String, SettingKind)] = [
@@ -133,6 +153,7 @@ final class SettingsTests: XCTestCase {
         locked.settings[R.startElsewhere] = setting(R.startElsewhere, .bool(false), rev: 2, source: .config)
         var offline = balancedHab("h3", label: "gamma", online: false)
         offline.settings[R.startElsewhere]?.value = .bool(true)
+        offline.settings[R.capcomEventActions]?.value = .string("ask")
         let st = LevelMatcher.match(app: app(.safe), habs: [safe, locked, offline])
         XCTAssertEqual(st.level, .safe)
         XCTAssertEqual(st.exceptions.map(\.habLabel), ["beta", "gamma"])
@@ -229,6 +250,7 @@ final class SettingsTests: XCTestCase {
         var h = balancedHab()
         h.settings[R.approvalMaxAge] = setting(R.approvalMaxAge, .int(30), rev: 3, source: .client)
         h.settings[R.startElsewhere] = setting(R.startElsewhere, .bool(true), rev: 2, source: .config)
+        h.settings[R.capcomEventActions] = setting(R.capcomEventActions, .string("allow"), rev: 2, source: .client)
         let q = QueuedSettingWrite(habID: "h1", settingID: R.logbookApproval, value: .string("off"), revision: 1, epoch: "e1", seen: .string("off"))
         XCTAssertTrue(SettingsWrites.connectPlan(hab: h, queued: [q], picked: .safe).send.isEmpty, "logbook is queued; the others stand")
         let p = SettingsWrites.connectPlan(hab: h, queued: [], picked: .safe)
@@ -320,27 +342,29 @@ final class SettingsTests: XCTestCase {
         c.update(habID: off.habID, label: off.label, state: state(off))
         await c.pick(.safe)
         XCTAssertEqual(sent["h1"], [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true)),
-                                     SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+                                     SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents")),
+                                     SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask"))])
         XCTAssertNil(sent["h2"])
-        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2"])
+        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2", "h2"])
         XCTAssertFalse(yes)
         XCTAssertFalse(faceID)
-        // Rows count once each, however many habs take them: the two hab-side rows, "Yes"
+        // Rows count once each, however many habs take them: the three hab-side rows, "Yes"
         // counts as Allow, and on iOS the refused Face ID row (macOS does not show it).
         #if os(iOS)
-        XCTAssertEqual(c.notice, "Safe: 3 of 4 changed. Require Face ID for SSH keys did not change: authentication was refused. "
+        XCTAssertEqual(c.notice, "Safe: 4 of 5 changed. Require Face ID for SSH keys did not change: authentication was refused. "
                        + "beta gets the change when it connects.")
         #else
-        XCTAssertEqual(c.notice, "Safe: 3 settings changed. beta gets the change when it connects.")
+        XCTAssertEqual(c.notice, "Safe: 4 settings changed. beta gets the change when it connects.")
         #endif
-        XCTAssertEqual(SettingsQueue.load(d).items.count, 2, "the queue is saved")
+        XCTAssertEqual(SettingsQueue.load(d).items.count, 3, "the queue is saved")
         XCTAssertEqual(d.string(forKey: SettingsCenter.levelKey), "safe")
 
         // The offline hab connects in the same epoch: its queued write goes, and the queue empties.
         c.update(habID: "h2", label: "beta", state: state(balancedHab("h2", label: "beta")))
         await c.connectionOnline(habID: "h2")
         XCTAssertEqual(sent["h2"], [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true)),
-                                     SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+                                     SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents")),
+                                     SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask"))])
         XCTAssertTrue(c.queue.items.isEmpty)
     }
 
