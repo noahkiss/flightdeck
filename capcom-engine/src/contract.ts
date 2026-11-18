@@ -24,6 +24,9 @@ export interface Item {
   images?: string[];
   context?: { kind?: string; title?: string; text?: string }[];
   send_now?: boolean; // sent with "Send now": runs while user turns wait (10.1)
+  // An event batch's action words (capcom-service.md 9.6): what its turn may ask gff-hab for,
+  // already capped by the level. gff-hab checks every call again.
+  actions?: string[];
 }
 
 // hello's settings, with 19.2's defaults where hello carries none.

@@ -693,3 +693,36 @@ test('an event turn fetches no unseen URL and asks no card; a seen one goes', as
     assert.equal(r.hab.of('approval.request').length, 0);
   });
 });
+
+test('a Capcom job with fetch lets its event turn ask for an unseen URL; gff-hab decides the card (9.6)', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    const verdicts: string[] = [];
+    r.sdk.script = async (ctx) => {
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://docs.example.com/a', prompt: 'read' }));
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://docs.example.com/b', prompt: 'read' }));
+    };
+    r.hab.input('b00000000000000a1', 'events', {
+      kind: 'event', author: '', actions: ['fetch'],
+      context: [{ kind: 'event', title: 'job web', text: 'a page changed' }],
+    });
+    await until(() => r.hab.of('approval.request').length === 1);
+    r.hab.send('approval.answer', { request: r.hab.of('approval.request')[0]!.request, allow: true });
+    await until(() => r.hab.of('approval.request').length === 2);
+    // gff-hab refused the second: the job's per-turn limit, say.
+    r.hab.send('approval.answer', { request: r.hab.of('approval.request')[1]!.request, allow: false, message: 'ask the user first' });
+    await r.hab.wait('turn.ended');
+    assert.deepEqual(verdicts, ['allow', 'deny']);
+    // Words other than fetch, or on an input that is not an event batch, ask for nothing.
+    verdicts.length = 0;
+    r.sdk.script = async (ctx) => {
+      verdicts.push(await ctx.tool('WebFetch', { url: 'https://docs.example.com/c', prompt: 'read' }));
+    };
+    r.hab.input('g1', 'a report', { kind: 'agent', author: 'bee/bob', actions: ['fetch'] });
+    await until(() => r.hab.of('turn.ended').length === 2);
+    r.hab.input('b00000000000000a2', 'events', { kind: 'event', author: '', actions: ['hand_off'], context: [] });
+    await until(() => r.hab.of('turn.ended').length === 3);
+    assert.deepEqual(verdicts, ['deny', 'deny']);
+    assert.equal(r.hab.of('approval.request').length, 2);
+  });
+});
