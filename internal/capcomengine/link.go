@@ -143,6 +143,9 @@ type conn struct {
 	seq    uint64
 	sent   string          // the newest item id sent on this connection
 	sentB  map[string]bool // the event batches sent on this connection
+	// batchOut: a batch went and no turn has started since. No other batch goes until one
+	// does, so two batches never share a turn (capcom-service.md 9.8). Guarded by Link.mu.
+	batchOut bool
 	resume string          // the SDK session hello named, "" for none
 	ready  bool
 	engine string // the engine kind its ready named
@@ -483,6 +486,7 @@ func (l *Link) handle(c *conn, m Message) {
 		}
 	case TTurnStarted:
 		l.mu.Lock()
+		c.batchOut = false
 		l.st.Turn, l.st.Origin = m.TurnID(), m.Origin
 		l.opened = append([]string(nil), m.Items...)
 		l.st.UserTurn = false
@@ -681,7 +685,7 @@ func (l *Link) pump() {
 			c.sent = it.ID
 		}
 		l.mu.Lock()
-		busy := l.st.Turn != ""
+		busy := l.st.Turn != "" || c.batchOut
 		l.mu.Unlock()
 		if !ok || l.cfg.Events == nil || busy {
 			// A batch never joins a running turn: outside text must not sit in a turn that may
@@ -692,10 +696,16 @@ func (l *Link) pump() {
 			if c.sentB[b.ID] {
 				continue
 			}
+			l.mu.Lock()
+			c.batchOut = true
+			l.mu.Unlock()
 			if err := l.send(c, Message{Type: TInput, Item: l.batchJSON(b)}); err != nil {
 				break
 			}
 			c.sentB[b.ID] = true
+			// One batch per idle pass: the next waits for this one's turn to start and end, so
+			// a job's words never meet another batch in one turn (9.6, 9.8).
+			break
 		}
 	}
 }

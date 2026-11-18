@@ -1310,9 +1310,9 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
   the round's words as they stand: a word removed, or a round deleted, after the message came
   allows nothing from then on. A peer's job keeps the words its message carried.
 - **A batch of its own.** A `round` item with words goes in a batch alone, so the words its
-  turn may use never meet another job's prompt or event. It counts one event turn. The engine
-  may still join a second released batch to a running turn, so a turn that took more than one
-  batch allows no word at all.
+  turn may use never meet another job's prompt or event. It counts one event turn. The link
+  sends one batch per idle pass, and the next only once that batch's turn started and ended.
+  As a second guard, a turn that took more than one batch allows no word at all.
 - **A grant names what the person saw.** `round.update` that adds a word must carry the
   revision the person read (`invalid` without it, `conflict` when the round changed since), so
   an agent's prompt edit between the read and the grant fails the grant. `gff round edit
