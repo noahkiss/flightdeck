@@ -8053,6 +8053,10 @@
           "session": {
             "type": "string",
             "description": "The new session's id on the target hab. Empty for a round."
+          },
+          "text": {
+            "type": "string",
+            "description": "Kind action: what the confirmed call answered, in one line."
           }
         },
         "required": [

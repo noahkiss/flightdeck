@@ -2619,6 +2619,8 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
     public var round: String?
     /// The new session's id on the target hab. Empty for a round.
     public var session: String
+    /// Kind action: what the confirmed call answered, in one line.
+    public var text: String?
 
     enum CodingKeys: String, CodingKey {
         case address = "address"
@@ -2627,15 +2629,17 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
         case pane = "pane"
         case round = "round"
         case session = "session"
+        case text = "text"
     }
 
-    public init(address: String? = nil, host: String, name: String? = nil, pane: String, round: String? = nil, session: String) {
+    public init(address: String? = nil, host: String, name: String? = nil, pane: String, round: String? = nil, session: String, text: String? = nil) {
         self.address = address
         self.host = host
         self.name = name
         self.pane = pane
         self.round = round
         self.session = session
+        self.text = text
     }
 }
 

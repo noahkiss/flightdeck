@@ -104,6 +104,11 @@ type Item struct {
 	SendNow bool `json:"send_now,omitempty"`
 	// Attribution is the data sources' marks a Capcom message shows (8.3).
 	Attribution []Attribution `json:"attribution,omitempty"`
+	// Job and Actions are a round item's Capcom job (capcom-service.md 9.6): the round's name,
+	// and the action words its message carried. The hab sets them only from a round message
+	// whose sender is round:<name>.
+	Job     string   `json:"job,omitempty"`
+	Actions []string `json:"actions,omitempty"`
 }
 
 // Card is a card item's content: what kind of card, and the choices it offers.

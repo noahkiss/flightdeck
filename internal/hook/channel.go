@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -152,10 +153,15 @@ func (s *Server) SetPersonal(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
-// SetGuard sets a check every non-read call on the route passes first, with the caller's pane
-// and the method: an error refuses the call with its kind. The Capcom service refuses an event
-// turn's acting calls with it (capcom-service.md 9.4).
-func (s *Server) SetGuard(g func(pane, method string) error) {
+// Guard checks a non-read route call before it runs, with the caller's pane, the method and the
+// params. An error refuses the call with its kind; a result answers it with that result, and the
+// call does not run.
+type Guard func(ctx context.Context, pane, method string, params json.RawMessage) (json.RawMessage, error)
+
+// SetGuard sets the check every non-read call on the route passes first. The Capcom service
+// refuses an event turn's acting calls with it, and turns a Capcom job's call into a
+// confirmation under ask (capcom-service.md 9.4, 9.6).
+func (s *Server) SetGuard(g Guard) {
 	s.mu.Lock()
 	s.guard = g
 	s.mu.Unlock()
@@ -264,49 +270,6 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods, GroupMethods)
 		return
 	}
-	s.mu.Lock()
-	guard := s.guard
-	s.mu.Unlock()
-	if guard != nil {
-		if err := guard(pane, call.Method); err != nil {
-			var ce *control.Error
-			if errors.As(err, &ce) {
-				fail(ce.Data.Kind, "%s", ce.Message)
-			} else {
-				fail(api.ErrorKindDenied, "%v", err)
-			}
-			return
-		}
-	}
-	s.mu.Lock()
-	h := s.channels
-	switch {
-	case conf:
-		h = s.confirm
-	case round:
-		h = s.rounds
-	case lb:
-		h = s.logbook
-	case ag:
-		h = s.agent
-	case grp:
-		h = s.groups
-	case pers:
-		h = s.personal
-	}
-	s.mu.Unlock()
-	if h == nil && pers {
-		fail(api.ErrorKindUnavailable, "%s is a Capcom personal tool, served only on the Capcom service's route (capcom-service.md 8)", call.Method)
-		return
-	}
-	if h == nil && lb {
-		fail(api.ErrorKindUnavailable, "%s needs Logbook, which this hab is running without", call.Method)
-		return
-	}
-	if h == nil {
-		fail(api.ErrorKindUnavailable, "%s needs a service this hab is running without", call.Method)
-		return
-	}
 	if len(call.Params) == 0 {
 		call.Params = json.RawMessage("{}")
 	}
@@ -314,18 +277,41 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	rc.SetWriteDeadline(time.Now().Add(channelWait + 10*time.Second))
 	ctx, cancel := context.WithTimeout(r.Context(), channelWait)
 	defer cancel()
+	failErr := func(err error, kind api.ErrorKind) {
+		var ce *control.Error
+		if errors.As(err, &ce) {
+			fail(ce.Data.Kind, "%s", ce.Message)
+		} else {
+			fail(kind, "%v", err)
+		}
+	}
+	s.mu.Lock()
+	guard := s.guard
+	s.mu.Unlock()
+	if guard != nil {
+		res, err := guard(ctx, pane, call.Method, call.Params)
+		if err != nil {
+			failErr(err, api.ErrorKindDenied)
+			return
+		}
+		if res != nil {
+			// The guard answered the call itself: nothing ran (capcom-service.md 9.6, ask).
+			_ = answer(channelAnswer{Result: res})
+			return
+		}
+	}
+	h, err := s.handler(call.Method)
+	if err != nil {
+		failErr(err, api.ErrorKindUnavailable)
+		return
+	}
 	res, written, err := h(ctx, pane, call.Method, call.Params)
 	if written == nil {
 		written = func(error) {}
 	}
 	if err != nil {
 		written(err)
-		var ce *control.Error
-		if errors.As(err, &ce) {
-			fail(ce.Data.Kind, "%s", ce.Message)
-		} else {
-			fail(api.ErrorKindUnavailable, "%v", err)
-		}
+		failErr(err, api.ErrorKindUnavailable)
 		return
 	}
 	b, err := json.Marshal(res)
@@ -335,6 +321,66 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		return
 	}
 	written(answer(channelAnswer{Result: b}))
+}
+
+// handler is the handler of one non-read route method.
+func (s *Server) handler(method string) (ChannelHandler, error) {
+	in := func(set []string) bool { return slices.Contains(set, method) }
+	s.mu.Lock()
+	var h ChannelHandler
+	switch {
+	case in(ChannelMethods):
+		h = s.channels
+	case in(ConfirmMethods):
+		h = s.confirm
+	case in(RoundMethods):
+		h = s.rounds
+	case in(LogbookMethods):
+		h = s.logbook
+	case in(AgentMethods):
+		h = s.agent
+	case in(GroupMethods):
+		h = s.groups
+	case in(PersonalMethods):
+		h = s.personal
+	default:
+		s.mu.Unlock()
+		return nil, control.Errorf(api.ErrorKindInvalid, "%q is not a route method", method)
+	}
+	s.mu.Unlock()
+	switch {
+	case h == nil && in(PersonalMethods):
+		return nil, control.Errorf(api.ErrorKindUnavailable, "%s is a Capcom personal tool, served only on the Capcom service's route (capcom-service.md 8)", method)
+	case h == nil && in(LogbookMethods):
+		return nil, control.Errorf(api.ErrorKindUnavailable, "%s needs Logbook, which this hab is running without", method)
+	case h == nil:
+		return nil, control.Errorf(api.ErrorKindUnavailable, "%s needs a service this hab is running without", method)
+	}
+	return h, nil
+}
+
+// Dispatch runs one non-read route call as the pane made it, past the guard. The Capcom service
+// runs with it an action call the user confirmed (capcom-service.md 9.6): the guard already
+// counted it, and the user's answer is the check.
+func (s *Server) Dispatch(ctx context.Context, pane, method string, params json.RawMessage) (json.RawMessage, error) {
+	h, err := s.handler(method)
+	if err != nil {
+		return nil, err
+	}
+	if len(params) == 0 {
+		params = json.RawMessage("{}")
+	}
+	res, written, err := h(ctx, pane, method, params)
+	if written == nil {
+		written = func(error) {}
+	}
+	if err != nil {
+		written(err)
+		return nil, err
+	}
+	b, err := json.Marshal(res)
+	written(err)
+	return b, err
 }
 
 // StatusError is an answer from the hab that is not 200: an unknown token, a body too large. The

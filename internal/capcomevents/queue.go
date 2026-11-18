@@ -27,6 +27,9 @@ const (
 	OutcomeTold   = "told"
 	OutcomeQuiet  = "quiet"
 	OutcomeUnseen = "unseen"
+	// OutcomeActed: the turn made a call to an action a Capcom job allows (9.6): it ran, or it
+	// raised its confirmation or card. It wins over told.
+	OutcomeActed = "acted"
 )
 
 // maxTimer bounds one wait of the timer: each fire compares wall time, so a sleep ends no wait
@@ -52,6 +55,9 @@ type Batch struct {
 	// Turn is the engine turn that took the batch; "" until it is taken.
 	Turn  string `json:"turn,omitempty"`
 	Wrote bool   `json:"wrote,omitempty"` // that turn wrote to the user
+	// Acts counts the action calls the turn made under a Capcom job (9.6), the same on every
+	// batch the turn took, so a restart keeps the per-turn cap.
+	Acts int `json:"acts,omitempty"`
 }
 
 // Limits are the hab-side settings of 9.2 and 9.3, read at each check.
@@ -344,6 +350,52 @@ func (q *Queue) UrgentTurn(turn string) bool {
 	return false
 }
 
+// TurnBatches returns the batches turn took and no turn end settled yet.
+func (q *Queue) TurnBatches(turn string) []Batch {
+	if turn == "" {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var out []Batch
+	for _, b := range q.st.Released {
+		if b.Turn == turn {
+			out = append(out, cloneBatch(b))
+		}
+	}
+	return out
+}
+
+// Act counts one action call of turn under a Capcom job (9.6). It refuses, and counts
+// nothing, when the turn took no batch or made limit calls already; else every batch the turn
+// took records the new count, so each of its round messages gets the outcome acted.
+func (q *Queue) Act(turn string, limit int) bool {
+	if turn == "" {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n, any := 0, false
+	for _, b := range q.st.Released {
+		if b.Turn == turn {
+			any = true
+			n = max(n, b.Acts)
+		}
+	}
+	if !any || n >= limit {
+		return false
+	}
+	for i := range q.st.Released {
+		if b := &q.st.Released[i]; b.Turn == turn {
+			b.Acts = n + 1
+		}
+	}
+	if err := q.saveLocked(); err != nil {
+		q.cfg.Logf("capcom events: save: %v", err)
+	}
+	return true
+}
+
 // TurnEnded settles the batches turn took: each round message in them gets the turn's outcome,
 // told when it wrote to the user, else quiet, at the turn's end (9.5).
 func (q *Queue) TurnEnded(turn string, at time.Time) {
@@ -365,7 +417,10 @@ func (q *Queue) settle(match func(Batch) bool, at time.Time) {
 			continue
 		}
 		word := OutcomeQuiet
-		if b.Wrote {
+		switch {
+		case b.Acts > 0:
+			word = OutcomeActed
+		case b.Wrote:
 			word = OutcomeTold
 		}
 		for _, r := range b.Rounds {

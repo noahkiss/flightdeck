@@ -155,6 +155,9 @@ type InputItem struct {
 	// SendNow runs the item now on the small model, with the items waiting before it, while
 	// the pace makes user turns wait (10.1, "Send now").
 	SendNow bool `json:"send_now,omitempty"`
+	// Actions are the action words an event batch's turn may use (capcom-service.md 9.6),
+	// already capped by the level. The engine asks for no other; gff-hab checks every call.
+	Actions []string `json:"actions,omitempty"`
 }
 
 // TurnRef names a running turn.

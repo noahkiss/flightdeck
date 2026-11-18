@@ -62,6 +62,8 @@ type ConfirmResult struct {
 	Round   string `json:"round,omitempty" doc:"Kind round: the new round's id on the runner."`
 	// Address comes with the spawn verb. Optional, so a newer client reads an older hab.
 	Address string `json:"address,omitempty" doc:"The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."`
+	// Text comes with Part 14 stage A9 (capcom-service.md 9.6).
+	Text string `json:"text,omitempty" doc:"Kind action: what the confirmed call answered, in one line."`
 }
 
 // ConfirmAction is the one call a Capcom job's event turn asked for while capcom.event_actions is

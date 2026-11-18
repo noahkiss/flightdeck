@@ -548,3 +548,52 @@ func TestLinkUserJoinsEventTurn(t *testing.T) {
 		t.Fatalf("after the user's message: %+v", st)
 	}
 }
+
+// An event turn's approval request (capcom-service.md 9.4, 9.6): with no Capcom job that allows
+// it the hab refuses it with the gate's reason and opens no card; with one, the card names the
+// job. A user turn's request is not gated.
+func TestLinkEventGate(t *testing.T) {
+	var asked []string
+	allow := false
+	h := newHarnessWith(t, func(c *LinkConfig) {
+		c.EventGate = func(turn, tool string) (string, error) {
+			asked = append(asked, turn+"/"+tool)
+			if !allow {
+				return "", errors.New("no Capcom job in this turn allows fetch: ask the user first")
+			}
+			return "for job web", nil
+		}
+	})
+	e, _ := h.connect()
+	e.send(readyMsg())
+	e.send(Message{Type: TTurnStarted, Turn: StrTurn("t1"), Origin: "event"})
+	e.send(Message{Type: TApprovalRequest, Request: "r1", Tool: "WebFetch", Reason: "Capcom wants to open example.com/x"})
+	if m := e.next(); m.Type != TApprovalAnswer || m.Request != "r1" || *m.Allow || !strings.Contains(m.Message, "ask the user first") {
+		t.Fatalf("refused request %+v", m)
+	}
+	if _, held := h.thread.ByKey("approval:r1"); held || h.link.Status().Approval != nil {
+		t.Fatal("a refused request opened a card")
+	}
+	allow = true
+	e.send(Message{Type: TApprovalRequest, Request: "r2", Tool: "WebFetch", Reason: "Capcom wants to open example.com/y"})
+	e.acked(e.seq)
+	card, held := h.thread.ByKey("approval:r2")
+	if !held || !strings.Contains(card.Text, "for job web") {
+		t.Fatalf("card %+v", card)
+	}
+	// Asked again (a reconnect): the card stands, the gate is not asked twice.
+	e.send(Message{Type: TApprovalRequest, Request: "r2", Tool: "WebFetch"})
+	e.acked(e.seq)
+	if len(asked) != 2 || asked[0] != "t1/WebFetch" {
+		t.Fatalf("gate asked %v", asked)
+	}
+	// A user turn asks no gate.
+	e.send(Message{Type: TTurnEnded, Turn: StrTurn("t1")})
+	u := h.user("open it")
+	e.send(Message{Type: TTurnStarted, Turn: StrTurn("t2"), Origin: "user", Items: []string{u.ID}})
+	e.send(Message{Type: TApprovalRequest, Request: "r3", Tool: "WebFetch"})
+	e.acked(e.seq)
+	if _, held := h.thread.ByKey("approval:r3"); !held || len(asked) != 2 {
+		t.Fatalf("user turn: held %v asked %v", held, asked)
+	}
+}

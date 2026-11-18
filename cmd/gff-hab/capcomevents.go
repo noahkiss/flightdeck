@@ -16,7 +16,9 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcomevents"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
+	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -158,6 +160,16 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	}
 	it := capcomthread.Item{Kind: capcomthread.KindRound, Key: key, Text: text,
 		Author: capcomthread.Author{Kind: capcomthread.AuthorAgent, Address: m.From.Host + "/" + m.From.Session}}
+	if m.From.Session == channels.RoundSender(r.Name) {
+		// A Capcom job's words (9.6) come only from a round runner's message: no session sends
+		// under a round: sender. Words outside the closed set are dropped, not trusted.
+		it.Job = r.Name
+		for _, w := range r.Actions {
+			if slices.Contains(rounds.Actions, string(w)) && !slices.Contains(it.Actions, string(w)) {
+				it.Actions = append(it.Actions, string(w))
+			}
+		}
+	}
 	for _, ev := range r.Events {
 		c := capcomthread.Context{Kind: "round_event", Title: strings.TrimSpace(ev.Kind + ": " + ev.Title)}
 		if ev.Level != "" {
@@ -190,28 +202,3 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	return api.ChannelStateAccepted, ""
 }
 
-// eventActing are the route methods an event turn may not call (9.4, E21): a hand-off and
-// any message to an agent (hand_off sends through channel.send), a session or project start
-// (confirm.request), a group's acting calls, and round changes.
-var eventActing = []string{"channel.send", "confirm.request",
-	"group.create", "group.amend", "group.close", "group.retry", "member.compact", "member.handoff", "member.action",
-	"round.create", "round.update", "round.delete", "round.run", "round.pause", "round.unpause"}
-
-// routeTurnWait is how long an acting call from the engine's route waits for its turn to be
-// known: the call comes from inside a turn, but the turn.started before it travels on the
-// engine's own connection and can arrive after it.
-const routeTurnWait = 5 * time.Second
-
-// routeGuard refuses an acting call from the engine's route unless the running turn is a user
-// turn: a user message opened it or joined it (9.4). An event turn's call is refused, and so is
-// one with no turn known, since only a turn runs tools.
-func (e *capcomEngine) routeGuard(pane, method string) error {
-	if pane != capcomRoute || !slices.Contains(eventActing, method) {
-		return nil
-	}
-	st := e.link.WaitTurn(routeTurnWait)
-	if st.Turn != "" && st.UserTurn {
-		return nil
-	}
-	return control.Errorf(api.ErrorKindDenied, "%s is not allowed in a turn Capcom began on its own, from an event or an agent's report: ask the user first, and act once they answer", method)
-}

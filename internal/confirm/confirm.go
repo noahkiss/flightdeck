@@ -153,6 +153,29 @@ type entry struct {
 	// published is set once confirm.requested went out and the request let go of the publish
 	// lock; only the requesting goroutine reads or writes it.
 	published bool
+	// act runs a kind action confirmation's call (capcom-service.md 9.6).
+	act ActionRun
+}
+
+// ActionRun runs the call of a kind action confirmation once the user confirmed it, and returns
+// one line of what the call answered.
+type ActionRun func(ctx context.Context) (string, error)
+
+// RequestAction opens a kind action confirmation (capcom-service.md 9.6): one call a Capcom
+// job's event turn made under capcom.event_actions = ask. It always asks, never runs as a
+// record, waits for no answer, and expires after ttl (capcom.event_action_max_age). Only
+// gff-hab calls it: confirm.request refuses kind action, so no agent asks for one.
+func (s *Service) RequestAction(ctx context.Context, from string, a api.ConfirmAction, ttl time.Duration, run ActionRun) (api.Confirmation, error) {
+	if run == nil || a.Job == "" || a.Word == "" {
+		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "an action confirmation needs a job, a word and a call")
+	}
+	if ttl <= 0 {
+		ttl = s.cfg.TTL
+	}
+	e := &entry{done: make(chan struct{}), ttl: ttl, act: run, c: api.Confirmation{
+		ID: newID(), Kind: "action", From: from, Action: &a, Created: stamp(s.cfg.Now()),
+	}}
+	return s.open1(ctx, e, true, 0)
 }
 
 // pubHeld reports whether the request still holds the publish lock for e.
@@ -214,6 +237,8 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 		return s.requestGroup(ctx, p)
 	case "round":
 		return s.requestRound(ctx, p)
+	case "action":
+		return api.Confirmation{}, control.Errorf(api.ErrorKindDenied, "kind action is raised only by gff-hab, for a Capcom job's call (capcom-service.md 9.6)")
 	case "setup":
 		return api.Confirmation{}, control.Errorf(api.ErrorKindUnavailable,
 			"project set-up is not built yet (mesh.md 7, set up elsewhere); set the project up on that host by hand, then start there")
@@ -241,6 +266,7 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	on := s.cfg.Enabled != nil && s.cfg.Enabled()
 	ask := on && !self // a start on the agent's own host never asks (capcom.md 6.4)
+	answered := Answered(ctx)
 	member := false
 	if st.Group != "" && s.cfg.Envelope != nil {
 		// A later start of a group's member (groups.md 3.3): inside the envelope its plan's
@@ -254,7 +280,8 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 		member = m
 	}
 	switch {
-	case member:
+	case member, answered:
+		// answered: the user confirmed this call already, as a Capcom job's (capcom-service.md 9.6).
 		ask = false
 	case st.Group != "" && (s.cfg.GroupPlan == nil || s.cfg.GroupPlan()):
 		// A group start from outside its envelope asks while confirm.group_plan is on, on any
@@ -390,6 +417,9 @@ func (s *Service) requestGroup(ctx context.Context, p api.ConfirmRequestParams) 
 	if !ask && elsewhere && s.cfg.Enabled != nil && s.cfg.Enabled() {
 		ask = true
 	}
+	if Answered(ctx) {
+		ask = false // the user confirmed this call already, as a Capcom job's (capcom-service.md 9.6)
+	}
 	ttl := s.cfg.TTL
 	if s.cfg.GroupTTL != nil {
 		if d := s.cfg.GroupTTL(); d > 0 {
@@ -428,6 +458,13 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		g := *e.c.Group
 		s.mu.Unlock()
 		return s.answerGroup(client, p, g)
+	}
+	if e.c.Kind == "action" {
+		s.mu.Unlock()
+		if ed := p.Edits; ed != nil && (*ed != (api.ConfirmEdits{}) || ed.Plan != nil) {
+			return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "a Capcom job's card takes confirm or cancel, with no edits")
+		}
+		return s.confirmed(p.ID, client, false, nil)
 	}
 	if e.c.Kind == "round" {
 		s.mu.Unlock()
@@ -576,7 +613,9 @@ func (s *Service) run(e *entry) api.Confirmation {
 	var start api.ConfirmStart
 	var group api.ConfirmGroup
 	var round api.ConfirmRound
+	act := e.act
 	switch kind {
+	case "action":
 	case "group":
 		group = *e.c.Group
 	case "round":
@@ -590,6 +629,11 @@ func (s *Service) run(e *entry) api.Confirmation {
 	var res api.ConfirmResult
 	var err error
 	switch kind {
+	case "action":
+		// The user confirmed this one call: a start or a plan it opens asks nothing more.
+		var text string
+		text, err = act(withAnswered(ctx))
+		res = api.ConfirmResult{Text: text}
 	case "group":
 		res, err = s.cfg.Groups.RunGroup(ctx, id, group, confirmed)
 	case "round":
@@ -713,6 +757,21 @@ func (s *Service) publishLocked(t api.EventType, c api.Confirmation) {
 
 type confirmedKey struct{}
 
+type answeredKey struct{}
+
+// withAnswered marks ctx as the run of a call the user confirmed already, a Capcom job's under
+// ask (capcom-service.md 9.6): a start or a group plan it requests runs with no second question.
+// Only this package sets it, for a kind action confirmation the user confirmed.
+func withAnswered(ctx context.Context) context.Context {
+	return context.WithValue(ctx, answeredKey{}, true)
+}
+
+// Answered reports whether ctx runs a call the user confirmed already.
+func Answered(ctx context.Context) bool {
+	v, _ := ctx.Value(answeredKey{}).(bool)
+	return v
+}
+
 // Confirmed reports, inside Runner.RunStart, whether the user answered the start's
 // confirmation; false for a record that ran with no question. A group member's trust cover
 // names the confirmation only when the user answered it (groups.md 4.2).
@@ -761,6 +820,22 @@ func CheckGroup(s api.ConfirmStart) error {
 
 // Message is the text a requesting session gets when the answer came after its wait.
 func Message(c api.Confirmation) string {
+	if c.Kind == "action" && c.Action != nil {
+		what := fmt.Sprintf("%s for job %s (%s)", c.Action.Word, c.Action.Job, c.Action.Summary)
+		switch c.State {
+		case "done":
+			out := fmt.Sprintf("Confirmation %s: the owner confirmed %s; it ran.", c.ID, what)
+			if c.Result != nil && c.Result.Text != "" {
+				out += " " + c.Result.Text
+			}
+			return out
+		case "cancelled":
+			return fmt.Sprintf("Confirmation %s: the owner cancelled %s. Nothing ran.", c.ID, what)
+		case "expired":
+			return fmt.Sprintf("Confirmation %s: %s for %s, so it expired. Nothing ran.", c.ID, strings.TrimSuffix(c.Reason, "; nothing ran"), what)
+		}
+		return fmt.Sprintf("Confirmation %s: %s failed: %s.", c.ID, what, c.Reason)
+	}
 	if c.Kind == "round" && c.Round != nil {
 		return roundMessage(c)
 	}
