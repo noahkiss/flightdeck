@@ -155,3 +155,46 @@ func TestRestoreLeavesRoom(t *testing.T) {
 		})
 	}
 }
+
+// ReadScreen gives each cell of an OSC 8 hyperlink its URI, and a snapshot-vt keeps the links,
+// so gff's composed view shows links a program printed before gff opened the pane
+// (gff-client.md 3.4).
+func TestReadScreenLinks(t *testing.T) {
+	p := Parser{}
+	cfg := vt.Config{Cols: 20, Rows: 3}
+	term, err := p.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.Write([]byte("a\x1b]8;id=x;https://example.com/a\x1b\\link\x1b]8;;\x1b\\b\r\n\x1b]8;;file:///tmp/f\x1b\\界\x1b]8;;\x1b\\"))
+	check := func(name string, term vt.Terminal) {
+		t.Helper()
+		var s vt.Screen
+		if err := term.ReadScreen(&s); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for x := range 6 {
+			got = append(got, s.Cells[x].Link)
+		}
+		u := "https://example.com/a"
+		if want := []string{"", u, u, u, u, ""}; strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("%s: row 0 links %q, want %q", name, got, want)
+		}
+		if w := s.Cells[s.Cols]; w.Text != "界" || w.Link != "file:///tmp/f" {
+			t.Errorf("%s: wide linked cell %+v", name, w)
+		}
+	}
+	check("live", term)
+	snap, err := term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := p.Restore(vt.EncodingVT, snap, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	check("restored from snapshot-vt", restored)
+}

@@ -2,6 +2,7 @@ package gffclient
 
 import (
 	"bytes"
+	"hash/fnv"
 	"strconv"
 
 	"github.com/noahkiss/flightdeck/internal/vt"
@@ -13,6 +14,36 @@ type hcell struct {
 	wide   bool
 	spacer bool // the second half of a wide cell: never drawn
 	style  vt.Style
+	link   hlink
+}
+
+// hlink is an OSC 8 hyperlink on the host: the URI the pane gave, and the id gff gives it. The
+// zero value is no link.
+type hlink struct {
+	id, uri string
+}
+
+// maxLinkBytes bounds the URI gff passes on. Terminals cap theirs near it.
+const maxLinkBytes = 4096
+
+// paneLink returns the host link for a pane cell's URI. The id names the pane and the URI, so
+// cells of one link join on hover, and the same URI in another pane never does. libghostty
+// gives the URI only, not the program's own id (gff-client.md 3.4). A URI with a control byte,
+// or longer than maxLinkBytes, is no link: it could end the sequence early.
+func paneLink(pane, uri string) hlink {
+	if uri == "" || len(uri) > maxLinkBytes {
+		return hlink{}
+	}
+	for i := 0; i < len(uri); i++ {
+		if b := uri[i]; b < 0x20 || b == 0x7f {
+			return hlink{}
+		}
+	}
+	h := fnv.New64a()
+	h.Write([]byte(pane))
+	h.Write([]byte{0})
+	h.Write([]byte(uri))
+	return hlink{id: "gff-" + strconv.FormatUint(h.Sum64(), 36), uri: uri}
 }
 
 // canvas is the composed host screen, and the screen last written to the host. Writing sends
@@ -23,6 +54,7 @@ type canvas struct {
 	valid      bool // prev holds what the host shows
 	cur        vt.Style
 	curValid   bool
+	link       hlink // the link open on the host while flush writes
 }
 
 func (c *canvas) resize(w, h int) {
@@ -65,8 +97,9 @@ func (c *canvas) text(x, y, w int, s string, st vt.Style) {
 }
 
 // pane draws a pane's screen into r. When the pane is larger than r, the shown part follows
-// the cursor; when smaller, the rest is filled dim (gff-client.md 10.1, not the owner).
-func (c *canvas) pane(s *vt.Screen, r rect, dim bool) {
+// the cursor; when smaller, the rest is filled dim (gff-client.md 10.1, not the owner). key names
+// the pane for its links' ids.
+func (c *canvas) pane(s *vt.Screen, r rect, dim bool, key string) {
 	ox := clampOrigin(s.CursorX, s.Cols, r.w)
 	oy := clampOrigin(s.CursorY, s.Rows, r.h)
 	fill := hcell{text: "·", style: vt.Style{Faint: true}}
@@ -84,6 +117,9 @@ func (c *canvas) pane(s *vt.Screen, r rect, dim bool) {
 				st.Faint = true
 			}
 			hc := hcell{text: sc.Text, style: st}
+			if sc.Link != "" {
+				hc.link = paneLink(key, sc.Link)
+			}
 			switch {
 			case sc.Spacer:
 				hc = hcell{style: st} // the first column cut a wide cell in half
@@ -92,7 +128,7 @@ func (c *canvas) pane(s *vt.Screen, r rect, dim bool) {
 			case sc.Wide:
 				hc.wide = true
 				c.set(r.x+x, r.y+y, hc)
-				c.set(r.x+x+1, r.y+y, hcell{spacer: true, style: st})
+				c.set(r.x+x+1, r.y+y, hcell{spacer: true, style: st, link: hc.link})
 				x++
 				continue
 			}
@@ -134,6 +170,7 @@ func (c *canvas) flush(out *bytes.Buffer) {
 				continue
 			}
 			if atX != x || atY != y {
+				c.setLink(out, hlink{}) // a link covers one run of cells
 				out.WriteString("\x1b[")
 				out.WriteString(strconv.Itoa(y + 1))
 				out.WriteByte(';')
@@ -144,6 +181,7 @@ func (c *canvas) flush(out *bytes.Buffer) {
 				writeSGR(out, n.style)
 				c.cur, c.curValid = n.style, true
 			}
+			c.setLink(out, n.link)
 			if n.text == "" {
 				out.WriteByte(' ')
 			} else {
@@ -155,8 +193,27 @@ func (c *canvas) flush(out *bytes.Buffer) {
 			}
 		}
 	}
+	c.setLink(out, hlink{})
 	copy(c.prev, c.next)
 	c.valid = true
+}
+
+// setLink opens l on the host, or closes the open link when l is no link. Each link opens with
+// its id (OSC 8 ; id=... ; URI) and closes with an empty OSC 8, both ended by ST.
+func (c *canvas) setLink(out *bytes.Buffer, l hlink) {
+	if l == c.link {
+		return
+	}
+	if l.uri == "" {
+		out.WriteString("\x1b]8;;\x1b\\")
+	} else {
+		out.WriteString("\x1b]8;id=")
+		out.WriteString(l.id)
+		out.WriteByte(';')
+		out.WriteString(l.uri)
+		out.WriteString("\x1b\\")
+	}
+	c.link = l
 }
 
 // writeSGR writes one SGR sequence that sets style st from a reset.
