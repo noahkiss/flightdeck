@@ -68,6 +68,7 @@ type FlightRule struct {
 	Reason            string                `json:"reason,omitempty" doc:"Why the harness loaded it, in the harness's words, such as session_start or compaction."`
 	Attribution       FlightRuleAttribution `json:"attribution" doc:"recorded, matched, computed or unknown."`
 	Note              string                `json:"note,omitempty" doc:"Why the attribution is unknown, or what else the record says, such as that only the start of a file was sent."`
+	Stale             bool                  `json:"stale,omitempty" doc:"A file Flightdeck rendered, still in the context, whose loaded copy differs from the last render of the same target: the agent works from an older render. Absent from an older hab."`
 }
 
 // FlightRules answers flightrules.list: a session's ledger, oldest entry first.
@@ -76,6 +77,7 @@ type FlightRules struct {
 	Session  string       `json:"session"`
 	Harness  string       `json:"harness,omitempty" doc:"The harness whose records built the ledger. Absent when the session has no agent session yet."`
 	Entries  []FlightRule `json:"entries"`
+	Stale    bool         `json:"stale,omitempty" doc:"An entry is stale: the session loaded a rendered file that a later render replaced. Absent from an older hab."`
 	Warnings []string     `json:"warnings,omitempty" doc:"Records the reader could not read, or read as placeholders."`
 }
 

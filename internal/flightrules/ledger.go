@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/instructions"
 )
 
 // MaxEntries bounds one session's ledger, hook entries apart. Past it, new entries are dropped
@@ -113,6 +114,7 @@ type Ledger struct {
 	byID     map[string]*api.FlightRule
 	latest   map[string]*api.FlightRule // by kind and source: the newest entry of the source
 	hooks    int                        // hook entries, counted against MaxHookEntries
+	headers  map[string]string          // by entry id: the render digest in a rendered file's header
 	warnings []string
 	warned   map[string]bool
 }
@@ -130,6 +132,7 @@ func (l *Ledger) Reset() {
 	l.byID = map[string]*api.FlightRule{}
 	l.latest = map[string]*api.FlightRule{}
 	l.hooks = 0
+	l.headers = map[string]string{}
 	l.warnings = nil
 	l.warned = map[string]bool{}
 }
@@ -188,8 +191,13 @@ func (l *Ledger) Observe(o Observation) {
 	} else {
 		e.Digest = Digest(o.Text)
 		e.Bytes = int64(len(o.Text))
-		if l.Configured != nil && (o.Kind == api.FlightRuleInstruction || o.Kind == api.FlightRuleMemory) {
-			e.ConfiguredSources = l.Configured(o.Source, o.Text)
+		if o.Kind == api.FlightRuleInstruction || o.Kind == api.FlightRuleMemory {
+			if l.Configured != nil {
+				e.ConfiguredSources = l.Configured(o.Source, o.Text)
+			}
+			if d := instructions.HeaderDigest(o.Text); d != "" {
+				l.headers[id] = d
+			}
 		}
 	}
 	if e.Attribution == "" {
@@ -210,6 +218,20 @@ func (l *Ledger) Remove(r Removal) {
 		if e.Gone == "" {
 			e.Gone = e.LastSeen
 		}
+	}
+}
+
+// MarkStale sets each entry's stale flag against the last render of one target (spec 11.4):
+// the newest entry of the target's source, still in the context, whose header digest differs
+// from the render's. Every other entry is not stale. ok false clears every flag.
+func (l *Ledger) MarkStale(r instructions.Rendered, ok bool) {
+	for _, e := range l.entries {
+		e.Stale = false
+		d := l.headers[e.ID]
+		if !ok || d == "" || e.Gone != "" || l.latest[sourceKey(e.Kind, e.Source)] != e {
+			continue
+		}
+		e.Stale = d != r.Digest && samePath(e.Source, r.Target)
 	}
 }
 

@@ -24,6 +24,16 @@ func Rendered(stateDir string, h instructions.Harness) func(path, text string) [
 	}
 }
 
+// Current returns the last render of one harness's target from its state record, for
+// Session.CheckStale. The record is read on each call, so a new render counts at once. A record
+// that cannot be read counts as none.
+func Current(stateDir string, h instructions.Harness) func() (instructions.Rendered, bool) {
+	return func() (instructions.Rendered, bool) {
+		r, ok, err := instructions.ReadRendered(stateDir, h)
+		return r, ok && err == nil && r.Digest != "" && r.Target != ""
+	}
+}
+
 // samePath compares two paths as written, then through their links.
 func samePath(a, b string) bool {
 	if filepath.Clean(a) == filepath.Clean(b) {

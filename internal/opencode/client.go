@@ -51,6 +51,10 @@ var Operations = []Operation{
 	{"session.synthetic", http.MethodPost, "/api/session/{sessionID}/synthetic"},
 	{"permission.request.list", http.MethodGet, "/api/permission/request"},
 	{"session.permission.reply", http.MethodPost, "/api/session/{sessionID}/permission/{requestID}/reply"},
+	{"location.get", http.MethodGet, "/api/location"},
+	{"config.get", http.MethodGet, "/api/config"},
+	{"skill.list", http.MethodGet, "/api/skill"},
+	{"mcp.list", http.MethodGet, "/api/mcp"},
 }
 
 // maxBody bounds a JSON answer the client reads whole.
@@ -374,4 +378,75 @@ func (c *Client) Reply(ctx context.Context, session, request, decision, message 
 	}
 	return c.call(ctx, "session.permission.reply", http.MethodPost,
 		"/api/session/"+session+"/permission/"+request+"/reply", nil, body, nil)
+}
+
+// Location is the server's folder and its project (location.get).
+type Location struct {
+	Directory string `json:"directory"`
+	Project   struct {
+		ID        string `json:"id"`
+		Directory string `json:"directory"`
+	} `json:"project"`
+}
+
+// Location returns the server's default location: the folder it serves and its project root.
+func (c *Client) Location(ctx context.Context) (Location, error) {
+	var out Location
+	err := c.call(ctx, "location.get", http.MethodGet, "/api/location", nil, nil, &out)
+	return out, err
+}
+
+// ConfigDoc is one entry of config.get: a config folder, or a config document with the part of
+// its parsed contents the client reads.
+type ConfigDoc struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+	Info struct {
+		Instructions []string `json:"instructions"`
+	} `json:"info"`
+}
+
+// Config returns the server's config folders and documents, global first.
+func (c *Client) Config(ctx context.Context) ([]ConfigDoc, error) {
+	var out []ConfigDoc
+	err := c.call(ctx, "config.get", http.MethodGet, "/api/config", nil, nil, &out)
+	return out, err
+}
+
+// Skill is one skill the server offers the agent (skill.list). Path is the SKILL.md file, or a
+// skill:// URL for a built-in skill; Content is its body without front matter.
+type Skill struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+}
+
+// Skills returns the skills of the server's default location.
+func (c *Client) Skills(ctx context.Context) ([]Skill, error) {
+	var out struct {
+		Data []Skill `json:"data"`
+	}
+	err := c.call(ctx, "skill.list", http.MethodGet, "/api/skill", nil, nil, &out)
+	return out.Data, err
+}
+
+// MCP is one MCP server of the server's config (mcp.list). Status is connected, pending,
+// disabled, failed or needs_auth.
+type MCP struct {
+	Name   string `json:"name"`
+	Status struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	} `json:"status"`
+}
+
+// MCPs returns the MCP servers of the server's default location.
+func (c *Client) MCPs(ctx context.Context) ([]MCP, error) {
+	var out struct {
+		Data []MCP `json:"data"`
+	}
+	err := c.call(ctx, "mcp.list", http.MethodGet, "/api/mcp", nil, nil, &out)
+	return out.Data, err
 }

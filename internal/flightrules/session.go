@@ -5,13 +5,15 @@ import (
 	"sync"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/instructions"
 )
 
 // Session is one session's ledger and the source that feeds it. It is safe for concurrent use.
 type Session struct {
-	mu  sync.Mutex
-	src Source
-	l   *Ledger
+	mu      sync.Mutex
+	src     Source
+	l       *Ledger
+	current func() (instructions.Rendered, bool) // the last render of the harness's target
 }
 
 // NewSession returns a session ledger fed by src. configured may be nil.
@@ -19,6 +21,15 @@ func NewSession(src Source, configured func(path, text string) []string) *Sessio
 	l := NewLedger()
 	l.Configured = configured
 	return &Session{src: src, l: l}
+}
+
+// CheckStale makes List flag entries whose rendered file a later render replaced; current
+// returns that render, false when there is none. It returns s.
+func (s *Session) CheckStale(current func() (instructions.Rendered, bool)) *Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.current = current
+	return s
 }
 
 // Harness names the source's harness.
@@ -30,6 +41,9 @@ func (s *Session) List(ctx context.Context) (entries []api.FlightRule, warnings 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err = s.src.Update(ctx, s.l)
+	if s.current != nil {
+		s.l.MarkStale(s.current())
+	}
 	return s.l.Entries(), s.l.Warnings(), err
 }
 
