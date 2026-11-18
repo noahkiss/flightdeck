@@ -317,6 +317,49 @@ func TestMCPSkillMatchesTools(t *testing.T) {
 	}
 }
 
+// TestSkillShellMatchesHelp: every shell command the printed manual names is a command that
+// `gff-hab -h` lists, with its verb. `gff round` runs `gff-hab round` (rounds.md 13), and
+// `gff agent` is `gff-hab agent`, so both are read as gff-hab's.
+func TestSkillShellMatchesHelp(t *testing.T) {
+	help := regexp.MustCompile(`(?m)^  gff-hab ([a-z-]+)(?: ([a-z|-]+))?`).FindAllStringSubmatch(usage, -1)
+	verbs := map[string][]string{} // command: the verbs its usage lines name
+	for _, h := range help {
+		verbs[h[1]] = append(verbs[h[1]], strings.Split(h[2], "|")...)
+	}
+	shells := regexp.MustCompile("(?m)^Shell: `(gff(?:-hab)?) ([a-z-]+)(?: ([a-z_-]+))?").FindAllStringSubmatch(skillText(), -1)
+	if len(shells) == 0 {
+		t.Fatal("the manual names no shell command")
+	}
+	seen := map[string]bool{}
+	for _, sh := range shells {
+		cmd, verb := sh[2], sh[3]
+		if sh[1] == "gff" && cmd != "round" && cmd != "agent" {
+			t.Errorf("manual: gff %s is not a gff command that runs gff-hab's", cmd)
+			continue
+		}
+		vs, ok := verbs[cmd]
+		if !ok {
+			t.Errorf("manual: %s %s is not in gff-hab -h", sh[1], cmd)
+			continue
+		}
+		seen[cmd] = true
+		// read and act take a tool name, which TestMCPSkillMatchesTools checks; a command with
+		// verbs must list this one.
+		if cmd == "read" || cmd == "act" || verb == "" || !slices.ContainsFunc(vs, func(v string) bool { return v != "" }) {
+			continue
+		}
+		if !slices.Contains(vs, verb) {
+			t.Errorf("manual: %s %s %s: gff-hab -h lists %s verbs %v", sh[1], cmd, verb, cmd, vs)
+		}
+	}
+	// The agent kit's commands are all in the manual.
+	for _, cmd := range []string{"send", "wait", "agent", "read", "act", "round"} {
+		if !seen[cmd] {
+			t.Errorf("the manual names no gff-hab %s command", cmd)
+		}
+	}
+}
+
 // --- End to end: two habs over the ssh stand-in ---
 
 func writeClaude(t *testing.T, dir, id, cwd string, at time.Time, user, agent string) {

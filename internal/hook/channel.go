@@ -53,9 +53,9 @@ var RoundMethods = []string{"round.list", "round.get", "round.create", "round.up
 var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.list", "group.report", "group.note",
 	"group.close", "group.retry", "member.compact", "member.handoff", "member.action", "lane.submit", "review.verdict", "group.move"}
 
-// AgentMethods are the methods an agent calls about itself (harness-adapters.md, Self-compact).
-// The pane's token names the agent: it can act only on its own pane.
-var AgentMethods = []string{"agent.compact"}
+// AgentMethods are the methods an agent calls about itself (harness-adapters.md, Self-compact
+// and Agent kit). The pane's token names the agent: it can act only on its own pane.
+var AgentMethods = []string{"agent.compact", "agent.name"}
 
 // PersonalMethods are Capcom's personal tools (capcom-service.md 8, E12). The route takes them
 // from the Capcom engine's token only; a pane's call is refused.

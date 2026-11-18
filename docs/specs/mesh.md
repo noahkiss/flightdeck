@@ -480,8 +480,9 @@ need for a handful of machines.
 
 - **Clients** read `catalog.list` from any hab to show hosts, projects with their locations, and
   hosts they could add. Each host's live state still comes from the client's own connection to it.
-- **Agents** read it through the agent kit (Part 4): `gff hosts`, `gff hosts
-  <label>`, `gff projects`, the same as MCP tools, and the printed skill (7).
+- **Agents** read it through the agent kit (Part 4): the read tools `hosts`, `projects`,
+  `agents` and `suggest_host`, as MCP tools (`gff-hab mcp`) or from a shell (`gff-hab read`),
+  and the printed manual (`gff-hab mcp --skill`; `harness-adapters.md`, Agent kit).
 
 ### 5.4 Built choices
 
@@ -587,9 +588,6 @@ Not built in this stage:
 - The `mesh.changed` wake-up for the catalog (4.2; mail has it, 6.5). The dialer pulls every
   15 s instead of 60 s, so a catalog change on the dialed hab reaches it in at most 15 s; a
   change on the dialer goes out at once.
-- The agent kit's `gff hosts` and `gff projects` (Part 4). The read tools serve the
-  same facts now: `gff-hab read hosts`, `projects`, `agents` and the MCP server `gff-hab mcp`
-  (`capcom.md` 5.5).
 - GPU models, battery state, Xcode simulators, attached devices, whether hooks are set up, and
   the embedded server's endpoints.
 - A dirty read on a hook event in that project: dirty state is up to 5 minutes old.

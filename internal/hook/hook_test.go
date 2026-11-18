@@ -148,6 +148,32 @@ func TestRunSendsNothing(t *testing.T) {
 	}
 }
 
+// TestRunExportsSession: Claude Code's SessionStart hook in a pane appends AGENT_KIND and
+// AGENT_SESSION_ID to CLAUDE_ENV_FILE, again at a later start; nothing else writes the file.
+func TestRunExportsSession(t *testing.T) {
+	dir := shortDir(t)
+	file := filepath.Join(dir, "env.sh")
+	addr := Addr(filepath.Join(dir, "hook.sock"), strings.Repeat("ab", 16)) // nothing listens
+	vars := map[string]string{Env: addr, ClaudeEnvFile: file}
+	start := func(harness, payload string, vars map[string]string) {
+		Run(context.Background(), Invocation{Harness: harness, Stdin: strings.NewReader(payload), Getenv: env(vars)})
+	}
+	start("claude", `{"session_id":"0b1c-2d","hook_event_name":"SessionStart","source":"startup"}`, vars)
+	start("claude", `{"session_id":"s2","hook_event_name":"Stop"}`, vars)
+	start("codex", `{"session_id":"c1","hook_event_name":"SessionStart"}`, vars)
+	start("claude", `{"session_id":"x; rm -rf /","hook_event_name":"SessionStart"}`, vars)
+	start("claude", `{"session_id":"s3","hook_event_name":"SessionStart"}`, map[string]string{ClaudeEnvFile: file})
+	start("claude", `{"session_id":"s4","hook_event_name":"SessionStart","source":"clear"}`, vars)
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "export AGENT_KIND=claude\nexport AGENT_SESSION_ID=0b1c-2d\nexport AGENT_KIND=claude\nexport AGENT_SESSION_ID=s4\n"
+	if string(b) != want {
+		t.Fatalf("env file:\n%s\nwant:\n%s", b, want)
+	}
+}
+
 // scaleTimeout multiplies d by $GFF_TEST_TIMEOUT_SCALE, a positive number (docs/testing.md).
 // Unset, it returns d.
 func scaleTimeout(d time.Duration) time.Duration {
