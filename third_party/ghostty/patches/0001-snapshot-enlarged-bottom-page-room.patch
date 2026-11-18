@@ -1,0 +1,50 @@
+Restore an enlarged bottom page with room for more rows too.
+
+Ghostty a622196c restores a snapshot's bottom page with room for more rows
+(PageList.fillPooled), but only when the page fits in a pool item. A page
+enlarged past a standard page (more styles or graphemes) still restores at
+the exact rows its record holds. It is full, so the first row written after a
+restore starts a new page. Each snapshot, restore and write cycle then adds a
+page that counts against the scrollback byte limit.
+
+Give such a page as many rows as a standard page of its width holds, as a
+terminal that never restored would have. The PAGE decoder already accepts a
+destination with more rows.
+
+Applied by `make libghostty` to the pinned Ghostty commit (GHOSTTY_COMMIT).
+
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index 8528d7c..a24cb82 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -4927,22 +4927,28 @@ pub fn increaseCapacity(
+
+ /// Returns `cap` with more rows, enough to fill the memory a pooled page
+ /// takes up anyway. If a page with `cap` is too large for the pool, this
+-/// returns `cap` unchanged.
++/// returns `cap` with as many rows as a standard page of its width holds.
+ ///
+ /// Every page small enough for the pool gets a full `std_size` buffer,
+ /// even when its capacity needs less. The leftover space can hold more
+ /// rows at no extra cost. Use this when allocating a page that will keep
+ /// receiving rows. A page allocated with only as many rows as it holds is
+ /// already full, so the next `grow` has to allocate a whole new page.
+ ///
+ /// Only `rows` changes, and it never gets smaller.
+ ///
+ /// ```zig
+ /// // Leave room for new output in a restored active page.
+ /// const allocation = try list.allocatePage(PageList.fillPooled(capacity));
+ /// ```
+ pub fn fillPooled(cap: Capacity) Capacity {
+-    if (Page.layout(cap).total_size > std_size) return cap;
++    if (Page.layout(cap).total_size > std_size) {
++        const std_rows = (std_capacity.adjust(.{ .cols = cap.cols }) catch return cap).rows;
++        var filled = cap;
++        filled.rows = @max(cap.rows, std_rows);
++        if (Page.layout(filled).total_size > size.max_page_size) return cap;
++        return filled;
++    }
+     const filled = cap.fitRows(std_size) orelse return cap;
+     assert(filled.rows >= cap.rows);
+     return filled;

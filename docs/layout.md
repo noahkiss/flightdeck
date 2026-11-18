@@ -137,11 +137,13 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
   commit. The Makefile pins the Ghostty commit those bindings were built against
   (`GHOSTTY_COMMIT`), or a later commit with the same C headers. Bump both together, by the steps
   in `docs/specs/ci-release.md` 7.9. No Ghostty source is committed here, only our own patches to
-  that commit in `third_party/ghostty/patches/`, when we carry any.
+  that commit in `third_party/ghostty/patches/`.
 - **Our patches.** `make libghostty` applies each `.patch` there, in name order, to the fetched
-  commit before it builds. We carry none at present. The patches' id (`none` without patches) is
-  in the stamp file and in CI's cache key (`make ghostty-id`), so a changed patch rebuilds the
-  library. On a `GHOSTTY_COMMIT` bump, drop a patch the new commit makes unneeded;
+  commit before it builds. `0001` gives a restored snapshot's bottom page room for more rows when
+  the page is enlarged past a standard page (more styles or graphemes); upstream does this only
+  for a standard page. Without it, each gff-hab restart leaves one more page in a pane's
+  scrollback. The patches' id (`none` without patches) is in the stamp file and in CI's cache key
+  (`make ghostty-id`), so a changed patch rebuilds the library. On a `GHOSTTY_COMMIT` bump, drop a patch the new commit makes unneeded;
   `make libghostty` stops when one no longer applies.
 - **Zig 0.17.0** builds libghostty-vt (pinned in `mise.toml`; the Ghostty commit's
   `minimum_zig_version`). `make libghostty` fetches the pinned commit into `build/ghostty-src`.

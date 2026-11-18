@@ -3120,7 +3120,7 @@ Ghostty
 Version: a622196c930138f312884382ab784e45b9ab653b
 Source: https://github.com/ghostty-org/ghostty
 Licence: MIT
-In: gff, gff-hab (libghostty-vt, built with the patches in third_party/ghostty/patches of the Flightdeck repository, if any)
+In: gff, gff-hab (libghostty-vt, built with the patches in third_party/ghostty/patches of the Flightdeck repository)
 
 --- third_party/licenses/ghostty/LICENSE
 
