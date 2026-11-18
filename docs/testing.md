@@ -255,6 +255,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/gffclient/` | The workspace over fake habs |
 | `go test -race -run 'TestWindowTitleFocus\|TestTitleTemplateAndSanitizing' ./internal/gffclient/` | Window titles |
 | `go test -race -run TestCanvasLinks ./internal/gffclient/ && go test -race -tags ghostty -run 'TestLinkSurvivesComposing' ./internal/gffclient/ && go test -tags ghostty -run TestReadScreenLinks ./internal/vt/ghostty/` | OSC 8 links in the composed view (`gff-client.md` 3.4) |
+| `go test -race -run 'TestKittyHost\|TestLegacyKeyGoldens\|TestKittyInTranslate\|TestKittyReplies' ./internal/gffclient/ && go test -race -tags ghostty -run TestKittyPaneEncoding ./internal/gffclient/ && go test -tags ghostty -run 'TestEncodeKeyGoldens\|TestKeyboardFlagsInSnapshot' ./internal/vt/ghostty/` | The kitty keyboard protocol in the composed view (`gff-client.md` 3.4, 8.2) |
 | `go test -race -run 'TestResume' ./internal/gffclient/ && go test -race -run 'TestResume\|TestSessionResume' ./cmd/gff-hab` | Resume (`gff-client.md` 6.4) |
 | `go test -race -run 'TestLogoutCheckpoint\|TestShutdownWatchdog\|TestResumeBookFlush' ./cmd/gff-hab` | Logout, restart and shutdown (`hab-holder.md` 2.11) |
 | `go test -race -run 'TestOutside' ./internal/transcript/ && go test -race -run 'TestAdopt\|TestSessionAdopt' ./cmd/gff-hab` | Adopt (`gff-client.md` 6.5) over hand-written transcripts |

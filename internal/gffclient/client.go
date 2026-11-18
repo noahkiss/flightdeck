@@ -211,10 +211,19 @@ type client struct {
 	keys     *keyReader
 	// mouseHeld is the start of a mouse report or scroll key cut at a read boundary.
 	mouseHeld []byte
-	notes     chan paneNote
-	frames    chan paneFrame
-	later     chan func()
-	debounce  Timer
+
+	// The kitty keyboard protocol on the host (kitty.go): whether the host answered gff's query
+	// and when gff asked, the start of an answer cut at a read boundary, whether gff's flag is
+	// pushed on the composed screen, and the re-encoder of keys read with it.
+	hostKitty  bool
+	kittyAsked time.Time
+	kittyHeld  []byte
+	kittyOn    bool
+	kin        kittyIn
+	notes      chan paneNote
+	frames     chan paneFrame
+	later      chan func()
+	debounce   Timer
 	// What the host shows besides the canvas, so an unchanged screen writes nothing.
 	cursorX, cursorY int
 	cursorOn         bool
@@ -345,6 +354,8 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	c.w, c.h = c.hostSize()
 	c.canvas.resize(c.w, c.h)
 	c.sendSizes()
+	c.out.WriteString(kittyQuery)
+	c.kittyAsked = cfg.Now()
 	if ws {
 		c.ui.runPending() // startup tabs on hosts already online
 	}
@@ -1056,9 +1067,10 @@ const (
 )
 
 // HostReset sets the host terminal back from anything gff or a pane can leave on it: the pane
-// modes, the composed view's modes, and the alternate screen. gff writes it when it ended
-// without setting the terminal back itself, such as after a panic.
-const HostReset = resetPaneModes + "\x1b[?1049l"
+// modes, the composed view's modes, gff's kitty keyboard flag (a pop, which a host with no
+// flag pushed ignores), and the alternate screen. gff writes it when it ended without setting
+// the terminal back itself, such as after a panic.
+const HostReset = resetPaneModes + kittyPop + "\x1b[?1049l"
 
 // mirrored are the focused pane's input modes that the composed view sets on the host, so
 // the host encodes keys and pastes the way the program asked (gff-client.md 8.2): cursor keys,
@@ -1107,6 +1119,7 @@ func (c *client) render() {
 		c.cursorOn = false
 		clear(c.modes)
 	}
+	c.syncKitty()
 	c.compose(a)
 }
 
@@ -1115,6 +1128,7 @@ func (c *client) render() {
 func (c *client) enterPass(v *view) {
 	if c.composed {
 		c.out.WriteString(resetMirrored(c.modes))
+		c.popKitty()
 		c.out.WriteString(leaveCompose)
 		c.composed = false
 	}
@@ -1150,6 +1164,7 @@ func (c *client) restoreHost() {
 	switch {
 	case c.composed:
 		c.out.WriteString(resetMirrored(c.modes))
+		c.popKitty()
 		c.out.WriteString(leaveCompose)
 	case c.carry != nil:
 		v := c.carry

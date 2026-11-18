@@ -84,6 +84,9 @@ func (c *client) takesMouse() bool { return c.pass == nil && c.composed }
 // input handles host input: mouse reports and scroll keys while composed, the rest through the
 // key reader.
 func (c *client) input(p []byte) error {
+	if p = c.takeKittyReplies(p); len(p) == 0 {
+		return nil
+	}
 	if len(c.mouseHeld) > 0 {
 		p = append(c.mouseHeld, p...)
 		c.mouseHeld = nil
@@ -158,10 +161,14 @@ func (c *client) keyInput(p []byte) error {
 	for _, ev := range c.keys.feed(p) {
 		if ev.act == "" {
 			if c.ws && c.ui.mode != modePanes {
-				c.ui.keys(ev.data)
+				if b := c.uiKeys(ev.data); len(b) > 0 {
+					c.ui.keys(b)
+				}
 				continue
 			}
-			c.typeKeys(ev.data)
+			if b := c.paneKeys(c.focused(), ev.data); len(b) > 0 {
+				c.typeKeys(b)
+			}
 			continue
 		}
 		if err := c.command(ev); err != nil {

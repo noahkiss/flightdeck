@@ -184,7 +184,8 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
   It leaves pass-through the moment a bar, a split or a resize would need composing.
 - **Host terminal features.** `gff` asks the host terminal for the kitty keyboard protocol, mouse
   reporting, bracketed paste, styled underlines and true colour, and falls back when the host
-  lacks one. It writes a pane's OSC 8 links to the host around the linked cells; a host without
+  lacks one. The kitty protocol is asked for with a query first; a host that does not answer gets
+  no push and sends legacy keys as before (3.4, 8.2). It writes a pane's OSC 8 links to the host around the linked cells; a host without
   links ignores the sequence and shows the text (3.4).
 - **Terminal title.** `gff` sets the host window title to `<host> · <workspace> | <pane title>`.
   An empty part drops with its separator.
@@ -263,8 +264,35 @@ cells of one link join on hover, and the same URI in two panes stays two links. 
 control byte, or longer than 4 KiB, draws as plain text. In pass-through the pane's own OSC 8
 sequences reach the host unchanged.
 
-**Terminal queries.** gff sends no query of its own to the host terminal, and its parsers never
-answer one: the `vt` wrapper gives libghostty no reply callback. In pass-through, a filter runs
+**Kitty keyboard protocol.** Built as zellij does it: gff pushes flag 1 (disambiguate) on the
+host and re-encodes each key for the pane that gets it. tmux, by contrast, reads extended keys
+from the host but gives panes only legacy or its own `extended-keys` forms; it keeps no kitty
+flags per pane.
+
+- At start gff writes one query, `CSI ? u`. A host with the protocol answers `CSI ? flags u`;
+  gff takes the answer out of the input wherever it comes, so no program sees it (the filter
+  below drops a pane's own `CSI ? u`, so every answer is gff's). For a second after the query, a
+  read that ends inside a possible answer is held for the next read.
+- Once the host has answered, gff pushes `CSI > 1 u` each time it enters the composed screen,
+  and pops it (`CSI < u`) before it leaves that screen: for pass-through, on detach, on exit. The
+  crash guard's reset holds the pop too. A host that never answered gets no push and no pop
+  (only the guard's reset, which pops nothing on such a host). gff has no suspend: Ctrl+Z goes
+  to the pane.
+- While the flag is on, the host sends Esc, Ctrl and Alt keys, Shift with Enter, Tab or
+  Backspace, and the keypad as `CSI code ; mods u`. The keymap reads those forms already. Text,
+  arrows, Home, End, Page keys and F keys keep their legacy forms, which read the same for a
+  legacy and a kitty program, so they pass as they came; so does a bracketed paste.
+- Each `CSI … u` is encoded again for where it goes. A pane whose program pushed kitty flags
+  (its parser's `KeyboardFlags`) gets libghostty's key encoder at those flags. With flag 8
+  (every key as an escape code), its text and Enter, Tab and Backspace become key events too.
+  A pane with no flags, and gff's own sidebar, board and prompts, get legacy bytes as xterm
+  sends them with no modifyOtherKeys: control bytes for Ctrl, ESC before an Alt key, `CSI Z`
+  for Shift+Tab. gff encodes those itself, because libghostty's legacy encoding sends some keys
+  in CSI u form (Ctrl+I as `CSI 105;5u`).
+- `vt.Fake` has no encoder and no flags: its panes get legacy bytes.
+
+**Terminal queries.** gff sends one query of its own to the host terminal, `CSI ? u` (above),
+and its parsers never answer one: the `vt` wrapper gives libghostty no reply callback. In pass-through, a filter runs
 over every pane's bytes and drops whatever the host would answer, so no answer can come back as
 typing. It also drops settings that would change the host beyond the pane. The filter runs on
 the bytes of every pane, shown or not, so a pane that starts passing through mid-sequence is
@@ -340,7 +368,7 @@ panic on any goroutine, SIGQUIT or SIGKILL. Go has no process-wide panic hook, s
 a small child process (`gff` itself, run with `GFF_TERMINAL_GUARD=1`). It saves the terminal's
 settings before raw mode, then waits on a pipe. gff writes one byte on it once it has set the
 terminal back. When the pipe ends without that byte, the guard puts back the saved settings,
-writes the mode reset and leaves the alternate screen.
+writes the mode reset, pops gff's kitty flag and leaves the alternate screen.
 
 **Tests.** The suite runs the real holder and gff-hab binaries, and gff in process with a fake
 host terminal (pipes, its output parsed by `vt.Fake`), a transport that records every control
@@ -362,6 +390,10 @@ request, and a debounce timer the test fires.
 | `TestCanvasLinks` | The canvas opens a link with its id right before the linked cells and closes it at a run's end, a line end, a pane's edge and a frame's end; the same URI in two panes gets two ids; a URI with a control byte is no link |
 | `TestLinkSurvivesComposing` (`-tags ghostty`) | Two panes side by side, one prints an OSC 8 link: the host output wraps exactly the linked cells in the link, and opens no other |
 | `TestReadScreenLinks` (`internal/vt/ghostty`) | libghostty's cells carry their link URI, also after a `snapshot-vt` restore |
+| `TestKittyHost` | A host that never answers the query gets no kitty push or pop; one that answers gets the push after the composed screen starts, its kitty-form keys reach a legacy program as legacy bytes, Ctrl+O `d` in kitty form detaches, and the pop comes right before the composed screen ends |
+| `TestKittyPaneEncoding` (`-tags ghostty`) | A program that pushed flags 9 gets text as `CSI 97u` and Ctrl+C as `CSI 99;5u` |
+| `TestLegacyKeyGoldens`, `TestKittyInTranslate`, `TestKittyReplies` | Legacy goldens; the re-encoder keeps legacy sequences and pastes, gives text keys their text, and holds a cut event; answers to the query are taken whole or cut, and nothing else is |
+| `TestEncodeKeyGoldens`, `TestKeyboardFlagsInSnapshot` (`internal/vt/ghostty`) | Kitty goldens at flags 1, 3, 5, 9, 25 and 31; a program's flags survive a `snapshot-vt` |
 | `TestSplitsRedrawAfterResize` | The `gff` binary in a pty starts vim and a full-screen script side by side, each at its view's size; after the terminal resizes, both draw at their new sizes and gff composes them; detach exits 0. Skips without vim |
 | Unit tests | The filter from any read split, a long string streams, the key reader (legacy, kitty and modifyOtherKeys prefix, key releases and modifier keys after the prefix, split reads), the layout, the canvas writes only changed cells and clips a wide cell |
 
@@ -369,7 +401,9 @@ request, and a debounce timer the test fires.
 
 | Limit | Why it is acceptable now |
 |---|---|
-| The composed view reads keys as the host sends them; it does not ask the host for the kitty keyboard protocol and does not re-encode keys per pane (8.2) | Cursor-key, keypad and bracketed paste modes are mirrored; pass-through gets the full protocol. The keymap stage owns key encoding |
+| The host gets kitty flag 1 only, so a program that asked for key releases (flag 2) or alternate keys (flag 4) gets presses and base keys in the composed view. With flag 8, gff cannot know the keyboard layout: an upper-case ASCII letter is Shift and the letter, any other character is its own key | zellij also pushes flag 1 only. Pass-through gets the full protocol from the host |
+| A legacy program gets xterm's plain legacy keys in the composed view, not modifyOtherKeys forms, even when it set modifyOtherKeys (vim does) | As before this protocol; keys with no legacy form lose their modifiers |
+| With a host that has no kitty protocol, keys reach a kitty program in legacy form | As before; programs that push flag 1 still read legacy keys |
 | No mouse in the composed view; no wheel scrolling of scrollback; no selection (5.2) | Pass-through gets the pane's mouse modes. Later stages |
 | Kitty graphics and other APC strings are dropped in pass-through | The host would answer them; images are a later stage |
 | Window titles | Built: pane OSC 0/2 titles appear in frames and the configurable host title follows focus |
@@ -1244,9 +1278,11 @@ section has no keys yet; the app holds the actions (`groups.md` 5.9).
 
 ### 8.2 Keys reach the pane intact
 
-- `gff` reads keys from the host terminal with the kitty keyboard protocol when the host offers it.
+- `gff` reads keys from the host terminal with the kitty keyboard protocol (flag 1) when the host
+  answers its query (3.4).
 - It encodes each key for the pane in the form the pane's program asked for: the kitty protocol at
-  the level the program enabled, else legacy bytes. The pane's keyboard mode comes from its parser.
+  the flags the program pushed, else legacy bytes. The pane's keyboard mode comes from its parser.
+  A host without the protocol sends legacy keys, and they pass as before.
 - Paste arrives as one `pane.input` call, with bracketed paste markers only if the program enabled
   bracketed paste.
 
@@ -1941,7 +1977,7 @@ Results of the review, with a mark and evidence per row and the ranked gaps: `gf
 | Restore after a reboot | After a restart, agents come back with their resume line ready, not run | Workspace restored; exited sessions offer Resume (6.2) | E2E: kill the holder; restart; views show Resume; nothing ran |
 | Clean environment for new panes | A rebuilt workspace drops agent identity variables so shells do not claim to be agents | Panes take the hab's environment (6.1) | E2E: start `gff` with an agent variable set; a new pane's environment lacks it |
 | Agents drive the workspace | Agents open panes, read screens, wait for output, type input and supervise other agents, here and on other hosts | The hab API, plus `gff` CLI verbs over the shared library (15.10) | E2E: a script opens a pane, waits for a line, reads it, sends input, over `ssh localhost` |
-| Kitty keyboard and OSC 8 links | Full key combinations and clickable links | Host features (3.2) and key encoding (8.2) | Unit: key encoder goldens per keyboard mode; screen test: an OSC 8 link survives composing |
+| Kitty keyboard and OSC 8 links | Full key combinations and clickable links | Host features (3.2) and key encoding (8.2) | Unit: key encoder goldens per keyboard mode (`TestLegacyKeyGoldens`, `TestEncodeKeyGoldens`); screen tests: `TestKittyHost`, `TestKittyPaneEncoding`, and an OSC 8 link survives composing (`TestLinkSurvivesComposing`) |
 | Theme | One dark theme across the workspace | Theme tokens mapped to the host palette (3.2) | Unit: every chrome colour comes from a token |
 | Status notices | A badge warns of a stale build or a missing permission | Warnings badge (9.1) | Screen test: an "update needed" hab raises the badge |
 | Pane size follows the typist | Not available today: the smallest client sets the size | Typing takes ownership (10.1) | E2E (shared with `docs/testing.md` 9): two clients; typing moves ownership once; an observer never resizes |
