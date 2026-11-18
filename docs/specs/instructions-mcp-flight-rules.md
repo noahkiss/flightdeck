@@ -836,15 +836,23 @@ an adapter.
   in the background, at most 5 seconds per session per pass, and a `flightrules.list` sets it
   too. A harness with no render record is never read, so a host that renders nothing pays
   nothing. opencode is never flagged: it reloads the file itself (the table above). An exited
-  session, and one that starts again, has no flag. The flag is not saved; the hab works it out
+  session has no flag. A restart clears it, and until the new program records a load the
+  newest entry is still the old program's: after a restart only a stale entry seen since the
+  restart began counts. The flag is not saved; the hab works it out
   again after its own restart. The catalog does not carry it.
-- **`session.restart {session}`** returns the ids `session.resume` returns. The owner starts
+- **`session.restart {session}`** returns the ids `session.resume` returns. It runs off the
+  connection's read loop, so pings and other calls go on while the harness exits, and a client
+  that leaves does not cut it short. The owner starts
   each one; the hab adds no confirmation (`app.md` 20.1). It refuses, and stops nothing:
   - `conflict`: another restart is running on the hab (one at a time; there is no "restart
     all"); the agent is not `idle` or `done`; the session is not running (`session.resume`
-    starts it); or it is a round's watcher session.
+    starts it); it is a round's watcher session; or the harness is not the pane's own program
+    in the foreground (the owner started it from a shell). A shell would take the hang-up while
+    the harness under it ran on, and the session's folder may not be where the owner started
+    it; the owner exits it there, and `session.resume` starts it.
   - `unavailable`: the pane runs no harness with an adapter; the harness has not reported its
-    session id; or the hab could not start it again: no resume start or folder is known.
+    session id; the hab could not start it again (no resume start or folder is known); or the
+    hang-up did not reach the pane.
   - `not_found`: no such session.
 - **Exit.** The hab hangs up the pane's program (SIGHUP to the pane's child, the signal
   `pane.close` sends) and waits up to 10 seconds for it to end. It checks the agent state once

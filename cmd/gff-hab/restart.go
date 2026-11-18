@@ -33,8 +33,13 @@ type restarter struct {
 	// ready reports why the session could not start again once its harness exits (its resume
 	// start or folder not known), before anything is stopped. nil: no check.
 	ready func(ctx context.Context, session string, st api.AgentState) error
+	// direct reports whether the pane's child is the harness itself, in the foreground: not a
+	// shell the owner started it from. nil: no check.
+	direct func(ctx context.Context, pane string) (bool, error)
 	// signal sends sig to a pane's child.
 	signal func(ctx context.Context, pane string, sig hp.Sig) error
+	// restarted hears a restart that started its harness again, and when it began. nil: none.
+	restarted func(session string, at time.Time)
 	// resume starts an exited session again: session.resume's path.
 	resume func(ctx context.Context, session string) (string, error)
 	logf   func(string, ...any)
@@ -63,12 +68,22 @@ func (r *restarter) Restart(ctx context.Context, session string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	if r.direct != nil {
+		// A shell in the pane would take the hang-up while the harness under it still ran, and
+		// a resume in the session's folder may not find the conversation: the owner exits it.
+		if ok, err := r.direct(ctx, ss.Pane); err != nil {
+			return "", control.Errorf(api.ErrorKindUnavailable, "session %s: %v", ss.Name, err)
+		} else if !ok {
+			return "", control.Errorf(api.ErrorKindConflict, "session %s: %s runs under another program in its pane (a shell); exit it there, then session.resume starts it", ss.Name, st.Harness)
+		}
+	}
 	if r.ready != nil {
 		if err := r.ready(ctx, session, st); err != nil {
 			return "", err
 		}
 	}
 	pane := ss.Pane
+	began := time.Now()
 	r.logf("restart: session %s: %s %s is %s; hanging up pane %s", ss.Name, st.Harness, st.Session, st.State, pane)
 	if err := r.exit(ctx, session, pane); err != nil {
 		return "", err
@@ -81,6 +96,9 @@ func (r *restarter) Restart(ctx context.Context, session string) (string, error)
 		}
 		r.logf("restart: session %s: %s exited; starting it again failed: %v", ss.Name, st.Harness, err)
 		return "", control.Errorf(kind, "session %s: %s exited, and starting it again failed: %s. Its conversation %s is untouched: session.resume, or the harness's resume in its folder, starts it again", ss.Name, st.Harness, errText(err), st.Session)
+	}
+	if r.restarted != nil {
+		r.restarted(session, began)
 	}
 	r.logf("restart: session %s: %s %s started again in pane %s", ss.Name, st.Harness, st.Session, newPane)
 	return newPane, nil
@@ -112,13 +130,16 @@ func (r *restarter) exit(ctx context.Context, session, pane string) error {
 			return control.Errorf(api.ErrorKindConflict, "session %s: the agent became %s; nothing was stopped", session, st.State)
 		}
 		if err := r.signal(ctx, pane, step.sig); err != nil && !r.ended(session, pane) {
+			if step.sig == hp.SigHUP {
+				return control.Errorf(api.ErrorKindUnavailable, "session %s: the hang-up did not reach its pane: %v; nothing was stopped", session, err)
+			}
 			r.logf("restart: session %s: signal %d to pane %s: %v", session, step.sig, pane, err)
 		}
 		if r.wait(ctx, session, pane, step.wait) {
 			return nil
 		}
 		if ctx.Err() != nil {
-			break
+			return control.Errorf(api.ErrorKindUnavailable, "session %s: out of time while the harness exits; it may still run, and nothing was restarted", session)
 		}
 	}
 	return control.Errorf(api.ErrorKindUnavailable, "session %s: the harness did not exit after a hang-up and a TERM; it still runs, and nothing was restarted", session)

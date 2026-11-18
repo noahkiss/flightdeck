@@ -123,6 +123,25 @@ func TestRestartRefused(t *testing.T) {
 		t.Errorf("not ready: %v", err)
 	}
 	g.r.ready = nil
+	g.r.direct = func(context.Context, string) (bool, error) { return false, nil }
+	if _, err := g.r.Restart(ctx, g.session); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "shell") {
+		t.Errorf("under a shell: %v", err)
+	}
+	g.r.direct = nil
+	// The agent takes a prompt between the check and the hang-up.
+	calls := 0
+	agent := g.r.agent
+	g.r.agent = func(pane string) (api.AgentState, bool) {
+		st, ok := agent(pane)
+		if calls++; calls > 1 {
+			st.State = api.AgentStatusWorking
+		}
+		return st, ok
+	}
+	if _, err := g.r.Restart(ctx, g.session); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "became working") {
+		t.Errorf("became busy: %v", err)
+	}
+	g.r.agent = agent
 	g.r.op.Lock()
 	if _, err := g.r.Restart(ctx, g.session); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "one session at a time") {
 		t.Errorf("a second restart: %v", err)
@@ -152,9 +171,11 @@ func TestRestartRefused(t *testing.T) {
 func TestRestartExitsThenResumes(t *testing.T) {
 	ctx := context.Background()
 	g := newRestartRig(t)
+	var heard []string
+	g.r.restarted = func(session string, at time.Time) { heard = append(heard, session) }
 	pane, err := g.r.Restart(ctx, g.session)
-	if err != nil || pane != "p2" {
-		t.Fatalf("restart: %q %v", pane, err)
+	if err != nil || pane != "p2" || !slices.Equal(heard, []string{g.session}) {
+		t.Fatalf("restart: %q %v, heard %v", pane, err, heard)
 	}
 	if !slices.Equal(g.sent(), []hp.Sig{hp.SigHUP}) || !slices.Equal(g.resumed, []string{g.session}) {
 		t.Fatalf("signals %v, resumed %v", g.sent(), g.resumed)

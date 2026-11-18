@@ -845,8 +845,24 @@ func serve(args []string) error {
 				}
 				return lk.Signal(ctx, u, hp.TargetChild, sig)
 			},
-			resume: sessionActs.ResumeSession,
-			ready:  restartReady(store, resumes, contentSvc.Folder, claudeTranscriptExists)}
+			direct: func(ctx context.Context, pane string) (bool, error) {
+				u, ok := parseUUID(pane)
+				if !ok {
+					return false, fmt.Errorf("pane %q is not a pane id", pane)
+				}
+				ps, ok := lk.Pane(u)
+				if !ok {
+					return false, fmt.Errorf("pane %s is gone", pane)
+				}
+				fg, err := lk.Foreground(ctx, u)
+				if err != nil {
+					return false, err
+				}
+				return ps.Pid != 0 && fg == int(ps.Pid), nil
+			},
+			restarted: staleW.restarted,
+			resume:    sessionActs.ResumeSession,
+			ready:     restartReady(store, resumes, contentSvc.Folder, claudeTranscriptExists)}
 		caps = append(caps, "session-restart")
 		caps = append(caps, "attachments")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read

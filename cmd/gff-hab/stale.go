@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -39,7 +41,43 @@ type staleWatch struct {
 	state string // the hab's state directory, where the renderer keeps its records
 	every time.Duration
 
+	mu sync.Mutex
+	// since holds when each session last restarted. Until the new program records a load, the
+	// newest entry is the old program's: only a stale entry seen at or after this time counts.
+	since map[string]time.Time
+
 	quit, done chan struct{}
+}
+
+// restarted notes a restart that began at at (restart.go), and clears the flag.
+func (w *staleWatch) restarted(session string, at time.Time) {
+	w.mu.Lock()
+	if w.since == nil {
+		w.since = map[string]time.Time{}
+	}
+	w.since[session] = at
+	w.mu.Unlock()
+	w.store.SetStale(session, nil)
+}
+
+// stale reports whether entries show the session working from an older render, loaded since
+// its last restart.
+func (w *staleWatch) stale(session string, entries []api.FlightRule) bool {
+	w.mu.Lock()
+	since, restarted := w.since[session]
+	w.mu.Unlock()
+	for _, e := range entries {
+		if !e.Stale {
+			continue
+		}
+		if !restarted {
+			return true
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.LastSeen); err == nil && !t.Before(since) {
+			return true
+		}
+	}
+	return false
 }
 
 // start begins the sweep. The flight rules service's mark should be w.listed, set when it is
@@ -96,7 +134,15 @@ func (w *staleWatch) harnessOf(ss api.Session) (api.AgentState, bool) {
 
 // sweep works out the flag of every session once.
 func (w *staleWatch) sweep(ctx context.Context) {
-	for _, ss := range w.store.Snapshot(api.HostInfo{}).Sessions {
+	sessions := w.store.Snapshot(api.HostInfo{}).Sessions
+	w.mu.Lock()
+	for id := range w.since {
+		if !slices.ContainsFunc(sessions, func(s api.Session) bool { return s.ID == id }) {
+			delete(w.since, id)
+		}
+	}
+	w.mu.Unlock()
+	for _, ss := range sessions {
 		if ctx.Err() != nil {
 			return
 		}
@@ -105,17 +151,17 @@ func (w *staleWatch) sweep(ctx context.Context) {
 			continue
 		}
 		rctx, cancel := context.WithTimeout(ctx, staleRead)
-		stale, err := w.rules.stale(rctx, ss.ID)
+		entries, err := w.rules.entries(rctx, ss.ID)
 		cancel()
 		if err != nil {
 			continue // a read cut short goes on at the next sweep; the flag stays
 		}
-		w.set(ss.ID, stale)
+		w.set(ss.ID, w.stale(ss.ID, entries))
 	}
 }
 
 // listed takes the flag from a flightrules.list, so a client that lists sees the session agree.
-func (w *staleWatch) listed(session, harness string, stale bool) {
+func (w *staleWatch) listed(session, harness string, entries []api.FlightRule) {
 	ss, ok := w.store.Session(session)
 	if !ok {
 		return
@@ -124,7 +170,7 @@ func (w *staleWatch) listed(session, harness string, stale bool) {
 		w.store.SetStale(session, nil)
 		return
 	}
-	w.set(session, stale)
+	w.set(session, w.stale(session, entries))
 }
 
 func (w *staleWatch) set(session string, stale bool) {

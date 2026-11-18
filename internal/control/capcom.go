@@ -217,29 +217,33 @@ func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 	return res, nil
 }
 
-// dispatchRestart answers session.restart.
-func (c *conn) dispatchRestart(m message, s api.Seq) (any, *Error) {
+// dispatchRestart answers session.restart. It runs off the read loop (handle), so the seq is
+// taken once the restart ended.
+func (c *conn) dispatchRestart(m message) (any, uint64, *Error) {
 	var p api.SessionRef
 	if e := c.decodeUp(m, &p); e != nil {
-		return nil, e
+		return nil, c.currentSeq(), e
 	}
 	if p.Session == "" {
-		return nil, appErr(api.ErrorKindInvalid, "session.restart needs a session")
+		return nil, c.currentSeq(), appErr(api.ErrorKindInvalid, "session.restart needs a session")
 	}
 	r, ok := c.s.cfg.Actions.(Restarter)
 	if !ok {
-		return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		return nil, c.currentSeq(), appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 	}
+	// Not the connection's context: a client that leaves must not cut a restart between the
+	// exit and the start.
 	ctx, cancel := context.WithTimeout(context.Background(), max(c.s.cfg.ActionTimeout, RestartTimeout))
 	defer cancel()
 	pane, err := r.RestartSession(ctx, p.Session)
+	seq := c.currentSeq()
 	if err != nil {
-		return nil, actionErr(m.Method, err)
+		return nil, seq, actionErr(m.Method, err)
 	}
 	if c.s.cfg.Size != nil {
 		c.s.cfg.Size.Created(c.clientID, pane)
 	}
-	return api.SessionCreated{Seq: s, Session: p.Session, Pane: pane}, nil
+	return api.SessionCreated{Seq: api.Seq{Seq: seq}, Session: p.Session, Pane: pane}, seq, nil
 }
 
 // dispatchResume answers session.resume.

@@ -33,9 +33,9 @@ type flightRulesService struct {
 	opencodeDir string // opencode's global config folder
 	state       string // the hab's state directory, where the instruction renderer keeps its records
 	now         func() time.Time
-	// mark hears whether a session works from an older render after each list that read to
-	// the end, for Session.stale (stale.go). nil: none.
-	mark func(session, harness string, stale bool)
+	// mark hears a session's entries after each list that read to the end, for Session.stale
+	// (stale.go). nil: none.
+	mark func(session, harness string, entries []api.FlightRule)
 
 	mu      sync.Mutex
 	ledgers map[string]*sessionLedger // by gff-hab session id
@@ -173,28 +173,23 @@ func (f *flightRulesService) List(ctx context.Context, p api.FlightRulesParams) 
 	case err != nil:
 		return api.FlightRules{}, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", p.Session, err)
 	case f.mark != nil:
-		f.mark(p.Session, sl.harness, out.Stale)
+		f.mark(p.Session, sl.harness, out.Entries)
 	}
 	return out, nil
 }
 
-// stale reads a session's records to the end and reports whether it works from an older
-// render (11.4). A session with no transcript yet is not stale.
-func (f *flightRulesService) stale(ctx context.Context, id string) (bool, error) {
+// entries reads a session's records to the end and returns its ledger, with the stale rule of
+// 11.4 applied. A session with no transcript yet has none.
+func (f *flightRulesService) entries(ctx context.Context, id string) ([]api.FlightRule, error) {
 	sl, err := f.ledger(id)
 	if err != nil || sl.s == nil {
-		return false, err
+		return nil, err
 	}
 	entries, _, err := sl.s.List(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	for _, e := range entries {
-		if e.Stale {
-			return true, nil
-		}
-	}
-	return false, nil
+	return entries, nil
 }
 
 // Text implements control.FlightRules.

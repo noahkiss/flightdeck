@@ -16,7 +16,8 @@ import (
 
 // TestStaleWatch: with no render record nothing is read and nothing is stale. With a record of
 // another digest than the one the Claude Code session loaded, the sweep flags it; an opencode
-// session is never flagged; a flightrules.list agrees; an ended session loses the flag.
+// session is never flagged; a flightrules.list agrees; after a restart only a load since then
+// counts; an ended session loses the flag.
 func TestStaleWatch(t *testing.T) {
 	dir := t.TempDir()
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "flightrules", "testdata", "claude-2.1.327.jsonl"))
@@ -70,6 +71,18 @@ func TestStaleWatch(t *testing.T) {
 	st.SetStale(claude.ID, nil)
 	if r, err := f.List(ctx, api.FlightRulesParams{Session: claude.ID}); err != nil || !r.Stale || staleOf(claude.ID) == nil {
 		t.Fatalf("list: %v %v, session %v", r.Stale, err, staleOf(claude.ID))
+	}
+	// After a restart, the old program's load no longer counts: the flag stays clear until the
+	// new program records a stale load of its own.
+	w.restarted(claude.ID, time.Now())
+	w.sweep(ctx)
+	if staleOf(claude.ID) != nil {
+		t.Fatalf("stale again right after a restart: %v", staleOf(claude.ID))
+	}
+	w.restarted(claude.ID, time.Time{})
+	w.sweep(ctx)
+	if staleOf(claude.ID) == nil {
+		t.Fatal("a stale load after the restart is not flagged")
 	}
 	h.Exit("p1", api.ExitStatus{})
 	waitUntil(t, "the exit", func() bool { s, _ := st.Session(claude.ID); return s.State == api.SessionStateExited })
