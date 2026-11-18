@@ -313,8 +313,16 @@ func TestNewPaneInFolder(t *testing.T) {
 	hst.waitScreen("it in a view", func(s string) bool { return strings.Contains(s, "in-proj") })
 	hst.typ("\x10n")
 	hst.waitScreen("the new pane", func(s string) bool { return strings.Contains(s, " sh-2 · one") })
-	// Type once the new shell prompts: the first pane prints no prompt, so "$ " is the new one's.
-	hst.waitScreen("the new pane's prompt", func(s string) bool { return strings.Contains(s, "$ ") })
+	// Type once the new shell prompts: the first pane prints no prompt, so a line ending in "$" is
+	// the new one's (the screen text drops trailing spaces).
+	hst.waitScreen("the new pane's prompt", func(s string) bool {
+		for _, l := range strings.Split(s, "\n") {
+			if strings.HasSuffix(strings.TrimRight(l, " "), "$") {
+				return true
+			}
+		}
+		return false
+	})
 	hst.typ("pwd -P\r")
 	want, _ := filepath.EvalSymlinks(dir)
 	hst.waitScreen("pwd in the first pane's folder", func(s string) bool { return strings.Contains(s, want) })
