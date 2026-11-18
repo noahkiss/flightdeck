@@ -269,6 +269,10 @@ Decisions taken in stage 4 (`internal/link`):
   an escape sequence, a control string or a UTF-8 character. A snapshot cannot carry a half-parsed
   sequence. A small scanner in the link tracks this; mid-sequence, the tick is skipped, and a
   planned stop keeps the older checkpoint.
+- A screen read or a new subscriber's `snapshot-vt` can come mid-sequence. On the alternate
+  screen the libghostty parser copies the terminal to reach the primary screen, and a copy needs
+  the unfinished sequence. So each libghostty terminal keeps up to 1 MiB of it. Past that (a long
+  OSC in flight) the read fails until the sequence ends.
 - A checkpoint is restored only onto a pane of the holder that wrote it.
 - Cadence: when a pane has printed nothing for 1 s, and at least every 10 s while it keeps
   printing; only when the screen changed. Both are configurable.

@@ -16,6 +16,12 @@ import (
 // Parser makes libghostty terminals.
 type Parser struct{}
 
+// continuationMax is the most bytes of an unfinished escape sequence or UTF-8 character a
+// terminal keeps so a snapshot can carry it. Output can stop anywhere, and without the tracking
+// libghostty refuses to snapshot a terminal that is not at ground. Past this limit (a long OSC
+// in flight) a snapshot fails until the sequence ends.
+const continuationMax = 1 << 20
+
 var _ vt.Parser = Parser{}
 
 // New returns an empty terminal.
@@ -23,7 +29,8 @@ func (Parser) New(cfg vt.Config) (vt.Terminal, error) {
 	if err := checkSize(cfg.Cols, cfg.Rows); err != nil {
 		return nil, err
 	}
-	opts := []libghostty.TerminalOption{libghostty.WithSize(uint16(cfg.Cols), uint16(cfg.Rows))}
+	opts := []libghostty.TerminalOption{libghostty.WithSize(uint16(cfg.Cols), uint16(cfg.Rows)),
+		libghostty.WithContinuationMaxBytes(continuationMax)}
 	if cfg.ScrollbackBytes > 0 {
 		opts = append(opts, libghostty.WithMaxScrollbackBytes(uint(cfg.ScrollbackBytes)))
 	}
@@ -51,6 +58,13 @@ func (p Parser) Restore(enc vt.Encoding, snapshot []byte, cfg vt.Config) (vt.Ter
 			return nil, fmt.Errorf("ghostty: snapshot decoder: %w", err)
 		}
 		defer d.Close()
+		// Accept a snapshot taken mid-sequence, and keep tracking on the new terminal.
+		if err := d.SetMaxContinuationBytes(continuationMax); err != nil {
+			return nil, fmt.Errorf("ghostty: snapshot decoder: %w", err)
+		}
+		if err := d.SetRetainContinuation(true); err != nil {
+			return nil, fmt.Errorf("ghostty: snapshot decoder: %w", err)
+		}
 		t, err := d.Decode()
 		if err != nil {
 			return nil, fmt.Errorf("ghostty: decode snapshot: %w", err)
@@ -216,7 +230,8 @@ func (t *terminal) primaryCopy() (*terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-	cp.Write([]byte("\x1b[?1049l"))
+	// CAN ends any sequence the copy is in the middle of, so the mode change lands.
+	cp.Write([]byte("\x18\x1b[?1049l"))
 	return cp.(*terminal), nil
 }
 
