@@ -198,6 +198,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/mcpreg/ && go test -race -run TestMCPRenderCLI ./cmd/gff-hab` | MCP registry over temporary folders, with a stand-in for Claude's CLI |
 | `go test -race -run 'TestLauncher\|TestShellJoin\|TestShellRoundTrip\|TestSecretNotQuoted\|TestHeadersParallel\|TestResolver\|TestLaunchEnvNames' ./internal/mcpreg/ && go test -race -run TestMCPLaunchCLI ./cmd/gff-hab` | Launch-time secrets (8.5) with invented values that no file holds (the fake provider prints rot13 of its reference) |
 | `go test -race ./internal/instructions/ && go test -race -run TestInstructions ./cmd/gff-hab` | Instruction renderer over a hand-written fake source tree in a temporary directory |
+| `go test -race ./internal/flightrules/ && go test -race -run TestFlightRules ./internal/control ./cmd/gff-hab` | Flight rules ledger over a hand-written Claude Code transcript: each attachment kind, a compaction, removals, placeholders, unknown attribution, incremental reads, the configured-source match, and both methods |
 | `go test -race ./internal/hook/ ./internal/agentcli/ && go test -race -run 'TestCompact\|TestNudge\|TestJoinContext' ./cmd/gff-hab` | Self-compact and the context nudge (`harness-adapters.md`) |
 | `go test -race ./internal/harness/... ./internal/hook/...` | Hook fixtures per harness to the exact `agent.state` stream |
 | `go test ./internal/progstatus/` | OSC 7501 report parsing over hand-written byte fixtures cut at every chunk size |
