@@ -990,6 +990,20 @@ func (c Client) SpeechTranscribe(ctx context.Context, params SpeechTranscribePar
 	return result, err
 }
 
+// FlightrulesList calls flightrules.list. A session's flight rules: every instruction file, memory, hook injection, skill listing and MCP instruction block its harness recorded, with scope, digest and size, never the text (instructions-mcp-flight-rules.md 11). Needs the flight-rules capability.
+func (c Client) FlightrulesList(ctx context.Context, params FlightRulesParams) (FlightRules, error) {
+	var result FlightRules
+	err := c.Caller.Call(ctx, "flightrules.list", params, &result)
+	return result, err
+}
+
+// FlightrulesText calls flightrules.text. The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.
+func (c Client) FlightrulesText(ctx context.Context, params FlightRuleTextParams) (FlightRuleText, error) {
+	var result FlightRuleText
+	err := c.Caller.Call(ctx, "flightrules.text", params, &result)
+	return result, err
+}
+
 // DetectExplain calls detect.explain. Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
 func (c Client) DetectExplain(ctx context.Context, params DetectExplainParams) (DetectExplain, error) {
 	var result DetectExplain

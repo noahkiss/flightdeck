@@ -188,6 +188,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.groupAdopt)
         result(HabMethods.groupAdoptCommit)
         result(HabMethods.groupTell)
+        result(HabMethods.flightrulesList)
+        result(HabMethods.flightrulesText)
         add("notification." + HabNotification.heartbeat, Heartbeat.self)
         add("notification." + HabNotification.closing, Closing.self)
         add("frame.hello", DataHello.self)
