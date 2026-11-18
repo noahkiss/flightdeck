@@ -215,17 +215,18 @@ type client struct {
 	// The kitty keyboard protocol on the host (kitty.go): whether the host answered gff's query
 	// and when gff asked, the start of an answer cut at a read boundary, whether gff's flag is
 	// pushed on the composed screen, and the re-encoder of keys read with it.
-	hostKitty    bool
-	kittyPending bool // the query is out and the host's DA1 answer has not come
-	kittyAsked   time.Time
-	kittyHeld    []byte
-	kittyPaste   bool // takeKittyReplies is inside a bracketed paste
-	kittyOn      bool
-	kin          kittyIn
-	notes        chan paneNote
-	frames       chan paneFrame
-	later        chan func()
-	debounce     Timer
+	hostKitty      bool
+	kittyPending   bool // the query is out and the host's DA1 answer has not come
+	kittyAsked     time.Time
+	kittyHeld      []byte
+	kittyPaste     bool // takeKittyReplies is inside a bracketed paste
+	kittyHoldEnded bool // the loop's timer ended the detection's hold
+	kittyOn        bool
+	kin            kittyIn
+	notes          chan paneNote
+	frames         chan paneFrame
+	later          chan func()
+	debounce       Timer
 	// What the host shows besides the canvas, so an unchanged screen writes nothing.
 	cursorX, cursorY int
 	cursorOn         bool
@@ -374,6 +375,9 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		tick = t.C
 	}
 	updates := cfg.Hosts.Updates()
+	// When the kitty detection's hold ends, what it held (a lone Esc, say) goes on at once.
+	kittyHold := time.NewTimer(kittyDetectWait)
+	defer kittyHold.Stop()
 	var modChanged <-chan struct{}
 	if cfg.Modules != nil && ws {
 		modChanged = cfg.Modules.Changed()
@@ -421,6 +425,11 @@ func Run(ctx context.Context, cfg Config) (err error) {
 				c.w, c.h = w, h
 				c.canvas.resize(w, h)
 				c.layoutChanged()
+			}
+		case <-kittyHold.C:
+			c.kittyHoldEnded = true
+			if err := c.input(nil); err != nil {
+				return err
 			}
 		case <-c.debounce.C():
 			c.sendSizes()

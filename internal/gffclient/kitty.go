@@ -29,30 +29,33 @@ const (
 	kittyPop   = "\x1b[<u"  // pop one entry
 )
 
-// kittyDetectWait bounds the detection for a host that answers neither query. kittyDrainWait
-// bounds how long gff, as it exits, waits for the answers still to come.
+// kittyDetectWait bounds how long gff holds a read that ends inside a possible answer: past it,
+// a host may never answer DA1, and a held Esc must not wait for the next key. Whole answers are
+// still taken after it, until DA1 comes. kittyDrainWait bounds how long gff, as it exits, waits
+// for the answers still to come.
 const (
 	kittyDetectWait = 2 * time.Second
 	kittyDrainWait  = 300 * time.Millisecond
 )
 
-// kittyDetecting reports whether the detection still waits for the host's answers.
-func (c *client) kittyDetecting() bool {
-	return c.kittyPending && c.cfg.Now().Sub(c.kittyAsked) < kittyDetectWait
+// kittyHolding reports whether the detection may still hold a cut read: its answers are due and
+// kittyDetectWait has not passed.
+func (c *client) kittyHolding() bool {
+	return c.kittyPending && !c.kittyHoldEnded && c.cfg.Now().Sub(c.kittyAsked) < kittyDetectWait
 }
 
-// takeKittyReplies removes the host's answers to kittyQuery from p while the detection runs,
-// and returns the rest. A program never sees one: the pass-through filter drops a pane's own
-// CSI ? u and CSI c (3.4), so these answers are gff's. A bracketed paste is never searched. A
-// read that ends inside a possible answer is held for the next. The DA1 answer ends the
-// detection; after it gff takes nothing.
+// takeKittyReplies removes the host's answers to kittyQuery from p until the DA1 answer ends
+// the detection, and returns the rest. A program never sees one: the pass-through filter drops
+// a pane's own CSI ? u and CSI c (3.4), so these answers are gff's. A late CSI ? u answer still
+// turns the protocol on. A bracketed paste is never searched. Within kittyDetectWait, a read
+// that ends inside a possible answer is held for the next; after it, held bytes go on with
+// the next call (the loop makes one when the wait ends). After DA1 gff takes nothing.
 func (c *client) takeKittyReplies(p []byte) []byte {
 	if len(c.kittyHeld) > 0 {
 		p = append(c.kittyHeld, p...)
 		c.kittyHeld = nil
 	}
-	if !c.kittyDetecting() {
-		c.kittyPending = false
+	if !c.kittyPending {
 		return p
 	}
 	var out []byte
@@ -93,8 +96,12 @@ func (c *client) takeKittyReplies(p []byte) []byte {
 			}
 			i += n
 		case replyPartial:
-			c.kittyHeld = append([]byte(nil), p[i:]...)
-			return out
+			if c.kittyHolding() {
+				c.kittyHeld = append([]byte(nil), p[i:]...)
+				return out
+			}
+			out = append(out, p[i])
+			i++
 		default:
 			out = append(out, p[i])
 			i++
@@ -106,7 +113,7 @@ func (c *client) takeKittyReplies(p []byte) []byte {
 // drainKittyAnswer reads the host's input as gff exits until the detection's answers have come,
 // or kittyDrainWait passes, so a late answer never lands in the shell gff leaves.
 func (c *client) drainKittyAnswer(input <-chan []byte) {
-	if !c.kittyDetecting() {
+	if !c.kittyPending {
 		return
 	}
 	t := time.NewTimer(kittyDrainWait)
@@ -270,7 +277,7 @@ func kittyToKey(k kittyKey) vt.Key {
 		key.Text = string(rune(k.text))
 	case key.Mods&1 != 0 && k.shifted > 0:
 		key.Text = string(rune(k.shifted))
-	case key.Mods&1 != 0 && k.code >= 'a' && k.code <= 'z':
+	case k.code >= 'a' && k.code <= 'z' && (key.Mods&1 != 0) != (key.Mods&64 != 0): // Shift or Caps Lock, not both
 		key.Text = string(rune(k.code - 'a' + 'A'))
 	default:
 		key.Text = string(rune(k.code))

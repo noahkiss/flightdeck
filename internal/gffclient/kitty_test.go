@@ -120,6 +120,13 @@ func TestKittyInTranslate(t *testing.T) {
 	if got := string(x.translate([]byte("u\x1b[46:62;4u"), rec)); got != `<97:0/1/"A"><46:62/3/"">` {
 		t.Fatalf("the held event and a shifted key: %q", got)
 	}
+	// Caps Lock alone upper-cases a letter's text; with Shift it does not.
+	if got := string(x.translate([]byte("\x1b[97;65u\x1b[97;66u"), rec)); got != `<97:0/64/"A"><97:0/65/"a">` {
+		t.Fatalf("Caps Lock: %q", got)
+	}
+	if got := string(x.translate([]byte("\x1b[97;65u"), legacyCodec(legacyModes{}))); got != "A" {
+		t.Fatalf("Caps Lock to a legacy reader: %q", got)
+	}
 	all := rec
 	all.all = true
 	if got := string(x.translate([]byte("aB\r\x1b"), all)); got != `<97:0/0/"a"><98:0/1/"B"><13:0/0/"">`+"\x1b" {
@@ -160,6 +167,30 @@ func TestKittyReplies(t *testing.T) {
 	c = &client{cfg: Config{Now: func() time.Time { return now }, Logf: t.Logf}, kittyAsked: now, kittyPending: true}
 	if got := string(c.takeKittyReplies([]byte("\x1b[?64;1;9cz"))); got != "z" || c.hostKitty || c.kittyPending {
 		t.Fatalf("DA1 alone: %q, host kitty %v, pending %v", got, c.hostKitty, c.kittyPending)
+	}
+
+	// Past kittyDetectWait (a slow ssh), whole answers are still taken until DA1 and a late
+	// CSI ? u still turns the protocol on; only the hold of a cut read stops, and what was held
+	// goes on with the next call, as the loop makes when its hold timer ends.
+	c = &client{cfg: Config{Now: func() time.Time { return now }, Logf: t.Logf}, kittyAsked: now, kittyPending: true}
+	if got := string(c.takeKittyReplies([]byte("a\x1b"))); got != "a" {
+		t.Fatalf("a lone Esc in the window: %q", got)
+	}
+	now = now.Add(2 * kittyDetectWait)
+	if got := string(c.takeKittyReplies(nil)); got != "\x1b" {
+		t.Fatalf("the held Esc after the window: %q", got)
+	}
+	if got := string(c.takeKittyReplies([]byte("\x1b[?1ub\x1b["))); got != "b\x1b[" || !c.hostKitty || !c.kittyPending {
+		t.Fatalf("a late answer: %q, host kitty %v, pending %v", got, c.hostKitty, c.kittyPending)
+	}
+	if got := string(c.takeKittyReplies([]byte("\x1b[?62;22cz"))); got != "z" || c.kittyPending {
+		t.Fatalf("a late DA1: %q, pending %v", got, c.kittyPending)
+	}
+	c = &client{cfg: Config{Now: func() time.Time { return now }, Logf: t.Logf}, kittyAsked: now, kittyPending: true}
+	c.takeKittyReplies([]byte("\x1b"))
+	c.kittyHoldEnded = true // the loop's timer, with a clock that does not move
+	if got := string(c.takeKittyReplies(nil)); got != "\x1b" {
+		t.Fatalf("the hold timer did not release the Esc: %q", got)
 	}
 
 	// At exit gff drains the answers still to come, and stops waiting after kittyDrainWait.

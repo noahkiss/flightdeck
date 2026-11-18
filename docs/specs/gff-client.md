@@ -274,10 +274,11 @@ flags per pane.
   attributes query (`CSI c`). A host with the protocol answers `CSI ? flags u` first; every
   terminal answers `CSI ? … c`, and that answer ends the detection. Until it comes, gff takes
   both answers out of the input, so no program sees them (the filter below drops a pane's own
-  `CSI ? u` and `CSI c`, so these answers are gff's). It never searches a bracketed paste. A
-  read that ends inside a possible answer is held for the next read; so is a lone Esc, for that
-  one round trip. After the DA1 answer gff takes nothing. A host that answers neither query ends
-  the detection after 2 s.
+  `CSI ? u` and `CSI c`, so these answers are gff's). It never searches a bracketed paste. For
+  up to 2 s, a read that ends inside a possible answer is held for the next read; so is a lone
+  Esc, for that round trip. When the 2 s pass, what is held goes on at once. Whole answers are
+  still taken after that, until the DA1 answer, and a late `CSI ? u` answer still turns the
+  protocol on (a slow ssh). After the DA1 answer gff takes nothing.
 - When gff exits before the detection ended (a quick detach, a single-hab view whose panes
   ended, an error), it reads the host's input for up to 300 ms more, until the DA1 answer, so a
   late answer never lands in the shell gff leaves.
