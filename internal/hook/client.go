@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"syscall"
 	"time"
 
@@ -164,6 +165,9 @@ func Run(ctx context.Context, in Invocation) error {
 	if t <= 0 {
 		t = now().UnixMilli()
 	}
+	if in.Harness == detect.KindClaude && event == "SessionStart" {
+		exportSession(in.Getenv(ClaudeEnvFile), payload)
+	}
 	env := harness.Envelope{Harness: in.Harness, Event: event, T: t, N: 1, Payload: payload}
 	if habit, ok := ContextEvent(in.Harness, event); ok && in.Stdout != nil {
 		text, err := PostContext(ctx, addr, env)
@@ -289,4 +293,44 @@ func ContextOutput(harness, event, text string) []byte {
 // it, or there is no socket file. Only then is gff-hab down.
 func Unreachable(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
+}
+
+// ClaudeEnvFile names the file Claude Code gives its SessionStart hook: each `export` line the
+// hook appends there reaches the session's later tool commands.
+const ClaudeEnvFile = "CLAUDE_ENV_FILE"
+
+// exportSession appends AGENT_KIND and AGENT_SESSION_ID for the session in a Claude Code
+// SessionStart payload to the file Claude Code named (harness-adapters.md, Environment contract).
+// A later start in the same process (/clear, a resume, a compaction) appends again, and the last
+// line wins. An id outside letters, digits, '-' and '_' is not written, so no value needs shell
+// quoting. It fails silently: a hook never fails a turn.
+func exportSession(file string, payload []byte) {
+	if file == "" {
+		return
+	}
+	var p struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(payload, &p) != nil || !safeID(p.SessionID) {
+		return
+	}
+	f, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(f, "export AGENT_KIND=%s\nexport AGENT_SESSION_ID=%s\n", detect.KindClaude, p.SessionID)
+	f.Close()
+}
+
+// safeID reports whether id is 1 to 128 of letters, digits, '-' and '_'.
+func safeID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
