@@ -45,6 +45,11 @@ type Observation struct {
 	// Placeholder marks a record the source knows only by its type: it has no text, digest or
 	// size, and its attribution is unknown.
 	Placeholder bool
+	// Repeats marks a source whose text changes from load to load for reasons that are not a
+	// new source: a hook that prints a clock, a date, an environment snapshot. The ledger keeps
+	// one entry per kind, source and event, with the latest text and a count, instead of a
+	// new entry per text.
+	Repeats     bool
 	At          string // RFC 3339 time of the record
 	Reason      string
 	Attribution api.FlightRuleAttribution
@@ -90,6 +95,9 @@ func Digest(text string) string {
 func (o Observation) ID() string {
 	if o.Placeholder {
 		return EntryID(o.Kind, o.Source, "")
+	}
+	if o.Repeats {
+		return EntryID(o.Kind, o.Source+"\x00"+o.Event, "latest")
 	}
 	return EntryID(o.Kind, o.Source, Digest(o.Text))
 }
@@ -144,8 +152,15 @@ func sourceKey(kind api.FlightRuleKind, source string) string {
 func (l *Ledger) Observe(o Observation) {
 	id := o.ID()
 	if e := l.byID[id]; e != nil {
-		if o.At != "" && o.At > e.LastSeen {
-			e.LastSeen = o.At
+		e.Count++
+		if o.At == "" || o.At >= e.LastSeen {
+			if o.At != "" {
+				e.LastSeen = o.At
+			}
+			if o.Repeats && !o.Placeholder {
+				// The newest text stands for the source.
+				e.Digest, e.Bytes, e.Note = Digest(o.Text), int64(len(o.Text)), o.Note
+			}
 		}
 		e.Gone = ""
 		l.latest[sourceKey(e.Kind, e.Source)] = e
@@ -166,6 +181,7 @@ func (l *Ledger) Observe(o Observation) {
 	e := &api.FlightRule{
 		ID: id, Kind: o.Kind, Scope: o.Scope, Source: o.Source, Event: o.Event, Path: o.Path,
 		FirstSeen: o.At, LastSeen: o.At, Reason: o.Reason, Attribution: o.Attribution, Note: o.Note,
+		Count: 1,
 	}
 	if o.Placeholder {
 		e.Attribution = api.FlightUnknown

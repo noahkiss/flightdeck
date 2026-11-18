@@ -57,7 +57,7 @@ func TestFlightRulesService(t *testing.T) {
 		t.Fatalf("cut read: %+v %v", r, err)
 	}
 	r, err := f.List(ctx, api.FlightRulesParams{Session: "s1"})
-	if err != nil || r.Harness != "claude" || len(r.Entries) != 17 || len(r.Warnings) != 1 {
+	if err != nil || r.Harness != "claude" || len(r.Entries) != 26 || len(r.Warnings) != 1 {
 		t.Fatalf("list: %d entries, %v", len(r.Entries), err)
 	}
 	e := r.Entries[0]
@@ -71,7 +71,7 @@ func TestFlightRulesService(t *testing.T) {
 
 	// The agent left: the last ledger stays readable.
 	delete(agents, "p1")
-	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s1"}); err != nil || len(r.Entries) != 17 {
+	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s1"}); err != nil || len(r.Entries) != 26 {
 		t.Errorf("after the agent left: %d %v", len(r.Entries), err)
 	}
 
@@ -82,7 +82,7 @@ func TestFlightRulesService(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "native-3.jsonl"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s3"}); err != nil || len(r.Entries) != 17 {
+	if r, err := f.List(ctx, api.FlightRulesParams{Session: "s3"}); err != nil || len(r.Entries) != 26 {
 		t.Errorf("written later: %d %v", len(r.Entries), err)
 	}
 

@@ -39,7 +39,29 @@ var claudeIgnored = map[string]bool{
 	"hook_cancelled": true, "hook_error_during_execution": true, "hook_stopped_continuation": true,
 	"hook_permission_decision": true, "hook_deferred_tool": true, "async_hook_response": true,
 	"async_hook_response_batch": true, "teammate_shutdown_batch": true, "agent_ask_notice": true,
+	// State the model never reads as such: the tools a command allowed, the account's
+	// organization, the remote session's links (Claude builds other reminders from them),
+	// deferred-tool bookkeeping, a file edit's snippet, dropped thinking blocks.
+	"command_permissions": true, "credential_org": true, "remote_session_change": true,
+	"deferred_tools_record": true, "edited_text_file": true, "thinking_drop": true,
 }
+
+// claudeData lists attachment types whose block Claude Code writes from recorded data at send
+// time. The entry's digest covers that data, not the words the model saw.
+var claudeData = map[string]struct {
+	source  string
+	field   string // the attachment field that holds the data; "" for the whole attachment
+	repeats bool
+}{
+	"environment":          {"environment", "snapshot", true},
+	"session_context":      {"session context", "context", true},
+	"auto_mode":            {"auto mode", "", true},
+	"deferred_tools_delta": {"deferred tools", "", false},
+	"prompt_snapshot":      {"system prompt", "systemPrompt", false},
+}
+
+// dataNote is the note on an entry whose digest covers recorded data.
+const dataNote = "Claude Code recorded the data it writes this block from; the digest covers that data, not the words the model saw"
 
 // Claude reads the ledger of a Claude Code session from its transcript, in place: the
 // attachment records that carry instruction files, nested memory, skill listings, invoked
@@ -102,16 +124,19 @@ func (c *Claude) Text(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
+	// A source that repeats keeps its latest text, so the scan goes on to the end for it; any
+	// other entry's text is the same in every record that carries it, so the first one does.
 	var found *string
+	done := false
 	nop := func(string, string, ...any) {}
 	_, err = scanLines(ctx, f, 0, func(line []byte, _ int64) {
-		if found != nil || line == nil {
+		if done || line == nil {
 			return
 		}
 		claudeLine(line, nop, func(o Observation) {
-			if found == nil && !o.Placeholder && o.ID() == id {
+			if !done && !o.Placeholder && o.ID() == id {
 				t := o.Text
-				found = &t
+				found, done = &t, !o.Repeats
 			}
 		}, func(Removal) {})
 	})
@@ -210,6 +235,12 @@ type claudeAttachment struct {
 	// hook_additional_context
 	HookName  string `json:"hookName"`
 	HookEvent string `json:"hookEvent"`
+	// model, silent_turn_reminder
+	Text string `json:"text"`
+	// date
+	Date string `json:"date"`
+	// agent_listing_delta
+	AddedLines []string `json:"addedLines"`
 }
 
 // claudeScope maps an instruction file's type to its kind and scope.
@@ -330,8 +361,35 @@ func claudeLine(line []byte, warn func(key, format string, args ...any), observe
 			o.Source, o.Attribution = "hook", api.FlightUnknown
 			o.Note = "Claude Code recorded hook context without the hook's name or event"
 		}
+		o.Repeats = true // a hook may print a clock or a usage line on every call
 		observe(o)
+	case "date":
+		observe(Observation{Kind: api.FlightRuleSystem, Scope: api.FlightScopeSession, Source: "date", Text: a.Date,
+			Repeats: true, At: at, Attribution: api.FlightRecorded, Note: dataNote})
+	case "silent_turn_reminder":
+		observe(Observation{Kind: api.FlightRuleSystem, Scope: api.FlightScopeSession, Source: "silent turn reminder",
+			Text: a.Text, Repeats: true, At: at, Attribution: api.FlightRecorded})
+	case "model":
+		o := Observation{Kind: api.FlightRuleSystem, Scope: api.FlightScopeSession, Source: "model identity",
+			Text: a.Text, At: at, Attribution: api.FlightRecorded}
+		if a.Text == "" {
+			o.Text, o.Note = dataText(rec.Attachment, "identity"), dataNote
+		}
+		observe(o)
+	case "agent_listing_delta":
+		if len(a.AddedLines) == 0 {
+			return // only removals: no text reached the agent
+		}
+		observe(Observation{Kind: api.FlightRuleSystem, Scope: api.FlightScopeSession, Source: "agent listing",
+			Text: strings.Join(a.AddedLines, "\n"), At: at, Attribution: api.FlightRecorded,
+			Note: fmt.Sprintf("%d agent types", len(a.AddedLines))})
 	default:
+		if d, ok := claudeData[a.Type]; ok {
+			observe(Observation{Kind: api.FlightRuleSystem, Scope: api.FlightScopeSession, Source: d.source,
+				Text: dataText(rec.Attachment, d.field), Repeats: d.repeats, At: at,
+				Attribution: api.FlightRecorded, Note: dataNote})
+			return
+		}
 		if claudeIgnored[a.Type] {
 			return
 		}
@@ -359,6 +417,26 @@ func placeholder(typ, at string) Observation {
 	return Observation{Kind: api.FlightRuleSystem, Scope: api.FlightScopeSession, Source: "attachment " + typ,
 		Placeholder: true, At: at, Attribution: api.FlightUnknown,
 		Note: fmt.Sprintf("Claude Code recorded a %s attachment, which Flightdeck does not read yet", typ)}
+}
+
+// dataText is an attachment's field, or the whole attachment, as compact JSON: the data a
+// block is written from. A field that is absent reads as "".
+func dataText(raw json.RawMessage, field string) string {
+	if field != "" {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil {
+			return ""
+		}
+		raw = fields[field]
+	}
+	if len(raw) == 0 {
+		return ""
+	}
+	var b bytes.Buffer
+	if json.Compact(&b, raw) != nil {
+		return string(raw)
+	}
+	return b.String()
 }
 
 // attachmentType reads only the type of an attachment whose other fields did not decode.

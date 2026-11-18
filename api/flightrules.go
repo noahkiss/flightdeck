@@ -63,6 +63,7 @@ type FlightRule struct {
 	Bytes             int64                 `json:"bytes" doc:"Size of that text in bytes."`
 	FirstSeen         string                `json:"first_seen" doc:"RFC 3339 time of the record that first carried this text."`
 	LastSeen          string                `json:"last_seen" doc:"RFC 3339 time of the latest record that carried it again, after a compaction or resume."`
+	Count             int                   `json:"count,omitempty" doc:"How many records carried this entry. For a source whose text changes on every load (a hook that prints a clock), one entry stands for every load: digest and bytes are the latest text's. Absent from an older hab."`
 	Gone              string                `json:"gone,omitempty" doc:"RFC 3339 time the harness recorded that this source left the context. Absent while it is in."`
 	Reason            string                `json:"reason,omitempty" doc:"Why the harness loaded it, in the harness's words, such as session_start or compaction."`
 	Attribution       FlightRuleAttribution `json:"attribution" doc:"recorded, matched, computed or unknown."`
