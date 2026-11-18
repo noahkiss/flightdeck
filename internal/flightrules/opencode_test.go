@@ -150,7 +150,9 @@ func TestOpencodeFixture(t *testing.T) {
 
 	// A poll that finds the same files and lists adds nothing and moves nothing.
 	again, _, err := s.List(context.Background())
-	if err != nil || !slices.EqualFunc(again, entries, func(a, b api.FlightRule) bool { return a.ID == b.ID && a.Count == b.Count && a.LastSeen == b.LastSeen && a.Gone == b.Gone }) {
+	if err != nil || !slices.EqualFunc(again, entries, func(a, b api.FlightRule) bool {
+		return a.ID == b.ID && a.Count == b.Count && a.LastSeen == b.LastSeen && a.Gone == b.Gone
+	}) {
 		t.Errorf("second poll changed the ledger: %v", err)
 	}
 

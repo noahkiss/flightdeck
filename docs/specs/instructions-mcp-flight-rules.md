@@ -543,11 +543,11 @@ extension-injected text (section 10).
 | | Claude Code | Codex | opencode | pi |
 |---|---|---|---|---|
 | Where | Session JSONL under the Claude config dir | Rollout JSONL under the Codex home | Its database, read only through the server API | Session JSONL under the agent directory |
-| Instruction files | `attachment` records of type `instructions`: one entry per file with `path`, `type` (`User`, `Project`, `Local`, `Managed`, `AutoMem`) and full `content`. Imported files are their own entries. Nested files arrive later as `nested_memory` with `path` and `content` | One concatenated text: a `world_state` record (`agents_md.text`) in 0.166; earlier builds put a user message headed "AGENTS.md instructions for <dir>". No per-file paths | Not recorded in any documented place. The server builds the system prompt per request | Not stored per turn. A compaction entry stores the whole system prompt at that point (`systemMessage`) |
+| Instruction files | `attachment` records of type `instructions`: one entry per file with `path`, `type` (`User`, `Project`, `Local`, `Managed`, `AutoMem`) and full `content`. Imported files are their own entries. Nested files arrive later as `nested_memory` with `path` and `content` | One concatenated text, written twice in 0.166 to 0.169: a user message headed "AGENTS.md instructions for <dir>" and a `world_state` record (`agents_md.directory`, `agents_md.text`; later records are RFC 7386 patches). Earlier builds wrote the message only. No per-file paths | Not recorded. The server builds the system prompt per request and no endpoint returns it. A nested file loaded after a read is a `synthetic` message with `metadata.instruction.paths`; a later edit is a `system` message with `metadata.notice` `instructions`, its paths only in its text | Not stored per turn. A compaction entry stores the whole system prompt at that point (`systemMessage`) |
 | Memory | The `AutoMem` entry in `instructions`; reads and writes of topic files are ordinary tool calls | Not attributed; memories are part of the injected text when on | — | — |
-| Skills | `skill_listing` (names, digests, count); `invoked_skills` (name, source, content) | `host_skills` body in `world_state`; earlier a skills developer message | Not recorded (docs) | Skill descriptions are in the system prompt only |
-| MCP server instructions | `mcp_instructions_delta`: added names with their text blocks, removed names | Not seen as a separate record | Not recorded | Not recorded |
-| Hook or extension injections | `hook_additional_context`: `hookEvent`, `hookName`, the text. `hook_success`: hook name, command, exit code | Not seen in sampled 0.166 rollouts; the docs do not say whether hook context is saved | Plugin-injected system text is runtime only | `custom_message` entries record extension-injected messages with their `customType` |
+| Skills | `skill_listing` (names, digests, count); `invoked_skills` (name, source, content) | `host_skills.body` in `world_state`, and a `<skills_instructions>` developer message | The server lists skills (`skill.list`: name, description, path, body); an invoked skill is a `skill` message | Skill descriptions are in the system prompt only |
+| MCP server instructions | `mcp_instructions_delta`: added names with their text blocks, removed names | Not seen as a separate record | `mcp.list` gives names and status, not the instructions text | Not recorded |
+| Hook or extension injections | `hook_additional_context`: `hookEvent`, `hookName`, the text. `hook_success`: hook name, command, exit code | A developer message with no marker, so it cannot be told apart from other developer text; the `hook_completed` event that names the hook is not saved | Plugin-injected system text is runtime only | `custom_message` entries record extension-injected messages with their `customType` |
 | Live signal | The `InstructionsLoaded` hook: `file_path`, `memory_type`, `load_reason` (`session_start`, `nested_traversal`, `path_glob_match`, `include`, `compact`), `parent_file_path` for imports. Not fired for an `AGENTS.md` read through the project-instructions setting | None for instructions | Server events; no documented instruction event | Startup header on screen only |
 | Runtime only | Settings values, hooks that only block, `--append-system-prompt` text | Which file each block came from; hook trust state | Plugin system transforms; the system prompt | Extension `before_agent_start` prompt changes; `APPEND_SYSTEM.md` between compactions |
 
@@ -586,13 +586,14 @@ client asks for it. Every client may ask, the phone included: a tap on a row sho
   `InstructionsLoaded` events add the load reason and the parent of each import; the transcript
   stays the primary source because it holds the text. Unknown attachment types become placeholder
   entries with a warning.
-- **Codex**. Run Codex's discovery for the session's cwd (global file,
-  then root to cwd) and digest each file: `computed`. Then look for each file's text inside the
-  recorded `agents_md` text: found is `matched`, not found is `unknown`. Rendered files match by
-  digest. Hook context is `unknown` except Flightdeck's own hooks, which send nothing.
+- **Codex**. Run Codex's discovery for the block's folder (global file,
+  then root to folder). Look for each file's text inside the recorded `agents_md` text: found is
+  `matched`. Text no file holds is `unknown`. Hook context carries no marker, so the ledger
+  cannot list it (11.4).
 - **opencode**. Run opencode's discovery (global, upward, `instructions`
-  entries) and digest each file: `computed`. Read MCP and skill lists from the server API.
-  Plugin text is `unknown`.
+  entries) and read each file: `computed`. Read MCP and skill lists from the server API. The
+  session's messages add nested files and invoked skills (`recorded`). Plugin text is not
+  recorded.
 - **pi** (later, with its adapter). Discovery as above, `computed`; `custom_message` entries are
   `recorded`; a compaction's system prompt lets the reader `match` files at that point.
 
@@ -607,13 +608,13 @@ file this came from").
 ### 11.4 Built
 
 Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capability
-`flight-rules`). The first version reads Claude Code only.
+`flight-rules`). It reads Claude Code, Codex and opencode.
 
 - **Shape.** A `Ledger` keeps entries, oldest first, and never their text. A `Source` per harness
   feeds it observations and finds an entry's text again on request. A `Session` pairs one ledger
-  with one source. A Codex or opencode source plugs in as a new `Source` with the attribution it
-  can prove (`computed`, `matched`), plus one case in the hab service's source choice; the
-  ledger and the API stay as they are. `Text` may run while `Update` reads.
+  with one source. Each source sets the attribution it can prove. A new harness adds a `Source`
+  and one case in the hab service's source choice; the ledger and the API stay as they are.
+  `Text` may run while `Update` reads.
 - **Entry.** The fields of 11.1, with these changes. `configured_sources` is a list, since one
   rendered file holds several sources. `event` holds a hook's event apart from its name. `path`
   names the file behind an invoked skill. `gone` is the time the harness recorded that a file or
@@ -629,7 +630,7 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   line, the date, an environment snapshot. The entry's digest and size are the latest text's,
   `count` counts the loads, and `first_seen` and `last_seen` span them. `flightrules.text`
   returns the latest text only; earlier texts are not kept. The rule is a flag on the
-  observation (`Repeats`), so a Codex or opencode source sets it for its own hooks. Every hook
+  observation (`Repeats`), so another source can set it for its own hooks. Every Claude hook
   entry repeats; so do the date, environment, session context, auto mode and silent turn
   reminder entries below.
 - **Unnamed sources.** A file with no path, a skill or server with no name, or hook context with
@@ -665,27 +666,98 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   placeholder per type, kind `system`, attribution `unknown`, with a warning. Today that covers
   `relevant_memories`, `memory_update`, `dynamic_skill` and `hook_system_message`, among others.
   The `InstructionsLoaded` hook is not used yet.
+- **Codex records read.** The rollout, in place, as for Claude. Shapes come from the public
+  source and were checked against a rollout Codex 0.169.0 wrote from hand-written files:
+  - The AGENTS.md block. Codex writes it twice: as a user message (`# AGENTS.md instructions
+    for <dir>`, then the text between `<INSTRUCTIONS>` markers) and in a `world_state` record
+    (`agents_md.directory` and `agents_md.text`; a record with `full` false is an RFC 7386 patch
+    of the one before). The reader takes a block once, when its text differs from the last
+    block. Codex's replacement notice is cut off; its removal notice, or a section with no
+    text, marks the block's sources gone.
+  - Splitting a block. The source runs Codex's discovery for the block's folder, else the
+    session's `cwd`: the global `AGENTS.override.md` or `AGENTS.md` in Codex's home, trimmed;
+    then the first `AGENTS.override.md`, `AGENTS.md` or `project_doc_fallback_filenames` name in
+    each folder from the project root down. The root is the nearest folder with a
+    `project_root_markers` entry (`.git` by default), read from the home's `config.toml` only.
+    Each file's current text that sits in the block on part boundaries (the block's ends or a
+    blank line) is one entry, scope `user` or `project`, attribution `matched`.
+  - What no file holds now is an entry with source `AGENTS.md instructions`, no scope and
+    attribution `unknown`. Its note names the files whose text differs. Codex's separators
+    (`--- project-doc ---`) belong to no entry. A file edited since the session loaded it, or
+    cut by Codex's 32 KiB budget, lands here.
+  - The rendered global file. A block that starts with Flightdeck's render header starts with
+    the global file: Codex puts it first. When its text no longer matches the file, the part up
+    to the project separator is still that file, attribution `matched`, with a note. Not when an
+    `AGENTS.override.md` hides the rendered `AGENTS.md`.
+  - A new block replaces the one before: every source of the old block is marked gone, and a
+    source the new block carries again comes back.
+  - The skill listing: `host_skills.body`, or the text between `<skills_instructions>`
+    markers. One `skills` entry per listing text, attribution `recorded`; a new listing marks
+    the old one gone.
+  - `session_meta.base_instructions.text`: kind `system`, source `base instructions`.
+  - Not read: hook context, `developer_instructions` from config, and memories. Codex writes
+    them as developer messages with no marker, and does not save the `hook_completed` event
+    that names a hook. The ledger shows nothing for them. Other `world_state` sections hold
+    hashes only, and are not read either.
+  - A rollout from a Codex version outside 0.166.0 to 0.169.0 reads, with a warning.
+- **opencode records read.** Through the server of the session's pane (`location.get`,
+  `config.get`, `skill.list`, `mcp.list`, `session.message.list`), shapes checked against an
+  opencode 2.3.2 server. The server returns neither the system prompt nor the list of files
+  in it. Each list call:
+  - Reads the session's messages added since the last call. A `synthetic` message with
+    `metadata.instruction.paths` is a nested file opencode loaded after a read: one entry per
+    path, its text cut from the `Instructions from: <path>` blocks, attribution `recorded`. A
+    text that does not split that way is one entry with attribution `unknown`. A `skill`
+    message is an invoked skill (`recorded`; `unknown` with no name). A `system` message with
+    `metadata.notice` `instructions` is a change notice: kind `instruction`, source
+    `instructions changed`, attribution `unknown`, since it names files only in its text and
+    may hold a diff. Other synthetic and system messages are not read: channel messages arrive
+    as synthetic messages.
+  - Runs opencode 2.3's discovery for the server's location and reads each file as it is now:
+    the global `AGENTS.md` in opencode's config folder, else `~/.claude/CLAUDE.md`; then
+    `AGENTS.md`, else `CLAUDE.md`, in each folder from the location up to the home folder when
+    the location is under it, else to the project root; then each config document's
+    `instructions` entries (an absolute path or glob, `~/`, or a relative glob searched from
+    the location up to the project root; `**` is not followed). Attribution `computed`, with a
+    note. An http or https entry is a placeholder: opencode fetches it, Flightdeck does not.
+    The config options that turn parts of the discovery off are not read.
+  - Reads the skill list into one `skills` entry (`computed`; the digest covers the list, not
+    the words the model saw) and adds one `mcp` placeholder per connected server, since the
+    server does not return a server's instructions.
+  - A computed entry not found again is marked gone; a new one is added; one found again is
+    left as it is, since a poll is not a load. A changed file is a new entry, and its old text
+    is no longer served.
+  - With the pane's server not running, the ledger stays as it was, with a warning.
 - **Configured sources.** The instruction renderer's state record keeps the configured sources
   it took text from (`roots`). An instruction entry at the record's target whose header digest
   equals the record's digest names those sources. A record from before `roots` names its depth-0
   files that read, except a Claude record, which names none: its roots mix in Claude's own
-  files. A rendered file whose digest differs names none; the stale-render check is a
-  later stage.
+  files. A rendered file whose digest differs names none.
+- **Stale.** For each harness the hab reads the renderer's state record on every list. The
+  newest entry of the record's target, still in the context, whose render header digest
+  differs from the record's digest is `stale`: the session works from an older render.
+  `flightrules.list` sets `stale` on that entry and on the answer. An older entry of the same
+  file, gone or replaced, is never stale. With no record, nothing is stale. For Claude Code and
+  Codex, the entry holds the text the session loaded. For opencode, the entry holds the file as
+  it is now, since opencode reloads a changed file before its next request (13); it is stale
+  only when the file and the record disagree.
 - **Limits.** A line over 32 MiB is skipped with a warning. A ledger holds at most 4000 entries
   besides hooks, and 1000 hook entries (one per hook source and event), so hooks never crowd out
   instruction files.
   `flightrules.text` returns at most 1 MiB, cut on a character boundary, with the whole size.
-  A transcript that shrinks or is replaced is read again from the start, with a warning; one cut
-  and grown back past the last read between two calls is not seen. A
-  record from a Claude Code version outside 2.1.310 to 2.1.327 reads, with a warning.
-- **Hab.** The ledger of a session opens from the transcript its agent's native session id
-  names, as the chat view does, and stays readable after the agent leaves. A transcript not
-  written yet is an empty ledger. A session of another harness answers `unavailable`. A read
+  A transcript or rollout that shrinks or is replaced is read again from the start, with a
+  warning; one cut and grown back past the last read between two calls is not seen. A
+  record from a Claude Code version outside 2.1.310 to 2.1.327 reads, with a warning. The text
+  of an opencode entry is read again from the server or the file; a text that changed since
+  answers `not_found`.
+- **Hab.** The ledger of a session opens from what its agent's native session id names, as the
+  chat view does: the Claude Code transcript, the Codex rollout, or the opencode session on the
+  pane's server. It stays readable after the agent leaves. A transcript or rollout not written
+  yet is an empty ledger. A session of another harness answers `unavailable`. A read
   that runs out of the call's time answers with what it read and a warning; the next call goes on
   from there. A ledger
   unused for 10 minutes, or whose session is gone, is dropped and read again on the next call.
-- **Not built.** Codex, opencode and pi sources; the stale-render check (13); the app and `gff`
-  views (11.3).
+- **Not built.** The pi source; the restart offers of 13; the app and `gff` views (11.3).
 
 ---
 
@@ -801,9 +873,18 @@ Opened while writing this spec, 2026-11-01.
   content reproduced
 - Codex instruction loader (no import handling):
   https://github.com/openai/codex/blob/main/codex-rs/core/src/agents_md.rs
+- Codex rollout shapes for the ledger (11.4), read 2026-11-18: `WorldStateItem` in
+  `codex-rs/protocol/src/protocol.rs`, the `agents_md` section in
+  `codex-rs/core/src/context/world_state/agents_md.rs`, the message markers in
+  `codex-rs/core/src/context/user_instructions.rs`, and the persisted events in
+  `codex-rs/rollout/src/policy.rs`, all at https://github.com/openai/codex. Checked against a
+  rollout Codex 0.169.0 wrote in a scratch home from hand-written files
 - opencode V2 instructions: https://opencode.ai/v2/docs/instructions/
 - opencode V2 MCP servers: https://opencode.ai/v2/docs/mcp-servers/
 - opencode V2 config: https://opencode.ai/v2/docs/config/
+- opencode 2.3.2 for the ledger (11.4), read 2026-11-18: the instruction discovery in
+  `packages/core/src/config/plugin/instruction.ts` at https://github.com/anomalyco/opencode
+  (tag v2.3.2), and the answers of a 2.3.2 release server run in a scratch home
 - pi 1.4.0 docs shipped with the package: `configuration.md`, `mcp.md`, `session-format.md`,
   `sessions.md`, `cli.md`, `security.md`, `slash-commands.md`; online at https://pi.dev/docs/latest
 - Paseo MCP injection: https://paseo.sh/docs/mcp
