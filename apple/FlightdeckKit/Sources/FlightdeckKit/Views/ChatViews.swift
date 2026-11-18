@@ -829,7 +829,7 @@ struct ComposerView: View {
                     .padding(.vertical, 7)
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
                     #if os(macOS)
-                    .onSubmit(send)
+                    .onSubmit { send() }
                     #endif
                 if (model.context.agentStatus == .working || model.thread?.typing == true) && model.context.online {
                     Button {
@@ -841,13 +841,20 @@ struct ComposerView: View {
                     .foregroundStyle(.red)
                     .accessibilityLabel("Stop")
                 }
-                Button(action: send) {
+                Button { send() } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.title2)
                 }
                 .buttonStyle(.borderless)
                 .disabled(!gate.allowsSend || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && !model.sendsContextAlone))
                 .keyboardShortcut(.return, modifiers: .command)
                 .accessibilityLabel("Send")
+                .contextMenu {
+                    // The Capcom thread only (capcom-service.md 10.1): run it on the small model
+                    // even while the usage governor makes user turns wait.
+                    if model.context.isCapcomService {
+                        Button("Send now", systemImage: "bolt") { send(now: true) }
+                    }
+                }
             }
         }
         .padding(10)
@@ -862,9 +869,9 @@ struct ComposerView: View {
         }
     }
 
-    private func send() {
+    private func send(now: Bool = false) {
         guard model.gate.allowsSend else { return }
-        model.send(draft, attachments: attachments)
+        model.send(draft, attachments: attachments, sendNow: now)
         // A refusal (a file over the limit) keeps the draft as it was.
         guard model.notice == nil else { return }
         // Send while dictating ends the dictation: its later words would write the sent text back.

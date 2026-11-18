@@ -1383,6 +1383,12 @@ first consumer.
   ends, the use and the share (`plan`), the spend and the cap in cents (`usd`), and today's
   tokens. gff's status board shows each consumer that is not at `ok`, or is unpaced, under
   "Usage pacing".
+- **The app.** The Capcom screen shows the `capcom` consumer's line above the thread, and the
+  usage sheet a "Usage pacing" section: "Pacing usage until <time>" (the note's words),
+  "small model", "event turns wait", "unpaced", then the use in gff's words (`app.md` 4.10,
+  14.2). The send
+  button's long-press menu on the thread sends with `send_now: true`. A catalog with no
+  `governor` section shows nothing.
 - **Groups.** A group registers as its own consumer, `group:<id>`, with its policy, its account
   and an `OnChange` that hears each change of its answer (`groups.md` 10). Stage G builds and
   tests only the Capcom consumer and a governor test of a group consumer; the group wiring is

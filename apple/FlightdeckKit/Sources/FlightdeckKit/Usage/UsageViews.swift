@@ -123,16 +123,20 @@ struct UsageBar: View {
     }
 }
 
-/// The usage sheet: one card per account, then the warning settings.
+/// The usage sheet: one card per account, the usage governor's pacing, then the warning
+/// settings.
 public struct UsageSheet: View {
     let book: UsageBook
     @Bindable var alerts: UsageAlerts
+    /// Where the governor's rows come from (capcom-service.md 10.1); nil shows none.
+    let governor: CapcomCenter?
     var focus: String?
     let close: () -> Void
 
-    public init(center: UsageCenter, focus: String?, close: @escaping () -> Void) {
+    public init(center: UsageCenter, governor: CapcomCenter? = nil, focus: String?, close: @escaping () -> Void) {
         self.book = center.book
         self.alerts = center.alerts
+        self.governor = governor
         self.focus = focus
         self.close = close
     }
@@ -152,6 +156,7 @@ public struct UsageSheet: View {
                             }
                             .id(a.key)
                         }
+                        GovernorSection(rows: governor?.governorRows(now: ctx.date) ?? [])
                         UsageWarningSettings(alerts: alerts)
                     }
                     .onAppear {
@@ -285,6 +290,27 @@ struct UsageWindowRow: View {
     }
 }
 
+/// "Usage pacing": each governor consumer that is not at `ok`, by hab. Absent with no rows.
+struct GovernorSection: View {
+    let rows: [GovernorRow]
+
+    var body: some View {
+        if !rows.isEmpty {
+            Section("Usage pacing") {
+                ForEach(rows) { r in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(r.title) · \(r.habLabel)").font(.callout.weight(.medium))
+                        Text(r.text)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+}
+
 struct UsageWarningSettings: View {
     @Bindable var alerts: UsageAlerts
 
@@ -321,13 +347,14 @@ extension View {
 
     /// The usage sheet while the book asks for it: from a footer bar, a
     /// widget or a usage notification.
-    func usageSheet(_ center: UsageCenter?) -> some View {
-        modifier(UsageSheetHost(center: center))
+    func usageSheet(_ center: UsageCenter?, governor: CapcomCenter? = nil) -> some View {
+        modifier(UsageSheetHost(center: center, governor: governor))
     }
 }
 
 struct UsageSheetHost: ViewModifier {
     let center: UsageCenter?
+    let governor: CapcomCenter?
 
     func body(content: Content) -> some View {
         if let center {
@@ -343,7 +370,7 @@ struct UsageSheetHost: ViewModifier {
                     #endif
                 }
                 .sheet(item: Binding(get: { center.book.presented }, set: { center.book.presented = $0 })) { p in
-                UsageSheet(center: center, focus: p.account) { center.book.presented = nil }
+                UsageSheet(center: center, governor: governor, focus: p.account) { center.book.presented = nil }
             }
         } else {
             content

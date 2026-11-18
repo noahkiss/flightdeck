@@ -62,6 +62,9 @@ public final class CapcomCenter {
     public internal(set) var standingSessions: [String: String] = [:]
     /// The habs whose catalog says they are marked always on, by hab id.
     public internal(set) var alwaysOn: Set<String> = []
+    /// The usage governor's section of each hab's catalog, by hab id (capcom-service.md 10.1);
+    /// absent for a hab whose catalog has none.
+    public internal(set) var governors: [String: CatalogGovernor] = [:]
     /// The hab a `capcom.assign` is on its way to.
     public internal(set) var assigning: String?
     /// Why the last `capcom.assign` failed; nil after a success.

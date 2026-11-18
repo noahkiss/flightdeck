@@ -134,6 +134,18 @@ final class ChatTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// "Send now" counts only on the Capcom thread (capcom-service.md 10.1): another session's
+    /// send leaves `send_now` out.
+    func testSendNowOnlyOnTheCapcomThread() async {
+        let (fleet, hab, model) = await setup(state: .done)
+        model.start()
+        model.send("hi", sendNow: true)
+        await eventually("sent") { await hab.sends.count == 1 }
+        let sends = await hab.sends
+        XCTAssertNil(sends[0].sendNow)
+        await fleet.setActive(false)
+    }
+
     func testWorkingQueuesUntilTurnEndsAndCancel() async {
         let (fleet, hab, model) = await setup(state: .working)
         model.start()

@@ -100,6 +100,9 @@ public struct Outgoing: Identifiable, Equatable, Sendable {
     public var attachments: [DraftAttachment] = []
     /// The attachments the hab already stored, in order: a retry uploads only the rest.
     public var uploaded: [UploadedAttachment] = []
+    /// "Send now" on the Capcom thread (capcom-service.md 10.1): the hab runs it on the small
+    /// model even while the usage governor makes user turns wait.
+    public var sendNow = false
     /// Bytes of the attachment uploading now that the hab holds.
     public var uploadedBytes = 0
     /// The Capcom context chips the send carried (capcom.md 8.4); set when it goes out.
@@ -469,7 +472,8 @@ public final class ChatModel {
     /// Sends the owner's text and attachments under the send gate. Empty text with no
     /// attachments does nothing, unless Capcom chips wait. Voice mode sends with origin
     /// `dictated`. A file over the limit is refused here, before any upload, with the limit named.
-    public func send(_ text: String, attachments: [DraftAttachment] = [], origin: SendOrigin = .typed) {
+    /// `sendNow` ("Send now", capcom-service.md 10.1) counts only on the Capcom service session.
+    public func send(_ text: String, attachments: [DraftAttachment] = [], origin: SendOrigin = .typed, sendNow: Bool = false) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty || !attachments.isEmpty || sendsContextAlone, gate.allowsSend else { return }
         if let r = attachments.lazy.compactMap(AttachmentLimits.refusal).first {
@@ -479,6 +483,7 @@ public final class ChatModel {
         notice = nil
         var o = Outgoing(id: nextOutgoing, text: t, status: gate == .now ? .sending : .queued, origin: origin)
         o.attachments = attachments
+        o.sendNow = sendNow && context.isCapcomService
         nextOutgoing += 1
         outgoing.append(o)
         if o.status == .sending {
@@ -541,6 +546,7 @@ public final class ChatModel {
               let i = outgoing.firstIndex(where: { $0.id == id }) else { return }
         let text = outgoing[i].text
         let origin = outgoing[i].origin
+        let sendNow = outgoing[i].sendNow
         outgoing[i].status = .sending
         // The chips the hab adds to this send: the ones waiting as it goes out.
         var carried: [CapcomContextItem] = []
@@ -550,7 +556,8 @@ public final class ChatModel {
             if let j = outgoing.firstIndex(where: { $0.id == id }) { outgoing[j].context = carried }
             do {
                 _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(
-                    attachments: stored.isEmpty ? nil : stored.map(\.id), origin: origin, session: session, text: text))
+                    attachments: stored.isEmpty ? nil : stored.map(\.id), origin: origin, sendNow: sendNow ? true : nil,
+                    session: session, text: text))
             } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter && carried.isEmpty {
                 // The harness has no adapter on this hab yet: type it as the adapter would.
                 guard let pane = context.pane else { throw e }

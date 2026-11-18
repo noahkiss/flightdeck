@@ -950,6 +950,17 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   Capcom has no project to watch in a terminal; the terminal is there for a first-start trust
   prompt (`capcom.md` 7.5). Every session with kind `capcom` gets this style, opened from its
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
+- **Usage pacing.** While the home's catalog lists the `capcom` consumer of the usage
+  governor at a pace other than `ok`, or unpaced, a line sits above the thread:
+  "Pacing usage until 15:04 · 40% of the week used, share 30%", "Small model · $6.12 of $5.00
+  today", "Event turns wait until Thu 09:30 · …", or "Unpaced: 12.3k tokens today". A time on
+  another day carries its weekday. A tap opens the usage sheet (14.2). A catalog with no
+  `governor` section shows nothing. The words are gff's "Usage pacing" lines, except
+  that a wait reads as the thread's note does (`capcom-service.md` 10.1). Code: `Usage/Governor.swift`, `CapcomCenter.governorLine`.
+  Tests: `GovernorTests`.
+- **Send now.** On the Capcom thread the send button's long-press menu (right click on the Mac)
+  offers "Send now": `session.send` with `send_now: true`, which runs that message on the small
+  model even while the governor makes user turns wait. Other sessions never send the flag.
 - **New conversation.** A toolbar button ("New conversation", the compose symbol) on every
   Capcom session (8.8). The draft now lives in the session view, so the button carries it.
   From a Capcom view, that view shows the new one in its place. From a Capcom session's board
@@ -2689,6 +2700,10 @@ The owner sees each harness account's usage limits before hitting them.
   pace".
 - **Alert me when free.** When a window is at 100 per cent, a button "Alert me when 5h is free"
   appears (14.4).
+- **Usage pacing.** Below the cards, one row per usage governor consumer that is not at `ok`,
+  or is unpaced, on each online hab: "Capcom · <hab>" (or the group's id) over the pacing line
+  of 4.10. The section is absent when no hab's catalog has a `governor` section, or every
+  consumer runs at `ok` (`capcom-service.md` 10.1).
 
 ### 14.3 Warnings
 

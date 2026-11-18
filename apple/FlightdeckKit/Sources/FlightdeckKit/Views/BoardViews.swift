@@ -244,7 +244,7 @@ public struct BoardScreen: View {
             fleet?.files.openRequest = nil
             if let row = board.rows.first(where: { $0.target == t }) { opened = row }
         }
-        .usageSheet(fleet?.usage)
+        .usageSheet(fleet?.usage, governor: fleet?.capcom)
         // A usage notification or widget tap while the Connections sheet is
         // up: close it first, since a second sheet cannot present over it.
         .onChange(of: fleet?.usage?.book.presented) { _, p in
