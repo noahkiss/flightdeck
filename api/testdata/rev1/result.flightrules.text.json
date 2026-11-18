@@ -1,0 +1,16 @@
+{
+  "bytes": 6,
+  "id": "id-4",
+  "seq": 3,
+  "text": "text-5",
+  "truncated": true,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

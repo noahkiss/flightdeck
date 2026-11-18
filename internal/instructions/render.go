@@ -109,6 +109,7 @@ type Plan struct {
 	Old      string // the file on disk, when there is one
 	NewDir   string // the target's directory, when a write would create it
 	Visits   []Visit
+	Roots    []string // the configured sources this render took text from, in order
 	Warnings []string
 }
 
@@ -197,6 +198,7 @@ func (r *Renderer) plan(h Harness) Plan {
 		if text == "" {
 			continue
 		}
+		p.Roots = append(p.Roots, s.Path)
 		if body.Len() > 0 {
 			body.WriteString("\n")
 		}
@@ -503,6 +505,7 @@ type record struct {
 	Digest   string        `json:"digest"`
 	Renderer int           `json:"renderer"`
 	Written  time.Time     `json:"written"`
+	Roots    []string      `json:"roots,omitempty"` // the configured sources with text in the render
 	Sources  []recordVisit `json:"sources"`
 }
 
@@ -518,8 +521,60 @@ func (e Env) RecordPath(h Harness) string {
 	return filepath.Join(e.StateDir, "instructions", string(h)+".json")
 }
 
+// Rendered is what a target's state record says about the last write: the flight rules ledger
+// uses it to name the configured sources behind a rendered file (spec 11.1).
+type Rendered struct {
+	Target  string
+	Digest  string   // hex, as in the file's header
+	Sources []string // the configured sources whose text the file holds
+}
+
+// ReadRendered reads the state record of a harness's target in the state directory. ok is
+// false when no write left one.
+func ReadRendered(stateDir string, h Harness) (r Rendered, ok bool, err error) {
+	data, err := os.ReadFile(Env{StateDir: stateDir}.RecordPath(h))
+	if errors.Is(err, fs.ErrNotExist) {
+		return Rendered{}, false, nil
+	}
+	if err != nil {
+		return Rendered{}, false, err
+	}
+	var rec record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return Rendered{}, false, fmt.Errorf("%s: %w", Env{StateDir: stateDir}.RecordPath(h), err)
+	}
+	r = Rendered{Target: rec.Target, Digest: rec.Digest, Sources: rec.Roots}
+	if len(r.Sources) == 0 && h != Claude {
+		// A record from before roots were kept: its root files that read. Not for Claude:
+		// there the roots also hold Claude's own files, expanded without output, and nothing
+		// tells them apart.
+		for _, v := range rec.Sources {
+			if v.Depth == 0 && v.Marker == Read {
+				r.Sources = append(r.Sources, v.Path)
+			}
+		}
+	}
+	return r, true, nil
+}
+
+// HeaderDigest returns the hex digest in a rendered file's header, or "" when the text does not
+// start with a Flightdeck header.
+func HeaderDigest(text string) string {
+	if !hasHeader(text) {
+		return ""
+	}
+	end := strings.Index(text, "-->")
+	if end < 0 {
+		return ""
+	}
+	if m := digestRe.FindStringSubmatch(text[:end]); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 func (r *Renderer) writeRecord(p Plan) error {
-	rec := record{Harness: p.Harness, Target: p.Path, Digest: p.Digest, Renderer: FormatVersion, Written: r.now().UTC()}
+	rec := record{Harness: p.Harness, Target: p.Path, Digest: p.Digest, Renderer: FormatVersion, Written: r.now().UTC(), Roots: p.Roots}
 	for _, v := range p.Visits {
 		rec.Sources = append(rec.Sources, recordVisit{Path: v.Path, Marker: v.Marker, Depth: v.Depth, From: v.From})
 	}

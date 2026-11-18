@@ -651,6 +651,7 @@ func serve(args []string) error {
 	var input control.Input
 	var sizes control.Size
 	var chat control.Chat
+	var flightRules control.FlightRules
 	var commands control.Commands
 	var chats *chatService
 	var agentCalls control.Agents
@@ -762,6 +763,11 @@ func serve(args []string) error {
 		ocs.dirty = chats.dirty
 		chat = chats
 		caps = append(caps, "transcripts")
+		// Flight rules (instructions-mcp-flight-rules.md 11): the context each session's
+		// harness recorded, read from the same transcripts.
+		flightRules = &flightRulesService{session: store.Session, agent: agents.Get, find: findTranscript,
+			state: absState, now: time.Now, ledgers: map[string]*sessionLedger{}}
+		caps = append(caps, "flight-rules")
 		// Rich content (app.md 4.7): references to files a session showed or touched.
 		contentSvc, err := newContent(dir, content.Config{
 			Session:      store.Session,
@@ -1777,6 +1783,7 @@ func serve(args []string) error {
 		Heavy:        heavyLock,
 		Groups:       groupsCtl,
 		Logbook:      lbVerbs,
+		FlightRules:  flightRules,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

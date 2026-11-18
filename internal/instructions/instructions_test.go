@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -281,6 +282,16 @@ func TestWrite(t *testing.T) {
 	rec, err := os.ReadFile(r.Env.RecordPath(Codex))
 	if err != nil || !strings.Contains(string(rec), p.Digest) || !strings.Contains(string(rec), filepath.Join(dir, "src", "missing.md")) {
 		t.Fatalf("state record: %v\n%s", err, rec)
+	}
+	// The flight rules ledger reads the record back: the target, the header's digest and the
+	// configured sources the render took text from.
+	rd, ok, err := ReadRendered(r.Env.StateDir, Codex)
+	if err != nil || !ok || rd.Target != p.Path || rd.Digest != p.Digest || HeaderDigest(p.Text) != p.Digest ||
+		len(rd.Sources) == 0 || !slices.Equal(rd.Sources, p.Roots) {
+		t.Fatalf("ReadRendered = %+v, %v, %v; roots %q", rd, ok, err, p.Roots)
+	}
+	if HeaderDigest("no header") != "" {
+		t.Fatal("HeaderDigest of a plain file")
 	}
 	// Only the target and the state record are new.
 	var added []string

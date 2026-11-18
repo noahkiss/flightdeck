@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -3855,6 +3855,157 @@ public struct FileReadParams: Codable, Sendable, Hashable {
         self.limit = limit
         self.offset = offset
         self.path = path
+    }
+}
+
+public struct FlightRule: Codable, Sendable, Hashable {
+    /// recorded, matched, computed or unknown.
+    public var attribution: String
+    /// Size of that text in bytes.
+    public var bytes: Int
+    /// The user's source files from Flightdeck's config, when this is a file Flightdeck rendered and its digest header matches the render record.
+    public var configuredSources: [String]?
+    /// Hex SHA-256 of the text that reached the agent. Absent for a placeholder.
+    public var digest: String?
+    /// A hook entry: the hook event, such as SessionStart or PostToolUse.
+    public var event: String?
+    /// RFC 3339 time of the record that first carried this text.
+    public var firstSeen: String
+    /// RFC 3339 time the harness recorded that this source left the context. Absent while it is in.
+    public var gone: String?
+    /// Stable for the session: made from kind, source and digest. flightrules.text takes it.
+    public var id: String
+    /// instruction, memory, hook, skills, skill, mcp or system.
+    public var kind: String
+    /// RFC 3339 time of the latest record that carried it again, after a compaction or resume.
+    public var lastSeen: String
+    /// Why the attribution is unknown, or what else the record says, such as that only the start of a file was sent.
+    public var note: String?
+    /// The file behind a source that is not itself a path, such as an invoked skill's file.
+    public var path: String?
+    /// Why the harness loaded it, in the harness's words, such as session_start or compaction.
+    public var reason: String?
+    /// The harness's level: managed, user, project, local, memory, session, skill or mcp. Absent when the record does not say.
+    public var scope: String?
+    /// A file path, a hook name, a skill name, an MCP server name, or what the record is when nothing names a source.
+    public var source: String
+
+    enum CodingKeys: String, CodingKey {
+        case attribution = "attribution"
+        case bytes = "bytes"
+        case configuredSources = "configured_sources"
+        case digest = "digest"
+        case event = "event"
+        case firstSeen = "first_seen"
+        case gone = "gone"
+        case id = "id"
+        case kind = "kind"
+        case lastSeen = "last_seen"
+        case note = "note"
+        case path = "path"
+        case reason = "reason"
+        case scope = "scope"
+        case source = "source"
+    }
+
+    public init(attribution: String, bytes: Int, configuredSources: [String]? = nil, digest: String? = nil, event: String? = nil, firstSeen: String, gone: String? = nil, id: String, kind: String, lastSeen: String, note: String? = nil, path: String? = nil, reason: String? = nil, scope: String? = nil, source: String) {
+        self.attribution = attribution
+        self.bytes = bytes
+        self.configuredSources = configuredSources
+        self.digest = digest
+        self.event = event
+        self.firstSeen = firstSeen
+        self.gone = gone
+        self.id = id
+        self.kind = kind
+        self.lastSeen = lastSeen
+        self.note = note
+        self.path = path
+        self.reason = reason
+        self.scope = scope
+        self.source = source
+    }
+}
+
+public struct FlightRuleText: Codable, Sendable, Hashable {
+    /// Size of the whole text in bytes.
+    public var bytes: Int
+    public var id: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var text: String
+    /// The text is cut at 1 MiB, on a character boundary.
+    public var truncated: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case bytes = "bytes"
+        case id = "id"
+        case seq = "seq"
+        case text = "text"
+        case truncated = "truncated"
+    }
+
+    public init(bytes: Int, id: String, seq: UInt64, text: String, truncated: Bool? = nil) {
+        self.bytes = bytes
+        self.id = id
+        self.seq = seq
+        self.text = text
+        self.truncated = truncated
+    }
+}
+
+public struct FlightRuleTextParams: Codable, Sendable, Hashable {
+    /// An entry id from flightrules.list for this session.
+    public var id: String
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case session = "session"
+    }
+
+    public init(id: String, session: String) {
+        self.id = id
+        self.session = session
+    }
+}
+
+public struct FlightRules: Codable, Sendable, Hashable {
+    public var entries: [FlightRule]
+    /// The harness whose records built the ledger. Absent when the session has no agent session yet.
+    public var harness: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var session: String
+    /// Records the reader could not read, or read as placeholders.
+    public var warnings: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case entries = "entries"
+        case harness = "harness"
+        case seq = "seq"
+        case session = "session"
+        case warnings = "warnings"
+    }
+
+    public init(entries: [FlightRule], harness: String? = nil, seq: UInt64, session: String, warnings: [String]? = nil) {
+        self.entries = entries
+        self.harness = harness
+        self.seq = seq
+        self.session = session
+        self.warnings = warnings
+    }
+}
+
+public struct FlightRulesParams: Codable, Sendable, Hashable {
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case session = "session"
+    }
+
+    public init(session: String) {
+        self.session = session
     }
 }
 
@@ -10277,6 +10428,10 @@ public enum HabMethods {
     public static let speechPrepare = HabMethod<SpeechPrepareParams, SpeechStatus>(name: "speech.prepare")
     /// Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.
     public static let speechTranscribe = HabMethod<SpeechTranscribeParams, SpeechTranscript>(name: "speech.transcribe")
+    /// A session's flight rules: every instruction file, memory, hook injection, skill listing and MCP instruction block its harness recorded, with scope, digest and size, never the text (instructions-mcp-flight-rules.md 11). Needs the flight-rules capability.
+    public static let flightrulesList = HabMethod<FlightRulesParams, FlightRules>(name: "flightrules.list")
+    /// The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.
+    public static let flightrulesText = HabMethod<FlightRuleTextParams, FlightRuleText>(name: "flightrules.text")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
     public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
     /// Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.

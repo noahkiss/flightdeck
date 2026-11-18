@@ -114,6 +114,8 @@ var Methods = []Method{
 	{"hab.permissions", "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.", PermissionsParams{}, Permissions{}},
 	{"speech.prepare", "Load the speech engine now, and start the model download if needed; returns the engine state at once (voice.md). Needs the speech capability.", SpeechPrepareParams{}, SpeechStatus{}},
 	{"speech.transcribe", "Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.", SpeechTranscribeParams{}, SpeechTranscript{}},
+	{"flightrules.list", "A session's flight rules: every instruction file, memory, hook injection, skill listing and MCP instruction block its harness recorded, with scope, digest and size, never the text (instructions-mcp-flight-rules.md 11). Needs the flight-rules capability.", FlightRulesParams{}, FlightRules{}},
+	{"flightrules.text", "The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.", FlightRuleTextParams{}, FlightRuleText{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 	{"channel.send", "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.", ChannelSendParams{}, ChannelSent{}},
 	{"channel.status", "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.", ChannelStatusParams{}, ChannelStatusResult{}},
@@ -394,5 +396,6 @@ var Translators = map[int]Translator{}
 // events work, and session.send to the service session goes to the thread
 // (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4). "device-context"
 // means device.context.put works and the hab serves Capcom's personal tools; it is sent with
-// capcom-thread (capcom-service.md 8).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"}
+// capcom-thread (capcom-service.md 8). "flight-rules" means flightrules.list and
+// flightrules.text work (instructions-mcp-flight-rules.md 11).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules"}

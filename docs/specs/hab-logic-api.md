@@ -667,7 +667,8 @@ A client checks for a capability before it uses the feature. Capabilities are
 for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
-`transcripts`, `detect-explain` (`detect.explain` works) and `capcom`. It always sends `mesh`, `idempotency-keys`,
+`transcripts`, `flight-rules` (`flightrules.list` and `flightrules.text` work), `detect-explain`
+(`detect.explain` works) and `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link), `settings`, `read-tools` and `confirm`. With the holder link on it also sends
 `rounds`. It sends `logbook` when its Logbook file opens (`logbook.md` 10.5), and `logbook-vectors` when its
