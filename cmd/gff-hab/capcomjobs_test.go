@@ -473,4 +473,3 @@ func TestCapcomJobsSecondReview(t *testing.T) {
 		}
 	}
 }
-

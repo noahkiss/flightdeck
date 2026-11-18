@@ -137,19 +137,19 @@ type openApproval struct {
 }
 
 type conn struct {
-	rw     io.ReadWriteCloser
-	wmu    sync.Mutex
-	w      *bufio.Writer
-	seq    uint64
-	sent   string          // the newest item id sent on this connection
-	sentB  map[string]bool // the event batches sent on this connection
+	rw    io.ReadWriteCloser
+	wmu   sync.Mutex
+	w     *bufio.Writer
+	seq   uint64
+	sent  string          // the newest item id sent on this connection
+	sentB map[string]bool // the event batches sent on this connection
 	// batchOut: a batch went and no turn has started since. No other batch goes until one
 	// does, so two batches never share a turn (capcom-service.md 9.8). Guarded by Link.mu.
 	batchOut bool
-	resume string          // the SDK session hello named, "" for none
-	ready  bool
-	engine string // the engine kind its ready named
-	done   chan struct{}
+	resume   string // the SDK session hello named, "" for none
+	ready    bool
+	engine   string // the engine kind its ready named
+	done     chan struct{}
 }
 
 // NewLink returns a link.

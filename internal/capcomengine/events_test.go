@@ -122,7 +122,9 @@ func TestLinkOneBatchPerTurn(t *testing.T) {
 	h := newHarnessWith(t, func(c *LinkConfig) {
 		var err error
 		q, err = capcomevents.Open(capcomevents.Config{Path: filepath.Join(t.TempDir(), capcomevents.File), Now: c.Now, After: c.After,
-			Limits: func() capcomevents.Limits { return capcomevents.Limits{DailyTurns: 100, BatchWindow: time.Hour, BatchMax: 1} }})
+			Limits: func() capcomevents.Limits {
+				return capcomevents.Limits{DailyTurns: 100, BatchWindow: time.Hour, BatchMax: 1}
+			}})
 		if err != nil {
 			t.Fatal(err)
 		}
