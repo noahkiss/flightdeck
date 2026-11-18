@@ -89,6 +89,10 @@ type sessionRecord struct {
 	// Swap marks the old session of a fresh-session swap in progress (groups.md 9.5): a
 	// gff-hab that stops mid-swap finishes or undoes it at its next start. Not in the API.
 	Swap *SwapMark `json:"swap,omitempty"`
+	// Stale is what the running agent loaded that a newer render replaced
+	// (instructions-mcp-flight-rules.md 13.1). The hab works it out again after a start, so it
+	// is never saved.
+	Stale []string `json:"-"`
 }
 
 // SwapMark is what the start repair of a swap needs: the member's name and group, the name the

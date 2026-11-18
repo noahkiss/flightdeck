@@ -85,6 +85,8 @@ type actions struct {
 	reserved func(name string) bool
 	// resumed hears each session session.resume started again. nil: none.
 	resumed func(session string)
+	// restart serves session.restart (restart.go). nil: unavailable.
+	restart *restarter
 }
 
 // isReserved reports whether name is kept for the Capcom service.

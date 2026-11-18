@@ -837,6 +837,7 @@ func (s *Store) ResumeSession(id, pane string) (api.Session, error) {
 	old := ss.Pane
 	ss.Pane, ss.State, ss.Exit = pane, stateRunning, nil
 	ss.Spawning, ss.Resuming = true, true
+	ss.Stale = nil // the new program loads what is current
 	ss.Revision++
 	events := []Event{s.sessionEvent(ss)}
 	if ps := s.panes[old]; ps != nil && old != "" {
@@ -1146,6 +1147,7 @@ func sessionAPI(ss *sessionRecord) api.Session {
 		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit), Round: copyRound(ss.Round),
 		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir, Group: copyGroup(ss.Group),
 		ContextPct: copyPct(ss.ContextPct), Compacts: ss.Compacts, Replaced: ss.Replaced,
+		Stale: slices.Clone(ss.Stale),
 	})
 }
 

@@ -1292,6 +1292,25 @@ func ScreenRows(s *vt.Screen) []string {
 	return out
 }
 
+// Signal sends sig to pane u's child or its foreground group, through its holder (holder spec
+// 2.5). The pane stays: its exit comes as for any program that ends.
+func (l *Link) Signal(ctx context.Context, u hp.UUID, target hp.Target, sig hp.Sig) error {
+	p := l.pane(u)
+	if p == nil {
+		return ErrNoPane
+	}
+	p.mu.Lock()
+	h, hd, lost := p.holder, p.handle, p.lost
+	p.mu.Unlock()
+	if lost != nil {
+		return lost
+	}
+	if h == nil {
+		return ErrNoPane
+	}
+	return h.Signal(ctx, hd, target, sig)
+}
+
 // Foreground asks pane u's holder for the pane's foreground process group (0: none).
 func (l *Link) Foreground(ctx context.Context, u hp.UUID) (int, error) {
 	p := l.pane(u)

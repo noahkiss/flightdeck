@@ -33,6 +33,9 @@ type flightRulesService struct {
 	opencodeDir string // opencode's global config folder
 	state       string // the hab's state directory, where the instruction renderer keeps its records
 	now         func() time.Time
+	// mark hears whether a session works from an older render after each list that read to
+	// the end, for Session.stale (stale.go). nil: none.
+	mark func(session, harness string, stale bool)
 
 	mu      sync.Mutex
 	ledgers map[string]*sessionLedger // by gff-hab session id
@@ -169,8 +172,29 @@ func (f *flightRulesService) List(ctx context.Context, p api.FlightRulesParams) 
 		out.Warnings = append(out.Warnings, "the session's records were not read to the end in time; list again for the rest")
 	case err != nil:
 		return api.FlightRules{}, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", p.Session, err)
+	case f.mark != nil:
+		f.mark(p.Session, sl.harness, out.Stale)
 	}
 	return out, nil
+}
+
+// stale reads a session's records to the end and reports whether it works from an older
+// render (11.4). A session with no transcript yet is not stale.
+func (f *flightRulesService) stale(ctx context.Context, id string) (bool, error) {
+	sl, err := f.ledger(id)
+	if err != nil || sl.s == nil {
+		return false, err
+	}
+	entries, _, err := sl.s.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if e.Stale {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Text implements control.FlightRules.

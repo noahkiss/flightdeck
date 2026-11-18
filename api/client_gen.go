@@ -752,6 +752,13 @@ func (c Client) SessionResume(ctx context.Context, params SessionRef) (SessionCr
 	return result, err
 }
 
+// SessionRestart calls session.restart. Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.
+func (c Client) SessionRestart(ctx context.Context, params SessionRef) (SessionCreated, error) {
+	var result SessionCreated
+	err := c.Caller.Call(ctx, "session.restart", params, &result)
+	return result, err
+}
+
 // SessionAdopt calls session.adopt. Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).
 func (c Client) SessionAdopt(ctx context.Context, params SessionAdoptParams) (SessionAdopted, error) {
 	var result SessionAdopted

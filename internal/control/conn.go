@@ -1381,6 +1381,8 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return c.dispatchDeviceContext(m, s)
 	case "session.resume":
 		return c.dispatchResume(m, s)
+	case "session.restart":
+		return c.dispatchRestart(m, s)
 	case "session.adopt", "session.outside":
 		return c.dispatchAdopt(m, s)
 	case "peers.list":

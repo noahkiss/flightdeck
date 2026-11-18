@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -8815,6 +8815,8 @@ public struct Session: Codable, Sendable, Hashable {
     public var revision: UInt64
     /// Set on a session a round's run started: the round and the run. Every client can badge and filter it.
     public var round: SessionRound?
+    /// What the running agent loaded that a newer render replaced: instructions. session.restart picks the new one up. Absent when nothing is stale, or the hab cannot tell.
+    public var stale: [String]?
     public var state: SessionState
     /// The agent session's title, from its adapter. Absent when the harness has none.
     public var title: String?
@@ -8834,11 +8836,12 @@ public struct Session: Codable, Sendable, Hashable {
         case replaced = "replaced"
         case revision = "revision"
         case round = "round"
+        case stale = "stale"
         case state = "state"
         case title = "title"
     }
 
-    public init(compacts: Int? = nil, contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, replaced: String? = nil, revision: UInt64, round: SessionRound? = nil, state: SessionState, title: String? = nil) {
+    public init(compacts: Int? = nil, contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, replaced: String? = nil, revision: UInt64, round: SessionRound? = nil, stale: [String]? = nil, state: SessionState, title: String? = nil) {
         self.compacts = compacts
         self.contextPct = contextPct
         self.dir = dir
@@ -8853,6 +8856,7 @@ public struct Session: Codable, Sendable, Hashable {
         self.replaced = replaced
         self.revision = revision
         self.round = round
+        self.stale = stale
         self.state = state
         self.title = title
     }
@@ -10372,6 +10376,8 @@ public enum HabMethods {
     public static let sessionCreate = HabMethod<SessionCreateParams, SessionCreated>(name: "session.create")
     /// Start an exited session's harness again in a new pane, with its resume id.
     public static let sessionResume = HabMethod<SessionRef, SessionCreated>(name: "session.resume")
+    /// Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.
+    public static let sessionRestart = HabMethod<SessionRef, SessionCreated>(name: "session.restart")
     /// Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).
     public static let sessionAdopt = HabMethod<SessionAdoptParams, SessionAdopted>(name: "session.adopt")
     /// List recent conversations on this host that no session of the hab holds, newest first (gff-client.md 6.5). Read-only.

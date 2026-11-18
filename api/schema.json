@@ -43,7 +43,8 @@
     "capcom-thread",
     "groups",
     "device-context",
-    "flight-rules"
+    "flight-rules",
+    "session-restart"
   ],
   "methods": [
     {
@@ -595,6 +596,29 @@
     {
       "name": "session.resume",
       "summary": "Start an exited session's harness again in a new pane, with its resume id.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionRef"
+      }
+    },
+    {
+      "name": "session.restart",
+      "summary": "Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -14666,6 +14690,13 @@
           "round": {
             "$ref": "#/components/schemas/SessionRound",
             "description": "Set on a session a round's run started: the round and the run. Every client can badge and filter it."
+          },
+          "stale": {
+            "type": "array",
+            "description": "What the running agent loaded that a newer render replaced: instructions. session.restart picks the new one up. Absent when nothing is stale, or the hab cannot tell.",
+            "items": {
+              "type": "string"
+            }
           },
           "state": {
             "$ref": "#/components/schemas/SessionState"
