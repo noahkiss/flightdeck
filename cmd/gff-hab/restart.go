@@ -8,7 +8,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -76,10 +75,9 @@ func (r *restarter) Restart(ctx context.Context, session string) (string, error)
 	}
 	newPane, err := r.resume(ctx, session)
 	if err != nil {
-		kind := api.ErrorKindUnavailable
-		var ce *control.Error
-		if errors.As(err, &ce) {
-			kind = ce.Data.Kind
+		kind := errKind(err)
+		if kind == "" {
+			kind = api.ErrorKindUnavailable
 		}
 		r.logf("restart: session %s: %s exited; starting it again failed: %v", ss.Name, st.Harness, err)
 		return "", control.Errorf(kind, "session %s: %s exited, and starting it again failed: %s. Its conversation %s is untouched: session.resume, or the harness's resume in its folder, starts it again", ss.Name, st.Harness, errText(err), st.Session)
