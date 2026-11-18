@@ -403,8 +403,9 @@ func TestGetSince(t *testing.T) {
 			defer mu.Unlock()
 			return api.Structure{
 				Projects: []api.Project{{ID: "p1", Name: "app"}},
-				Sessions: []api.Session{{ID: "s1", Name: "fix-bug", Project: "p1", Pane: "pane-1"}},
-				Agents:   slices.Clone(agents),
+				Sessions: []api.Session{{ID: "s1", Name: "fix-bug", Project: "p1", Pane: "pane-1"},
+					{ID: "s2", Name: "zsh", Pane: "pane-2"}, {ID: "s3", Name: "term", Pane: "pane-3"}},
+				Agents: slices.Clone(agents),
 			}
 		},
 		Publish: func(u api.CatalogUpdated) { mu.Lock(); events = append(events, u); mu.Unlock() },
@@ -420,6 +421,8 @@ func TestGetSince(t *testing.T) {
 	}
 	if r := s.Get(g + 5); r.Catalog == nil {
 		t.Fatal("a since past the generation (a puller with an older life of this hab) gets everything")
+	} else if got := r.Catalog.ShellSessions; !slices.Equal(got, []string{"fix-bug", "term", "zsh"}) {
+		t.Fatalf("shell sessions with no agent: %v", got)
 	}
 	mu.Lock()
 	agents = []api.AgentState{{Pane: "pane-1", Harness: "claude", State: api.AgentStatusWorking, At: "2026-11-01T10:00:00Z"},
@@ -433,6 +436,10 @@ func TestGetSince(t *testing.T) {
 	}
 	if a := r.Catalog.Agents[0]; a.Session != "fix-bug" || a.Project != "app" || a.Harness != "claude" || a.State != api.AgentStatusWorking || a.Since == "" {
 		t.Fatalf("agent %+v", a)
+	}
+	// A session whose agent exited is a shell session again (mesh.md 6.5).
+	if got := r.Catalog.ShellSessions; !slices.Equal(got, []string{"term", "zsh"}) {
+		t.Fatalf("shell sessions: %v", got)
 	}
 	mu.Lock()
 	if len(events) == 0 || events[len(events)-1].DeviceID != "SHA256:self" {

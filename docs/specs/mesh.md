@@ -539,6 +539,8 @@ merged view.
   5 minutes.
 - **Agents.** Every pane whose agent state is not `exited`, named by its session (an unfiled
   pane by its pane id), with the project's name and the time its state began.
+- **Shell sessions.** `shell_sessions` names every other session, sorted: a shell, or a session
+  whose agent exited. Peers read it for the name clash (6.5). A copy from an older hab has none.
 - **Peers in the catalog.** The catalog lists the device ids of this hab's peer list
   (`peers`), and of those the peers it watches (`watches`): each one whose copy carries the
   always-on mark. Only a watching hab can raise the alert, so the always-on check defers to
@@ -783,9 +785,10 @@ the rest of client kind `hab`.
 - A name found only in an unlisted hab's copy is refused with "add <host id> as a peer": mail
   goes only to habs in the peer list (6.3, no forwarding).
 - **Names unique across peers.** `session.create` with a name, and `session.rename`, refuse with
-  `conflict` "name in use on <label>" when a catalog copy (stale included) lists an agent with
-  that name. A name gff-hab picks itself (`claude`, then `claude-2`) also skips names in the
-  copies. A copy is dropped when its peer leaves the peer list (5.4), and its names with it. A
+  `conflict` "name in use on <label>" when a catalog copy (stale included) lists an agent or a
+  shell session with that name (5.4). A copy from an older hab lists no shell sessions, so only
+  its agents clash. A bare name never resolves to a shell session: a shell takes no mail. A
+  name gff-hab picks itself (`claude`, then `claude-2`) also skips names in the copies. A copy is dropped when its peer leaves the peer list (5.4), and its names with it. A
   clash made while a peer was offline stays (10); `label/name` reaches either agent.
 
 **State on disk.**
@@ -962,8 +965,6 @@ Not built in this stage:
 - The read back and its `not_delivered`; the two-second typing pause (both Part 4).
 - Revocations as control items (`transport.md` 6.6): the outbox takes only messages and status
   items.
-- A name clash for a session with no agent: the catalog lists agents only, so a shell session's
-  name on a peer does not clash.
 
 Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
 

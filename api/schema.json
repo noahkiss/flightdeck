@@ -6238,6 +6238,13 @@
               "$ref": "#/components/schemas/CatalogService"
             }
           },
+          "shell_sessions": {
+            "type": "array",
+            "description": "The names of this host's sessions with no running agent (a shell, or an agent that exited), sorted. Absent with none.",
+            "items": {
+              "type": "string"
+            }
+          },
           "system": {
             "$ref": "#/components/schemas/CatalogSystem"
           },

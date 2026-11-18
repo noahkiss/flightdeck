@@ -618,25 +618,27 @@ func (s *Service) build(first bool) {
 			watches = append(watches, id)
 		}
 	}
+	ags := agents(st)
 	c := api.Catalog{
-		DeviceID:     s.cfg.Self,
-		Host:         s.cfg.Host,
-		System:       s.facts.System,
-		Toolchains:   slices.Clone(s.facts.Toolchains),
-		Harnesses:    slices.Clone(s.facts.Harnesses),
-		Capabilities: words(append(slices.Clone(s.facts.Capabilities), extra...), s.declared.Capabilities),
-		Services:     slices.Clone(s.declared.Services),
-		Actions:      slices.Clone(s.declared.Actions),
-		Projects:     projects(s.cfg.Self, st, dirs, s.folders),
-		Agents:       agents(st),
-		AlwaysOn:     s.declared.AlwaysOn,
-		Peers:        peerIDs,
-		Watches:      watches,
-		Capcom:       capcom,
-		Rounds:       rounds,
-		Heavy:        heavy,
-		Groups:       groups,
-		Governor:     gov,
+		DeviceID:      s.cfg.Self,
+		Host:          s.cfg.Host,
+		System:        s.facts.System,
+		Toolchains:    slices.Clone(s.facts.Toolchains),
+		Harnesses:     slices.Clone(s.facts.Harnesses),
+		Capabilities:  words(append(slices.Clone(s.facts.Capabilities), extra...), s.declared.Capabilities),
+		Services:      slices.Clone(s.declared.Services),
+		Actions:       slices.Clone(s.declared.Actions),
+		Projects:      projects(s.cfg.Self, st, dirs, s.folders),
+		Agents:        ags,
+		ShellSessions: shellSessions(st, ags),
+		AlwaysOn:      s.declared.AlwaysOn,
+		Peers:         peerIDs,
+		Watches:       watches,
+		Capcom:        capcom,
+		Rounds:        rounds,
+		Heavy:         heavy,
+		Groups:        groups,
+		Governor:      gov,
 	}
 	c = api.NonNil(c)
 	prev := s.own
@@ -765,6 +767,19 @@ func agents(st api.Structure) []api.CatalogAgent {
 		out = append(out, ca)
 	}
 	slices.SortFunc(out, func(a, b api.CatalogAgent) int { return strings.Compare(a.Session, b.Session) })
+	return out
+}
+
+// shellSessions lists the names of the sessions not in ags, sorted: shells, and sessions whose
+// agent exited. Peers read them to refuse a clashing name (mesh.md 6.5).
+func shellSessions(st api.Structure, ags []api.CatalogAgent) []string {
+	var out []string
+	for _, ss := range st.Sessions {
+		if !slices.ContainsFunc(ags, func(a api.CatalogAgent) bool { return a.Session == ss.Name }) {
+			out = append(out, ss.Name)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 

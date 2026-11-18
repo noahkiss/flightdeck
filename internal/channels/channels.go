@@ -619,7 +619,8 @@ func shortID(id string) string {
 }
 
 // ClashLabel returns where a name is in use on a peer: the label (or host id) of the first
-// catalog copy, stale ones included, that lists an agent with that name; "" when none does.
+// catalog copy, stale ones included, that lists an agent or a shell session with that name; ""
+// when none does. A copy from an older hab lists no shell sessions, so only its agents clash.
 // capcom never clashes between habs: a stale copy that still lists it never blocks the new home
 // (capcom-service.md 2.4).
 func ClashLabel(l api.CatalogList, self, name string) string {
@@ -630,13 +631,12 @@ func ClashLabel(l api.CatalogList, self, name string) string {
 		if e.Own || e.Catalog.DeviceID == self {
 			continue
 		}
-		for _, a := range e.Catalog.Agents {
-			if a.Session == name {
-				if e.Label != "" {
-					return e.Label
-				}
-				return e.Catalog.Host
+		if slices.ContainsFunc(e.Catalog.Agents, func(a api.CatalogAgent) bool { return a.Session == name }) ||
+			slices.Contains(e.Catalog.ShellSessions, name) {
+			if e.Label != "" {
+				return e.Label
 			}
+			return e.Catalog.Host
 		}
 	}
 	return ""

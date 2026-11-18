@@ -1134,6 +1134,27 @@ func TestResolveBareNames(t *testing.T) {
 	}
 }
 
+// A peer's shell session (no agent) clashes by name, from a stale copy too; a bare name never
+// resolves to it, since a shell takes no mail (mesh.md 6.5).
+func TestClashShellSessions(t *testing.T) {
+	a := newHab(t, "dev-a", "hosta", t.TempDir(), newLocal("alice"))
+	a.peers.setList([]api.Peer{{Label: "bee", DeviceID: "dev-b"}, {Label: "sea", DeviceID: "dev-c"}})
+	a.cat = api.CatalogList{Hosts: []api.CatalogEntry{
+		{Own: true, Catalog: api.Catalog{DeviceID: "dev-a", ShellSessions: []string{"mine"}}},
+		{Label: "bee", Catalog: api.Catalog{DeviceID: "dev-b", Host: "hostb", ShellSessions: []string{"sheila"}}},
+		{Label: "sea", Stale: true, Catalog: api.Catalog{DeviceID: "dev-c", Host: "hostc", ShellSessions: []string{"old"}}},
+		{Catalog: api.Catalog{DeviceID: "dev-d", Host: "hostd", ShellSessions: []string{"stray"}}},
+	}}
+	for name, want := range map[string]string{"sheila": "bee", "old": "sea", "stray": "hostd", "mine": "", "capcom": ""} {
+		if got := ClashLabel(a.cat, "dev-a", name); got != want {
+			t.Errorf("clash %s: %q, want %q", name, got, want)
+		}
+	}
+	if _, err := a.s.resolve("sheila"); kind(err) != api.ErrorKindNotFound {
+		t.Fatalf("resolve sheila: %v", err)
+	}
+}
+
 // A bare capcom resolves to the Capcom home host, never by the catalog copies, so two copies
 // that list it are no clash; capcom never clashes at create; a hab that lost the mark refuses
 // mail to capcom naming the new home (capcom-service.md 2.4).
