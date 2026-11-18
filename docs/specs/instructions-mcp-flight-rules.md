@@ -763,7 +763,8 @@ Built (`internal/flightrules`, `flightrules.list` and `flightrules.text`, capabi
   that runs out of the call's time answers with what it read and a warning; the next call goes on
   from there. A ledger
   unused for 10 minutes, or whose session is gone, is dropped and read again on the next call.
-- **Not built.** The pi source; the restart offers of 13; the app and `gff` views (11.3).
+- **Not built.** The pi source; the app and `gff` views (11.3). The restart offer is built
+  for the API and `gff` (13.1).
 
 ---
 
@@ -822,6 +823,50 @@ file, or a per-harness MCP config digest.
 Rules, all from the plan: one session at a time, never all at once; only when the agent state is
 `idle` or `done`; the user starts each one; on failure, report it and leave the old session
 resumable by hand.
+
+### 13.1 Built
+
+Built (`cmd/gff-hab` `restart.go`, `stale.go`, `restartcli.go`; capability `session-restart`).
+It covers stale instructions for Claude Code and Codex. The restart works for any harness with
+an adapter.
+
+- **`Session.stale`.** An optional list on the session record; today its one word is
+  `instructions`. It is set while a running Claude Code or Codex session works from an older
+  render (the stale rule of 11.4). The hab reads each such session's records every 30 seconds,
+  in the background, at most 5 seconds per session per pass, and a `flightrules.list` sets it
+  too. A harness with no render record is never read, so a host that renders nothing pays
+  nothing. opencode is never flagged: it reloads the file itself (the table above). An exited
+  session, and one that starts again, has no flag. The flag is not saved; the hab works it out
+  again after its own restart. The catalog does not carry it.
+- **`session.restart {session}`** returns the ids `session.resume` returns. The owner starts
+  each one; the hab adds no confirmation (`app.md` 20.1). It refuses, and stops nothing:
+  - `conflict`: another restart is running on the hab (one at a time; there is no "restart
+    all"); the agent is not `idle` or `done`; the session is not running (`session.resume`
+    starts it); or it is a round's watcher session.
+  - `unavailable`: the pane runs no harness with an adapter; the harness has not reported its
+    session id; or the hab could not start it again: no resume start or folder is known.
+  - `not_found`: no such session.
+- **Exit.** The hab hangs up the pane's program (SIGHUP to the pane's child, the signal
+  `pane.close` sends) and waits up to 10 seconds for it to end. It checks the agent state once
+  more first: an agent that took a prompt meanwhile is `conflict`, and nothing stops. A harness
+  ends on the hang-up as when its terminal closes; an opencode pane's wrapper passes it to the
+  TUI and stops the server. A program still running gets SIGTERM and 5 more seconds. One that outlives both keeps
+  running, and the call answers `unavailable` with nothing restarted.
+- **Start.** Once the program ended, the session takes `session.resume`'s path: Capcom's
+  sessions through Capcom, the rest from the resume book, with the agent's native id
+  (`claude --resume <id>`, `codex resume <id>`, `opencode --session <id>`). The holder runs one
+  program per pane, and a pane's hook token is bound to its id (`harness-adapters.md`, Token),
+  so the harness starts in a new pane of the same session: same id, name, project and folder.
+  Clients follow the session, as after `session.resume`.
+- **Failure after the exit.** The session stays exited and the error keeps the start's kind
+  (`conflict` when the conversation now runs outside the hab). It names the conversation's id
+  and says it is untouched: `session.resume`, or the harness's own resume in its folder, picks
+  it up. Flightdeck never writes the transcript.
+- **`gff restart <session>`** runs `gff-hab restart` with the same arguments, by name or id;
+  `-list` prints the sessions flagged stale.
+- **Not built.** Stale MCP config: no harness records which MCP config a session loaded (Claude
+  Code records only the servers that send instructions), and the per-harness record of 8.4 has
+  no tie to a session, so the hab cannot tell. pi's `/reload`. The offer in the app.
 
 ---
 
