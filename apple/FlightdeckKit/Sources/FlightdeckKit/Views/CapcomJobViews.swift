@@ -52,9 +52,16 @@ struct CapcomJobsPage: View {
 struct CapcomJobSummary: View {
     let job: CapcomJob
 
+    /// The trigger in plain words; an event trigger names its event.
+    private var trigger: String {
+        let t = job.round.trigger
+        if t.kind == .event, let e = t.event, !e.isEmpty { return "on \(e)" }
+        return RoundText.trigger(t)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(RoundText.trigger(job.round.trigger)) · on \(job.habLabel)")
+            Text("\(trigger) · on \(job.habLabel)")
                 .font(.callout)
             HStack(spacing: 6) {
                 Text("Last: \(CapcomJobs.outcomeText(job.outcome))")

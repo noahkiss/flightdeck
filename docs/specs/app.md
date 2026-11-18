@@ -3918,6 +3918,9 @@ The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/Capcom
 - **Cards.** The kind `action` confirmation shows the job, the word and the method in rows that
   wrap and never cut, then the summary and the params whole; the list or thread around the card
   scrolls a long one. The `job` card in the Capcom thread shows its text with a bolt.
+- **Demo mode.** Workbench holds two jobs: build-failures (`hand_off`, last `acted`) and
+  morning-brief (no words, last `told`). Debug builds take `-FlightdeckOpenCapcomJobs YES` to
+  open the list at launch.
 - **Not built.** The round form edits only `fresh`, `resume` and `fork` rounds; a `capcom`
   round's Edit needs a form of its own.
 
