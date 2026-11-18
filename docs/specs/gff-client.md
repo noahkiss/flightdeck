@@ -264,34 +264,55 @@ cells of one link join on hover, and the same URI in two panes stays two links. 
 control byte, or longer than 4 KiB, draws as plain text. In pass-through the pane's own OSC 8
 sequences reach the host unchanged.
 
-**Kitty keyboard protocol.** Built as zellij does it: gff pushes flag 1 (disambiguate) on the
-host and re-encodes each key for the pane that gets it. tmux, by contrast, reads extended keys
+**Kitty keyboard protocol.** Built as zellij does it: gff pushes kitty flags on the host and
+re-encodes each key for the pane that gets it. zellij pushes flag 1 (disambiguate); gff pushes
+flags 1 and 4 (alternate keys), so a legacy pane gets the shifted key with Alt or Ctrl. tmux, by contrast, reads extended keys
 from the host but gives panes only legacy or its own `extended-keys` forms; it keeps no kitty
 flags per pane.
 
-- At start gff writes one query, `CSI ? u`. A host with the protocol answers `CSI ? flags u`;
-  gff takes the answer out of the input wherever it comes, so no program sees it (the filter
-  below drops a pane's own `CSI ? u`, so every answer is gff's). For a second after the query, a
-  read that ends inside a possible answer is held for the next read.
-- Once the host has answered, gff pushes `CSI > 1 u` each time it enters the composed screen,
+- At start gff detects the protocol as its spec describes: `CSI ? u`, then a primary device
+  attributes query (`CSI c`). A host with the protocol answers `CSI ? flags u` first; every
+  terminal answers `CSI ? … c`, and that answer ends the detection. Until it comes, gff takes
+  both answers out of the input, so no program sees them (the filter below drops a pane's own
+  `CSI ? u` and `CSI c`, so these answers are gff's). It never searches a bracketed paste. A
+  read that ends inside a possible answer is held for the next read; so is a lone Esc, for that
+  one round trip. After the DA1 answer gff takes nothing. A host that answers neither query ends
+  the detection after 2 s.
+- When gff exits before the detection ended (a quick detach, a single-hab view whose panes
+  ended, an error), it reads the host's input for up to 300 ms more, until the DA1 answer, so a
+  late answer never lands in the shell gff leaves.
+- Once the host has answered, gff pushes `CSI > 5 u` each time it enters the composed screen,
   and pops it (`CSI < u`) before it leaves that screen: for pass-through, on detach, on exit. The
   crash guard's reset holds the pop too. A host that never answered gets no push and no pop
   (only the guard's reset, which pops nothing on such a host). gff has no suspend: Ctrl+Z goes
   to the pane.
-- While the flag is on, the host sends Esc, Ctrl and Alt keys, Shift with Enter, Tab or
-  Backspace, and the keypad as `CSI code ; mods u`. The keymap reads those forms already. Text,
-  arrows, Home, End, Page keys and F keys keep their legacy forms, which read the same for a
-  legacy and a kitty program, so they pass as they came; so does a bracketed paste.
+- While the flags are on, the host sends Esc, Ctrl and Alt keys, Shift with Enter, Tab or
+  Backspace, and the keypad as `CSI code[:shifted] ; mods u`. The keymap reads those forms
+  already. Text and a bracketed paste pass as they came. The cursor and function keys keep CSI
+  forms, but not quite xterm's: the host ignores DECCKM, and sends F1 to F4 as `CSI P`, `CSI Q`,
+  `CSI 13 ~` and `CSI S` (`CSI R` would read as a cursor position report). A kitty program
+  reads them as they came. For a legacy reader gff rewrites them: an unmodified arrow, Home or
+  End becomes `SS3` under DECCKM, F1 to F4 become `SS3 P` to `SS3 S`, and a modified F3
+  `CSI 1 ; m R`. The other keys (Page keys, F5 and up, modified cursor keys) read the same in
+  both and pass.
 - Each `CSI … u` is encoded again for where it goes. A pane whose program pushed kitty flags
   (its parser's `KeyboardFlags`) gets libghostty's key encoder at those flags. With flag 8
   (every key as an escape code), its text and Enter, Tab and Backspace become key events too.
   A pane with no flags, and gff's own sidebar, board and prompts, get legacy bytes as xterm
-  sends them with no modifyOtherKeys: control bytes for Ctrl, ESC before an Alt key, `CSI Z`
-  for Shift+Tab. gff encodes those itself, because libghostty's legacy encoding sends some keys
+  sends them with no modifyOtherKeys: control bytes for Ctrl over the shifted key (Ctrl+Shift+-
+  is 0x1f, Ctrl+? 0x7f), ESC before an Alt key and its shifted character (Alt+Shift+. is
+  `ESC >`), Caps Lock upper-casing a letter, `CSI Z` for Shift+Tab. Ctrl with a key that has
+  no control form (Ctrl+é) types the key. The keypad follows the pane's modes: its arrows,
+  Home and End are cursor keys, its Page, Insert and Delete keys `CSI n ~`, each with xterm's
+  modifier parameter (Ctrl+keypad Up is `CSI 1;5A`); its digits, operators and Enter send
+  their character, or their `SS3` form under DECKPAM. gff encodes those itself, because libghostty's legacy encoding sends some keys
   in CSI u form (Ctrl+I as `CSI 105;5u`).
 - `vt.Fake` has no encoder and no flags: its panes get legacy bytes.
+- Leaving the composed screen also drops what the re-encoder held (a key cut by a read, an
+  open paste): input after it comes in another encoding.
 
-**Terminal queries.** gff sends one query of its own to the host terminal, `CSI ? u` (above),
+**Terminal queries.** gff sends one detection of its own to the host terminal, `CSI ? u` and
+`CSI c` (above),
 and its parsers never answer one: the `vt` wrapper gives libghostty no reply callback. In pass-through, a filter runs
 over every pane's bytes and drops whatever the host would answer, so no answer can come back as
 typing. It also drops settings that would change the host beyond the pane. The filter runs on
@@ -368,7 +389,7 @@ panic on any goroutine, SIGQUIT or SIGKILL. Go has no process-wide panic hook, s
 a small child process (`gff` itself, run with `GFF_TERMINAL_GUARD=1`). It saves the terminal's
 settings before raw mode, then waits on a pipe. gff writes one byte on it once it has set the
 terminal back. When the pipe ends without that byte, the guard puts back the saved settings,
-writes the mode reset, pops gff's kitty flag and leaves the alternate screen.
+writes the mode reset, pops gff's kitty flags and leaves the alternate screen.
 
 **Tests.** The suite runs the real holder and gff-hab binaries, and gff in process with a fake
 host terminal (pipes, its output parsed by `vt.Fake`), a transport that records every control
@@ -390,9 +411,9 @@ request, and a debounce timer the test fires.
 | `TestCanvasLinks` | The canvas opens a link with its id right before the linked cells and closes it at a run's end, a line end, a pane's edge and a frame's end; the same URI in two panes gets two ids; a URI with a control byte is no link |
 | `TestLinkSurvivesComposing` (`-tags ghostty`) | Two panes side by side, one prints an OSC 8 link: the host output wraps exactly the linked cells in the link, and opens no other |
 | `TestReadScreenLinks` (`internal/vt/ghostty`) | libghostty's cells carry their link URI, also after a `snapshot-vt` restore |
-| `TestKittyHost` | A host that never answers the query gets no kitty push or pop; one that answers gets the push after the composed screen starts, its kitty-form keys reach a legacy program as legacy bytes, Ctrl+O `d` in kitty form detaches, and the pop comes right before the composed screen ends |
+| `TestKittyHost` | A host that answers only DA1 gets no kitty push or pop; one that answers gets the push after the composed screen starts, its kitty-form keys reach a legacy program as legacy bytes, Ctrl+O `d` in kitty form detaches, and the pop comes right before the composed screen ends |
 | `TestKittyPaneEncoding` (`-tags ghostty`) | A program that pushed flags 9 gets text as `CSI 97u` and Ctrl+C as `CSI 99;5u` |
-| `TestLegacyKeyGoldens`, `TestKittyInTranslate`, `TestKittyReplies` | Legacy goldens; the re-encoder keeps legacy sequences and pastes, gives text keys their text, and holds a cut event; answers to the query are taken whole or cut, and nothing else is |
+| `TestLegacyKeyGoldens`, `TestLegacyCSIGoldens`, `TestKittyInTranslate`, `TestKittyReplies` | Legacy goldens in each cursor and keypad mode: Ctrl and Alt over the shifted key, Caps Lock, Ctrl with no control form, the keypad with modifiers, SS3 cursor keys under DECCKM, F1 to F4; the re-encoder keeps pastes, gives text keys their text and shifted key, holds a cut event, and forgets both on leaving the composed screen; the detection's answers are taken whole or cut until DA1, never from a paste, and the exit drain waits for them at most 300 ms |
 | `TestEncodeKeyGoldens`, `TestKeyboardFlagsInSnapshot` (`internal/vt/ghostty`) | Kitty goldens at flags 1, 3, 5, 9, 25 and 31; a program's flags survive a `snapshot-vt` |
 | `TestSplitsRedrawAfterResize` | The `gff` binary in a pty starts vim and a full-screen script side by side, each at its view's size; after the terminal resizes, both draw at their new sizes and gff composes them; detach exits 0. Skips without vim |
 | Unit tests | The filter from any read split, a long string streams, the key reader (legacy, kitty and modifyOtherKeys prefix, key releases and modifier keys after the prefix, split reads), the layout, the canvas writes only changed cells and clips a wide cell |
@@ -401,7 +422,8 @@ request, and a debounce timer the test fires.
 
 | Limit | Why it is acceptable now |
 |---|---|
-| The host gets kitty flag 1 only, so a program that asked for key releases (flag 2) or alternate keys (flag 4) gets presses and base keys in the composed view. With flag 8, gff cannot know the keyboard layout: an upper-case ASCII letter is Shift and the letter, any other character is its own key | zellij also pushes flag 1 only. Pass-through gets the full protocol from the host |
+| The host gets kitty flags 1 and 4 only, so a program that asked for key releases (flag 2) gets presses in the composed view. A kitty program that asked for alternate keys (flag 4) gets them only from the text: libghostty's encoder takes no shifted key. With flag 8, gff cannot know the keyboard layout: an upper-case ASCII letter is Shift and the letter, any other character is its own key | zellij pushes flag 1 only. Pass-through gets the full protocol from the host |
+| Modifiers on a keypad key in application keypad mode are dropped: it sends its plain `SS3` form | xterm's modified forms there are rarely read |
 | A legacy program gets xterm's plain legacy keys in the composed view, not modifyOtherKeys forms, even when it set modifyOtherKeys (vim does) | As before this protocol; keys with no legacy form lose their modifiers |
 | With a host that has no kitty protocol, keys reach a kitty program in legacy form | As before; programs that push flag 1 still read legacy keys |
 | No mouse in the composed view; no wheel scrolling of scrollback; no selection (5.2) | Pass-through gets the pane's mouse modes. Later stages |
@@ -1278,7 +1300,7 @@ section has no keys yet; the app holds the actions (`groups.md` 5.9).
 
 ### 8.2 Keys reach the pane intact
 
-- `gff` reads keys from the host terminal with the kitty keyboard protocol (flag 1) when the host
+- `gff` reads keys from the host terminal with the kitty keyboard protocol (flags 1 and 4) when the host
   answers its query (3.4).
 - It encodes each key for the pane in the form the pane's program asked for: the kitty protocol at
   the flags the program pushed, else legacy bytes. The pane's keyboard mode comes from its parser.

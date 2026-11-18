@@ -111,6 +111,9 @@ type Key struct {
 	// 27, 13, 9 and 127 for Esc, Enter, Tab and Backspace, or kitty's number for a functional
 	// key (57344 and up, such as 57399 for keypad 0).
 	Code int
+	// Shifted is the code point the key types with Shift (kitty's alternate key), 0 when the
+	// host did not say.
+	Shifted int
 	// Mods holds kitty's modifier bits: 1 Shift, 2 Alt, 4 Ctrl, 8 Super, 16 Hyper, 32 Meta,
 	// 64 Caps Lock, 128 Num Lock.
 	Mods int

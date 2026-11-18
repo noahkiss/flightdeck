@@ -215,15 +215,17 @@ type client struct {
 	// The kitty keyboard protocol on the host (kitty.go): whether the host answered gff's query
 	// and when gff asked, the start of an answer cut at a read boundary, whether gff's flag is
 	// pushed on the composed screen, and the re-encoder of keys read with it.
-	hostKitty  bool
-	kittyAsked time.Time
-	kittyHeld  []byte
-	kittyOn    bool
-	kin        kittyIn
-	notes      chan paneNote
-	frames     chan paneFrame
-	later      chan func()
-	debounce   Timer
+	hostKitty    bool
+	kittyPending bool // the query is out and the host's DA1 answer has not come
+	kittyAsked   time.Time
+	kittyHeld    []byte
+	kittyPaste   bool // takeKittyReplies is inside a bracketed paste
+	kittyOn      bool
+	kin          kittyIn
+	notes        chan paneNote
+	frames       chan paneFrame
+	later        chan func()
+	debounce     Timer
 	// What the host shows besides the canvas, so an unchanged screen writes nothing.
 	cursorX, cursorY int
 	cursorOn         bool
@@ -355,13 +357,14 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	c.canvas.resize(c.w, c.h)
 	c.sendSizes()
 	c.out.WriteString(kittyQuery)
-	c.kittyAsked = cfg.Now()
+	c.kittyAsked, c.kittyPending = cfg.Now(), true
 	if ws {
 		c.ui.runPending() // startup tabs on hosts already online
 	}
 	defer func() {
 		c.restoreHost()
 		cfg.Out.Write(c.out.Bytes())
+		c.drainKittyAnswer(input) // a late answer must not reach the shell gff leaves
 	}()
 
 	tick := cfg.Tick

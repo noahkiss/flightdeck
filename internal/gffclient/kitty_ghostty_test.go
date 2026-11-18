@@ -24,9 +24,9 @@ func TestKittyPaneEncoding(t *testing.T) {
 	a := spawn(t, other, `echo ready; read -r x; stty raw -echo; printf '\033[>9upushed\r\n'; head -c 12 | od -An -tx1 | tr -d ' \n'; echo; exec sleep 600`, 40, 10)
 	b := spawn(t, other, "echo right; exec sleep 600", 40, 10)
 	hst := newHost(t, 100, 30, false)
+	hst.kitty = true
 	startGFF(t, h, hst, SplitColumns, PaneSpec{ID: a}, PaneSpec{ID: b})
 	hst.waitScreen("both panes", func(s string) bool { return strings.Contains(s, "ready") && strings.Contains(s, "right") })
-	hst.typ("\x1b[?0u")
 	waitUntil(t, "the push", func() bool { return bytes.Contains(hst.output(), []byte(kittyPush)) })
 	call(t, other, "pane.input", api.InputParams{Pane: a, Data: []byte("\n")}, nil)
 	hst.waitScreen("the program's push", func(s string) bool { return strings.Contains(s, "pushed") })
