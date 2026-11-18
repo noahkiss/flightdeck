@@ -201,4 +201,3 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	}
 	return api.ChannelStateAccepted, ""
 }
-
