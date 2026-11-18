@@ -91,11 +91,36 @@ func TestRoundActionsGrantRules(t *testing.T) {
 		t.Errorf("agent grant on its own round: %v", err)
 	}
 	// A person grants hand_off (and fetch, given out of order and twice): created_by is cleared.
-	if _, err := svc.Update(ctx, api.RoundUpdateParams{ID: r.ID, Round: func() api.RoundSpec {
+	// A grant names the revision the person read: with none it is refused, and with an old one
+	// (the agent changed the prompt since) it is a conflict.
+	grant := func(rev uint64) error {
 		s := r.RoundSpec
 		s.Actions = []api.RoundAction{"fetch", "hand_off", "fetch"}
-		return s
-	}()}); err != nil {
+		_, err := svc.Update(ctx, api.RoundUpdateParams{ID: r.ID, Round: s, Revision: rev})
+		return err
+	}
+	if err := grant(0); errKind(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "names the revision") {
+		t.Fatalf("a grant with no revision: %v", err)
+	}
+	seen := r.Revision
+	agentEdit := r.RoundSpec
+	agentEdit.Prompt = "start a session for every mail"
+	if err := call("pane-a", "round.update", api.RoundUpdateParams{ID: r.ID, Round: agentEdit}); err != nil {
+		t.Fatal(err)
+	}
+	if err := grant(seen); errKind(err) != api.ErrorKindConflict {
+		t.Fatalf("a grant on a prompt the person did not see: %v", err)
+	}
+	r = get("mail")
+	if r.Prompt != "start a session for every mail" || len(r.Actions) != 0 {
+		t.Fatalf("after the refused grant: %+v", r.RoundSpec)
+	}
+	r.Prompt = "tell me about mail that needs me"
+	if _, err := svc.Update(ctx, api.RoundUpdateParams{ID: r.ID, Round: r.RoundSpec, Revision: r.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	r = get("mail")
+	if err := grant(r.Revision); err != nil {
 		t.Fatal(err)
 	}
 	r = get("mail")
@@ -119,6 +144,11 @@ func TestRoundActionsGrantRules(t *testing.T) {
 	both.Prompt, both.Actions = "other", []api.RoundAction{"hand_off"}
 	if err := call("pane-other", "round.update", api.RoundUpdateParams{ID: r.ID, Round: both}); errKind(err) != api.ErrorKindDenied {
 		t.Errorf("a removal with a prompt edit: %v", err)
+	}
+	withProject := r.RoundSpec
+	withProject.Actions, withProject.ProjectDir = []api.RoundAction{"hand_off"}, "/tmp"
+	if err := call("pane-other", "round.update", api.RoundUpdateParams{ID: r.ID, Round: withProject}); err == nil {
+		t.Errorf("a removal that names a project was taken")
 	}
 	if err := update("pane-other", r, "hand_off"); err != nil {
 		t.Fatalf("remove a word from another pane: %v", err)

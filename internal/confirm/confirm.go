@@ -266,7 +266,6 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	on := s.cfg.Enabled != nil && s.cfg.Enabled()
 	ask := on && !self // a start on the agent's own host never asks (capcom.md 6.4)
-	answered := Answered(ctx)
 	member := false
 	if st.Group != "" && s.cfg.Envelope != nil {
 		// A later start of a group's member (groups.md 3.3): inside the envelope its plan's
@@ -280,8 +279,7 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 		member = m
 	}
 	switch {
-	case member, answered:
-		// answered: the user confirmed this call already, as a Capcom job's (capcom-service.md 9.6).
+	case member:
 		ask = false
 	case st.Group != "" && (s.cfg.GroupPlan == nil || s.cfg.GroupPlan()):
 		// A group start from outside its envelope asks while confirm.group_plan is on, on any
@@ -416,9 +414,6 @@ func (s *Service) requestGroup(ctx context.Context, p api.ConfirmRequestParams) 
 	ask := s.cfg.GroupPlan == nil || s.cfg.GroupPlan()
 	if !ask && elsewhere && s.cfg.Enabled != nil && s.cfg.Enabled() {
 		ask = true
-	}
-	if Answered(ctx) {
-		ask = false // the user confirmed this call already, as a Capcom job's (capcom-service.md 9.6)
 	}
 	ttl := s.cfg.TTL
 	if s.cfg.GroupTTL != nil {
@@ -630,7 +625,8 @@ func (s *Service) run(e *entry) api.Confirmation {
 	var err error
 	switch kind {
 	case "action":
-		// The user confirmed this one call: a start or a plan it opens asks nothing more.
+		// The user confirmed this one call. A start or a plan it opens still asks under its own
+		// setting, with its own card, so nothing runs that a card did not show.
 		var text string
 		text, err = act(withAnswered(ctx))
 		res = api.ConfirmResult{Text: text}
@@ -760,8 +756,8 @@ type confirmedKey struct{}
 type answeredKey struct{}
 
 // withAnswered marks ctx as the run of a call the user confirmed already, a Capcom job's under
-// ask (capcom-service.md 9.6): a start or a group plan it requests runs with no second question.
-// Only this package sets it, for a kind action confirmation the user confirmed.
+// ask (capcom-service.md 9.6): the group service's event-turn check lets it through, whatever
+// turn runs now. Only this package sets it, for a kind action confirmation the user confirmed.
 func withAnswered(ctx context.Context) context.Context {
 	return context.WithValue(ctx, answeredKey{}, true)
 }

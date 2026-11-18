@@ -106,10 +106,11 @@ func TestLinkBatchWaitsForTurn(t *testing.T) {
 	if m := e.next(); m.Type != TInput || !strings.HasPrefix(inputID(m), "b") {
 		t.Fatalf("after the turn: %+v", m)
 	}
-	// A reconnect while a user turn runs keeps it a user turn.
+	// A reconnect while a user turn runs keeps it a user turn, when the engine says so (an origin
+	// of user alone is not enough: TestLinkUserTurnFailsClosed).
 	e2, _ := h.connect()
 	r := readyMsg()
-	r.Turn = json.RawMessage(`{"turn":"t2","origin":"user"}`)
+	r.Turn = json.RawMessage(`{"turn":"t2","origin":"user","user":true}`)
 	e2.send(r)
 	waitFor(t, "the user turn after a reconnect", func() bool { s := h.link.Status(); return s.Turn == "t2" && s.UserTurn })
 }

@@ -144,7 +144,7 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 		// A crash between the thread and the queue left it in neither batch nor turn: queue it
 		// now, so the retry is still seen.
 		if it.Read.IsZero() && !e.events.Holds(it.ID) {
-			if err := e.events.Add(capcomevents.Event{Item: it.ID, Urgent: urgent, Round: m.ID}); err != nil {
+			if err := e.events.Add(capcomevents.Event{Item: it.ID, Urgent: urgent, Round: m.ID, Solo: len(it.Actions) > 0}); err != nil {
 				return api.ChannelStateRefused, "the Capcom event queue did not take it"
 			}
 		}
@@ -163,7 +163,7 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	if m.From.Session == channels.RoundSender(r.Name) {
 		// A Capcom job's words (9.6) come only from a round runner's message: no session sends
 		// under a round: sender. Words outside the closed set are dropped, not trusted.
-		it.Job = r.Name
+		it.Job = m.From.Host + "/" + r.Name // two hosts may each have a round of one name
 		for _, w := range r.Actions {
 			if slices.Contains(rounds.Actions, string(w)) && !slices.Contains(it.Actions, string(w)) {
 				it.Actions = append(it.Actions, string(w))
@@ -194,7 +194,9 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	if !added {
 		return api.ChannelStateDuplicate, ""
 	}
-	if err := e.events.Add(capcomevents.Event{Item: stored.ID, Urgent: urgent, Round: m.ID}); err != nil {
+	// A job with words goes in a batch of its own (9.6): no other job's prompt or event shares
+	// the turn its words allow.
+	if err := e.events.Add(capcomevents.Event{Item: stored.ID, Urgent: urgent, Round: m.ID, Solo: len(stored.Actions) > 0}); err != nil {
 		// The runner sends it again; the thread holds it, and the duplicate path queues it.
 		e.logf("capcom events: %v", err)
 		return api.ChannelStateRefused, "the Capcom event queue did not take it"

@@ -593,7 +593,7 @@ test('after a reconnect, ready names the running turn and open cards are asked a
     await until(() => (r.engine as any).route.pending === 0);
     r.hab.drop();
     const ready = await r.hab.wait('ready', (m) => m.conn === 2);
-    assert.deepEqual(ready.turn, { turn: ts.turn, origin: 'user' });
+    assert.deepEqual(ready.turn, { turn: ts.turn, origin: 'user', user: true }); // user: the hab knows after a reconnect (9.6)
     const again = await r.hab.wait('approval.request', (m) => m.conn === 2);
     assert.deepEqual({ ...again, seq: 0, conn: 0 }, { ...req, seq: 0, conn: 0 });
     r.hab.send('approval.answer', { request: req.request, allow: true, message: '' });

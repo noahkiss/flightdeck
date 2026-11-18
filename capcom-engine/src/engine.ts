@@ -211,7 +211,7 @@ export class Engine {
     }
     const ready: Record<string, unknown> = { engine: 'claude', version: ENGINE_VERSION, sdk_version: SDK_VERSION, capabilities: CAPABILITIES };
     // An engine that outlived a gff-hab restart says which turn runs.
-    if (this.turn) ready.turn = { turn: this.turn.id, origin: this.turn.origin };
+    if (this.turn) ready.turn = { turn: this.turn.id, origin: this.turn.origin, user: this.turn.user }; // user: a reconnect knows (9.4)
     return ready;
   }
 

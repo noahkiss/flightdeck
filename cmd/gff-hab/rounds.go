@@ -1769,7 +1769,8 @@ func agentEdit(old api.Round, next api.RoundSpec, method string) (removeOnly boo
 	same.Actions = old.Actions
 	stored := old.RoundSpec
 	removed := len(want) < len(have)
-	if reflect.DeepEqual(normalSpec(same), normalSpec(stored)) {
+	project := next.ProjectDir != "" || (next.ProjectRemote != "" && next.ProjectRemote != stored.ProjectRemote)
+	if !project && reflect.DeepEqual(normalSpec(same), normalSpec(stored)) {
 		return removed, nil
 	}
 	if len(have) > 0 {
@@ -1948,6 +1949,11 @@ func (s *roundsService) updateRound(ctx context.Context, p api.RoundUpdateParams
 	s.mu.Lock()
 	rev := max(s.revs[p.ID], 1)
 	s.mu.Unlock()
+	if p.Revision == 0 && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
+		// A grant names the revision the person read, so the prompt they let act is the one
+		// they saw, not one an agent wrote since (capcom-service.md 9.6).
+		return api.Round{}, control.Errorf(api.ErrorKindInvalid, "round %s: a grant of action words names the revision you read (revision); read the round and its prompt, then grant", r.Name)
+	}
 	if p.Revision != 0 && p.Revision != rev {
 		return api.Round{}, control.Errorf(api.ErrorKindConflict, "round %s is at revision %d, not %d; read it again", r.Name, rev, p.Revision)
 	}

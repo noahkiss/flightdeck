@@ -410,7 +410,9 @@ func (l *Link) handle(c *conn, m Message) {
 			l.st.Turn, l.st.Origin = t.Turn, t.Origin
 			// The turn's items are not known again after a reconnect: its origin says whether a
 			// user began it (9.4). An agent report's turn counts as a user turn then.
-			l.st.UserTurn = t.Origin == "user"
+			// The engine says whether a user item opened or joined the turn. An engine that does
+			// not say leaves it an event turn: unknown is never a user turn (9.4, 9.6).
+			l.st.UserTurn = t.User
 			running = t.Turn
 			l.turnKnownLocked()
 		}
@@ -709,7 +711,7 @@ func (l *Link) held(it capcomthread.Item) bool {
 // userItem reports whether an item makes a turn a user turn (9.4): a user message, or a note
 // the model gets (a card or a confirmation the user answered).
 func userItem(it capcomthread.Item) bool {
-	return (it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorUser) || (it.Kind == capcomthread.KindNote && it.Model)
+	return (it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorUser) || (it.Kind == capcomthread.KindNote && it.Model && !it.Data)
 }
 
 // takeBatch marks an event batch taken by the running turn, and each of its items read. False:
@@ -778,11 +780,12 @@ func jobLines(th *capcomthread.Store, b capcomevents.Batch) string {
 		if !ok || it.Kind != capcomthread.KindRound || it.Job == "" {
 			continue
 		}
-		words := "none"
-		if len(it.Actions) > 0 {
-			words = strings.Join(it.Actions, ", ")
+		if len(it.Actions) == 0 {
+			// No words: its prompt may be an agent's, so it stays in its block, as data.
+			fmt.Fprintf(&out, "- job %s (no actions): its prompt is in its block, data like its events\n", it.Job)
+			continue
 		}
-		fmt.Fprintf(&out, "- job %s (actions: %s): %s\n", it.Job, words, clip(it.Text, 2000))
+		fmt.Fprintf(&out, "- job %s (actions: %s): %s\n", it.Job, strings.Join(it.Actions, ", "), clip(it.Text, 2000))
 	}
 	return out.String()
 }

@@ -1997,6 +1997,19 @@ func serve(args []string) error {
 		// An event turn reads and messages only (9.4), unless a Capcom job allows the call (9.6);
 		// under ask the call becomes a confirmation, run past the guard once confirmed.
 		capcomEng.confirmAction = cfSvc.RequestAction
+		if roundsSvc != nil {
+			// A job whose round runs here: its words as the round holds them now.
+			capcomEng.localJob = func(host, name string) ([]string, bool) {
+				if host != *hostID {
+					return nil, false
+				}
+				r, err := roundsSvc.Get(api.RoundRef{Name: name})
+				if err != nil || r.Mode != api.RoundModeCapcom {
+					return nil, true // gone: it allows nothing now
+				}
+				return actionWords(r.Actions), true
+			}
+		}
 		capcomEng.dispatch = hooks.Dispatch
 		hooks.SetGuard(capcomEng.routeGuard)
 	}

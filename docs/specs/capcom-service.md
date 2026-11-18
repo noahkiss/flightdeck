@@ -1302,9 +1302,19 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
 
 - **Where the words live.** The runner sends the round's words that it still holds at send
   time, so a word the user removed after the run started never goes. The home hab copies them
-  onto the `round` item, with the round's name as the job, only when the sender is
-  `round:<the round mark's name>`; a word outside the closed set is dropped. Any other round
+  onto the `round` item, with the job named `<runner host>/<round name>`, only when the sender
+  is `round:<the round mark's name>`; a word outside the closed set is dropped. Any other round
   mark (a session's sender name, another round's name) adds a `round` item with no words.
+- **Words now, for a local job.** When the job's round runs on the home hab, each check reads
+  the round's words as they stand: a word removed, or a round deleted, after the message came
+  allows nothing from then on. A peer's job keeps the words its message carried.
+- **A batch of its own.** A `round` item with words goes in a batch alone, so the words its
+  turn may use never meet another job's prompt or event. It counts one event turn.
+- **A grant names what the person saw.** `round.update` that adds a word must carry the
+  revision the person read (`invalid` without it, `conflict` when the round changed since), so
+  an agent's prompt edit between the read and the grant fails the grant. `gff round edit
+  -actions` prints the prompt the words let act and asks first (`-yes` skips it); `apply`
+  prints it in its diff.
 - **Which call needs which word.** `hand_off` allows `channel.send`, so it also allows
   `channel_send`, which sends the same way. `start_session` and `set_up_project` allow
   `confirm.request` of kind `start` and `setup`. `group` allows the coordinator's acting calls
@@ -1321,12 +1331,18 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
 - **`allow`.** The call runs as in a user turn, under its own gates, and a card of type `job`
   (a record, no choices, its ref the job) names the job and says what the call does.
 - **`ask`.** The call becomes a confirmation of the new kind `action` (`capcom.md` 6.4), which
-  names the job, the word and what the call does, and expires after
+  names the job and the word and carries the whole call: a summary that cuts nothing (a
+  message or a seed shows whole), the method, and the params the hab runs. It expires after
   `capcom.event_action_max_age`. Nothing runs. The tool gets `denied`, "waits for the user",
   except a start, which gets the confirmation as `confirm.request` would answer. On confirm the
-  hab runs the call as Capcom's route would, past the guard, and a start or a plan it opens
-  asks nothing more: the action card was the one question. A `card` or `fetch` call raises
-  only its own card (8.5, 5.3), since that card already asks.
+  hab runs those params as Capcom's route would, past the guard. A start or a group plan the
+  call asks for still raises its own card under its own setting, so nothing runs that a card
+  did not show. A `card` or `fetch` call raises only its own card (8.5, 5.3), since that card
+  already asks.
+- **Turns.** The engine's `ready` says whether a user item opened or joined the running turn;
+  without that word the hab treats the turn as an event turn, never a user turn. A card's
+  answer reaches the model as a note marked data, which quotes the card's title and neither
+  opens nor joins a user turn: an event turn may have written that title.
 - **The engine.** The batch input carries the words the turn may use, capped by the level and
   `capcom.event_actions_per_turn`, and a line per job with its prompt and words. The engine
   asks for an unseen URL in an event turn only when `fetch` is among them; gff-hab checks
@@ -1337,6 +1353,13 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
 - **gff.** `gff round add|edit -actions w,...` sets the words; `show` lists them; export and
   apply carry them. The board's `m` shows only `capcom` rounds, each with its words and its
   newest message's outcome.
+- **Stated assumptions and limits.** The control socket is the person: the hab trusts any call
+  on it. From a pane, the CLI refuses `-actions`, `confirm answer` and the like where
+  `$GFF_HAB` is set, but an agent with the user's shell and no sandbox can drop that variable
+  and reach the socket, as in the tools Flightdeck measures itself against. A peer-credential
+  check on the socket is not built. The hab judges a route call by the turn that runs when it
+  arrives: a call still in flight from an event turn the user stopped, landing after a user
+  turn began, is judged as the user turn's. The SDK gives the route call no turn id to compare.
 - **Not built in A9.** The app's "Capcom jobs" list in Capcom settings and the action switches
   on a round's page (rounds stage 7's views). The app has the `capcom.event_actions` row with
   its levels; `capcom.event_actions_per_turn` and `capcom.event_action_max_age` have no app row.

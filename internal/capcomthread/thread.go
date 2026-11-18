@@ -97,6 +97,9 @@ type Item struct {
 	// Model marks a note the model gets as input (a card answered, a confirmation outcome; 4.2).
 	// User messages, agent reports and round items always go to the model.
 	Model bool `json:"model,omitempty"`
+	// Data marks a Model note whose text quotes what an event turn wrote (a calendar card's
+	// title): the model gets it, but it neither opens nor joins a user turn (capcom-service.md 9.6).
+	Data bool `json:"data,omitempty"`
 	// Read is when the engine took the message (input.taken, 7.3). Zero: not read yet.
 	Read time.Time `json:"read,omitzero"`
 	// SendNow marks a user message sent with "Send now": it runs on the small model while the

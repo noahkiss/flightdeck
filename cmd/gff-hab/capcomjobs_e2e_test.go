@@ -75,7 +75,7 @@ func TestCapcomJobsE2E(t *testing.T) {
 	waitUntil(t, "outcome told", func() bool { return outcome("mail", 1) == "told" })
 
 	// A person grants hand_off; under allow (the default) the call goes through the route.
-	mustRound(t, e.habEnv, "edit", "mail", "-actions", "hand_off")
+	mustRound(t, e.habEnv, "edit", "mail", "-yes", "-actions", "hand_off")
 	if r := getRound(t, c, "mail"); len(r.Actions) != 1 || r.Actions[0] != "hand_off" {
 		t.Fatalf("after the grant: %+v", r.Actions)
 	}
@@ -86,7 +86,7 @@ func TestCapcomJobsE2E(t *testing.T) {
 	waitUntil(t, "outcome acted", func() bool { return outcome("mail", 2) == "acted" })
 	card := false
 	for _, it := range threadText(t, c) {
-		if it.Kind == "card" && it.Card != nil && it.Card.Type == cardJob && strings.Contains(it.Text, "job mail") {
+		if it.Kind == "card" && it.Card != nil && it.Card.Type == cardJob && strings.Contains(it.Text, "/mail,") {
 			card = true
 		}
 	}
@@ -105,7 +105,7 @@ func TestCapcomJobsE2E(t *testing.T) {
 	waitUntil(t, "outcome acted under ask", func() bool { return outcome("mail", 3) == "acted" })
 	var l api.ConfirmList
 	call(t, c, "confirm.list", api.ConfirmListParams{}, &l)
-	if len(l.Confirmations) != 1 || l.Confirmations[0].Kind != "action" || l.Confirmations[0].Action == nil || l.Confirmations[0].Action.Job != "mail" {
+	if len(l.Confirmations) != 1 || l.Confirmations[0].Kind != "action" || l.Confirmations[0].Action == nil || !strings.HasSuffix(l.Confirmations[0].Action.Job, "/mail") {
 		t.Fatalf("confirmations %+v", l.Confirmations)
 	}
 	// The tap runs the call through the route: channel.send answers that nobody is there.

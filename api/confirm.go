@@ -71,7 +71,9 @@ type ConfirmResult struct {
 type ConfirmAction struct {
 	Job     string      `json:"job" doc:"The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas."`
 	Word    RoundAction `json:"word" doc:"The action word the call uses."`
-	Summary string      `json:"summary" doc:"What the call would do, in one line, such as hand off to web-ui: fix the login page."`
+	Summary string      `json:"summary" doc:"What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole."`
+	Method  string      `json:"method" doc:"The route method the hab runs on confirm, such as channel.send."`
+	Params  string      `json:"params" doc:"The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting."`
 }
 
 // Confirmation is one start, set-up or round an agent asked for: an open question to the user, or,

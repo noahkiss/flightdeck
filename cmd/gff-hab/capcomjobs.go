@@ -142,7 +142,7 @@ func (e *capcomEngine) batchJobs(b capcomevents.Batch, word string) []string {
 	var jobs []string
 	for _, id := range b.Items {
 		it, ok := e.thread.Get(id)
-		if !ok || it.Kind != capcomthread.KindRound || it.Job == "" || !slices.Contains(it.Actions, word) {
+		if !ok || it.Kind != capcomthread.KindRound || it.Job == "" || !slices.Contains(e.jobWords(it), word) {
 			continue
 		}
 		if !slices.Contains(jobs, it.Job) {
@@ -150,6 +150,27 @@ func (e *capcomEngine) batchJobs(b capcomevents.Batch, word string) []string {
 		}
 	}
 	return jobs
+}
+
+// jobWords are a round item's words as they stand now: for a job whose round runs on this
+// hab, only those the round still has, so a word the user removed, or a deleted round, allows
+// nothing from then on. A peer's job keeps the words its message carried.
+func (e *capcomEngine) jobWords(it capcomthread.Item) []string {
+	host, name, ok := strings.Cut(it.Job, "/")
+	if !ok || e.localJob == nil {
+		return it.Actions
+	}
+	now, local := e.localJob(host, name)
+	if !local {
+		return it.Actions
+	}
+	var out []string
+	for _, w := range it.Actions {
+		if slices.Contains(now, w) {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // batchActions is the words a batch's turn may use, capped by the level and the per-turn
@@ -219,7 +240,10 @@ func (e *capcomEngine) routeGuard(ctx context.Context, pane, method string, para
 		return nil, control.Errorf(api.ErrorKindUnavailable, "%s: this hab cannot ask the user to confirm a Capcom job's action", method)
 	}
 	dispatch := e.dispatch
-	c, err := e.confirmAction(ctx, capcomServiceName, api.ConfirmAction{Job: job, Word: api.RoundAction(word), Summary: summary},
+	// The card shows the whole call: its summary, never cut, and the params the hab runs on
+	// confirm. A start or a plan the call asks for still raises its own card.
+	c, err := e.confirmAction(ctx, capcomServiceName, api.ConfirmAction{Job: job, Word: api.RoundAction(word), Summary: summary,
+		Method: method, Params: string(params)},
 		time.Duration(e.settingInt(settings.CapcomEventActionMaxAge))*time.Minute,
 		func(ctx context.Context) (string, error) {
 			res, err := dispatch(ctx, pane, method, params)
@@ -280,7 +304,8 @@ func (e *capcomEngine) jobCard(turn, text, job string) {
 	}
 }
 
-// actionSummary says what an acting call would do, in one line, for its card.
+// actionSummary says what an acting call would do, for its card. It cuts nothing: a message or
+// a seed shows whole, so the user sees all the text the call sends.
 func actionSummary(method string, params json.RawMessage) string {
 	var p struct {
 		To    string                  `json:"to"`
@@ -319,7 +344,7 @@ func actionSummary(method string, params json.RawMessage) string {
 			s += ": " + p.Plan.Title
 		}
 	}
-	return clipLine(s, 300)
+	return s
 }
 
 // resultLine is a confirmed call's answer in one line.

@@ -433,7 +433,7 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	sock := socketFlag(fs)
 	via := fs.String("via", "", "run this command and speak over its stdio, e.g. \"ssh <host> gff-hab connect\"")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
-	yes := fs.Bool("yes", false, "rm and apply: do not ask")
+	yes := fs.Bool("yes", false, "rm, apply, and a grant of action words in edit: do not ask")
 	limit := fs.Int("limit", 20, "runs: at most this many runs")
 	runNow := fs.Bool("run-now", false, "add: also start one run now")
 	host := fs.String("host", "", "a peer's label: act on its rounds, through its endpoint (move: the new runner)")
@@ -624,6 +624,15 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		spec.ProjectRemote = "" // read only here: the project id stays
 		if err := def.apply(&spec, set, words); err != nil {
 			return err
+		}
+		if g := rounds.Granted(actionWords(r.Round.Actions), actionWords(spec.Actions)); len(g) > 0 {
+			// The grant flow shows the prompt the words let act (capcom-service.md 9.6); the
+			// update names the revision read here, so a prompt changed since is refused.
+			fmt.Fprintf(out, "Round %s may then use %s on its own. Its prompt, which Capcom will take as your instruction:\n  %s\n",
+				r.Round.Name, strings.Join(g, ", "), strings.ReplaceAll(spec.Prompt, "\n", "\n  "))
+			if !*yes && !askYes(stdin, out, "Grant these words? [y/N] ") {
+				return errors.New("not granted")
+			}
 		}
 		var res api.RoundResult
 		if err := c.Call(ctx, "round.update", api.RoundUpdateParams{ID: r.Round.ID, Round: spec, Revision: r.Round.Revision}, &res); err != nil {
@@ -1247,6 +1256,17 @@ func printPlan(out io.Writer, plan []roundChange) {
 			}
 		default:
 			fmt.Fprintf(out, "~ %s %s\n", ch.op, ch.have.Name)
+		}
+		if ch.op == "create" || ch.op == "update" {
+			var had []string
+			if ch.have != nil {
+				had = actionWords(ch.have.Actions)
+			}
+			if g := rounds.Granted(had, ch.want.Actions); len(g) > 0 {
+				// A grant shows the prompt the words let act (capcom-service.md 9.6).
+				fmt.Fprintf(out, "    grants %s; Capcom takes this prompt as your instruction:\n      %s\n",
+					strings.Join(g, ", "), strings.ReplaceAll(ch.want.Prompt, "\n", "\n      "))
+			}
 		}
 	}
 }

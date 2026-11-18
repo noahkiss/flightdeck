@@ -283,3 +283,24 @@ func TestStoppedHoldsAll(t *testing.T) {
 		t.Fatal("not released at start")
 	}
 }
+
+// TestSoloBatch: a Capcom job with words goes in a batch of its own (capcom-service.md 9.6); the
+// events around it batch as before, and it still counts one event turn.
+func TestSoloBatch(t *testing.T) {
+	r := newRig(t, day(12, 0))
+	a := r.add(false, "")
+	r.n++
+	solo := fmt.Sprintf("c%016x", r.n)
+	if err := r.q.Add(Event{Item: solo, At: r.c.now, Round: "m1", Solo: true}); err != nil {
+		t.Fatal(err)
+	}
+	b := r.add(false, "")
+	r.c.advance(day(12, 2))
+	got := r.batches()
+	if len(got) != 2 || !slices.Equal(got[0], []string{a, b}) || !slices.Equal(got[1], []string{solo}) {
+		t.Fatalf("batches %v", got)
+	}
+	if n, _ := r.q.Turns(); n != 2 {
+		t.Fatalf("turns %d", n)
+	}
+}

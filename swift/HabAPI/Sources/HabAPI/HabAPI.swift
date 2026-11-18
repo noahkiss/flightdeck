@@ -2395,19 +2395,27 @@ public struct Compaction: Codable, Sendable, Hashable {
 public struct ConfirmAction: Codable, Sendable, Hashable {
     /// The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas.
     public var job: String
-    /// What the call would do, in one line, such as hand off to web-ui: fix the login page.
+    /// The route method the hab runs on confirm, such as channel.send.
+    public var method: String
+    /// The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting.
+    public var params: String
+    /// What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole.
     public var summary: String
     /// The action word the call uses.
     public var word: RoundAction
 
     enum CodingKeys: String, CodingKey {
         case job = "job"
+        case method = "method"
+        case params = "params"
         case summary = "summary"
         case word = "word"
     }
 
-    public init(job: String, summary: String, word: RoundAction) {
+    public init(job: String, method: String, params: String, summary: String, word: RoundAction) {
         self.job = job
+        self.method = method
+        self.params = params
         self.summary = summary
         self.word = word
     }

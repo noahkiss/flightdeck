@@ -7818,9 +7818,17 @@
             "type": "string",
             "description": "The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas."
           },
+          "method": {
+            "type": "string",
+            "description": "The route method the hab runs on confirm, such as channel.send."
+          },
+          "params": {
+            "type": "string",
+            "description": "The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting."
+          },
           "summary": {
             "type": "string",
-            "description": "What the call would do, in one line, such as hand off to web-ui: fix the login page."
+            "description": "What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole."
           },
           "word": {
             "$ref": "#/components/schemas/RoundAction",
@@ -7830,7 +7838,9 @@
         "required": [
           "job",
           "word",
-          "summary"
+          "summary",
+          "method",
+          "params"
         ]
       },
       "ConfirmAnswerParams": {

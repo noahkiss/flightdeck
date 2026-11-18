@@ -1467,7 +1467,9 @@ the field rules of 3: `round.create` with words from a pane's or Capcom's route 
 an agent route's `round.update` is checked against the stored round under the edit lock, so
 it may remove words from any round, and on a round with words it may change nothing else; a
 round with words refuses an agent route's pause, unpause, delete and run. A person's update
-that adds a word clears `created_by`. An agent's round on another host (kind `round`
+that adds a word clears `created_by`, and must carry the revision the person read
+(`invalid` without one): `gff round edit -actions` and `apply` show the prompt the words let
+act before they grant. An agent's round on another host (kind `round`
 confirmation) is refused with words, since the runner's create over the link would take them
 as a person's. The round message carries the words. `gff round add|edit -actions`, `show`,
 export and apply carry them, and gff's board filters on `m`. The app's Capcom jobs list is not
