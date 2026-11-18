@@ -185,6 +185,7 @@ const usage = `usage:
   gff-hab mcp header -config file <name>
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab agent compact [-json] [follow-up... | -]   (the same as gff agent; in an agent's pane)
+  gff-hab agent name [-json] <name>                  (the same as gff agent; in an agent's pane)
   gff-hab hook [-t ms] [-wait] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
   gff-hab statusline claude [-timeout d] [-- command...] < status-line input
@@ -1956,9 +1957,11 @@ func serve(args []string) error {
 		hooks.SetPersonal(capcomEng.personal.hook)
 		hooks.SetGuard(capcomEng.routeGuard) // an event turn reads and messages only (9.4)
 	}
-	if compacts != nil {
-		hooks.SetAgent(compactHook(compacts))
+	var names renamer
+	if sessionActs != nil {
+		names = sessionActs
 	}
+	hooks.SetAgent(agentHook(compacts, names, store))
 	hooks.SetReads(readHook(reads, cs, pm))
 	folders := spawnFolders{catalog: cs.List, host: *hostID}
 	if sessionActs != nil {

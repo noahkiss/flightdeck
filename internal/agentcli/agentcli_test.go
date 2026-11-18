@@ -12,7 +12,7 @@ import (
 // that call nothing; Text names the follow-up only when one was given.
 func TestUsageAndOutsidePane(t *testing.T) {
 	none := func(string) string { return "" }
-	for _, args := range [][]string{nil, {"nonesuch"}, {"compact", "go on"}} {
+	for _, args := range [][]string{nil, {"nonesuch"}, {"compact", "go on"}, {"name"}, {"name", "a", "b"}, {"name", "bob"}} {
 		var out, errb bytes.Buffer
 		if code := Run("gff", args, strings.NewReader(""), &out, &errb, none); code != exitUsage || out.Len() != 0 {
 			t.Errorf("%q: exit %d, out %q", args, code, out.String())

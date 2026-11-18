@@ -235,6 +235,12 @@ type CompactParams struct {
 	FollowUp string `json:"follow_up,omitempty" doc:"A message delivered as the agent's first after the compaction, at most 8000 characters."`
 }
 
+// AgentNameParams are the params of agent.name, a pane route method: the pane's token names the
+// session to rename (harness-adapters.md, Agent kit). The result is the renamed Session.
+type AgentNameParams struct {
+	Name string `json:"name" doc:"The session's new name: 1 to 64 of A-Z a-z 0-9 . _ -, unique on this host and its peers."`
+}
+
 // Compaction is one self-compact: the result of agent.compact and the data of an agent.compact
 // event, whose id is the compaction id.
 type Compaction struct {
