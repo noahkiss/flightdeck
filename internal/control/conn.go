@@ -478,6 +478,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleExplain(m)
 		return
 	}
+	if m.Method == "flightrules.list" || m.Method == "flightrules.text" {
+		c.handleFlightRules(m)
+		return
+	}
 	switch m.Method {
 	case "content.show", "content.list", "content.read", "content.diff":
 		c.handleContent(m)
