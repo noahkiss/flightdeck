@@ -68,7 +68,25 @@ public enum DemoFleet {
         await hab.setUsage(demoUsage(Date()))
         await addConfirmations(hab)
         await addCapcom(hab)
+        await addCapcomJobs(hab)
         return hab
+    }
+
+    /// Two Capcom jobs (capcom-service.md 9.6): one that may hand off work and acted last
+    /// time, one that only reads and messages.
+    static func addCapcomJobs(_ hab: FakeHab) async {
+        await hab.setCapability(RoundCenter.capability, true)
+        await hab.setCapability(CapcomJobs.capability, true)
+        try? await hab.loadRound(RoundSpec(
+            actions: [.handOff], mode: .capcom, name: "build-failures",
+            prompt: "When a build fails, find the project's agent and hand it the failing test with the log.",
+            trigger: RoundTrigger(event: "notice.raised", kind: .event)))
+        try? await hab.loadRound(RoundSpec(
+            mode: .capcom, name: "morning-brief",
+            prompt: "Each morning, tell me what my agents finished overnight and what waits for me.",
+            trigger: RoundTrigger(every: "1d", kind: .cron)))
+        await hab.loadRoundOutcome(named: "build-failures", "acted")
+        await hab.loadRoundOutcome(named: "morning-brief", "told")
     }
 
     /// One start that waits for the owner and one that ran at once (capcom.md 6.1).

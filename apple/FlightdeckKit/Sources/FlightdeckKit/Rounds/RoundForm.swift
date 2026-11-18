@@ -113,9 +113,6 @@ public struct RoundDraft: Equatable, Sendable {
             s.expiresAt = k.expiresAt
             s.harnessArgs = k.harnessArgs
             s.waitMs = k.waitMs
-            // A Capcom job's words stay: an edit that dropped them would take away what the
-            // person granted (capcom-service.md 9.6).
-            if mode == .capcom { s.actions = k.actions }
         }
         s.model = model.isEmpty ? nil : model
         switch mode {
