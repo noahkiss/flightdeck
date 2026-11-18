@@ -3564,8 +3564,8 @@ picker never changes them.
 | `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 1 to 1000 | 20 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
 | `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
-| `capcom.event_actions_per_turn` | Capcom job actions in one look, at most | Capcom | integer 0 to 20; 0 allows none | 3 | Hab, the home hab (no app row yet) | `capcom-service.md` 9.6, 19.1 |
-| `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, the home hab (no app row yet) | `capcom-service.md` 9.6, 19.1 |
+| `capcom.event_actions_per_turn` | Capcom job actions in one look, at most | Capcom | integer 0 to 20; 0 allows none | 3 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
+| `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
 | `group.max_workers` | Workers per lead | Agents | integer 0 to 5 | 2 | Hab, every hab; copied into each member's envelope | `groups.md` 3.3 |
@@ -3781,10 +3781,6 @@ The page is `Views/SettingsViews.swift`.
 - **`gff lb status`** waits for Logbook.
 - **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
   usage thresholds are not sent yet.
-- **Capcom jobs** (`capcom-service.md` 9.6): `capcom.event_actions` is a levelled row, and the
-  hab enforces all three `capcom.event_action*` settings. The "Capcom jobs" list in Capcom
-  settings, with the action switches on a round's page, is not built, and
-  `capcom.event_actions_per_turn` and `capcom.event_action_max_age` have no app row yet.
 
 ---
 
@@ -3893,4 +3889,35 @@ reports, mouse motion and wheel reports while the client owns the pane.
 - **Reason.** The hab cannot tell a focus report from typed bytes in `pane.input` without
   parsing the stream, and other clients (`gff`) send their own. The app knows what its
   terminal generated.
+
+### 21.5 Capcom jobs
+
+The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/CapcomJobs.swift`
+(the list, the switches, the grant), `Views/CapcomJobViews.swift`. Tests: `CapcomJobTests`.
+
+- **Where.** Capcom settings (the "Capcom host" page) has a "Capcom jobs" row with the count.
+  It opens the list: one section per job, by name, with its trigger, its hab and "Last:" and
+  the outcome ("Told you", "Stayed quiet", "Acted", "Not seen", "No answer", "No run yet"),
+  "Paused" when it is, a link to the round's page, and the switches. A `capcom` round's page
+  shows the same switches under "Capcom may", with "Last outcome".
+- **Capability.** Only habs whose welcome lists `rounds` and `round-actions` count. With none,
+  the row does not show.
+- **Switches.** One per word, in the hab's order: "Hand off work to an agent" (`hand_off`),
+  "Start a session", "Set up a project", "Start or change a group" (`group`), "Add calendar and
+  reminder cards" (`card`), "Open pages it has not seen" (`fetch`).
+- **A grant shows the prompt.** Turning a switch on shows, under the switches, "Allow
+  "<switch>"?", "Capcom follows this prompt when the job's events come in:", the prompt whole,
+  and Cancel and Allow. Allow sends `round.update` with the round's whole definition, the word
+  added, and the revision of the round the prompt came from. The app keeps a digest of the
+  prompt each job had at its last grant, in the app's defaults; a later grant with the same
+  prompt goes at once, at the revision the app holds.
+- **A conflict never grants.** On `conflict` the app reads the round (`round.get`) and shows
+  its prompt again, with "The job changed. Read its prompt again." Only a second Allow grants.
+- **Off.** Turning a switch off sends the removal at once. On `conflict` the app reads the
+  round and sends the removal once more on it: a removal only narrows the job.
+- **Cards.** The kind `action` confirmation shows the job, the word and the method in rows that
+  wrap and never cut, then the summary and the params whole; the list or thread around the card
+  scrolls a long one. The `job` card in the Capcom thread shows its text with a bolt.
+- **Not built.** The round form edits only `fresh`, `resume` and `fork` rounds; a `capcom`
+  round's Edit needs a form of its own.
 

@@ -1416,6 +1416,7 @@ it.
 | `hab.woke` | Event | A detected wake (4.3), with `slept_s`. Host scope |
 | Channel message `round` | Optional field | Round id, run id and the deadline. The target hab delivers it under the round lock and expires it at the deadline (5.2) |
 | `round-lock` | Capability | The hab honours the channel `round` mark (5.2) |
+| `round-actions` | Capability | The hab knows a `capcom` round's `actions` (3); a client shows Capcom jobs only from such a hab. Stage A9 |
 | `capcom-service` | Capability (Part 14) | The Capcom service runs on this hab (5.2) |
 | Message states `accepted`, `duplicate`, `declined` | Words | Final states of a channel message to the Capcom service (5.2) |
 | `logbook.history` `folded_after` | Optional parameter | Ops this replica folded after a local fold number (4.3) |
@@ -1472,8 +1473,8 @@ that adds a word clears `created_by`, and must carry the revision the person rea
 act before they grant. An agent's round on another host (kind `round`
 confirmation) is refused with words, since the runner's create over the link would take them
 as a person's. The round message carries the words. `gff round add|edit -actions`, `show`,
-export and apply carry them, and gff's board filters on `m`. The app's Capcom jobs list is not
-built.
+export and apply carry them, and gff's board filters on `m`. The app's Capcom jobs list is in
+`app.md` 21.5.
 
 Built (stage 3). Where this spec left a choice open:
 
