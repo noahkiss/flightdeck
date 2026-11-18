@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1419,7 +1420,7 @@ func apiRound(e rounds.Entry) api.Round {
 			CatchUp: api.RoundCatchUp(r.CatchUp), OnFinish: api.RoundOnFinish(r.OnFinish), Notify: api.RoundNotify(r.Notify),
 			Paused: r.Paused, Group: r.Group,
 			DebounceMS: time.Duration(r.Debounce).Milliseconds(), CooldownMS: time.Duration(r.Cooldown).Milliseconds(),
-			Secrets: r.Secrets,
+			Secrets: r.Secrets, Actions: apiActions(r.Actions),
 		},
 		CreatedBy: r.CreatedBy, CreatedAt: rfc(&r.CreatedAt), UpdatedAt: rfc(&r.UpdatedAt),
 		NextSlot: rfc(st.NextSlot), LastSlot: rfc(st.LastSlot), LastOK: rfc(st.LastOK),
@@ -1622,6 +1623,7 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		Group:   p.Group, Debounce: rounds.Duration(time.Duration(p.DebounceMS) * time.Millisecond),
 		Cooldown: rounds.Duration(time.Duration(p.CooldownMS) * time.Millisecond),
 		Secrets:  p.Secrets,
+		Actions:  actionWords(p.Actions),
 	}
 	if w := p.Trigger.Watch; w != nil {
 		r.Trigger.Watch = &rounds.Watch{Argv: w.Argv, Cwd: w.Cwd, Kinds: w.Kinds}
@@ -1732,6 +1734,68 @@ func wordIn(set, w string) bool {
 	return false
 }
 
+// actionWords and apiActions convert a Capcom job's action words (capcom-service.md 9.6).
+func actionWords(a []api.RoundAction) []string {
+	var out []string
+	for _, w := range a {
+		out = append(out, string(w))
+	}
+	return out
+}
+
+func apiActions(a []string) []api.RoundAction {
+	var out []api.RoundAction
+	for _, w := range a {
+		out = append(out, api.RoundAction(w))
+	}
+	return out
+}
+
+// errGrant is the refusal of an agent route's grant (capcom-service.md 9.6).
+func errGrant(method string) error {
+	return control.Errorf(api.ErrorKindDenied, "%s: only the user can let Capcom act on a job; an agent may create a capcom round with no actions, and may remove words", method)
+}
+
+// agentEdit checks an agent route's round.update against the stored round (capcom-service.md
+// 9.6): it may not add an action word, and while the round has words it may only remove some,
+// with every other field as round.get gives it. removeOnly reports an edit that only removes
+// words, which any route may make, also on a round the agent did not create.
+func agentEdit(old api.Round, next api.RoundSpec, method string) (removeOnly bool, err error) {
+	have, want := actionWords(old.Actions), actionWords(next.Actions)
+	if len(rounds.Granted(have, want)) > 0 {
+		return false, errGrant(method)
+	}
+	same := next
+	same.Actions = old.Actions
+	stored := old.RoundSpec
+	removed := len(want) < len(have)
+	if reflect.DeepEqual(normalSpec(same), normalSpec(stored)) {
+		return removed, nil
+	}
+	if len(have) > 0 {
+		return false, control.Errorf(api.ErrorKindDenied, "%s: round %s may act for the user (actions %v), so it is the user's: an agent may only remove its action words, sending the round as round.get gives it", method, old.Name, have)
+	}
+	return false, nil
+}
+
+// normalSpec drops what a client may leave out or the hab fills on read, so two specs that
+// define the same round compare equal.
+func normalSpec(s api.RoundSpec) api.RoundSpec {
+	s.ProjectDir, s.ProjectRemote = "", ""
+	s.Trigger.Every = ""
+	s.Paused = false // round.update keeps the stored mark
+	if len(s.Actions) == 0 {
+		s.Actions = nil
+	}
+	if len(s.HarnessArgs) == 0 {
+		s.HarnessArgs = nil
+	}
+	if len(s.Command) == 0 {
+		s.Command = nil
+	}
+	return s
+}
+
 // roundErr maps a rounds error to its API kind.
 func roundErr(err error) error {
 	var fe *rounds.FieldError
@@ -1743,6 +1807,8 @@ func roundErr(err error) error {
 		return err
 	case errors.As(err, &fe):
 		return control.Errorf(api.ErrorKindInvalid, "%v", err)
+	case errors.Is(err, rounds.ErrGrant):
+		return control.Errorf(api.ErrorKindDenied, "%v", err)
 	case errors.Is(err, rounds.ErrNameTaken):
 		return control.Errorf(api.ErrorKindConflict, "a round named %s exists", trimErr(err, rounds.ErrNameTaken))
 	case errors.Is(err, rounds.ErrNotFound):
@@ -1824,6 +1890,16 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 }
 
 func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (api.Round, error) {
+	return s.updateRound(ctx, p, nil)
+}
+
+// UpdateAgent is round.update from an agent route (capcom-service.md 9.6): check runs with the
+// stored round under the edit lock, so no person's grant lands between the check and the write.
+func (s *roundsService) UpdateAgent(ctx context.Context, p api.RoundUpdateParams, check func(old api.Round) error) (api.Round, error) {
+	return s.updateRound(ctx, p, check)
+}
+
+func (s *roundsService) updateRound(ctx context.Context, p api.RoundUpdateParams, check func(old api.Round) error) (api.Round, error) {
 	if p.ID == "" {
 		return api.Round{}, control.Errorf(api.ErrorKindInvalid, "round.update needs the round's id")
 	}
@@ -1837,6 +1913,15 @@ func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (ap
 	old, ok := s.store.Get(p.ID)
 	if !ok {
 		return api.Round{}, control.Errorf(api.ErrorKindNotFound, "no round %s on this hab", p.ID)
+	}
+	if check != nil {
+		cur, err := s.round(p.ID)
+		if err != nil {
+			return api.Round{}, err
+		}
+		if err := check(cur); err != nil {
+			return api.Round{}, err
+		}
 	}
 	// A harness is checked when the edit names a new one; a round whose harness went away
 	// stays editable (its runs fail "harness not found").
@@ -2062,11 +2147,21 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			}
 			return control.Errorf(api.ErrorKindDenied, "from a pane, a round may target only the calling session (self); %s is another session", spec.Target)
 		}
-		// own checks that the round exists and that the calling session created it.
+		// own checks that the round exists, that the calling session created it, and that it
+		// is not a job the user let act.
+		var ownRound func(api.Round) error
 		own := func(ref api.RoundRef) error {
 			r, err := svc.Get(ref)
 			if err != nil {
 				return err
+			}
+			return ownRound(r)
+		}
+		// ownRound is own's check of a round already read.
+		ownRound = func(r api.Round) error {
+			if len(r.Actions) > 0 {
+				// A granted job is the user's (capcom-service.md 9.6): its creator lost it at the grant.
+				return control.Errorf(api.ErrorKindDenied, "%s: round %s may act for the user (actions %v), so only the user changes, pauses or deletes it; an agent may only remove its action words", method, r.Name, actionWords(r.Actions))
 			}
 			if !filed || r.CreatedBy != ss.ID {
 				return control.Errorf(api.ErrorKindDenied, "%s: from a pane, only rounds this session created can be changed or run; round %s was not; use the control socket", method, r.Name)
@@ -2120,6 +2215,9 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if p.Batch != nil {
 				return nil, nil, control.Errorf(api.ErrorKindDenied, "from a pane, a round is created with no pending batch: only a move carries one")
 			}
+			if len(p.Round.Actions) > 0 {
+				return nil, nil, errGrant(method)
+			}
 			by := ""
 			if filed {
 				by = ss.ID
@@ -2131,7 +2229,7 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := own(api.RoundRef{ID: p.ID}); err != nil {
+			if _, err := svc.Get(api.RoundRef{ID: p.ID}); err != nil {
 				return nil, nil, err
 			}
 			if err := target(&p.Round); err != nil {
@@ -2140,7 +2238,15 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if err := noSecrets(&p.Round); err != nil {
 				return nil, nil, err
 			}
-			r, err := svc.Update(ctx, p)
+			// Under the edit lock: no grant may come from here, a granted job takes only the
+			// removal of words, and that removal needs no ownership (capcom-service.md 9.6).
+			r, err := svc.UpdateAgent(ctx, p, func(old api.Round) error {
+				removeOnly, err := agentEdit(old, p.Round, method)
+				if err != nil || removeOnly {
+					return err
+				}
+				return ownRound(old)
+			})
 			return api.RoundResult{Round: r}, nil, err
 		case "round.runs":
 			var p api.RoundRunsParams

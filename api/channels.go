@@ -42,6 +42,8 @@ type ChannelRound struct {
 	Level    string       `json:"level,omitempty" doc:"The highest notice level in the batch. A hint."`
 	LastOK   string       `json:"last_ok,omitempty" doc:"RFC 3339: GFF_ROUND_LAST_OK."`
 	Deadline string       `json:"deadline,omitempty" doc:"Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired."`
+	// Actions was added by Part 14 stage A9 (capcom-service.md 9.6).
+	Actions []RoundAction `json:"actions,omitempty" doc:"Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:<name>, and caps them by capcom.event_actions."`
 }
 
 // RoundEvent is one event of a round's batch (rounds.md 4.5).

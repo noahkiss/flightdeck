@@ -119,10 +119,11 @@ const (
 )
 
 const (
-	ConfirmKindStart ConfirmKind = "start"
-	ConfirmKindSetup ConfirmKind = "setup"
-	ConfirmKindGroup ConfirmKind = "group"
-	ConfirmKindRound ConfirmKind = "round"
+	ConfirmKindStart  ConfirmKind = "start"
+	ConfirmKindSetup  ConfirmKind = "setup"
+	ConfirmKindGroup  ConfirmKind = "group"
+	ConfirmKindRound  ConfirmKind = "round"
+	ConfirmKindAction ConfirmKind = "action"
 )
 
 const (
@@ -304,6 +305,15 @@ const (
 const (
 	RedrawModeSnapshot RedrawMode = "snapshot"
 	RedrawModeNudge    RedrawMode = "nudge"
+)
+
+const (
+	RoundActionHandOff      RoundAction = "hand_off"
+	RoundActionStartSession RoundAction = "start_session"
+	RoundActionSetUpProject RoundAction = "set_up_project"
+	RoundActionGroup        RoundAction = "group"
+	RoundActionCard         RoundAction = "card"
+	RoundActionFetch        RoundAction = "fetch"
 )
 
 const (

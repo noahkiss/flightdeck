@@ -64,6 +64,14 @@ type ConfirmResult struct {
 	Address string `json:"address,omitempty" doc:"The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."`
 }
 
+// ConfirmAction is the one call a Capcom job's event turn asked for while capcom.event_actions is
+// ask (capcom-service.md 9.6). Only gff-hab raises it: confirm.request refuses kind action.
+type ConfirmAction struct {
+	Job     string      `json:"job" doc:"The Capcom job (a capcom round's name) whose message the turn took. Several jobs are joined by commas."`
+	Word    RoundAction `json:"word" doc:"The action word the call uses."`
+	Summary string      `json:"summary" doc:"What the call would do, in one line, such as hand off to web-ui: fix the login page."`
+}
+
 // Confirmation is one start, set-up or round an agent asked for: an open question to the user, or,
 // with confirm.start_elsewhere off, a record of what ran (capcom.md 6.1).
 type Confirmation struct {
@@ -76,8 +84,11 @@ type Confirmation struct {
 	Setup  *ConfirmSetup `json:"setup,omitempty" doc:"Kind setup: the set-up as it will run."`
 	// Group comes with stage B3 of agent groups (groups.md 3.2). Optional, so an older client
 	// shows a kind group card as an action.
-	Group      *ConfirmGroup  `json:"group,omitempty" doc:"Kind group: the plan the confirmation starts, or the change an amend adds."`
-	Round      *ConfirmRound  `json:"round,omitempty" doc:"Kind round: the round as it will be made, or was."`
+	Group *ConfirmGroup `json:"group,omitempty" doc:"Kind group: the plan the confirmation starts, or the change an amend adds."`
+	Round *ConfirmRound `json:"round,omitempty" doc:"Kind round: the round as it will be made, or was."`
+	// Action comes with Part 14 stage A9 (capcom-service.md 9.6). Optional, so an older client
+	// shows a kind action card as an action.
+	Action     *ConfirmAction `json:"action,omitempty" doc:"Kind action: the one call a Capcom job's event turn asked for under capcom.event_actions = ask."`
 	Created    string         `json:"created" doc:"RFC 3339 time the hab took the request."`
 	ExpiresAt  string         `json:"expires_at,omitempty" doc:"RFC 3339 time an open confirmation expires, 60 minutes after it opened. An expired one never runs."`
 	Closed     string         `json:"closed,omitempty" doc:"RFC 3339 time it closed."`
