@@ -9,11 +9,14 @@ public enum ConfirmCardContent {
         public var label: String
         public var value: String
         public var mono: Bool
+        /// The row shows its value whole, wrapped, never cut.
+        public var whole: Bool
 
-        public init(_ label: String, _ value: String, mono: Bool = false) {
+        public init(_ label: String, _ value: String, mono: Bool = false, whole: Bool = false) {
             self.label = label
             self.value = value
             self.mono = mono
+            self.whole = whole
         }
     }
 
@@ -45,13 +48,19 @@ public enum ConfirmCardContent {
     // MARK: - Capcom job action
 
     /// A Capcom job's action card rows (capcom-service.md 9.6, 9.8): the job, the word and the
-    /// call. The view adds what the call does and its params, whole: the hab runs exactly those.
+    /// call, each whole. The view adds `actionTexts`.
     public static func actionFacts(_ a: ConfirmAction) -> [Fact] {
         var out: [Fact] = []
-        add(&out, "Job", a.job, mono: true)
-        add(&out, "Action", a.word.rawValue)
-        add(&out, "Call", a.method, mono: true)
+        add(&out, "Job", a.job, mono: true, whole: true)
+        add(&out, "Action", a.word.rawValue, whole: true)
+        add(&out, "Call", a.method, mono: true, whole: true)
         return out
+    }
+
+    /// A Capcom job's action card texts: what the call does and the params the hab runs on
+    /// confirm, exactly as the hab sent them. The view shows both whole, in a box that scrolls.
+    public static func actionTexts(_ a: ConfirmAction) -> [Fact] {
+        [Fact("What it does", a.summary, whole: true), Fact("Params", a.params, mono: true, whole: true)]
     }
 
     // MARK: - Round
@@ -145,8 +154,8 @@ public enum ConfirmCardContent {
 
     // MARK: - Helpers
 
-    private static func add(_ out: inout [Fact], _ label: String, _ value: String?, mono: Bool = false) {
-        if let v = nonEmpty(value) { out.append(Fact(label, v, mono: mono)) }
+    private static func add(_ out: inout [Fact], _ label: String, _ value: String?, mono: Bool = false, whole: Bool = false) {
+        if let v = nonEmpty(value) { out.append(Fact(label, v, mono: mono, whole: whole)) }
     }
 
     private static func nonEmpty(_ s: String?) -> String? {

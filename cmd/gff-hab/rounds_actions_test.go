@@ -198,3 +198,13 @@ func TestRoundActionsNormal(t *testing.T) {
 		t.Errorf("granted %v", g)
 	}
 }
+
+// TestRoundActionsCapability: a hab that runs rounds says it knows action words, so a client
+// shows its Capcom jobs (capcom-service.md 9.6).
+func TestRoundActionsCapability(t *testing.T) {
+	t.Parallel()
+	e, _ := newRoundEnv(t)
+	if w := welcome(t, e.sock); !slices.Contains(w.Capabilities, "rounds") || !slices.Contains(w.Capabilities, capRoundActions) {
+		t.Fatalf("welcome capabilities %v: want rounds and %s", w.Capabilities, capRoundActions)
+	}
+}

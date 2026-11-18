@@ -28,6 +28,9 @@ import (
 const (
 	capRoundLock     = "round-lock"
 	capCapcomService = "capcom-service"
+	// capRoundActions says the hab knows a capcom round's action words (capcom-service.md
+	// 9.6): a client shows its Capcom jobs only from such a hab.
+	capRoundActions = "round-actions"
 )
 
 // Reasons of message runs (rounds.md 5.2, the run-state tables).

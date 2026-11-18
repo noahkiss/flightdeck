@@ -1773,7 +1773,7 @@ func serve(args []string) error {
 		pushCtl = roundPush{Push: pushes, rounds: roundsSvc}
 		input = roundInput{Input: input, rounds: roundsSvc}
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
-		caps = append(caps, "rounds", capRoundLock)
+		caps = append(caps, "rounds", capRoundLock, capRoundActions)
 	}
 	s := control.New(control.Config{
 		Build:    build,

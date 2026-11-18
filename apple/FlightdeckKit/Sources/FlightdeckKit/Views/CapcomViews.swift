@@ -95,6 +95,7 @@ struct CapcomHostList: View {
 /// The Capcom host page in Settings.
 struct CapcomHostSettingsView: View {
     let center: CapcomCenter
+    @Environment(\.rounds) private var rounds
 
     var body: some View {
         Form {
@@ -115,6 +116,9 @@ struct CapcomHostSettingsView: View {
             }
             if let r = center.deviceContext {
                 CapcomShareSettings(reporter: r)
+            }
+            if let rounds {
+                CapcomJobsSection(center: rounds)
             }
             if let sites = center.sites {
                 Section {

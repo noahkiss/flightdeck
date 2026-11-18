@@ -107,6 +107,8 @@ public enum SettingsRegistry {
     public static let groupMaxWorkers = "group.max_workers"
     public static let groupCloseMembers = "group.close_members"
     public static let capcomEventActions = "capcom.event_actions"
+    public static let capcomEventActionsPerTurn = "capcom.event_actions_per_turn"
+    public static let capcomEventActionMaxAge = "capcom.event_action_max_age"
 
     /// The levelled settings, in registry order (app.md 20.3).
     public static let levelled: [SettingDef] = [
@@ -147,6 +149,12 @@ public enum SettingsRegistry {
         SettingDef(id: groupMaxLeads, title: "Leads at once", area: .agents, kind: .integer(1...10, unit: ""), store: .everyHab),
         SettingDef(id: groupMaxWorkers, title: "Workers per lead", area: .agents, kind: .integer(0...5, unit: ""), store: .everyHab),
         SettingDef(id: groupCloseMembers, title: "Close idle members at the end", area: .agents, kind: .bool, store: .everyHab),
+        // Capcom jobs (capcom-service.md 9.6): the Capcom home hab reads them; every hab keeps
+        // them, so a move of Capcom keeps the values.
+        SettingDef(id: capcomEventActionsPerTurn, title: "Capcom job actions in one look, at most", area: .agents,
+                   kind: .integer(0...20, unit: ""), store: .everyHab),
+        SettingDef(id: capcomEventActionMaxAge, title: "A Capcom job's ask card expires after", area: .agents,
+                   kind: .integer(1...1440, unit: "min"), store: .everyHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareLocationID, title: "Share location with Capcom", area: .agents, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareCalendarID, title: "Share calendar with Capcom", area: .agents, kind: .page, store: .app),

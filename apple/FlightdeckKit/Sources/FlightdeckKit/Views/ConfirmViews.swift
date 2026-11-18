@@ -129,10 +129,12 @@ struct ConfirmCardView: View {
         } else if let g = c.group {
             groupFacts(g)
         } else if let a = c.action {
-            // The whole call, never clamped: the hab runs exactly these params on confirm.
+            // The whole call, never clamped: the hab runs exactly these params on confirm. The
+            // list or thread around the card scrolls a long one.
             factGrid(ConfirmCardContent.actionFacts(a))
-            longText(a.summary, label: "What it does", clamp: false)
-            longText(a.params, label: "Params", clamp: false)
+            ForEach(Array(ConfirmCardContent.actionTexts(a).enumerated()), id: \.offset) { _, t in
+                longText(t.value, label: t.label, clamp: false, mono: t.mono)
+            }
         }
     }
 
@@ -176,15 +178,15 @@ struct ConfirmCardView: View {
 
     private func factGrid(_ facts: [ConfirmCardContent.Fact]) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-            ForEach(Array(facts.enumerated()), id: \.offset) { _, f in row(f.label, f.value, mono: f.mono) }
+            ForEach(Array(facts.enumerated()), id: \.offset) { _, f in row(f.label, f.value, mono: f.mono, whole: f.whole) }
         }
         .font(.callout)
     }
 
     /// A seed, prompt or brief: six lines unless `clamp` is off.
-    private func longText(_ text: String, label: String, clamp: Bool = true) -> some View {
+    private func longText(_ text: String, label: String, clamp: Bool = true, mono: Bool = false) -> some View {
         Text(text)
-            .font(.callout)
+            .font(mono ? .callout.monospaced() : .callout)
             .lineLimit(clamp ? 6 : nil)
             .textSelection(.enabled)
             .padding(8)
@@ -194,7 +196,7 @@ struct ConfirmCardView: View {
     }
 
     @ViewBuilder
-    private func row(_ label: String, _ value: String?, mono: Bool = false) -> some View {
+    private func row(_ label: String, _ value: String?, mono: Bool = false, whole: Bool = false) -> some View {
         if let value, !value.isEmpty {
             GridRow {
                 Text(label)
@@ -202,7 +204,8 @@ struct ConfirmCardView: View {
                 Text(value)
                     .font(mono ? .callout.monospaced() : .callout)
                     .textSelection(.enabled)
-                    .lineLimit(2)
+                    .lineLimit(whole ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: whole)
                     .truncationMode(.middle)
             }
         }

@@ -52,6 +52,8 @@ public final class RoundCenter {
     public var deleteAsk: RoundRow?
     /// Actions in flight, by row id.
     public private(set) var busy: Set<String> = []
+    /// The Capcom jobs list and its switches (capcom-service.md 9.6).
+    @ObservationIgnored public let jobs: CapcomJobs
 
     @ObservationIgnored private let board: Board
     @ObservationIgnored private let connection: @MainActor (String) -> HabConnection?
@@ -77,6 +79,7 @@ public final class RoundCenter {
         self.defaults = defaults
         self.connection = connection
         self.alwaysOn = alwaysOn
+        jobs = CapcomJobs(board: board, defaults: defaults, connection: connection)
         showRunSessions = defaults.object(forKey: Self.showKey) as? Bool ?? true
     }
 

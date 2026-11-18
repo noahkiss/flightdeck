@@ -161,6 +161,15 @@ struct RoundPage: View {
                     Text(e).foregroundStyle(.red)
                 }
             }
+            // A Capcom job's words, as switches (capcom-service.md 9.6).
+            if let job = center.jobs.job(habID: habID, round: roundID) {
+                Section {
+                    LabeledContent("Last outcome", value: CapcomJobs.outcomeText(job.outcome))
+                    CapcomJobSwitches(jobs: center.jobs, job: job)
+                } header: {
+                    Text("Capcom may")
+                }
+            }
             Section {
                 Button("Run now") { Task { await center.runNow(row) } }
                     .disabled(busy)

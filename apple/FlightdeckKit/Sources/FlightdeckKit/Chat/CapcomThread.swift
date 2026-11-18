@@ -323,6 +323,16 @@ public enum CapcomCardChoice: String, CaseIterable, Sendable {
         default: return a.choice.capitalized
         }
     }
+
+    /// The symbol a thread card shows: a hand for an approval, a bolt for a Capcom job's
+    /// action ("For job …, Capcom used …", capcom-service.md 9.6), else a card.
+    public static func icon(_ type: String?) -> String {
+        switch type {
+        case "approval": return "hand.raised"
+        case "job": return "bolt"
+        default: return "rectangle.on.rectangle"
+        }
+    }
 }
 
 /// One row of the Capcom thread (capcom-service.md 7.2), in the words it shows.
