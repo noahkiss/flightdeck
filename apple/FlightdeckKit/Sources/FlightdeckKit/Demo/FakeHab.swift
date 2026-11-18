@@ -607,6 +607,8 @@ public actor FakeHab {
     private var roundBook = FakeRounds()
     /// Every `round.*` method called, oldest first.
     public private(set) var roundCalls: [String] = []
+    /// Every `round.update` received, oldest first, refused or not.
+    public private(set) var roundUpdates: [RoundUpdateParams] = []
     /// Whether a run by hand starts its session at once (true) or stays queued.
     private var roundSpawn = true
     public func setRoundSpawn(_ on: Bool) { roundSpawn = on }
@@ -636,6 +638,22 @@ public actor FakeHab {
     /// Stores a round as a state file read at start would, with no event.
     public func loadRound(_ spec: RoundSpec) throws {
         _ = try roundBook.create(RoundCreateParams(round: spec), projects: projects, sessions: sessions)
+    }
+
+    /// Changes a round's prompt as an agent would, at its next revision. With `emit` off the
+    /// app does not hear of it, so its next write at the old revision meets a conflict.
+    public func editRound(named n: String, prompt: String, emit: Bool = true) async {
+        guard let id = round(named: n)?.id, let r = roundBook.edit(id, prompt: prompt) else { return }
+        if emit { await roundUpdated(r) }
+    }
+
+    /// Gives a round an ended run with Capcom's outcome word, as the snapshot shows it.
+    public func loadRoundOutcome(named n: String, _ word: String) {
+        guard let r = round(named: n) else { return }
+        let num = (roundBook.runs[r.id]?.last?.number ?? 0) + 1
+        let at = Fixture.stamp(Date())
+        roundBook.put(RoundRun(created: at, endedAt: at, id: "\(r.id)-run\(num)", number: num,
+                               outcome: RoundRunOutcome(at: at, word: word), round: r.id, state: .succeeded, trigger: .manual))
     }
 
     private func roundUpdated(_ r: Round) async {
@@ -682,7 +700,9 @@ public actor FakeHab {
                 if p.runNow == true { run = await spawn(try roundBook.startRun(RoundRef(id: r.id))) }
                 await reply(c, id: id, result: RoundCreated(round: roundBook.rounds[r.id] ?? r, run: run, seq: c.seq))
             case HabMethods.roundUpdate.name:
-                let r = try roundBook.update(try decode(RoundUpdateParams.self, params, method), projects: projects, sessions: sessions)
+                let p = try decode(RoundUpdateParams.self, params, method)
+                roundUpdates.append(p)
+                let r = try roundBook.update(p, projects: projects, sessions: sessions)
                 await roundUpdated(r)
                 await reply(c, id: id, result: RoundResult(round: r, seq: c.seq))
             case HabMethods.roundDelete.name:

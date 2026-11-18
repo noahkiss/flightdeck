@@ -274,6 +274,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race -run 'TestModule\|TestModStyle\|TestCanvasText' ./internal/gffclient/` | Module cards on gff's status board |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac), with the block fixtures decoded and encoded back |
 | `cd apple/FlightdeckKit && swift test` | Test the app's shared package (it links `swift/HabAPI`) |
+| `go test -run TestRoundActionsCapability ./cmd/gff-hab && (cd apple/FlightdeckKit && swift test --filter CapcomJobTests)` | The Capcom jobs list in the app (`app.md` 21.5) over a fake hab: only `capcom` rounds, none from a hab without `round-actions`; a grant shows the prompt and sends the revision shown; a conflict reloads and does not grant; a switch off sends the removal; the action card keeps the whole call; the job card; the two limit rows |
 | `cd apple/FlightdeckKit && swift test --filter CapcomThreadTests` | The Capcom service thread in the app (`capcom-service.md` 7.6) over a fake hab |
 | `cd apple/FlightdeckKit && swift test --filter 'GovernorTests\|testSendNowOnlyOnTheCapcomThread'` | The usage governor in the app (`capcom-service.md` 10.1) over a fake hab: the pacing line for each basis and pace, no line without the catalog section, and Send now |
 | `go test -race -run 'TestLinkAllowSite\|TestCapcomMessage\|TestCapcomPushesMessage\|TestThreadLines' ./internal/capcomengine/ ./internal/push/ ./cmd/gff-hab/ ./internal/gffclient/` | Capcom A3, hab and gff half (`capcom-service.md` 5.3, 7.6, 7.7) |

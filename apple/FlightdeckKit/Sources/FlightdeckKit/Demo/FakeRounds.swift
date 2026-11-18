@@ -36,6 +36,12 @@ struct FakeRounds {
         } else if let t = s.target, sessions[t] == nil {
             throw FakeFailure(kind: .notFound, hint: "target session \(t) does not exist on this hab")
         }
+        if let words = s.actions, !words.isEmpty {
+            if s.mode != .capcom { throw FakeFailure(kind: .invalid, hint: "actions: for capcom rounds only") }
+            if let w = words.first(where: { w in !CapcomJobs.words.contains { $0.word == w } }) {
+                throw FakeFailure(kind: .invalid, hint: "actions: unknown word \(w.rawValue)")
+            }
+        }
         if s.trigger.kind == .cron, let e = s.trigger.every, slotSpan(e) == nil {
             throw FakeFailure(kind: .invalid, hint: "trigger: every \(e): cron cannot express it; nearest presets: 5m, 10m")
         }
@@ -71,6 +77,7 @@ struct FakeRounds {
         if trigger.kind == .cron, trigger.zone == nil { trigger.zone = "UTC" }
         let stamp = Fixture.stamp(now())
         return Round(
+            actions: s.actions.flatMap { $0.isEmpty ? nil : $0 },
             catchUp: s.catchUp ?? .once, command: s.command, createdAt: created, cwd: s.cwd, expiresAt: s.expiresAt,
             harness: s.harness, harnessArgs: s.harnessArgs, id: id, lastRun: old?.lastRun, maxRuns: s.maxRuns,
             mode: s.mode, model: s.model, name: s.name, nextSlot: old?.paused == true ? nil : nextSlot(trigger),
@@ -95,6 +102,12 @@ struct FakeRounds {
         if p.id.isEmpty { throw FakeFailure(kind: .invalid, hint: "round.update needs the round's id") }
         try check(p.round, projects: projects, sessions: sessions)
         guard let old = rounds[p.id] else { throw FakeFailure(kind: .notFound, hint: "no round \(p.id) on this hab") }
+        // A grant names what the person saw (capcom-service.md 9.8): a word added needs the
+        // revision read.
+        let added = Set(p.round.actions ?? []).subtracting(old.actions ?? [])
+        if !added.isEmpty, p.revision == nil || p.revision == 0 {
+            throw FakeFailure(kind: .invalid, hint: "revision: required to add an action word")
+        }
         if let rev = p.revision, rev != 0, rev != old.revision {
             throw FakeFailure(kind: .conflict, hint: "round \(p.round.name) is at revision \(old.revision), not \(rev); read it again")
         }
@@ -139,6 +152,15 @@ struct FakeRounds {
         let run = RoundRun(created: Fixture.stamp(now()), id: "\(r.id)-run\(n)", number: n, round: r.id, state: .queued, trigger: .manual)
         put(run)
         return run
+    }
+
+    /// An edit from elsewhere (an agent's prompt change): the round at its next revision.
+    mutating func edit(_ id: String, prompt: String) -> Round? {
+        guard var r = rounds[id] else { return nil }
+        r.prompt = prompt
+        r.revision += 1
+        rounds[id] = r
+        return r
     }
 
     /// The round at its next revision, as the hab publishes it when a run ends (its counts

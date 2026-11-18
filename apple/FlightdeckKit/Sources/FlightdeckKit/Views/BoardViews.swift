@@ -70,6 +70,8 @@ public struct BoardScreen: View {
     /// The Capcom view is open (app.md 4.10); it and `opened` never both hold.
     @State private var capcomShown = false
     @State private var showConnections = false
+    /// Debug builds: the Capcom jobs list opened at launch.
+    @State private var capcomJobsShown = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -265,6 +267,19 @@ public struct BoardScreen: View {
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        // Debug builds only: `-FlightdeckOpenCapcomJobs YES` opens the Capcom jobs list at launch.
+        .task {
+            if fleet != nil, UserDefaults.standard.bool(forKey: "FlightdeckOpenCapcomJobs") { capcomJobsShown = true }
+        }
+        .sheet(isPresented: $capcomJobsShown) {
+            if let fleet {
+                NavigationStack {
+                    CapcomJobsPage(center: fleet.rounds)
+                        .navigationTitle("Capcom jobs")
+                        .toolbar { Button("Done") { capcomJobsShown = false } }
+                }
             }
         }
         #endif

@@ -232,8 +232,9 @@ struct CapcomCardRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(item.text ?? "Capcom asks", systemImage: item.card?.type == "approval" ? "hand.raised" : "rectangle.on.rectangle")
+            Label(item.text ?? "Capcom asks", systemImage: CapcomCardChoice.icon(item.card?.type))
                 .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
             if let a = item.answer {
                 Text(CapcomCardChoice.answered(a))
                     .font(.caption)

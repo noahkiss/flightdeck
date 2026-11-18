@@ -1363,9 +1363,13 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
   check on the socket is not built. The hab judges a route call by the turn that runs when it
   arrives: a call still in flight from an event turn the user stopped, landing after a user
   turn began, is judged as the user turn's. The SDK gives the route call no turn id to compare.
-- **Not built in A9.** The app's "Capcom jobs" list in Capcom settings and the action switches
-  on a round's page (rounds stage 7's views). The app has the `capcom.event_actions` row with
-  its levels; `capcom.event_actions_per_turn` and `capcom.event_action_max_age` have no app row.
+- **The app** (`app.md` 21.5). Capcom settings links to "Capcom jobs", the `capcom` rounds
+  of every hab whose welcome lists `round-actions`, each with its trigger, its last outcome and
+  one switch per word; a round's page shows the same switches. A switch on shows the job's
+  prompt first and grants at the revision shown; a `conflict` reloads the job and shows its
+  prompt again. The kind `action` card shows the job, the word, the method, the summary and
+  the params whole; the `job` card shows in the thread with its own symbol. The Settings page
+  has rows for all three `capcom.event_action*` settings.
 
 ---
 
