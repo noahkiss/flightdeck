@@ -100,4 +100,3 @@ func scanLines(ctx context.Context, r io.Reader, from int64, fn func(line []byte
 		buf, n, over = buf[:0], 0, false
 	}
 }
-

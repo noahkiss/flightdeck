@@ -11,6 +11,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/flightrules"
 	"github.com/noahkiss/flightdeck/internal/instructions"
+	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 )
 
@@ -18,14 +19,20 @@ import (
 const flightRulesIdle = 10 * time.Minute
 
 // flightRulesService serves flightrules.list and flightrules.text (instructions-mcp-flight-rules.md
-// 11). A session's ledger is found like its chat: the native session id its hooks reported names
-// the transcript. Only Claude Code has a ledger source yet.
+// 11). A session's ledger is found like its chat: the native session id its harness reported
+// names the Claude Code transcript or the Codex rollout, or the opencode session its pane's
+// server holds.
 type flightRulesService struct {
 	session func(id string) (api.Session, bool)
 	agent   func(pane string) (api.AgentState, bool)
 	find    func(harness, native string) (string, error)
-	state   string // the hab's state directory, where the instruction renderer keeps its records
-	now     func() time.Time
+	// opencode returns the client of an opencode pane's server; nil: none.
+	opencode    func(pane string) (*opencode.Client, bool)
+	codexHome   string // Codex's home, for its global AGENTS.md and config
+	home        string // the user's home folder, for opencode's discovery
+	opencodeDir string // opencode's global config folder
+	state       string // the hab's state directory, where the instruction renderer keeps its records
+	now         func() time.Time
 
 	mu      sync.Mutex
 	ledgers map[string]*sessionLedger // by gff-hab session id
@@ -37,14 +44,51 @@ type sessionLedger struct {
 	used            time.Time
 }
 
-// source builds the ledger source of a harness, or nil when it has none yet. A new harness's
-// source is one more case here.
-func (f *flightRulesService) source(harness, path string) (flightrules.Source, func(string, string) []string) {
+// renderHarness is the instruction renderer's name for a harness with a ledger source, or "".
+// A new harness's source is one more case here and in open.
+func renderHarness(harness string) instructions.Harness {
 	switch harness {
 	case detect.KindClaude:
-		return flightrules.NewClaude(path), flightrules.Rendered(f.state, instructions.Claude)
+		return instructions.Claude
+	case detect.KindCodex:
+		return instructions.Codex
+	case detect.KindOpencode:
+		return instructions.Opencode
 	}
-	return nil, nil
+	return ""
+}
+
+// open builds the ledger of a native session. A transcript or rollout not written yet is
+// transcript.ErrNoTranscript.
+func (f *flightRulesService) open(harness, native, pane string) (*flightrules.Session, error) {
+	var src flightrules.Source
+	switch harness {
+	case detect.KindClaude, detect.KindCodex:
+		path, err := f.find(harness, native)
+		if err != nil {
+			return nil, err
+		}
+		if harness == detect.KindClaude {
+			src = flightrules.NewClaude(path)
+		} else {
+			src = flightrules.NewCodex(path, f.codexHome)
+		}
+	case detect.KindOpencode:
+		src = flightrules.NewOpencode(native, func() (flightrules.OpencodeAPI, bool) {
+			if f.opencode == nil {
+				return nil, false
+			}
+			c, ok := f.opencode(pane)
+			if !ok || c == nil {
+				return nil, false
+			}
+			return c, true
+		}, f.home, f.opencodeDir)
+	default:
+		return nil, errors.New("no flight rules reader for " + harness)
+	}
+	h := renderHarness(harness)
+	return flightrules.NewSession(src, flightrules.Rendered(f.state, h)).CheckStale(flightrules.Current(f.state, h)), nil
 }
 
 // ledger returns a session's ledger, opening it on first use. It is nil with no error while
@@ -77,10 +121,10 @@ func (f *flightRulesService) ledger(id string) (*sessionLedger, error) {
 		sl.used = now
 		return sl, nil
 	}
-	if src, _ := f.source(harness, ""); src == nil {
+	if renderHarness(harness) == "" {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs %s, which has no flight rules reader yet", id, harness)
 	}
-	path, err := f.find(harness, native)
+	s, err := f.open(harness, native, sess.Pane)
 	if errors.Is(err, transcript.ErrNoTranscript) {
 		sl = &sessionLedger{harness: harness, native: native, used: now}
 		f.ledgers[id] = sl
@@ -89,8 +133,7 @@ func (f *flightRulesService) ledger(id string) (*sessionLedger, error) {
 	if err != nil {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", id, err)
 	}
-	src, configured := f.source(harness, path)
-	sl = &sessionLedger{harness: harness, native: native, s: flightrules.NewSession(src, configured), used: now}
+	sl = &sessionLedger{harness: harness, native: native, s: s, used: now}
 	f.ledgers[id] = sl
 	return sl, nil
 }
@@ -116,6 +159,9 @@ func (f *flightRulesService) List(ctx context.Context, p api.FlightRulesParams) 
 		return out, nil
 	}
 	out.Entries, out.Warnings, err = sl.s.List(ctx)
+	for _, e := range out.Entries {
+		out.Stale = out.Stale || e.Stale
+	}
 	switch {
 	case err != nil && ctx.Err() != nil:
 		// A long transcript's first read ran out of time. The source keeps its place, so the

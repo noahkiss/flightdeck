@@ -39,9 +39,9 @@ func codexTree(t *testing.T) (root, home, rollout string) {
 	root = t.TempDir()
 	home = filepath.Join(root, "codex-home")
 	files := map[string]string{
-		filepath.Join(home, "AGENTS.md"):                    codexGlobalNow + "\n",
-		filepath.Join(root, "proj", "AGENTS.md"):            "Project rule.\n",
-		filepath.Join(root, "proj", "sub", "AGENTS.md"):     "Sub rule, edited.\n",
+		filepath.Join(home, "AGENTS.md"):                   codexGlobalNow + "\n",
+		filepath.Join(root, "proj", "AGENTS.md"):           "Project rule.\n",
+		filepath.Join(root, "proj", "sub", "AGENTS.md"):    "Sub rule, edited.\n",
 		filepath.Join(root, "proj", ".git", "placeholder"): "",
 	}
 	for p, s := range files {

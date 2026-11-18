@@ -1,0 +1,27 @@
+{
+  "note": "Written by hand. What an opencode 2.3.2 server returns for the ledger: location.get, config.get, skill.list, mcp.list, and session.message.list (oldest first here; the test server pages them newest first). {{ROOT}} and {{STATE}} are filled in by the test.",
+  "location": {"directory": "{{ROOT}}/proj/sub", "project": {"id": "prj_01", "directory": "{{ROOT}}/proj", "canonical": "{{ROOT}}/proj"}},
+  "config": [
+    {"type": "directory", "path": "{{ROOT}}/config/opencode"},
+    {"type": "document", "path": "{{ROOT}}/config/opencode/opencode.json", "info": {"instructions": ["{{STATE}}/instructions/opencode.md", "https://example.com/rules.md"]}},
+    {"type": "document", "path": "{{ROOT}}/proj/opencode.json", "info": {"instructions": ["docs/*.md"]}}
+  ],
+  "skill": {"location": {"directory": "{{ROOT}}/proj/sub"}, "data": [
+    {"id": "demo", "name": "demo", "description": "Does a demo thing.", "path": "{{ROOT}}/proj/.opencode/skill/demo/SKILL.md", "content": "Demo skill body."},
+    {"id": "opencode", "name": "opencode", "description": "Answers questions about opencode.", "path": "skill://opencode/SKILL.md", "content": "Built-in body."}
+  ]},
+  "mcp": {"location": {"directory": "{{ROOT}}/proj/sub"}, "data": [
+    {"name": "docs", "status": {"status": "connected"}},
+    {"name": "broken", "status": {"status": "failed", "error": "NotFound: the command does not exist"}}
+  ]},
+  "messages": [
+    {"id": "msg_01", "type": "user", "time": {"created": 1767261601000}, "text": "Read sub/deep/notes.txt."},
+    {"id": "msg_02", "type": "synthetic", "time": {"created": 1767261602000}, "description": "Loaded sub/deep/AGENTS.md", "metadata": {"instruction": {"paths": ["{{ROOT}}/proj/sub/deep/AGENTS.md"]}}, "text": "Instructions from: {{ROOT}}/proj/sub/deep/AGENTS.md\nDeep rules.\n"},
+    {"id": "msg_03", "type": "synthetic", "time": {"created": 1767261603000}, "description": "Channel message", "text": "A message from another agent."},
+    {"id": "msg_04", "type": "skill", "time": {"created": 1767261604000}, "skill": "skl_01", "name": "release-notes", "text": "Skill body."},
+    {"id": "msg_05", "type": "system", "time": {"created": 1767261605000}, "description": "Instructions updated: core/instructions", "metadata": {"notice": "instructions", "instructionSources": ["core/instructions"]}, "text": "The instructions changed:\nInstructions from: {{ROOT}}/proj/AGENTS.md\nProject rule, edited.\n"},
+    {"id": "msg_06", "type": "skill", "time": {"created": 1767261606000}, "skill": "skl_02", "text": "A skill body with no name."},
+    {"id": "msg_07", "type": "synthetic", "time": {"created": 1767261607000}, "description": "Loaded sub/x/AGENTS.md, sub/y/AGENTS.md", "metadata": {"instruction": {"paths": ["{{ROOT}}/proj/sub/x/AGENTS.md", "{{ROOT}}/proj/sub/y/AGENTS.md"]}}, "text": "Instructions from: {{ROOT}}/proj/sub/x/AGENTS.md\nX rules.\n\nInstructions from: {{ROOT}}/proj/sub/y/AGENTS.md\nY rules.\n"},
+    {"id": "msg_08", "type": "system", "time": {"created": 1767261608000}, "text": "System text that is no instruction notice."}
+  ]
+}

@@ -9389,6 +9389,10 @@
           "source": {
             "type": "string",
             "description": "A file path, a hook name, a skill name, an MCP server name, or what the record is when nothing names a source."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "A file Flightdeck rendered, still in the context, whose loaded copy differs from the last render of the same target: the agent works from an older render. Absent from an older hab."
           }
         },
         "required": [
@@ -9468,6 +9472,10 @@
           },
           "session": {
             "type": "string"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "An entry is stale: the session loaded a rendered file that a later render replaced. Absent from an older hab."
           },
           "warnings": {
             "type": "array",
