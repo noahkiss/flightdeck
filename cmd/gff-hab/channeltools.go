@@ -41,7 +41,7 @@ var channelTools = []kitTool{
 			{Name: "timeout_seconds", Type: "integer", Doc: "How long to wait, at most 600. Absent: 110."}},
 		run: runChannelWait},
 	{Name: "channel_name", Action: true, Shell: "gff-hab agent name <name>",
-		Doc: "Name your own session. The name is your channel address: other agents send to it, as name on this host or label/name from another. It must be unique on this host and on the connected hosts. Returns your session with its new name.",
+		Doc:  "Name your own session. The name is your channel address: other agents send to it, as name on this host or label/name from another. It must be unique on this host and on the connected hosts. Returns your session with its new name.",
 		Args: []toolArg{{Name: "name", Type: "string", Doc: "The new name: 1 to 64 of A-Z a-z 0-9 . _ -, such as reviewer or api-tests.", Required: true}},
 		run:  runChannelName},
 }
