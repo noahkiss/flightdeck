@@ -3865,6 +3865,8 @@ public struct FlightRule: Codable, Sendable, Hashable {
     public var bytes: Int
     /// The user's source files from Flightdeck's config, when this is a file Flightdeck rendered and its digest header matches the render record.
     public var configuredSources: [String]?
+    /// How many records carried this entry. For a source whose text changes on every load (a hook that prints a clock), one entry stands for every load: digest and bytes are the latest text's. Absent from an older hab.
+    public var count: Int?
     /// Hex SHA-256 of the text that reached the agent. Absent for a placeholder.
     public var digest: String?
     /// A hook entry: the hook event, such as SessionStart or PostToolUse.
@@ -3894,6 +3896,7 @@ public struct FlightRule: Codable, Sendable, Hashable {
         case attribution = "attribution"
         case bytes = "bytes"
         case configuredSources = "configured_sources"
+        case count = "count"
         case digest = "digest"
         case event = "event"
         case firstSeen = "first_seen"
@@ -3908,10 +3911,11 @@ public struct FlightRule: Codable, Sendable, Hashable {
         case source = "source"
     }
 
-    public init(attribution: String, bytes: Int, configuredSources: [String]? = nil, digest: String? = nil, event: String? = nil, firstSeen: String, gone: String? = nil, id: String, kind: String, lastSeen: String, note: String? = nil, path: String? = nil, reason: String? = nil, scope: String? = nil, source: String) {
+    public init(attribution: String, bytes: Int, configuredSources: [String]? = nil, count: Int? = nil, digest: String? = nil, event: String? = nil, firstSeen: String, gone: String? = nil, id: String, kind: String, lastSeen: String, note: String? = nil, path: String? = nil, reason: String? = nil, scope: String? = nil, source: String) {
         self.attribution = attribution
         self.bytes = bytes
         self.configuredSources = configuredSources
+        self.count = count
         self.digest = digest
         self.event = event
         self.firstSeen = firstSeen

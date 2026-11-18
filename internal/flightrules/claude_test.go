@@ -3,6 +3,7 @@ package flightrules
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +29,7 @@ type want struct {
 	reason      string
 	text        string // "" for a placeholder
 	note        string // a substring the note holds
+	count       int    // 0 means 1
 }
 
 // TestClaudeFixture reads the hand-written 2.1.327 fixture: each attachment type the spec lists
@@ -41,7 +43,7 @@ func TestClaudeFixture(t *testing.T) {
 	}
 	wants := []want{
 		{kind: "instruction", scope: "managed", source: "/etc/claude-code/CLAUDE.md", attribution: "recorded", first: at("02"), last: at("02"), reason: "session_start", text: "Managed policy text."},
-		{kind: "instruction", scope: "user", source: "/home/user/.claude/CLAUDE.md", attribution: "recorded", first: at("02"), last: at("13"), reason: "session_start", text: "User instructions."},
+		{kind: "instruction", scope: "user", source: "/home/user/.claude/CLAUDE.md", attribution: "recorded", first: at("02"), last: at("13"), reason: "session_start", text: "User instructions.", count: 2},
 		{kind: "instruction", scope: "user", source: "/home/user/.claude/shared.md", attribution: "recorded", first: at("02"), last: at("02"), reason: "session_start", text: "Imported by the user file."},
 		{kind: "instruction", scope: "user", source: "/home/user/.claude/rules/flightdeck.md", attribution: "recorded", first: at("02"), last: at("02"), reason: "session_start"},
 		{kind: "instruction", scope: "project", source: "/work/demo/CLAUDE.md", attribution: "recorded", first: at("02"), last: at("02"), reason: "session_start", text: "Project instructions, first version."},
@@ -55,8 +57,17 @@ func TestClaudeFixture(t *testing.T) {
 		{kind: "skill", scope: "skill", source: "demo-skill", attribution: "recorded", first: at("08"), last: at("08"), text: "Demo skill body."},
 		{kind: "system", scope: "session", source: "attachment relevant_memories", attribution: "unknown", first: at("09"), last: at("09"), note: "does not read"},
 		{kind: "instruction", scope: "project", source: "/work/demo/CLAUDE.md", attribution: "recorded", first: at("13"), last: at("13"), reason: "compaction", text: "Project instructions, second version."},
-		{kind: "hook", scope: "session", source: "PostToolUse:Bash", event: "PostToolUse", attribution: "recorded", first: at("15"), last: at("15"), text: "Lint passed with 0 warnings."},
+		{kind: "hook", scope: "session", source: "PostToolUse:Bash", event: "PostToolUse", attribution: "recorded", first: at("15"), last: at("17"), text: "Lint passed at 10:00:17.", count: 2},
 		{kind: "hook", scope: "session", source: "hook", attribution: "unknown", first: at("16"), last: at("16"), text: "Context from a hook with no name.", note: "without the hook's name"},
+		{kind: "system", scope: "session", source: "date", attribution: "recorded", first: at("18"), last: at("19"), text: "2026-01-02", note: "covers that data", count: 2},
+		{kind: "system", scope: "session", source: "environment", attribution: "recorded", first: at("20"), last: at("20"), text: `{"platform":"linux","shell":"bash","cwd":"/work/demo"}`, note: "covers that data"},
+		{kind: "system", scope: "session", source: "session context", attribution: "recorded", first: at("21"), last: at("21"), text: `{"attachedProject":"demo"}`, note: "covers that data"},
+		{kind: "system", scope: "session", source: "auto mode", attribution: "recorded", first: at("22"), last: at("22"), text: `{"type":"auto_mode","autoModeConsentFlow":false,"finishExposedWork":false,"bashFirst":false,"steerOnly":false}`, note: "covers that data"},
+		{kind: "system", scope: "session", source: "deferred tools", attribution: "recorded", first: at("23"), last: at("23"), text: `{"type":"deferred_tools_delta","addedNames":["WebFetch"],"removedNames":[]}`, note: "covers that data"},
+		{kind: "system", scope: "session", source: "system prompt", attribution: "recorded", first: at("24"), last: at("24"), text: `["You are a demo agent."]`, note: "covers that data"},
+		{kind: "system", scope: "session", source: "model identity", attribution: "recorded", first: at("25"), last: at("25"), text: "You are the demo model."},
+		{kind: "system", scope: "session", source: "agent listing", attribution: "recorded", first: at("26"), last: at("26"), text: "- helper: Helps with demos.", note: "1 agent types"},
+		{kind: "system", scope: "session", source: "silent turn reminder", attribution: "recorded", first: at("28"), last: at("29"), text: "The user has not spoken for a while.", count: 2},
 	}
 	if len(entries) != len(wants) {
 		for _, e := range entries {
@@ -68,13 +79,13 @@ func TestClaudeFixture(t *testing.T) {
 		e := entries[i]
 		if e.Kind != w.kind || e.Scope != w.scope || e.Source != w.source || e.Event != w.event ||
 			e.Attribution != w.attribution || e.FirstSeen != w.first || e.LastSeen != w.last ||
-			e.Gone != w.gone || e.Reason != w.reason {
+			e.Gone != w.gone || e.Reason != w.reason || e.Count != max(w.count, 1) {
 			t.Errorf("entry %d = %+v\nwant %+v", i, e, w)
 		}
 		if w.note != "" && !strings.Contains(e.Note, w.note) {
 			t.Errorf("entry %d note %q lacks %q", i, e.Note, w.note)
 		}
-		if w.kind == "system" {
+		if w.kind == "system" && w.text == "" { // a placeholder
 			if e.Digest != "" || e.Bytes != 0 {
 				t.Errorf("placeholder %d has digest %q and %d bytes", i, e.Digest, e.Bytes)
 			}
@@ -332,5 +343,26 @@ func TestClaudeUnnamedSources(t *testing.T) {
 		if e.Attribution != api.FlightUnknown || e.Source == "" || !strings.Contains(e.Note, "without naming it") {
 			t.Errorf("%+v", e)
 		}
+	}
+}
+
+// TestLedgerRepeats: a source that repeats keeps one entry per kind, source and event, whatever
+// the harness, with the latest text and a count. Another event of the same hook is its own entry.
+func TestLedgerRepeats(t *testing.T) {
+	l := NewLedger()
+	for i := 1; i <= 800; i++ {
+		l.Observe(Observation{Kind: api.FlightRuleHook, Source: "status", Event: "PostToolUse", Repeats: true,
+			Text: strings.Repeat("t", i), At: fmt.Sprintf("2026-01-01T10:%02d:%02dZ", i/60, i%60)})
+	}
+	l.Observe(Observation{Kind: api.FlightRuleHook, Source: "status", Event: "SessionStart", Repeats: true, Text: "start"})
+	es := l.Entries()
+	if len(es) != 2 {
+		t.Fatalf("%d entries", len(es))
+	}
+	if e := es[0]; e.Count != 800 || e.Bytes != 800 || e.Digest != Digest(strings.Repeat("t", 800)) || e.FirstSeen >= e.LastSeen {
+		t.Errorf("%+v", e)
+	}
+	if es[1].Event != "SessionStart" || es[1].Count != 1 {
+		t.Errorf("%+v", es[1])
 	}
 }

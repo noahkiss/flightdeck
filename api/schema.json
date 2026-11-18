@@ -9337,6 +9337,11 @@
               "type": "string"
             }
           },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many records carried this entry. For a source whose text changes on every load (a hook that prints a clock), one entry stands for every load: digest and bytes are the latest text's. Absent from an older hab."
+          },
           "digest": {
             "type": "string",
             "description": "Hex SHA-256 of the text that reached the agent. Absent for a placeholder."
