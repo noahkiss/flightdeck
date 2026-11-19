@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	gffHabDir = d
-	testtmp.Exit(m.Run(), d)
+	testtmp.Run(m, d)
 }
 
 func fakeSSH(args []string) int {

@@ -69,18 +69,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "build holder: %v\n%s", err, out)
 		testtmp.Exit(1, dir)
 	}
-	testtmp.Exit(m.Run(), dir)
+	testtmp.Run(m, dir)
 }
 
 // shortDir returns a fresh directory with a short path (macOS caps socket paths at 104 bytes).
+// testtmp stops what a test started from it if the test binary dies first.
 func shortDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "fdl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return dir
+	return testtmp.Dir(t, "fdl")
 }
 
 type lockedBuffer struct {

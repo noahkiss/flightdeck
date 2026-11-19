@@ -142,7 +142,7 @@ spec reserves its secret names in section 6 only.
 | Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE`, `.claude/**`, `renovate.json` | Nothing builds them. Only the hygiene scan runs |
 | Go | `go.mod`, `go.sum`, `Makefile`, `race-pkgs.mk`, `mise.toml`, `cmd/**`, `internal/**`, `api/**`, `swift/**`, `scripts/**`, `third_party/**`, `NOTICE`, `docs/examples/**`, `apple/App/Acknowledgements.txt`, `apple/FlightdeckKit/Package.resolved`, `ci.yml` and `release.yml`; no Markdown outside `docs/examples/` (2) | `ci.yml`. Go tests load the example config files in `docs/examples/`; `make check-notices` compares the two notice files with what `Package.resolved` and the rest produce (7.8) |
 | Apple | `apple/**`, `swift/HabAPI/**`, `api/schema.json`, `api/testdata/**`, `api/modules/testdata/**`, `design/icons/**`, `internal/transcript/testdata/**`, `internal/capcom/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`; a schema change regenerates `swift/HabAPI`, so a Go change under `api/` that leaves the schema alone tests nothing here. `GoldenTests`, `BlockTests`, `ChatSnapshotTests`, `CapcomEntryTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
-| Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `internal/vt/**`, `cmd/gff-hab-holder/**`, `Makefile`, `go.mod`, `go.sum`, `mise.toml`, `scripts/go-test-split.sh`, `scripts/service-check.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
+| Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `internal/vt/**`, `cmd/gff-hab-holder/**`, `Makefile`, `go.mod`, `go.sum`, `mise.toml`, `scripts/go-test-split.sh`, `scripts/service-check.sh`, `scripts/dev-sweep.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
 | Engine | `capcom-engine/**` but its Markdown, `.github/workflows/capcom-engine.yml` | `capcom-engine.yml` (3.7). The Go tests run a stub engine and read nothing here |
 
 `swift/` stays in the Go group too: `make check-gen` diffs `api` and `swift`, so a hand edit to
@@ -304,7 +304,8 @@ launchd code differ from Linux, a holder stage closes on a three-pass race run o
 `brew install bash` and sets `GFF_TEST_BASH` to it: the image's `/bin/bash` is 3.2 and it ships
 no Homebrew bash, while the marked shell tests need bash 4.4 (`hab-logic-api.md` 2.5). With
 `GFF_TEST_BASH` set, those tests fail on an old bash instead of skipping. The nightly leg and a
-dispatch add `scripts/service-check.sh` (core tests 2 and 13 under launchd). The darwin build
+dispatch add `scripts/service-check.sh` (core tests 2 and 13 under launchd) with
+`GFF_SVC_RUN=1`: on macOS the script runs only with that opt-in (`testing.md`). The darwin build
 passes no `GHOSTTY_ZIGFLAGS` (7.3: Ghostty's build sets its own macOS target). The holder group's
 paths also cover `internal/vt/**`, `Makefile`, `go.mod`, `go.sum` and `mise.toml`, so a parser or
 pin change runs here the same day. A hosted macOS runner has a GUI

@@ -75,7 +75,7 @@ func TestMain(m *testing.M) {
 			testtmp.Exit(1, d)
 		}
 	}
-	testtmp.Exit(m.Run(), d)
+	testtmp.Run(m, d)
 }
 
 // waitLong bounds every wait; GFF_TEST_TIMEOUT_SCALE raises it on a slow machine.
@@ -103,15 +103,10 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 }
 
 // shortDir returns a private directory with a short path (macOS socket paths max 104 bytes).
+// testtmp stops what a test started from it if the test binary dies first.
 func shortDir(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("", "gffc")
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Chmod(d, 0o700)
-	t.Cleanup(func() { os.RemoveAll(d) })
-	return d
+	return testtmp.Dir(t, "gffc")
 }
 
 // hab is one holder and one gff-hab serving it.
