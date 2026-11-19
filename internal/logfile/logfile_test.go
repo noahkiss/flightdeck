@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/testtmp"
 )
 
 const habFlags = log.LstdFlags | log.Lmicroseconds | log.LUTC
@@ -160,7 +162,7 @@ func TestWriterEarlyAndTee(t *testing.T) {
 // zero bytes (spec 4.3, test 2). The shell's >> opens the file for append, as launchd and
 // systemd's append: do; internal/service's TestCopyTruncateUnderInit checks the real ones.
 func TestCopyTruncateAppender(t *testing.T) {
-	dir := t.TempDir()
+	dir := testtmp.Dir(t, "gfflog") // the shell runs from it, so a leak is found and stopped
 	path := filepath.Join(dir, "holder.log")
 	cmd := exec.Command("/bin/sh", "-c", `pad=$(printf '%0100d' 0); i=0; while :; do i=$((i+1)); echo "line $i $pad"; sleep 0.01; done >>"$1"`, "sh", path)
 	if err := cmd.Start(); err != nil {
