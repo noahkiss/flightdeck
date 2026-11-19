@@ -217,12 +217,15 @@ struct AttachButton: View {
             Button { files = true } label: { Label("Files", systemImage: "folder") }
             Button(action: paste) { Label("Paste", systemImage: "doc.on.clipboard") }
         } label: {
-            Image(systemName: "paperclip")
+            Image(systemName: "plus")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .menuIndicator(.hidden)
         .buttonStyle(.borderless)
         .fixedSize()
-        .accessibilityLabel("Attach")
+        .accessibilityLabel("Attach a file")
         .photosPicker(isPresented: $photos, selection: $picked, maxSelectionCount: 10, matching: .images)
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }

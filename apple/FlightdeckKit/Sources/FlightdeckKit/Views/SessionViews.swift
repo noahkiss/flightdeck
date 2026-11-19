@@ -77,6 +77,8 @@ public struct SessionView: View {
     /// The friction note sheet (diagnostics.md 9.1).
     @State private var frictionShown = Self.frictionAtLaunch
     @State private var voiceShown = false
+    /// The Show in chat sheet (app.md 4.11).
+    @State private var chatShowShown = ChatShowButton.atLaunch
     /// Voice from the More menu found the microphone off.
     @State private var voiceDenied = false
     @Environment(\.voiceKit) private var voiceKit
@@ -155,6 +157,9 @@ public struct SessionView: View {
                     ToolbarItem(placement: .secondaryAction) {
                         Button("Files", systemImage: "doc.on.doc") { showFiles = true }
                     }
+                    if mode == .chat, model.show != nil, !model.context.isCapcomService {
+                        ToolbarItem(placement: .secondaryAction) { ChatShowButton(shown: $chatShowShown) }
+                    }
                     if model.context.takesFriction {
                         ToolbarItem(placement: .secondaryAction) { frictionButton }
                     }
@@ -205,6 +210,11 @@ public struct SessionView: View {
                             .buttonStyle(.borderless)
                         if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
                             consoleButton
+                                .buttonStyle(.borderless)
+                        }
+                        if model.show != nil, !model.context.isCapcomService {
+                            ChatShowButton(shown: $chatShowShown)
+                                .labelStyle(.iconOnly)
                                 .buttonStyle(.borderless)
                         }
                         Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
@@ -260,6 +270,11 @@ public struct SessionView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .sheet(isPresented: $chatShowShown) {
+            if let store = model.show {
+                ChatShowSheet(store: store, target: model.target)
+            }
+        }
         .sheet(isPresented: $consoleShown) {
             ConsoleSheet(target: model.target)
         }

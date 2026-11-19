@@ -96,6 +96,7 @@ final class ChatSnapshotTests: XCTestCase {
         let text = ChatRender.text(ChatRender.items([call, child, p1, p2]))
         XCTAssertEqual(text, """
         TOOL Task [running] explore (folded)
+            says: Asking a subagent: explore [agents]
             | AGENT
             |     inside
         PLAN 0 of 1 (earlier, folded)

@@ -38,28 +38,6 @@ struct BoardGroupsSection: View {
     }
 }
 
-/// The groups a coordinator made, above its chat.
-struct SessionGroupCards: View {
-    let target: SessionTarget
-    @Environment(\.groups) private var center
-
-    var body: some View {
-        if let center, case let cards = center.cards(coordinator: target), !cards.isEmpty {
-            TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                ScrollView {
-                    VStack(spacing: 8) {
-                        ForEach(cards) { GroupCardView(center: center, card: $0, now: ctx.date) }
-                    }
-                    .padding(8)
-                }
-                .frame(maxHeight: 360)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            Divider()
-        }
-    }
-}
-
 /// One group's card (groups.md 5.4): the header with its waits, the items, the members (a tap
 /// opens the session), the lane, the reports waiting for the coordinator, and the actions.
 struct GroupCardView: View {

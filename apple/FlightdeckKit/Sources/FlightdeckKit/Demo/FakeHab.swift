@@ -394,6 +394,11 @@ public actor FakeHab {
     public func setCapcomProposals(session: String, _ records: [LogbookRecord]) { capcomProposals[session] = records }
     private var nextAnswerFailure: Failure?
 
+    /// Takes `approval.answer` with choice `answer` (a question) as the real hab will once it
+    /// answers questions; off by default, as the real hab refuses it today. Demo mode turns it on.
+    public private(set) var answersQuestions = false
+    public func setAnswersQuestions(_ on: Bool) { answersQuestions = on }
+
     /// Makes the next `approval.answer` fail with this error.
     public func failNextAnswer(kind: ErrorKind, hint: String) {
         nextAnswerFailure = Failure(kind: kind, hint: hint)
@@ -1352,7 +1357,7 @@ public actor FakeHab {
                 await fail(c, id: id, kind: f.kind, hint: f.hint)
                 break
             }
-            if p.choice == .answer {
+            if p.choice == .answer && !answersQuestions {
                 await fail(c, id: id, kind: .unavailable, hint: "answering a question is not built yet; answer it in the terminal")
                 break
             }
@@ -1378,7 +1383,7 @@ public actor FakeHab {
                 break
             }
             await reply(c, id: id, result: Empty(seq: c.seq))
-            a.state = p.choice == .allow ? .working : .idle
+            a.state = p.choice == .deny ? .idle : .working
             a.kind = nil
             a.request = nil
             a.at = Fixture.stamp(Date())

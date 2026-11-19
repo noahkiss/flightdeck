@@ -434,8 +434,8 @@ public final class ContentModel {
 // MARK: - Diffs
 
 /// A unified diff, split into files, hunks and lines.
-public struct ParsedDiff: Equatable, Sendable {
-    public struct File: Equatable, Sendable {
+public struct ParsedDiff: Hashable, Sendable {
+    public struct File: Hashable, Sendable {
         public var oldPath: String?
         public var newPath: String?
         public var hunks: [Hunk] = []
@@ -444,13 +444,13 @@ public struct ParsedDiff: Equatable, Sendable {
         public var removed: Int { hunks.reduce(0) { $0 + $1.lines.filter { $0.kind == .removed }.count } }
     }
 
-    public struct Hunk: Equatable, Sendable {
+    public struct Hunk: Hashable, Sendable {
         public var header: String
         public var lines: [Line] = []
     }
 
-    public struct Line: Equatable, Sendable {
-        public enum Kind: Equatable, Sendable { case context, added, removed, note }
+    public struct Line: Hashable, Sendable {
+        public enum Kind: Hashable, Sendable { case context, added, removed, note }
         public var kind: Kind
         public var text: String
         /// Line numbers in the old and new file, when the hunk header gives them.

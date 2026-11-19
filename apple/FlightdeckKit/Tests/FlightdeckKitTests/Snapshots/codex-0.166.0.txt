@@ -5,36 +5,46 @@ USER
 AGENT
     I will look at app.py first.
 TOOL exec [done] grep -n greet app.py (folded)
+    says: Ran grep -n greet app.py [commands]
     $ grep -n greet app.py
     output:
     3:def greet():
 TOOL apply_patch [done] /work/demo/app.py and 1 more (folded)
-    - def greet():
-    + def hello():
-    - from app import greet
-    + from app import hello
+    says: Edited 2 files +2 -2 [edits]
+    file /work/demo/app.py +1 -1
+    @@ -3 +3 @@
+       3 - def greet():
+       3 + def hello():
+    file /work/demo/test_app.py +1 -1
+    @@ -1 +1 @@
+       1 - from app import greet
+       1 + from app import hello
     output:
     Success. Updated the following files:
     M app.py
     M test_app.py
 TOOL exec [error] python -m pytest -q (folded)
+    says: Ran python -m pytest -q [commands]
     $ python -m pytest -q
       # second line
     output:
     1 failed, 2 passed
 TOOL exec [denied] rm -rf build (folded)
+    says: Ran rm -rf build [commands]
     $ rm -rf build
 TOOL mcp__docs__search [error] pytest fixtures (folded)
-    input: {
-      "query" : "pytest fixtures"
-    }
+    says: Asked Docs to search "pytest fixtures" [connectors]
     output:
     no results
 TOOL web_search [done] pytest rename fixture (one line) (folded)
+    says: Searched the web for "pytest rename fixture" [reads]
 TOOL image_gen [done] /work/demo/icon.png (folded)
+    says: Made an image /work/demo/icon.png [edits]
 TOOL view_image [done] /work/demo/icon.png (one line) (folded)
+    says: Viewed /work/demo/icon.png [reads]
 EVENT notice: Subagent checker started
 TOOL agent_wait [done] (folded)
+    says: Waited for a subagent [agents]
 EVENT unknown: Unsupported Codex item: FutureItem
 EVENT unknown: Unsupported Codex record: future_line
 AGENT

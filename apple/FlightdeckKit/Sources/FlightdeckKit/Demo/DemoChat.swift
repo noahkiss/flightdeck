@@ -24,13 +24,21 @@ enum DemoChat {
                 PlanStep(status: .inProgress, text: "Draw the chart on the station page"),
                 PlanStep(status: .pending, text: "Add a migration for the new index"),
             ]),
-            msg(s, 4, .tool, 13.5, tool: ChatTool(input: input(["pattern": "readings"]), name: "Grep", output: "src/db/schema.ts\nsrc/api/stations.ts", status: .done, target: "readings")),
-            msg(s, 5, .tool, 13.2, tool: ChatTool(input: input(["file_path": "src/db/schema.ts"]), name: "Read", output: "export const readings = table('readings', {\n  station: text(),\n  at: timestamp(),\n  height_m: real(),\n})", status: .done, target: "src/db/schema.ts")),
-            msg(s, 6, .agent, 12, text: "Readings live in one table, keyed by station and time. A query by station will need an index:\n\n```sql\nCREATE INDEX readings_station_at ON readings (station, at);\n```\n\nI'll add the endpoint next."),
-            msg(s, 7, .tool, 10, tool: ChatTool(input: input(["file_path": "src/api/stations.ts", "old_string": "router.get('/stations/:id', station)", "new_string": "router.get('/stations/:id', station)\nrouter.get('/stations/:id/readings', readings)"]), name: "Edit", output: "The file was updated.", status: .done, target: "src/api/stations.ts")),
-            msg(s, 8, .event, 9, text: "Allowed Edit (once)", event: .permission),
-            msg(s, 9, .agent, 4, text: "The chart now draws on the station page:\n\n- **x axis:** time, last 48 hours\n- **y axis:** height in metres\n- high and low tides are marked\n\nThe index needs a migration before this is fast on large stations."),
-            msg(s, 10, .tool, 2, tool: ChatTool(input: input(["command": "npm run migrate", "description": "Apply the new index"]), name: "Bash", status: .running, target: "npm run migrate")),
+            msg(s, 4, .tool, 13.6, tool: ChatTool(input: input(["id": "TIDE-41"]), name: "mcp__claude_ai_Linear__get_issue",
+                                                  output: "TIDE-41 · Station page: tide height chart\nShow the last 48 hours of readings for one station.", status: .done)),
+            msg(s, 5, .tool, 13.5, tool: ChatTool(input: input(["pattern": "readings", "output_mode": "content"]), name: "Grep",
+                                                  output: "src/db/schema.ts:3:export const readings = table('readings', {\nsrc/db/schema.ts:9:export type Reading = typeof readings\nsrc/api/stations.ts:2:import { readings } from '../db/schema'\nsrc/api/stations.ts:42:  // TODO readings\nsrc/web/station.tsx:7:// readings go here\nsrc/web/station.tsx:30:const readings = useReadings(id)",
+                                                  status: .done, target: "readings")),
+            msg(s, 6, .tool, 13.2, tool: ChatTool(input: input(["file_path": "src/db/schema.ts"]), name: "Read", output: "export const readings = table('readings', {\n  station: text(),\n  at: timestamp(),\n  height_m: real(),\n})", status: .done, target: "src/db/schema.ts")),
+            msg(s, 7, .tool, 13.0, tool: ChatTool(input: input(["file_path": "src/api/stations.ts"]), name: "Read", output: "import { readings } from '../db/schema'", status: .done, target: "src/api/stations.ts")),
+            msg(s, 8, .agent, 12, text: "Readings live in one table, keyed by station and time. A query by station will need an index:\n\n```sql\nCREATE INDEX IF NOT EXISTS readings_station_at ON readings (station, at) WHERE height_m IS NOT NULL;\n```\n\nI'll add the endpoint next."),
+            msg(s, 9, .tool, 10, tool: ChatTool(input: input(["file_path": "src/api/stations.ts", "old_string": "// TODO readings", "new_string": "router.get('/stations/:id/readings',\n  limit(48), readings)"]), name: "Edit",
+                                                output: "The file src/api/stations.ts has been updated. Here's the result of running `cat -n` on a snippet of the edited file:\n    41\u{2192}router.get('/stations/:id', show)\n    42\u{2192}router.get('/stations/:id/readings',\n    43\u{2192}  limit(48), readings)",
+                                                status: .done, target: "src/api/stations.ts")),
+            msg(s, 10, .tool, 9.5, tool: ChatTool(input: input(["file_path": "src/web/TideChart.tsx", "content": "export function TideChart({ readings }: Props) {\n  return <LineChart data={readings} x=\"at\" y=\"height_m\" />\n}"]), name: "Write", output: "File created.", status: .done, target: "src/web/TideChart.tsx")),
+            msg(s, 11, .tool, 9, tool: ChatTool(input: input(["command": "npm test", "description": "Run the tests"]), name: "Bash", output: "Test Suites: 4 passed, 4 total\nTests:       12 passed, 12 total", status: .done, target: "npm test")),
+            msg(s, 12, .agent, 4, text: "The chart now draws on the station page:\n\n- **x axis:** time, last 48 hours\n- **y axis:** height in metres\n- high and low tides are marked\n\nThe page needs one new index before it is fast. May I run the migration?"),
+            msg(s, 13, .tool, 2, tool: ChatTool(input: input(["command": "npm run migrate", "description": "Apply the new index"]), name: "Bash", status: .running, target: "npm run migrate")),
         ]
     }
 
@@ -50,7 +58,7 @@ enum DemoChat {
     static func palette(_ s: String) -> [ChatMessage] {
         [
             msg(s, 1, .user, 8, text: "Pick a color palette for the lantern themes. Warm, with good contrast."),
-            msg(s, 2, .agent, 6, text: "I made two options. Both pass contrast checks for body text.\n\n1. **Ember:** deep red, amber, cream\n2. **Dusk:** plum, peach, sand\n\nWhich one should I apply?"),
+            msg(s, 2, .agent, 6, text: "The lantern page needs one palette before I style the cards. Both pass contrast checks for body text. Which one?"),
         ]
     }
 

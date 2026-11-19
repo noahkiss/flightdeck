@@ -412,7 +412,10 @@ struct DictationButton: View {
             listening ? stop() : start()
         } label: {
             Image(systemName: listening ? "mic.circle.fill" : "mic")
+                .font(.title3)
                 .foregroundStyle(listening ? Color.red : Color.accentColor)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .disabled(busy)

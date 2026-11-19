@@ -114,6 +114,7 @@ struct InlineImageView: View {
     let model: ContentModel
     let item: ContentItem
     @State private var zoomed = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -121,9 +122,13 @@ struct InlineImageView: View {
                 // About 3x the 360 pt frame: sharp on a phone, a fraction of a full decode.
                 DecodedImage(model: model, item: version, data: data, maxPixel: 1080) { img in
                     Button { zoomed = true } label: {
+                        // A neutral panel: in dark mode a white chart does not glare (app.md 4.11).
                         img.resizable().scaledToFit()
                             .frame(maxWidth: 360, maxHeight: 260, alignment: .leading)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .padding(6)
+                            .background(ImagePanel.fill(scheme), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Image \(item.title ?? item.name)")
@@ -483,71 +488,6 @@ struct DiffView: View {
         }
         .task(id: "\(item.id)-\(item.size ?? -1)-\(model.context.online)") {
             load = await model.diff(for: item)
-        }
-    }
-}
-
-/// Diff lines, unified, with line numbers where known.
-struct DiffBody: View {
-    let diff: ParsedDiff
-    var maxLines: Int?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(diff.files.enumerated()), id: \.offset) { _, f in
-                VStack(alignment: .leading, spacing: 0) {
-                    if diff.files.count > 1, let p = f.newPath ?? f.oldPath {
-                        Text(p).font(.caption.weight(.semibold)).padding(.bottom, 2)
-                    }
-                    if f.binary {
-                        Text("Binary file").font(.caption).foregroundStyle(.secondary)
-                    }
-                    ForEach(Array(lines(f).enumerated()), id: \.offset) { _, l in
-                        row(l)
-                    }
-                }
-            }
-        }
-        .textSelection(.enabled)
-    }
-
-    private func lines(_ f: ParsedDiff.File) -> [ParsedDiff.Line] {
-        var out: [ParsedDiff.Line] = []
-        for h in f.hunks {
-            out.append(.init(kind: .note, text: h.header, old: nil, new: nil))
-            out.append(contentsOf: h.lines)
-        }
-        if let n = maxLines, out.count > n { return Array(out.prefix(n)) + [.init(kind: .note, text: "…", old: nil, new: nil)] }
-        return out
-    }
-
-    private func row(_ l: ParsedDiff.Line) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(l.new.map(String.init) ?? l.old.map(String.init) ?? "")
-                .foregroundStyle(.tertiary)
-                .frame(width: 34, alignment: .trailing)
-            Text(prefix(l.kind) + l.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .font(.caption.monospaced())
-        .foregroundStyle(l.kind == .note ? .secondary : .primary)
-        .background(background(l.kind))
-    }
-
-    private func prefix(_ k: ParsedDiff.Line.Kind) -> String {
-        switch k {
-        case .added: return "+ "
-        case .removed: return "- "
-        case .context: return "  "
-        case .note: return ""
-        }
-    }
-
-    private func background(_ k: ParsedDiff.Line.Kind) -> Color {
-        switch k {
-        case .added: return .green.opacity(0.14)
-        case .removed: return .red.opacity(0.14)
-        default: return .clear
         }
     }
 }
