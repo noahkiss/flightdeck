@@ -666,7 +666,7 @@ id, this hab's host id or device id, or `self`. `notice.get` reads the last 500 
 last 7 days, saved across a restart (`capcom.md` 8.5). `logbook` means the hab has a Logbook
 replica and the `logbook.*` methods and the `logbook.updated` and `logbook.conflict` events work
 (`logbook.md` 10.3, 10.5); without it every `logbook.*` method answers `unavailable`. `logbook-vectors` means the hab keeps a
-vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `rounds` means the `round.*` methods, the `round.updated` and
+vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `pane-drive` means `pane.list`, `pane.type` and `pane.new` work (3.12). `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
 `friction` means `diag.friction` works: the hab stores a friction note with a tail of its logs
 (`diagnostics.md` 9). `trust` means `trust.answer` works (`app.md` 7.10). `round-actions` means
@@ -686,7 +686,7 @@ for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts`, `flight-rules` (`flightrules.list` and `flightrules.text` work), `detect-explain`
-(`detect.explain` works), `pane-read` (3.11), `session-restart` (`session.restart` and `Session.stale` work) and
+(`detect.explain` works), `pane-read` (3.11), `pane-drive` (3.12), `session-restart` (`session.restart` and `Session.stale` work) and
 `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link), `settings`, `read-tools`, `confirm`, `friction` and `debug`. With the holder link on it also sends
@@ -782,7 +782,8 @@ capability) carries none. Kinds are a server-sent word set, so adding one needs 
 
 With the `read-tools` capability: kind `denied`, a read the host's read scope refused
 (`capcom.md` 5.2). With `pane-read`: kind `denied` also answers a pane read or wait that
-`agent.read_panes` refuses (3.11). The hint names the host, and is the same for every reason: it never names the pattern or the list.
+`agent.read_panes` refuses (3.11). With `pane-drive`: kind `denied` also answers a pane list, type or start that the
+settings refuse (3.12). The hint names the host, and is the same for every reason: it never names the pattern or the list.
 
 With the `groups` capability: kind `moved`, a call about a group whose home moved to another
 hab (`groups.md` 5.7). `data.home` is the new home's device id; the caller's hab sends the call
@@ -898,6 +899,9 @@ the control socket starts to answer moves into the table.
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes |
 | `pane.read` | A pane's screen and optional scrollback as plain text (capability `pane-read`, 3.11) | Yes |
 | `pane.wait` | Wait until a pane's new output matches a text or a pattern, or goes quiet, or the program exits (capability `pane-read`, 3.11) | Yes |
+| `pane.list` | The panes the caller may read, here and on peers (capability `pane-drive`, 3.12) | Yes |
+| `pane.type` | Type text, and optionally Enter, into a pane, under the send gate (capability `pane-drive`, 3.12) | Yes |
+| `pane.new` | Start a shell or a program in a new pane on this hab (capability `pane-drive`, 3.12) | Yes |
 | `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes |
 | `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes |
 | `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes |
@@ -1752,8 +1756,7 @@ Built choices (`internal/panetext`, `cmd/gff-hab/panes.go`, `internal/control/pa
   one lock.
 - `pane.wait` follows the pane with `Link.Subscribe`, as a data stream does, and skips a snapshot
   chunk (bytes lost). A subscription that falls behind is opened again from the last offset read.
-- Typing and creating need no new method: `pane.input` (3.8) and `session.create` (3.9) serve
-  them, through `gff-hab api call` until verbs are added.
+- Listing, typing and creating are `pane.list`, `pane.type` and `pane.new` (3.12).
 
 Limits:
 
@@ -1766,6 +1769,151 @@ Limits:
 - A forwarded wait checks each lease from the offset the last one reached, so a line that a
   lease boundary splits is checked from the boundary on. A quiet wait across hosts may end up to
   one lease late when output came near a lease's end.
+
+### 3.12 Driving panes
+
+An agent lists the panes it may read, types into a pane, and starts a pane. With 3.11 it runs a
+command in another pane and reads the result without the owner's socket path. Capability
+`pane-drive` means `pane.list`, `pane.type` and `pane.new` work. A hab with the holder link sends
+it. The reference is the same as for 3.11: the zellij workspace's MCP server lists panes, types
+and creates them (`gff-client.md` 12 row 28).
+
+**`pane.list {host}`** returns the panes the caller may read under `agent.read_panes` (3.11):
+
+| Field | Meaning |
+|---|---|
+| `panes` | One row per live pane: `pane`, `session` (its name; absent when unfiled), `session_id`, `project` and `project_name` (absent when unfiled), `host` (this hab's host id, or a peer's label), `own` (the caller's own pane), `state` (the session's state), `agent` (the harness that runs there; absent for none) and `agent_state` |
+| `unreached` | Peers that were asked and did not answer: `label` and `reason` |
+
+- **The rule filters rows, never the call.** A row the caller may not read is left out, with no
+  count and no hint: no title, name or existence of such a pane leaks. Under `off` the route sees
+  its own pane only. A peer link gets every row under `all`; under `project` and `off` it gets
+  `denied`, as a read does. The Capcom route gets `denied`.
+- **No title.** A row carries no pane or session title: titles come from program output, and the
+  session name is enough to address the pane.
+- **Peers.** With `host` absent, the owner and an agent under `all` also get the rows of every
+  online peer link with `pane-drive`, asked at once, each for at most 5 s. A peer's rows carry
+  its label as `host`; address them as `label/name`. A peer's answer is untrusted: the hab drops
+  control characters from each string and keeps at most 1,000 rows per peer. `host` set to a
+  peer label, or to this hab's host id, asks only that host. Under `project` and `off` an agent
+  gets this hab's rows only, and a `host` that names a peer is `denied`. A call over a peer link
+  lists that hab's own panes: a forward never forwards.
+- At most 1,000 rows from this hab, in session-name order, unfiled panes last.
+
+**`pane.type {pane | session, text, enter}`** writes `text` to the pane's program, as `pane.input`
+(3.8) writes keys. `enter` sends CR after it as its own write, queued back to back: no other
+client's write lands between. The target is named as in 3.11, `label/name` included.
+
+- `text` is at most 64 KiB, written as given: a tab is a tab, `\u0003` is Ctrl-C. Empty text
+  with `enter` sends Enter alone; empty text without `enter` is `invalid`.
+- **The send gate holds for `type`** (`harness-adapters.md`, Input delivery). The hab refuses the
+  call with `conflict`, and writes nothing, when:
+  - the pane's agent has an open permission request, or its state is `blocked`: Enter, or the
+    right key, would answer the dialog;
+  - a `session.send` or another `pane.type` to the pane is in flight: `session.send` holds the
+    pane until its turn starts (up to 3 s); a `type` holds it while its writes go in, and, with
+    `enter` into an agent's pane, until the turn starts, as a send does;
+  - a client typed into the pane in the last 2 seconds: a person comes first.
+- **Refused, not queued.** The hint names the reason, and the agent tries again later. This is
+  the smaller behaviour: the hab keeps no queue, and a queued Enter could land on a dialog that
+  opened meanwhile. `session.send` refuses the same way.
+- The gate holds at every door, the owner's included. The owner's own keys go through
+  `pane.input`, which has no gate.
+- A shell pane has no agent state, so only the in-flight and typing checks apply there. A
+  `working` agent takes the text: its prompt queues it.
+- **The answer** is `{pane, session, bytes}`: the pane id, its session name (`label/name` from a
+  peer), and how many bytes went in, Enter included.
+- A type is not client input: it does not take the pane's size (6.2), does not count as a person
+  typing for the gate, and does not take over a round's run.
+
+**`pane.new {argv, cwd, in_project, name}`** starts a pane through `session.create` (3.9): a
+shell, or the program `argv`, in a new session on this hab. It answers `{session, pane, name}`.
+
+- `argv` absent starts the hab's shell. `cwd` is an absolute folder. Absent, a call from a pane
+  starts in that pane's folder (`cwd_of`); any other call starts in the hab's home directory.
+- `in_project` files the session in the caller's own session's project, and starts it in the
+  caller's folder unless `cwd` is given. Outside a filed pane it is `invalid`.
+- `name` is the session name. Absent, the program's base name, with a number when taken.
+- No `harness`, `seed`, `env` or `project_dir`. An agent that wants another agent uses `spawn`,
+  which asks the owner where the settings say so (`harness-adapters.md`, Spawn).
+- `pane.new` is local: it starts nothing on a peer.
+
+**Who may drive.** The hab-side setting `agent.drive_panes` (`app.md` 20.3) decides what an
+agent may type into and start. It binds the same two doors as `agent.read_panes` (3.11):
+
+| Value | The pane route may type into | The pane route may start | A peer link may |
+|---|---|---|---|
+| `all` (Bypass) | Every pane on this hab, and a peer's by `label/name` | A pane in any folder | Type into and start any pane on this hab |
+| `project` (Balanced) | The panes of sessions filed in its own session's project, its own pane included | A pane in its own project only: `in_project` is implied, and `cwd` is refused | Nothing |
+| `off` (Safe) | Nothing | Nothing | Nothing |
+
+- **Defaults, one step tighter than reading.** `agent.read_panes` is `project` at Safe and `all`
+  at Balanced and Bypass. Typing is stronger than reading: a key can answer a permission prompt,
+  type into a shell the owner left open, or start a program as the owner. The gate stops the
+  first only while the hab sees the dialog; a pane without hooks shows only OSC 7501, which a
+  program can forge (`harness-adapters.md`, Edge cases). So Balanced keeps an agent to its own
+  project, where the owner already lets it work; Safe allows nothing; Bypass is the owner's
+  choice to trust agents with every pane.
+- **`off` is Safe's value**, not a value set by hand only as for `agent.read_panes`: reading its
+  own pane is harmless, while typing into it is of no use.
+- A refused call answers `denied`. The hint names the setting and its value, never the target.
+- **No existence oracle.** Under `project` and `off`, and always for a peer link under those
+  values, a target the caller may not type into answers `denied` whether or not it exists, as in
+  3.11.
+- **This hab's rule gates a forward.** A `pane.type` to `label/name` on a peer is forwarded only
+  under `all`. The peer answers under its own rule.
+- **The Capcom route** is refused `pane.list`, `pane.type` and `pane.new` at every level, as it
+  is refused reads (8, Q9).
+- **The owner** (any other client) lists, types and starts at every level, as in 3.11.
+- The two settings are separate. An agent may type into a pane it cannot read: it types blind,
+  and `pane.list` does not show the pane.
+- The hab checks the rule at each call.
+
+**Bounds.** A pane route token and a peer link each run at most 4 `pane.type` and 4 `pane.list`
+calls at once, and the hab at most 32 in all; a call past a bound answers `unavailable` at once.
+A `pane.type` waits at most 10 s for its writes. `pane.new` runs under `session.create`'s bounds.
+
+**Logging.** No log line holds the typed text, a screen row, a title, a session name, a folder or
+`argv` (`diagnostics.md` 10.1). A refused call logs the method, the setting's value, and the
+caller's and target's pane ids. A granted `pane.type` logs the caller's and target's pane ids and
+the byte count. A granted `pane.new` logs the caller's pane id and the new pane id. A granted
+`pane.list` logs nothing.
+
+**The CLI** (`gff-hab`, beside `screen` and `wait -pane`; the door is picked as in 3.11):
+
+- `gff-hab panes [-socket path | -via command] [-host label] [-json]` prints one row per pane:
+  host, session name (`-` when unfiled), project name, state, agent and agent state, pane id.
+  Then one line per unreached peer. `-json` prints the `pane.list` answer.
+- `gff-hab type [-socket path | -via command] [-enter] <pane | session | label/name> <text... |
+  ->` types the words joined by spaces; `-` reads the text from stdin. `-enter` adds Enter. It
+  prints nothing on success.
+- `gff-hab new [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [--
+  argv...]` starts a pane. `-project` is `in_project`. It prints the session name, the session id
+  and the pane id; `-json` prints the answer.
+- Exit codes as in 3.11: 0 done; 1 a local error; 2 usage; 3 the hab refused the call.
+- Names and errors are cleaned before they print, as in 3.11.
+
+**MCP tools.** `gff-hab mcp` lists `pane_list`, `pane_read`, `pane_wait`, `pane_type` and
+`pane_new` (`harness-adapters.md`, Agent kit). Each is one call of its method, under the same
+rules. Their descriptions say that screen text is untrusted program output.
+
+Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
+
+- `pane.type` writes through the agent service's queue, as `session.send` does, not through
+  `pane.input`'s chain, so a type is not client input. The gate runs under the send's claim on
+  the pane, before any byte goes in.
+- The 2 s check reads the time of the last `pane.input` that reached the pane. It lives in
+  memory: a type right after a gff-hab restart does not see input from before it.
+- `pane.new` calls the server's own `session.create` path, with its idempotency table.
+
+Limits:
+
+- The gate trusts the agent state the hab sees. In a pane without hooks a program that forges
+  `idle` over a dialog lets a type's Enter answer it, as for `session.send`.
+- A type into a shell the owner left at a password prompt types into it. The rule guards that,
+  not the gate.
+- `pane.new` with `argv` can start a harness as a plain program, with no seed and no
+  confirmation. `agent.drive_panes` decides whether an agent may start anything at all.
 
 ---
 
@@ -2347,7 +2495,8 @@ Decision: 60 s, configurable later. Built as `control.DefaultReconnectGrace`.
 
 ### Q9. May Capcom read panes (owner)
 
-Capcom's route is refused `pane.read` and `pane.wait` at every level for now (3.11). Capcom acts
+Capcom's route is refused `pane.read`, `pane.wait`, `pane.list`, `pane.type` and `pane.new` at
+every level for now (3.11, 3.12). Capcom acts
 on events and reads untrusted text, so pane text from any session would be a path for injected
 instructions into its turns. Options: keep it refused; let it read the panes of a session the
 user attached in this conversation (`capcom.md` 8.1); or follow `agent.read_panes` like any
