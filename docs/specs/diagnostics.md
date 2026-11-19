@@ -353,7 +353,7 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
 | Previous gff-hab ended by handover or crash, at each link ready | Already logged at link ready (`internal/link/link.go`, "previous handover" or "crash"). gff-hab's own record comes from its run marker (6.3), not from the holder's view, so no second record | 1.2 #6 |
 | Handover write failed on close | `internal/holderclient/holderclient.go:512` | 1.2 #7 |
 | A channel message expired unsent | `internal/channels/channels.go:1819-1834` | 1.2 #8 |
-| Peer online and offline, once per change | `internal/peers/manager.go` | 1.2 #9 |
+| Peer online and offline, once per change, named by device id, never by its label (10.1). The older peers lines that print a label move to `name` keys in stage 5 | `internal/peers/manager.go` | 1.2 #9 |
 | A hab line that does not decode: method if known, decode error, never the line | `RPCClient.swift:170` | 1.2 #11 |
 
 ### 4.7 Hang diagnosis

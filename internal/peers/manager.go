@@ -474,12 +474,17 @@ func (m *Manager) publish(label string) {
 	m.published[label] = p
 	m.mu.Unlock()
 	// One line per change between online and not (diagnostics.md 4.6): the reconnect attempts
-	// log their own errors, and these lines make the timeline.
+	// log their own errors, and these lines make the timeline. They name the peer by its device
+	// id, which Flightdeck minted, never by its label from the config file (10.1).
 	if on := p.State == api.PeerStateOnline; on != (had && prev.State == api.PeerStateOnline) && (on || had) {
+		id := p.DeviceID
+		if id == "" {
+			id = "(device id not known)"
+		}
 		if on {
-			m.cfg.Logf("peers: %s online", label)
+			m.cfg.Logf("peers: device %s online", id)
 		} else {
-			m.cfg.Logf("peers: %s offline (%s)", label, p.State)
+			m.cfg.Logf("peers: device %s offline (%s)", id, p.State)
 		}
 	}
 	if (!had || !samePeer(prev, p)) && m.cfg.Publish != nil {
