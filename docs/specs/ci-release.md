@@ -308,7 +308,8 @@ launchd code differ from Linux, a holder stage closes on a three-pass race run o
 no Homebrew bash, while the marked shell tests need bash 4.4 (`hab-logic-api.md` 2.5). With
 `GFF_TEST_BASH` set, those tests fail on an old bash instead of skipping. The nightly leg and a
 dispatch add `scripts/service-check.sh` (core tests 2 and 13 under launchd) with
-`GFF_SVC_RUN=1`: on macOS the script runs only with that opt-in (`testing.md`). The darwin build
+`GFF_SVC_RUN=1`: on macOS the script runs only with that opt-in (`testing.md`). A scheduled run
+reports to an issue (3.8). The darwin build
 passes no `GHOSTTY_ZIGFLAGS` (7.3: Ghostty's build sets its own macOS target). The holder group's
 paths also cover `internal/vt/**`, `Makefile`, `go.mod`, `go.sum` and `mise.toml`, so a parser or
 pin change runs here the same day. A hosted macOS runner has a GUI
@@ -343,7 +344,7 @@ Each job passes its own go-ci `concurrency-key` (the shard, or `slow`), so the j
 never queue behind each other.
 
 A scheduled run skips everything when `main` has not moved since the last passing run; a
-dispatch always runs everything.
+dispatch always runs everything. A scheduled run reports to an issue (3.8).
 
 A last small job on `ubuntu-24.04-arm` runs only
 `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline'` with the
@@ -359,6 +360,24 @@ network. The Node version is `capcom-engine/.node-version` (26); the engine's fl
 `engines.node` in `package.json`. Timeout 15 minutes. Before this workflow, nothing in CI ran the
 engine's tests, so a Renovate bump of an SDK was gated by nothing. The job is the fast check
 itself, so a push to `main` runs it as the pull request did (rule 3).
+
+### 3.8 Scheduled-run issues
+
+`nightly.yml` and `macos-go.yml` end with a `report` job. It runs after every other job
+(`needs` on all of them, `if: always()`), and only for a `schedule` event on `main`; a push, a
+pull request or a dispatch never touches issues. It calls `scripts/scheduled-ci-report.sh`, which
+keeps one open issue per workflow:
+
+- **A failed run** (a job failed, timed out or was cancelled) opens an issue titled
+  `Scheduled <workflow> run failed on main` with the label `scheduled-ci`, and creates the label
+  when it is missing. When that issue is already open, the run comments on it instead.
+- **A passed run** comments on the open issue and closes it. A run that the guard skipped counts
+  as passed: the guard skips only a commit that already passed.
+
+The repo is public, so the issue and its comments hold fixed text, the workflow name, the run URL,
+the commit and the names of the failed jobs. They never hold a log line, a path or an environment
+value; the run URL leads to the logs. The job uses the run's `GITHUB_TOKEN`; only this job has
+`issues: write` (and `actions: read`, to list the run's jobs). No secret is involved.
 
 ---
 

@@ -139,3 +139,32 @@ jobs:
       cancel-in-progress: false
       commands: make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline'
       timeout-minutes: 30
+
+  # A scheduled run on main keeps one issue (docs/specs/ci-release.md 3.8): a failure opens it or
+  # comments on it, and the next passing scheduled run closes it. Only this job writes issues.
+  report:
+    name: Report a scheduled run
+    needs: [plan, suites, slow, warm-arm64]
+    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/scheduled-ci-report.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Open, comment on or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+          SHA: ${{ github.sha }}
+          SELF_JOB: Report a scheduled run
+        run: scripts/scheduled-ci-report.sh
