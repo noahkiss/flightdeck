@@ -19,7 +19,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 
 ## Results
 
-27 pass, 1 fail, 4 gap, of 32 rows.
+30 pass, 2 gap, of 32 rows.
 
 | # | Behaviour | Mark | Evidence |
 |---|---|---|---|
@@ -36,15 +36,15 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 | 11 | Splits on direction keys | pass | Pane mode `l`/`r`, `j`/`d`, `h` and `k` put the new pane on that side, in the focused pane's folder (`TestNewPaneStacksAndSplits`, `TestNewPaneInFolder`); Alt+h/j/k/l move focus across the nested layout and wrap in a stack (`TestFocusAcrossNestedLayout`) |
 | 12 | Focus moves on direction keys | pass | Alt+H and Alt+L move focus between two side-by-side views, typing follows. Alt+Shift+arrows cannot be bound (8.4) |
 | 13 | Zoom and close | pass | Ctrl+P `f` zooms; Ctrl+P `x` closes the view and the session stays in the sidebar; the sidebar's `x` asks "end zsh-2 on alpha? the program gets a hang-up (y/n)" |
-| 14 | Reopen a closed pane | gap | No reopen action in the keymap |
+| 14 | Reopen a closed pane | pass | Pane mode `u` brings back the view closed last in its old place, focused; it keeps ten, a closed tab's views come back one by one, an exited session reopens with Resume and Shell, a closed session is skipped (`TestReopenView`, `TestLayoutReopen`, `gff-client.md` 5.8) |
 | 15 | Scroll without a mode | pass | The wheel over a view scrolls its local scrollback and sends nothing to the hab; Shift+PageUp/PageDown/End by keys; a mouse program gets the wheel, an alternate screen gets arrows (`TestWheelScrollsLocally`, `gff-client.md` 5.7) |
 | 16 | Typing while scrolled up | pass | Typed keys reach the program and the scrolled view stays on its rows (`TestWheelScrollsLocally`) |
 | 17 | Thin pane frames with agent names | pass | `zsh · alpha · working`, `zsh · alpha · blocked:permission`. The frame names the session and host; the harness shows on the board only |
 | 18 | Exit status on the frame | pass | `… · alpha · exited 126`, `sh · alpha · exited 0` |
 | 19 | Bell marker | pass | `bell` on the frame about 1.3 s after the bell, gone by 2.8 s |
-| 20 | Finished command drops to a shell | gap | `exited 0` on the frame; no key starts a shell |
+| 20 | Finished command drops to a shell | pass | `build · one · exited 0 · Enter resume · Esc shell`; Esc starts the hab's shell in the same view, in the command's folder, and the exited session stays in the sidebar. `[keys.exited]` rebinds both keys (`TestShellAfterExitInFolder`, `TestShellAfterExit`, `gff-client.md` 5.8) |
 | 21 | Large floating pane | pass (15.9 B) | A zoomed pane in a scratch tab works: Ctrl+T `n`, `n`, Enter, Enter, Ctrl+P `f`. The sidebar stays beside the zoom, the tab cannot be closed, and the scratch program keeps running after its view closes. Open: B or A (15.9) |
-| 22 | Window title names the host | fail | gff writes no OSC 0 or 2 to the host; a pane's title is ignored |
+| 22 | Window title names the host | pass | The host gets `OSC 2 ; one · work \| <pane title> ST` for the focused view and a new one on a focus move; the host's own title is pushed first and popped at exit; control and format characters are removed and the title capped at 512 characters; an empty tab's title is the workspace's name (`TestWindowTitleFocus`, `TestTitleTemplateAndSanitizing`, `gff-client.md` 3.4) |
 | 23 | Several windows mirror one workspace | gap | Decided 15.4 B; not built: each gff holds its own tabs |
 | 24 | Agents on every host | pass | The sidebar lists both habs' sessions; the new-session prompt cycles hosts with Tab |
 | 25 | Agent state per pane | pass | Working `~`, blocked `!`, exited `_` in the sidebar; the board puts the blocked session under Needs you; the tab gets `!` and the count `1 need you` |
@@ -89,9 +89,6 @@ Nice to have:
 
 | Outcome | Rows |
 |---|---|
-| A console command that exits cleanly offers a shell | 20 |
-| Reopen the last closed views | 14 |
-| Host window title from a template | 22 |
 | OSC 8 links and the kitty keyboard protocol in the composed view | 29 |
 | Help overlay that lists the keymap | 13 |
 

@@ -22,7 +22,8 @@ type Mode string
 // The modes (gff-client.md 8.1). Normal passes keys to the pane and watches for its Ctrl and
 // Alt keys. Locked passes every key but its own. Session takes one key, then returns to normal. Pane and
 // tab stay through focus and tab moves, until another command, Esc or Enter. Sidebar and board
-// are the keys while that part has focus.
+// are the keys while that part has focus. Exited is no mode one enters: it is the keys a
+// focused exited view takes in normal mode (gff-client.md 5.8).
 const (
 	ModeNormal  Mode = "normal"
 	ModeLocked  Mode = "locked"
@@ -31,10 +32,11 @@ const (
 	ModeTab     Mode = "tab"
 	ModeSidebar Mode = "sidebar"
 	ModeBoard   Mode = "board"
+	ModeExited  Mode = "exited"
 )
 
 // Modes lists the modes in the order the config documents them.
-var Modes = []Mode{ModeNormal, ModeLocked, ModeSession, ModePane, ModeTab, ModeSidebar, ModeBoard}
+var Modes = []Mode{ModeNormal, ModeLocked, ModeSession, ModePane, ModeTab, ModeSidebar, ModeBoard, ModeExited}
 
 // sticky reports whether a mode stays after a key it does not bind, and after a focus or tab
 // move (stays), until Esc, Enter or another command.
@@ -80,9 +82,12 @@ const (
 	actLastTab   = "last-tab"
 	actNextTab   = "next-tab"
 	actPrevTab   = "prev-tab"
-	actCloseView = "close-view" // close the focused view; the program keeps running
-	actWarnings  = "warnings"   // list the warnings on the bottom row
-	actTabN      = "tab-"       // tab-1 to tab-9: go to that tab
+	actCloseView = "close-view"  // close the focused view; the program keeps running
+	actReopen    = "reopen-view" // show the view closed last again, in its place
+	actResume    = "resume"      // an exited view: resume its session
+	actShell     = "shell"       // an exited view: the hab's shell in its place and folder
+	actWarnings  = "warnings"    // list the warnings on the bottom row
+	actTabN      = "tab-"        // tab-1 to tab-9: go to that tab
 	actUp        = "up"
 	actDown      = "down"
 	actOpen      = "open"
@@ -119,7 +124,7 @@ var actionLabels = map[string]string{
 	actNewUp:  "split up",
 	actRedraw: "redraw", actNudge: "nudge", actFit: "fit", actDetach: "detach", actSidebar: "sidebar",
 	actBoard: "board", actBars: "bars", actNewTab: "new tab", actRenameTab: "rename tab", actCloseTab: "close tab", actLastTab: "last tab", actNextTab: "next tab", actPrevTab: "previous tab",
-	actCloseView: "close view", actWarnings: "warnings", actUp: "move", actDown: "move", actOpen: "open",
+	actCloseView: "close view", actReopen: "reopen", actResume: "resume", actShell: "shell", actWarnings: "warnings", actUp: "move", actDown: "move", actOpen: "open",
 	actOpenTab: "open in new tab", actNew: "new", actRename: "rename", actClose: "close", actFilter: "filter",
 	actGroup: "group", actFocusLeft: "move focus", actFocusRight: "move focus", actFocusUp: "move focus",
 	actFocusDown: "move focus", actMoveTabLeft: "move tab", actMoveTabRight: "move tab",
@@ -135,6 +140,13 @@ func init() {
 // modeActions lists the actions a mode can bind. Normal binds the mode keys and any command,
 // so one chord can do one thing; locked binds only unlock.
 func modeAllows(m Mode, act string) bool {
+	switch act {
+	case actResume, actShell:
+		return m == ModeExited
+	}
+	if m == ModeExited {
+		return false
+	}
 	switch act {
 	case actUp, actDown, actOpen, actOpenTab, actNew, actRename, actClose, actFilter, actGroup:
 		return m == ModeSidebar || m == ModeBoard && (act == actUp || act == actDown || act == actOpen || act == actOpenTab)
@@ -323,7 +335,7 @@ func DefaultKeymap() *Keymap {
 		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "R", actRunSessions, "esc", actBack)
 	add(ModePane, "n", actNewPane, "l", actNewRight, "r", actNewRight, "j", actNewDown, "d", actNewDown,
 		"h", actNewLeft, "k", actNewUp, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit,
-		"x", actCloseView, "esc", actBack, "enter", actBack)
+		"x", actCloseView, "u", actReopen, "esc", actBack, "enter", actBack)
 	add(ModeTab, "n", actNewTab, "r", actRenameTab, "x", actCloseTab, "tab", actLastTab, "h", actPrevTab, "left", actPrevTab, "k", actPrevTab, "up", actPrevTab,
 		"l", actNextTab, "right", actNextTab, "j", actNextTab, "down", actNextTab)
 	for i := 1; i <= 9; i++ {
@@ -347,6 +359,7 @@ func DefaultKeymap() *Keymap {
 		"esc", actBack, "q", actBack)
 	add(ModeBoard, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
 		"r", actRunNow, "p", actPause, "m", actCapcomJobs, "R", actRunSessions, "esc", actBack, "q", actBack)
+	add(ModeExited, "enter", actResume, "esc", actShell)
 	return km
 }
 

@@ -294,7 +294,12 @@ func (u *workspaceUI) barText(w int) string {
 	case ModeSession, ModePane, ModeTab, ModeLocked:
 		lead = " " + string(m) + " ·"
 	}
-	return lead + fitHints(u.c.cfg.Keymap.hints(m), w-len([]rune(lead)), u.c.cfg.Bar.MaxHints)
+	hs := u.c.cfg.Keymap.hints(m)
+	if v := u.c.focused(); m == ModeNormal && u.mode == modePanes && v != nil && u.resumable(v) {
+		// An exited view's keys first (gff-client.md 5.8).
+		hs = append(u.c.cfg.Keymap.hints(ModeExited), hs...)
+	}
+	return lead + fitHints(hs, w-len([]rune(lead)), u.c.cfg.Bar.MaxHints)
 }
 
 func (u *workspaceUI) drawBottom() (int, int, bool) {
