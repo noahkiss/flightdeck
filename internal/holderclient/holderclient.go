@@ -509,7 +509,10 @@ func (c *Client) Close() {
 	}
 	c.mu.Unlock()
 	for _, h := range hs {
-		_ = h.pc.WriteFrame(&hp.Handover{Token: h.nextToken()})
+		if err := h.pc.WriteFrame(&hp.Handover{Token: h.nextToken()}); err != nil {
+			// The holder records a crash for this clean stop (diagnostics.md 1.2 #7).
+			c.cfg.Logf("holderclient: holder %s: handover not sent: %v", h.Entry().Instance, err)
+		}
 		h.close(ErrClosed)
 	}
 }

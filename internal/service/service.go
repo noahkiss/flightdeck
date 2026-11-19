@@ -283,10 +283,12 @@ func (c Config) holderPlist(instance string) string {
 	return filepath.Join(c.UnitDir, c.HolderJob(instance)+".plist")
 }
 
-// logicLog is the launchd log of the logic job.
-func (c Config) logicLog() string { return filepath.Join(c.LogDir(), "gff-hab.log") }
+// logicLog is the file the init system writes the logic job's stdout and stderr to. gff-hab's
+// own log is hab.log beside it; this file gets what reaches stderr, such as a crash's traceback
+// (diagnostics.md 4.3).
+func (c Config) logicLog() string { return filepath.Join(c.LogDir(), "hab.stderr") }
 
-// holderLog is the launchd log of holder instance.
+// holderLog is the file the init system writes holder instance's stdout and stderr to.
 func (c Config) holderLog(instance string) string {
 	return filepath.Join(c.LogDir(), "gff-hab-holder."+instance+".log")
 }
@@ -374,6 +376,14 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 		}
 		out = append(out, c.enableLink())
 	}
+	if m != nil {
+		logs, err := holderLogs(c)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, logs...)
+		out = append(out, jobLogs(c)...)
+	}
 	if c.Init == Launchd {
 		plists, err := holderPlists(c)
 		if err != nil {
@@ -381,11 +391,6 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 		}
 		out = append(out, plists...)
 		if m != nil {
-			logs, err := holderLogs(c)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, logs...)
 			// Every build directory goes, with its bundles; uninstall has stopped every job.
 			builds, err := buildDirs(c)
 			if err != nil {
@@ -419,6 +424,29 @@ func dedup(paths []string) []string {
 // holderPlists lists the per-instance holder plists in the LaunchAgents directory.
 func holderPlists(c Config) ([]string, error) {
 	return filepath.Glob(filepath.Join(globEscape(c.UnitDir), globEscape(c.Prefix)+".gff-hab-holder.*.plist"))
+}
+
+// jobLogs lists the other log files the installed jobs write in the log directory: gff-hab's
+// hab.log and hook.log, and the old files that rotation and copy-truncate leave beside them and
+// beside the job output files (diagnostics.md 4.3). Uninstall removes them with the jobs.
+func jobLogs(c Config) []string {
+	dir := globEscape(c.LogDir())
+	var out []string
+	for _, base := range []string{"hab.log", "hook.log"} {
+		if _, err := os.Lstat(filepath.Join(c.LogDir(), base)); err == nil {
+			out = append(out, filepath.Join(c.LogDir(), base))
+		}
+	}
+	for _, pat := range []string{"hab.log.*", "hook.log.*", "hab.stderr.*", "gff-hab-holder.*.log.*"} {
+		m, _ := filepath.Glob(filepath.Join(dir, pat))
+		for _, p := range m {
+			ext := filepath.Ext(p)
+			if len(ext) > 1 && strings.Trim(ext[1:], "0123456789") == "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // holderLogs lists the holder logs in the log directory: gff-hab-holder.<instance>.log, for a
@@ -554,14 +582,13 @@ func Install(ctx context.Context, c Config, o Options) error {
 	} else if err := installBinaries(c, o, m); err != nil {
 		return err
 	}
-	if c.Init == Launchd {
-		// launchd discards a job's output unless it names files; the directory must exist first.
-		if err := m.mkdirAll(c, c.LogDir(), 0o700); err != nil {
-			return err
-		}
-		if err := m.willWrite(c, c.logicLog()); err != nil {
-			return err
-		}
+	// Both init systems write each job's output to a file in the log directory (launchd's
+	// StandardErrorPath, systemd's append:); the directory must exist first.
+	if err := m.mkdirAll(c, c.LogDir(), 0o700); err != nil {
+		return err
+	}
+	if err := m.willWrite(c, c.logicLog()); err != nil {
+		return err
 	}
 	if err := m.mkdirAll(c, c.UnitDir, 0o755); err != nil {
 		return err

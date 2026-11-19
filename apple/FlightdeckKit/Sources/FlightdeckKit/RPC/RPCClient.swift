@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import os
 
 /// A JSON-RPC error from the hab. Clients branch on `kind`, never on `message`
 /// (hab-logic-api.md 3.6).
@@ -81,6 +82,7 @@ public actor RPCClient {
     private var started = false
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private static let log = Logger(subsystem: "com.flightdeck.app", category: "rpc")
 
     /// When the last bytes arrived, and when the last request went out.
     public private(set) var lastReceived = ContinuousClock.now
@@ -167,7 +169,17 @@ public actor RPCClient {
     }
 
     private func handle(_ line: Data) {
-        guard let head = try? decoder.decode(Head.self, from: line) else { return }
+        let head: Head
+        do {
+            head = try decoder.decode(Head.self, from: line)
+        } catch {
+            // The line is dropped. The log names the method when it can, the decode error's kind
+            // and the line's size; never the line, which can hold a user's text
+            // (diagnostics.md 4.6).
+            let method = Self.method(of: line) ?? "unknown"
+            Self.log.error("dropped a hab line that does not decode: method \(method, privacy: .public), \(Self.kind(of: error), privacy: .public), \(line.count) bytes")
+            return
+        }
         if let m = head.method {
             // The hab sends notifications only; a request from it is ignored.
             if head.id == nil { inboundSink.yield(Inbound(method: m, line: line)) }
@@ -201,6 +213,31 @@ public actor RPCClient {
     private struct Head: Decodable {
         var id: Int?
         var method: String?
+    }
+
+    /// The method of a line, when it is a JSON object whose method is an API word.
+    private static func method(of line: Data) -> String? {
+        guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let m = obj["method"] as? String, m.count <= 64,
+              m.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "_") })
+        else { return nil }
+        return m
+    }
+
+    /// A decode error's kind and the coding path, which holds schema keys only.
+    private static func kind(of error: Error) -> String {
+        guard let e = error as? DecodingError else { return "not a decoding error" }
+        let path: [CodingKey]
+        let kind: String
+        switch e {
+        case .typeMismatch(_, let c): (kind, path) = ("type mismatch", c.codingPath)
+        case .valueNotFound(_, let c): (kind, path) = ("value not found", c.codingPath)
+        case .keyNotFound(let k, let c): (kind, path) = ("key not found", c.codingPath + [k])
+        case .dataCorrupted(let c): (kind, path) = ("data corrupted", c.codingPath)
+        @unknown default: (kind, path) = ("other", [])
+        }
+        let at = path.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+        return at.isEmpty ? kind : "\(kind) at \(at)"
     }
 
     private struct ErrorObject: Decodable {

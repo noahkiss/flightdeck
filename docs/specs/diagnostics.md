@@ -1,6 +1,7 @@
 # Diagnostics: behaviour spec
 
-Status: proposed, revised after a fresh-eyes review. Owner decisions are open in section 13.
+Status: stage 1 parts (a) to (d) built; part (e) and stages 2 to 6 proposed. Owner decisions
+are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
 that early daily use tells the maintainers three things: how the product is used, which bugs
@@ -223,6 +224,11 @@ redaction by key (8.3) needs it.
 
 - gff-hab keeps its standard `log.Logger` and every `Logf` call. Only its output changes: a
   size-capped file writer (4.3) replaces stderr.
+- gff-hab opens `hab.log` once it holds the state-directory lock, so one gff-hab writes it. A
+  line written before that goes to stderr at once and to `hab.log` after.
+- Run by hand (`-init none`), gff-hab also copies each line to stderr, as before. Run by a
+  service manager (`-init launchd` or `systemd`), it does not: `hab.stderr` then holds only what
+  reaches stderr directly, such as a crash's traceback.
 - The logger's flags become date, time with microseconds, and UTC. One line in `main.go`; no call
   site changes. `gff-hab logs` (4.8) parses that time to merge files.
 - The prefix stays `gff-hab: `. The holder keeps `gff-hab-holder: `.
@@ -266,8 +272,8 @@ All files are in `<state>/logs/`, mode 0600, in a directory of mode 0700.
 | File | Writer | Rotated by | Cap |
 |---|---|---|---|
 | `hab.log` | gff-hab's logger | gff-hab, in-process | 10 MiB, 3 old files |
-| `hab.stderr` | The service manager (launchd file, systemd `append:`) | gff-hab, copy-truncate at start and in the hourly sweep | 1 MiB |
-| `holder.<instance>.log` | The service manager, from the holder's stderr | gff-hab, copy-truncate in the hourly sweep | 5 MiB, 2 old files |
+| `hab.stderr` | The service manager (launchd file; on Linux the unit's shell, `>>`) | gff-hab, copy-truncate at start and in the hourly sweep | 1 MiB, 1 old file |
+| `gff-hab-holder.<instance>.log` | The service manager, from the holder's stderr | gff-hab, copy-truncate at start and in the hourly sweep | 5 MiB, 2 old files |
 | `hook.log` | Failed hook runs, append only (4.4) | gff-hab, rename in the hourly sweep | 1 MiB, 1 old file |
 | `capcom.log` (stage 5) | The Capcom engine | The engine, in-process | 5 MiB, 2 old files |
 | `crash/` | Crash output and stack dumps (6) | gff-hab's sweep, oldest first | 20 files |
@@ -284,13 +290,24 @@ Rules:
   compares the open file with the path. When the path is gone or is another file, it reopens.
 - **Copy-truncate where another process writes.** The service manager holds the holder's file
   open. gff-hab copies it to `.1` and truncates it in place, so the holder needs no change. Lines
-  written during the copy may be lost; that is accepted. launchd and systemd's `append:` open the
+  written during the copy may be lost; that is accepted. launchd and the units' shell (`>>`) open the
   file for append, so writes after a truncate land at the new end; stage 1's test confirms it on
   both systems.
 - **Never block.** The writer is buffered. When its queue (1,000 lines) is full, it drops lines
   and counts them; the next line written carries the count. A full disk drops lines the same way.
-- **Units on Linux.** Install writes `StandardOutput=append:` and `StandardError=append:` into
-  both units, so Linux and macOS keep the same files (Q2).
+- **Units on Linux.** Both units start their program through `/bin/sh`, which makes the log
+  folder and appends the program's stdout and stderr to the same file launchd writes (Q2). It
+  is not `StandardOutput=append:`: systemd opens that file for each command of the unit,
+  `ExecStartPre` too, so no command could make a missing folder first, and the user may remove
+  `<state>/logs/` (12). The shell
+  execs the program, so the unit's main pid is the program's.
+- **Names.** A holder's file keeps the name launchd's holder jobs already write. A new name would
+  need a migration across the holders that run while gff-hab updates, for no gain.
+- **Gone holders.** launchd's sweep removes a gone holder's file (`internal/service`). gff-hab's
+  sweep removes old files whose current file is gone, and a holder's file that no registered
+  holder owns and that has not changed in 7 days.
+- **Uninstall.** `gff-hab uninstall` removes the job output files, `hab.log`, `hook.log` and
+  their old files with the jobs. `crash/` and `health.jsonl` are gff-hab's state and stay.
 
 **Decision: rotate inside gff-hab, change no holder code.** macOS has no logrotate, and
 `newsyslog` needs root. The holder stays tiny (`hab-holder.md` 6.6); its file is handled from
@@ -337,10 +354,10 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
 | Hook server panic, through its `ErrorLog` | `internal/hook/server.go:91` | 1.2 #1 |
 | Hook failures, store drops, "no hook reached gff-hab" | `internal/harness/store.go`, no longer debug-only | 1.2 #3, #4 |
 | Hook server down: the line repeats every 10 minutes while it stays down, and `status` shows it | `cmd/gff-hab/main.go:2048-2052` | 1.2 #5 |
-| Previous gff-hab ended by handover or crash, at each link ready | `internal/link/link.go:569-578`; also a health record (6) | 1.2 #6 |
+| Previous gff-hab ended by handover or crash, at each link ready | Already logged at link ready (`internal/link/link.go`, "previous handover" or "crash"). gff-hab's own record comes from its run marker (6.3), not from the holder's view, so no second record | 1.2 #6 |
 | Handover write failed on close | `internal/holderclient/holderclient.go:512` | 1.2 #7 |
 | A channel message expired unsent | `internal/channels/channels.go:1819-1834` | 1.2 #8 |
-| Peer online and offline, once per change | `internal/peers/manager.go` | 1.2 #9 |
+| Peer online and offline, once per change, named by device id, never by its label (10.1). The older peers lines that print a label move to `name` keys in stage 5 | `internal/peers/manager.go` | 1.2 #9 |
 | A hab line that does not decode: method if known, decode error, never the line | `RPCClient.swift:170` | 1.2 #11 |
 
 ### 4.7 Hang diagnosis
@@ -360,7 +377,9 @@ A deadlocked gff-hab never crashes, so a crash record never sees it.
 ### 4.8 Reading logs
 
 `gff-hab logs` reads the files directly, so it works while gff-hab is down. From stage 1 it merges
-`hab.log`, every `holder.*.log`, `hook.log` and, from stage 5, `capcom.log`, ordered by time.
+`hab.log`, every `gff-hab-holder.*.log`, `hook.log` and, from stage 5, `capcom.log`, ordered by
+time. Each file's old files come first. A line with no time stamp, such as a stack trace, stays
+with the line before it. Until the holder's next build, its lines carry local time to the second.
 
 | Flag | Stage | Meaning |
 |---|---|---|
@@ -374,8 +393,11 @@ A deadlocked gff-hab never crashes, so a crash record never sees it.
 - Output is local time, one line per entry, with the file's process kind in front.
 - `gff-hab status` (stage 1): build and version of gff-hab and each holder, uptime, crashes and
   unclean ends in the last 7 days (6), hook endpoint up or down, peers online, Capcom state (a
-  word, never its last stderr line), debug until, log folder size. It is the first command a user
-  runs, as `herdr status` is.
+  word, never its last stderr line), debug, log folder size. It is the first command a user
+  runs, as `herdr status` is. It reads the run marker and the holder registry, so it works while
+  gff-hab is down; peers and Capcom need gff-hab to answer. Until stage 2, debug means
+  `GFF_HAB_DEBUG` in gff-hab's environment, which the marker records; the holder's version is its
+  protocol version from the registry.
 
 ### 4.9 The Capcom engine and the speech helper (stage 5)
 
@@ -471,7 +493,8 @@ pane. A reader joins by session id and time.
 | Each holder | `<state>/run/holder.<instance>.json` | pid and start time; the holder has no epoch (`api/types.go:62` is gff-hab's) |
 
 Fields: `proc`, `instance`, the run id, `pid`, `build`, `version`, `started`, `last_seen`,
-`clean`.
+`clean`. gff-hab's marker also holds `crash_file` (6.2), `hook` (`up` or `down`, 4.6) and
+`debug` (4.5), for `gff-hab status`.
 
 - `clean` is `false` until a clean exit sets it `true`.
 - `last_seen` changes only when the process flushes a log line, and at a clean exit. An idle
@@ -501,15 +524,18 @@ At start, before it writes its own marker, a process reads the previous one:
 |---|---|---|---|
 | `clean` true | n/a | none | n/a |
 | `clean` false | has a `panic:` or `fatal error:` line | `crash` | That first line, with the value after `panic:` cut to 120 bytes |
-| `clean` false | empty or missing | `unclean` | `signal or kill`; on Linux, the unit's last exit status from `systemctl --user show` when available |
+| `clean` false | empty or missing | `unclean` | `signal or kill` |
 
 - The record goes to `<state>/health.jsonl`; the last 500 records stay. Fields: `proc`,
   `instance`, `kind`, `cause`, the previous run id, `build`, `version`, `started`, `last_seen`,
   and the crash file's name.
 - The process logs one line: "previous run ended unclean", with the same fields and its own
   version and build.
+- The unit's exit status is not read: once systemd restarts the unit, `systemctl --user show`
+  reports the new run, not the one that ended.
 - gff-hab writes the record for a lost holder from the link's view: holder instance, panes lost,
-  the holder's last build, `cause` `holder lost`.
+  the holder's last build, kind `unclean`, `cause` `holder lost`. A broken connection and a
+  crash look the same from the link, so a lost holder raises no notice.
 - **Crash notice.** gff-hab raises a notice (`notice.raise`, `api/methods.go:105`) for a `crash`
   of gff-hab or a holder, at most one per hour: "gff-hab restarted after a crash". It names no
   file and no host. An `unclean` end raises none: a reboot or a kill is not a bug.
@@ -828,7 +854,7 @@ None of these is an app row: each is an operator limit or has one right answer (
 |---|---|
 | The laptop sleeps for hours | Nothing is written. The watchdog ignores a gap in wall time across sleep: it measures loop ticks against the monotonic clock and skips a check that spans a sleep. A day boundary passed in sleep closes the old tally day at the next flush |
 | The clock jumps | Lines keep their wall time. Rotation is by size. Tally days follow local date at flush |
-| Two gff-hab processes by accident (`hab-holder.md` 6.8) | The second waits on the state-directory lock before it opens `hab.log`, so one writer holds the file |
+| Two gff-hab processes by accident (`hab-holder.md` 6.8) | The second fails at the state-directory lock before it opens `hab.log`, so one writer holds the file; its lines go to stderr |
 | A crash in the middle of a line | `gff-hab logs` and the bundle skip a line that does not parse, and count it |
 | The user deletes `<state>/logs/` | The inode check reopens the file at the next rotation check |
 | A panic value that holds user text | The crash file stays local. In a bundle, pass 2 runs on it, and `cause` in a health record is cut to 120 bytes. The code rule: a panic message is a constant plus ids, never content |

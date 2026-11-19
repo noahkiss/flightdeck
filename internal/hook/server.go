@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -91,6 +92,10 @@ func NewServer(reg Resolver, sink Sink, logf func(string, ...any)) *Server {
 	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
 	return s
 }
+
+// SetErrorLog sets the logger of the HTTP server's own errors, among them a handler panic it
+// recovered (diagnostics.md 6.2). Call it before Serve.
+func (s *Server) SetErrorLog(l *log.Logger) { s.http.ErrorLog = l }
 
 // Serve accepts on l, a Unix listener from control.Listen, until Close. Callers running as
 // another user are refused. It returns nil after Close.

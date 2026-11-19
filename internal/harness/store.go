@@ -78,6 +78,10 @@ type pane struct {
 	// at its prompt. Any accepted report or hook clears it.
 	ownerStop bool
 
+	// dropLogged is the harness and session of the last dropped event that was logged: a nested
+	// session drops each of its events, and one line per session is enough.
+	dropLogged string
+
 	// hooked is the harness whose hook last reached gff-hab for this pane, in this gff-hab run,
 	// since its session last ended. A turn its OSC 7501 reports show finishing with no such hook
 	// marks the hooks missing.
@@ -106,7 +110,9 @@ type resolution struct {
 type Config struct {
 	Publish func(structure.Event)
 	Now     func() time.Time
-	Logf    func(string, ...any)
+	// Logf gets the lines of dropped hooks and events, and of hooks that never arrive
+	// (diagnostics.md 4.6). Nil discards them.
+	Logf func(string, ...any)
 }
 
 // NewStore returns an empty store.
@@ -173,7 +179,10 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	if p.bound && (harness != p.st.Harness || (u.Session != "" && p.st.Session != "" && u.Session != p.st.Session)) {
 		rebind := u.Bind && !u.Subagent && harness == p.st.Harness
 		if !rebind {
-			s.logf("pane %s: dropped %s event for %s session %q; bound to %s session %q", paneID, harness, harness, u.Session, p.st.Harness, p.st.Session)
+			if key := harness + "\x00" + u.Session; p.dropLogged != key {
+				p.dropLogged = key
+				s.logf("pane %s: dropped %s event for %s session %q; bound to %s session %q", paneID, harness, harness, u.Session, p.st.Harness, p.st.Session)
+			}
 			return false, ""
 		}
 		if p.open != "" {

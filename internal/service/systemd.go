@@ -17,7 +17,8 @@ func logicUnit(c Config) []byte {
 	fmt.Fprintf(&b, "# Written by gff-hab install; gff-hab uninstall removes it.\n")
 	fmt.Fprintf(&b, "[Unit]\nDescription=Flightdeck logic process (gff-hab)\nStartLimitIntervalSec=0\n\n")
 	fmt.Fprintf(&b, "[Service]\nType=simple\n")
-	fmt.Fprintf(&b, "ExecStart=%s\n", execLine(c.HabPath(), c.ServeArgs()...))
+	argv := withOutput(c.logicLog(), append([]string{c.HabPath()}, c.ServeArgs()...))
+	fmt.Fprintf(&b, "ExecStart=%s\n", execLine(argv[0], argv[1:]...))
 	writeEnv(&b, c)
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=1\n\n")
 	fmt.Fprintf(&b, "[Install]\nWantedBy=default.target\n")
@@ -33,7 +34,11 @@ func holderUnit(c Config) []byte {
 	fmt.Fprintf(&b, "# Written by gff-hab install; gff-hab uninstall removes it.\n")
 	fmt.Fprintf(&b, "[Unit]\nDescription=Flightdeck holder %%i (gff-hab-holder)\n\n")
 	fmt.Fprintf(&b, "[Service]\nType=simple\n")
-	args := []string{systemdQuote(c.HolderPath(), true)}
+	// The output file names the instance: %i, the same name launchd's holder job writes.
+	var args []string
+	for _, a := range withOutput(c.holderLog("\x00"), []string{c.HolderPath()}) {
+		args = append(args, strings.ReplaceAll(systemdQuote(a, true), "\x00", "%i"))
+	}
 	for _, a := range c.HolderArgs("\x00") {
 		if a == "\x00" {
 			args = append(args, "%i") // the instance name, from the unit name
@@ -55,6 +60,19 @@ func writeEnv(b *bytes.Buffer, c Config) {
 	for _, kv := range c.JobEnv() {
 		fmt.Fprintf(b, "Environment=%s\n", systemdQuote(kv, false))
 	}
+}
+
+// outputScript makes the output file's folder, then runs the program with its stdout and stderr
+// appended to the file. $0 is the file; the program and its arguments follow.
+const outputScript = `mkdir -p -m 700 "${0%/*}" && exec "$@" >>"$0" 2>&1`
+
+// withOutput wraps argv so its output is appended to file, as launchd's job files are, so both
+// init systems keep the same files (diagnostics.md 4.3, Q2). A shell does it, not systemd's
+// StandardOutput=append:, which systemd opens for each command of the unit, ExecStartPre
+// too, so no command could make a missing folder first. The shell's >> opens the file for append, so gff-hab's
+// copy-truncate leaves no gap; exec keeps the program's pid the unit's main pid.
+func withOutput(file string, argv []string) []string {
+	return append([]string{"/bin/sh", "-c", outputScript, file}, argv...)
 }
 
 // execLine quotes a command line for ExecStart.

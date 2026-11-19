@@ -143,6 +143,8 @@ type linkOptions struct {
 	starter         service.Starter // starts holders as init system jobs; nil starts none
 	checkpointEvery time.Duration   // the longest a printing pane goes without a checkpoint; 0: default
 	checkpointIdle  time.Duration   // quiet time before a pane's idle checkpoint; 0: default
+	// lost hears a holder whose connection ended with an error (link.Config.Lost); nil: none.
+	lost func(instance, build string, panes int)
 }
 
 // openLink starts the holder link (spec 2.3). The holder directory comes from -holders, else
@@ -193,6 +195,7 @@ func openLinkIn(dir, state string, opt linkOptions, logger *log.Logger) (*link.L
 		IdleAfter:        opt.checkpointIdle,
 		Start:            start,
 		Retired:          retired,
+		Lost:             opt.lost,
 		Logf:             logger.Printf,
 	})
 }

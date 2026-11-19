@@ -243,6 +243,9 @@ type Config struct {
 	CloseGrace     time.Duration // how long a closing connection may take to flush
 	Now            func() time.Time
 	Logf           func(format string, args ...any)
+	// Epoch is the server's epoch. Empty: a fresh one (NewEpoch). gff-hab makes its epoch at
+	// start, before the server, to name its run marker and crash file (diagnostics.md 6).
+	Epoch string
 	// Observe hears every event Publish sends, before any client: the event triggers of
 	// rounds (rounds.md 4.3). It must not block. Nil: none.
 	Observe func(structure.Event)
@@ -298,16 +301,22 @@ func New(cfg Config) *Server {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
+	if cfg.Epoch == "" {
+		cfg.Epoch = NewEpoch()
+	}
 	if !slices.Contains(cfg.Capabilities, IdempotencyCapability) {
 		cfg.Capabilities = append(slices.Clip(cfg.Capabilities), IdempotencyCapability) // idem.go always runs
 	}
 	return &Server{
 		cfg:    cfg,
-		epoch:  randomID(8),
+		epoch:  cfg.Epoch,
 		conns:  map[*conn]struct{}{},
 		tokens: map[string]*token{},
 	}
 }
+
+// NewEpoch returns a fresh random epoch.
+func NewEpoch() string { return randomID(8) }
 
 // Epoch returns this server's epoch.
 func (s *Server) Epoch() string { return s.epoch }
