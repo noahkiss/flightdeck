@@ -18,6 +18,8 @@ public enum AppFleet {
         fleet.confirms = confirmCenter(fleet)
         if demo {
             log.info("demo mode")
+            fleet.isDemo = true
+            addDemoCenters(to: fleet, defaults: defaults)
             Task { await DemoFleet.populate(fleet) }
             return fleet
         }
@@ -42,6 +44,21 @@ public enum AppFleet {
         addSettings(to: fleet, defaults: defaults)
         addDeviceContext(to: fleet, defaults: defaults)
         return fleet
+    }
+
+    /// Demo mode's approval and settings centers: answers go through each demo hab's live
+    /// connection, found by its host id; nothing reaches the device's own notifications.
+    @MainActor
+    static func addDemoCenters(to fleet: Fleet, defaults: UserDefaults) {
+        let answerer = ApprovalAnswerer(
+            live: { [weak fleet] host in
+                fleet?.connections.first { c in fleet?.board.habs.first { $0.id == c.id }?.state.welcome?.host.id == host }
+            },
+            oneShot: { _ in throw TransportError("demo habs answer only while the app is open") },
+            clientLabel: clientLabel
+        )
+        fleet.approvals = ApprovalCenter(board: fleet.board, answerer: answerer, defaults: defaults)
+        addSettings(to: fleet, defaults: defaults)
     }
 
     /// Capcom's personal tools (capcom-service.md 8.1, 8.5): the device context reporter with

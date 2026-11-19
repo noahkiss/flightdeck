@@ -668,12 +668,12 @@ extension Board.Hab {
 }
 
 extension BoardRow {
+    /// Amber means "needs you" only, green means done (app.md 3.8).
     var stateColor: Color {
         switch state {
-        case .blocked?: return .orange
-        case .error?: return .red
-        case .done?: return rank == .doneUnseen ? .blue : .secondary
-        case .working?: return .green
+        case .blocked?, .error?: return .orange
+        case .done?: return rank == .doneUnseen ? .orange : .green
+        case .working?: return .teal
         case .idle?: return .secondary
         default: return .gray.opacity(0.5)
         }
@@ -693,23 +693,8 @@ extension BoardRow {
     }
 
     func stateText(now: Date) -> String {
-        let word: String
-        switch state {
-        case .blocked?:
-            switch blockedKind {
-            case .question?: word = "Question"
-            case .auth?: word = "Sign-in"
-            default: word = "Permission"
-            }
-        case .error?: word = "Error"
-        case .done?: word = "Done"
-        case .working?: word = "Working"
-        case .idle?: word = "Idle"
-        case .exited?: word = "Exited"
-        default: word = target.session == nil ? "Unfiled" : "No agent"
-        }
-        guard let since else { return word }
-        return word + " · " + Self.age(since, now: now)
+        guard let since else { return stateWord }
+        return stateWord + " · " + Self.age(since, now: now)
     }
 
     static func age(_ d: Date, now: Date) -> String {

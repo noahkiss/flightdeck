@@ -14,6 +14,15 @@ public enum DemoFleet {
         defaults.bool(forKey: argument)
     }
 
+    /// "Look around with demo data" on first run (app.md 3.9): the demo habs join this run of
+    /// the app. Nothing is saved, so the next start opens on pairing again.
+    @MainActor
+    public static func start(_ fleet: Fleet) async {
+        guard !fleet.isDemo else { return }
+        fleet.isDemo = true
+        await populate(fleet)
+    }
+
     /// Adds the two demo habs to `fleet` and starts the script.
     @MainActor
     public static func populate(_ fleet: Fleet, script: Bool = true) async {
@@ -45,7 +54,7 @@ public enum DemoFleet {
         await hab.load(
             projects: [
                 Fixture.project("p-tide", name: "tide-tables", sessions: ["s1", "s3"]),
-                Fixture.project("p-seed", name: "seed-catalog", sessions: ["s2"]),
+                Fixture.project("p-seed", name: "seed-catalog", sessions: ["s2", "s6"]),
                 Fixture.project("p-lantern", name: "paper-lantern", sessions: ["s4", "s5"]),
             ],
             sessions: [
@@ -54,8 +63,9 @@ public enum DemoFleet {
                 Fixture.session("s3", name: "claude-2", pane: "%3", project: "p-tide", model: "claude-opus", title: "Write the API docs", contextPct: 31),
                 Fixture.session("s4", name: "opencode", pane: "%4", project: "p-lantern", model: "qwen-coder", title: "Refactor the layout engine"),
                 Fixture.session("s5", name: "dev server", pane: "%5", project: "p-lantern"),
+                groupMember,
             ],
-            panes: ["%1", "%2", "%3", "%4", "%5"].enumerated().map { i, p in Fixture.pane(p, session: "s\(i + 1)") }
+            panes: ["%1", "%2", "%3", "%4", "%5", "%7"].enumerated().map { i, p in Fixture.pane(p, session: i == 5 ? "s6" : "s\(i + 1)") }
                 + [Fixture.pane("%6", session: nil)],
             agents: [
                 Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission,
@@ -63,14 +73,53 @@ public enum DemoFleet {
                 Fixture.agent(pane: "%2", harness: "codex", state: .error, at: ago(6)),
                 Fixture.agent(pane: "%3", harness: "claude", state: .done, at: ago(1)),
                 Fixture.agent(pane: "%4", harness: "opencode", state: .working, at: ago(4)),
+                Fixture.agent(pane: "%7", harness: "claude", state: .working, at: ago(9)),
             ]
         )
+        await addGroup(hab)
         await hab.setUsage(demoUsage(Date()))
         await addConfirmations(hab)
         await addCapcom(hab)
         await addCapcomJobs(hab)
         await hab.setCapability(FrictionNote.capability, true)
         return hab
+    }
+
+    /// The group's lead: a member session that folds into the group's row (app.md 3.1).
+    static var groupMember: Session {
+        var s = Fixture.session("s6", name: "claude-7c41e0-lead-1", pane: "%7", project: "p-seed", model: "claude-sonnet",
+                                title: "Split the parser: the API", contextPct: 27)
+        s.group = SessionGroup(id: "g-demo1", item: "api", role: .lead)
+        return s
+    }
+
+    /// One running group on workbench (groups.md 5.4): the coordinator is claude-2, the lead
+    /// works on the API, and the UI waits for it.
+    static func addGroup(_ hab: FakeHab) async {
+        await hab.setCapability(GroupCenter.capability, true)
+        let made = ago(40)
+        let plan = GroupPlan(brief: "Split the parser into an API and a UI part", items: [
+            GroupPlanItem(id: "api", title: "API"),
+            GroupPlanItem(after: "api", id: "ui", title: "UI"),
+        ], members: [
+            GroupPlanMember(harness: "claude", item: "api", role: .lead),
+            GroupPlanMember(harness: "codex", item: "ui", role: .lead),
+        ], project: "seed-catalog", title: "Split the parser")
+        await hab.loadGroup(Group(
+            confirmation: GroupConfirmationRef(id: "none"),
+            coordinator: GroupCoordinator(address: "workbench/claude-2", name: "claude-2", session: "s3"),
+            created: Fixture.stamp(made), generation: 1, home: FakeHab.deviceID(host: "workbench"), id: "g-demo1",
+            inbox: [], items: [
+                GroupItem(branch: "group/g-demo1/api", id: "api", lead: "claude-7c41e0-lead-1", state: "working", title: "API"),
+                GroupItem(after: "api", id: "ui", reason: "waits for the API to reach review", state: "queued", title: "UI"),
+            ], lane: GroupLaneState(queue: []), leftovers: [],
+            members: [
+                GroupMember(agent: AgentStatus(rawValue: "working"), contextPct: 27, harness: "claude", host: "workbench", item: "api",
+                            name: "claude-7c41e0-lead-1", role: .lead, session: "s6", state: "running"),
+                GroupMember(harness: "codex", host: "workbench", item: "ui", name: "codex-7c41e0-lead-2", role: .lead, state: "planned"),
+            ],
+            pause: GroupPause(), plan: plan, project: "seed-catalog", revision: 1, state: "running", title: "Split the parser",
+            updated: Fixture.stamp(made), waits: []))
     }
 
     /// Two Capcom jobs (capcom-service.md 9.6): one that may hand off work and acted last
