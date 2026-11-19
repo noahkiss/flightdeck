@@ -215,7 +215,10 @@ focus is stored on a hab.
   permission (7.2), the question for a question, else the session name. The context line is the
   pending command, the question's lead, or the last agent message ("Editing src/session/store.ts").
 - **Section labels.** The board labels its groups in plain words: Needs you (ranks 1 to 3),
-  Working, Done (rank 5), and Other.
+  Working, Done (rank 5), and Other. A section header carries its count ("Needs you · 3").
+- **State words.** Rows name a state in plain words, never the raw state: "Needs permission",
+  "Asks a question", "Needs sign-in", "Asks to trust a folder", "Stopped with an error", "Done",
+  "Working", "Idle", "Exited", "No agent".
 - **Seen.** Opening a session marks it seen. The hab turns `done` into `idle` when a client focuses
   the pane (`harness-adapters.md`, States). The app reports focus (17).
 - **Badge.** The app icon badge counts sessions that need you, across all online habs, plus
@@ -224,6 +227,20 @@ focus is stored on a hab.
   action that needs the hab is offered.
 - **Actions from a row:** open, answer an approval (7), start or resume the harness when the pane
   shows `none` or `exited`, close an exited session.
+- **Rows that need you (iOS, 3.8).** Each kind of rank 1 row carries its own action:
+  - A permission shows its command in a monospaced box and Deny and Allow on the row. They answer
+    through the approval sheet's path (7.3), so expiry and "answered elsewhere" hold. A tap on
+    the title opens the session.
+  - A question shows Answer, which opens the session's chat. Answering inline waits for the chat
+    stage.
+  - Sign-in, folder trust and errors open the session.
+  - A confirmation card (7.9) is one compact row: its title, "Asked by <agent> · <project> ·
+    expires in <time>", and Review. Review opens the full card in a sheet sized to its content.
+- **Groups (iOS).** A live group (`groups.md` 5.4) is one Working row: its title, "Group of <n> ·
+  <a> working, <b> waiting · <hab>". A tap opens the group's page with its card. Its members'
+  sessions fold into that row, except a member that needs you, which stays in Needs you. A group
+  that ended within the card's cut-off shows in Done.
+- **Rounds (iOS)** leave the board for the Rounds tab (3.8). Run sessions stay on the board.
 
 ### 3.2 Edge cases
 
@@ -254,8 +271,9 @@ On iPad and Mac the board has a second column beside the list.
   A count of online habs heads the list. Tap opens the hab: its projects, its endpoints, its
   device list, and "Pair a device".
 - **New session.** A floating button starts a session: pick a hab, a project and a harness.
-- On iPhone the board is the list alone. Cards and connections live behind tabs in the top bar
-  (home, devices, network, settings).
+- On iPhone and iPad the board is the Sessions tab (3.8). Connections become Computers, the first
+  group of the Settings tab, with a page per hab and "Pair another computer". The Mac keeps the
+  connections column.
 - **Until previews exist.** The second column holds connections only. An empty cards box headed
   "Sessions" read as the session list on the wrong side, so it stays out until live previews
   exist; then the cards return at the top of the column. The board list on the left carries the
@@ -314,14 +332,75 @@ On iPad and Mac, inside a session, a sidebar lists every session grouped by proj
 | An offline hab | Its cached names still match, dimmed |
 | No match | "No matches" and a hint to check the filter for project or hab |
 
-### 3.7 Usage footer
+### 3.7 Usage strip
 
-The board's footer holds one bar per harness account in use: harness icon, name, and a bar for its
-tightest window. Tap opens the usage sheet (14).
+One bar per harness account in use: harness name, a bar for its tightest window, and the used
+percentage. Tap opens the usage sheet (14).
+
+- **iOS 26 and later:** the strip is the tab bar's bottom accessory (3.8), on every tab. It hides
+  while no account has a reading.
+- **iOS 17 to 25:** the strip sits under the Sessions list as a footer.
+- **Mac:** the footer under the board list.
+
+### 3.8 The app shell (iPhone and iPad)
+
+The root is a stock tab view with four tabs, in this order:
+
+| Tab | Symbol | Holds |
+|---|---|---|
+| Sessions | `rectangle.stack` | The status board (3.1), with a badge of the needs-you count |
+| Capcom | `dot.radiowaves.left.and.right` | The Capcom view (4.10) |
+| Rounds | `clock` | The rounds list (21.2), its "Show run sessions" switch and New round, and Capcom jobs (21.5) |
+| Settings | `slider.horizontal.3` | The Settings tab (20.7) |
+
+- **iPhone.** The tab bar floats at the bottom and shrinks while a list scrolls down. The usage
+  strip is its bottom accessory (3.7). A session opens pushed in the Sessions tab's stack, with
+  the tab bar hidden, so the chat keeps its composer room.
+- **iPad.** The same four tabs in the sidebar-adaptable style: a tab bar at the top that the owner
+  can turn into a sidebar. Design call: it is the system's own control for one structure at two
+  widths, so iPad and iPhone share it. Inside the Sessions tab, a regular-width window keeps the
+  board and session split (3.3, 11); a compact one uses the phone layout.
+- **Mac.** The window keeps the board and session split with the connections column. The Mac's own
+  chrome (a Settings window, a sidebar) is a later stage.
+- **Deployment.** The app targets iOS 17. `Tab` items, the sidebar-adaptable style, the bottom
+  accessory and the minimise-on-scroll behaviour sit behind an iOS 26 availability check. Before
+  iOS 26 the app shows the same four tabs with `tabItem` labels and the usage strip as the
+  Sessions list's footer.
+- **The Sessions tab.** A large title, "Sessions", that collapses on scroll. The toolbar holds a
+  hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its
+  state and opens Computers. The app has no start-session flow (3.3's floating button is not
+  built), so the toolbar shows no start control; it joins the toolbar when that flow exists. The
+  Capcom row and the Groups and Rounds sections are gone from this list (3.1).
+- **Colour.** Amber means "needs you" and nothing else: the Needs you header, its rows' marks and
+  the tab badge. Green means done. One accent colour marks actions (Allow, Answer, Review, links).
+  Working rows show a teal dot; idle and other rows a grey one. Errors sit in Needs you, so they
+  are amber, with an exclamation mark.
+- **Dynamic Type.** Every row and button group fits at the largest accessibility size. A row's
+  button sits beside its text while it fits, else under it; a pair of buttons stacks when side by
+  side would wrap a word. No button breaks a word across lines.
+- **VoiceOver.** Icon-only controls carry a label: the hosts menu ("Hosts: 2 of 2 online"), the
+  state marks, and the tab badge.
+
+### 3.9 First run
+
+- **No hab, no demo:** the app opens on "Pair your computer", not on an empty board. It says what
+  Flightdeck does in one sentence, then two steps: run `gff-hab pair` on the computer (it shows a
+  code for 10 minutes), then scan the code with this phone. Under them: Scan the code (the pairing
+  sheet with the camera on), Type the code (the same sheet with the field), Set up over SSH ("Add
+  a hab by address", 10.4), and Look around with demo data.
+- **Demo data** loads the demo habs into this run of the app. Nothing is saved; the next start
+  opens on "Pair your computer" again.
+- **Push permission** is asked once a hab is online, never on the first frame and never in demo
+  mode. iOS keeps the answer, so later starts show no prompt.
+- **Launch frame.** The launch screen uses the grouped background colour in light and dark, and
+  the first frame draws the shell at once, so no blank white frame shows.
+- **The Mac** has a local hab by default (10.5), so it never shows first run.
 
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
-rows; search field; usage bars in the footer); `hab-logic-api.md` 5, 6.4; `harness-adapters.md`.
+rows; search field; usage bars in the footer); `hab-logic-api.md` 5, 6.4; `harness-adapters.md`;
+Happy (pairing is the first screen); AudioBooth (a stock tab view with a bottom accessory, the
+tab bar minimising on scroll, settings split by area).
 
 ---
 
@@ -2322,7 +2401,7 @@ The hab sends one structure. Each device presents it its own way. No layout reac
 
 | | iPhone | iPad | Mac |
 |---|---|---|---|
-| Home | Status board | Sidebar board plus session | Sidebar board plus session |
+| Home | Four tabs (3.8); Sessions is the status board | The same four tabs, sidebar-adaptable; the Sessions tab splits board and session | Board plus session; connections column |
 | Session | Chat first; a switch flips to terminal | Chat and terminal side by side, about 50/50 | Chat and terminal side by side, about 50/50 |
 | Console | A sheet over the session | A drawer under the terminal | A drawer under the terminal |
 | Divider | — | Draggable; snaps to 50/50, chat only, terminal only | Same as iPad |
@@ -3725,12 +3804,29 @@ Each candidate below is a fixed behaviour now.
 
 ### 20.7 The Settings page
 
+On iPhone and iPad, Settings is a tab (3.8) with four groups:
+
+- **Computers.** One row per hab: a state dot, its label, and "Online · <n> sessions · runs
+  Capcom" (or its offline or update state). A tap opens the hab's page: its state, endpoint, last
+  error and session count. "Pair another computer" opens the pairing sheet. Pairing lives here,
+  next to the computers it adds.
+- **How much agents may do alone.** The level picker as a segmented control (Safe, Balanced,
+  Bypass), a plain sentence for what the picked level means, the exception count, and "All
+  settings", which opens the full page below.
+- **This iPhone** (or This iPad): Notifications, Face ID before Allow (`ssh.require_face_id`),
+  Voice, and Usage warnings.
+- **Help and diagnostics:** "Show setting keys", SSH keys and habs, and Acknowledgements. The
+  footer says that Capcom and round settings live on their tabs.
+
+The full page ("All settings" on iOS, the Settings sheet on the Mac):
+
 - **One page, grouped by area:** Agents (with the Capcom host picker, 4.10), Approvals,
   Notifications, Voice, Usage, Widgets, Connection, Security, and Habs (each hab's push status
   and keys).
 - **The level picker** heads the page, above the groups.
-- **Search** filters rows by title and id across groups. Each row shows its id in small type, so
-  a doc or an issue can name it.
+- **Search** filters rows by title and id across groups. A row shows its id in small type only
+  while "Show setting keys" is on (off by default), so a doc or an issue can still name it. A row
+  that no hab serves says "No paired computer has this setting".
 - **A hab-side row** says where it is stored: "On every hab" or "On <hab>".
 - **Today's pages** (Settings › Notifications, › Voice, › SSH and the usage warnings) become
   groups of this page. Their sections keep the wording of each row.
@@ -3815,7 +3911,7 @@ the badge), `Demo/FakeRounds.swift` (the fake hab). Tests: `RoundTests`,
 
 ### 21.2 The status board
 
-- **Rounds list.** Below the session sections, a "Rounds" section holds the "Show run
+- **Rounds list.** On iPhone and iPad the Rounds tab (3.8), on the Mac the board below the session sections: a "Rounds" section holds the "Show run
   sessions" switch and New round, then one section per hab, "Rounds on <hab>" ("· offline"
   when it is). Each row: the name, the mode, the trigger in the catalog's words ("every 1h",
   "every 1d in Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
@@ -3901,7 +3997,7 @@ reports, mouse motion and wheel reports while the client owns the pane.
 The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/CapcomJobs.swift`
 (the list, the switches, the grant), `Views/CapcomJobViews.swift`. Tests: `CapcomJobTests`.
 
-- **Where.** Capcom settings (the "Capcom host" page) has a "Capcom jobs" row with the count.
+- **Where.** Capcom settings (the "Capcom host" page) has a "Capcom jobs" row with the count; on iPhone and iPad the Rounds tab has one too.
   It opens the list: one section per job, by name, with its trigger, its hab and "Last:" and
   the outcome ("Told you", "Stayed quiet", "Acted", "Not seen", "No answer", "No run yet"),
   "Paused" when it is, a link to the round's page, and the switches. A `capcom` round's page
