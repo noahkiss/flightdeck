@@ -661,8 +661,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
 - **After this turn.** The hab does not queue. While the agent works, the app keeps the message
   ("Sends after this turn", with Cancel) and sends one at the next `idle`, `done` or `error`. A
   `conflict` while the agent works puts the message back in that queue.
-- **Refusals** show the hab's error kind and hint on the message ("conflict: the agent is
-  blocked"), with Retry and Dismiss.
+- **Refusals** show plain words for the hab's error kind on the message ("Not sent: the agent
+  is busy or waiting for an answer"), with Retry and Dismiss; the hint stays out (4.11).
 - **Send path.** The composer calls `session.send`. Only when the hab answers `unavailable` for
   a harness with no adapter (not Claude Code) and the agent is at its prompt does the app type
   through `pane.input` as the adapter would: the text in bracketed paste (any ESC removed), then
@@ -1212,7 +1212,7 @@ one answer, the expiry, answered elsewhere).
 | No reader for this harness, or the hab cannot serve the chat | No chat for this session | "<harness> on <hab> keeps no conversation Flightdeck can show. The terminal shows the session as it runs." | Open terminal |
 | The transcript does not exist yet | Waiting for the first message | "The conversation shows here once the agent writes it." | Open terminal |
 | The chat did not load | The chat didn't load | "Flightdeck couldn't read this conversation from <hab>." | Try again, Open terminal |
-| A send the hab refused | under the message | Plain words per error kind: "Not sent: the agent is waiting for an answer" | Retry, Dismiss |
+| A send the hab refused | under the message | Plain words per error kind: "Not sent: the agent is busy or waiting for an answer", "the session can't take a message now", "the session is gone" | Retry, Dismiss |
 
 No hab hint, error kind or method name shows in these states; the log keeps them.
 

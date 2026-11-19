@@ -100,7 +100,7 @@ final class CapcomEntryTests: XCTestCase {
         let m = try await openWithNotice(fleet)
         await hab.failNextSend(kind: .unavailable, hint: "the paste did not reach the pane")
         m.send("is this safe?")
-        await eventually("failed") { m.outgoing.first?.status == .failed("unavailable: the paste did not reach the pane") }
+        await eventually("failed") { m.outgoing.first?.status == .failed("the session can't take a message now") }
         XCTAssertEqual(m.pending.map(\.title), ["Build failed"])
         // A retry carries them.
         m.retry(m.outgoing[0].id)

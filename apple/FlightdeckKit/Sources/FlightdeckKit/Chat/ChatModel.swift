@@ -653,10 +653,18 @@ public final class ChatModel {
     }
 
     /// The hab's reason for refusing, with its error kind.
+    /// A refused send in plain words (app.md 4.11); the hab's hint stays out of the chat.
     static func refusal(_ error: Error) -> String {
         if let e = error as? AttachmentRefused { return e.hint }
-        if let e = error as? RPCError, let d = e.data { return "\(d.kind.rawValue): \(d.hint)" }
-        return describe(error)
+        if let e = error as? RPCError {
+            switch e.kind {
+            case .conflict: return "the agent is busy or waiting for an answer"
+            case .unavailable: return "the session can't take a message now"
+            case .notFound: return "the session is gone"
+            default: return "the hab refused it"
+            }
+        }
+        return "the hab didn't answer"
     }
 
     /// The writes that type a message into a harness prompt: the text in
