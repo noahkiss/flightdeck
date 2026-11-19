@@ -6,8 +6,6 @@ Flightdeck is a native iPhone, iPad and Mac app with a terminal client and a sma
 each host. It works with Claude Code, Codex and opencode. Agents keep running when you close
 the app, and every session stays resumable from a plain terminal.
 
-**Status:** early design. Nothing here runs yet.
-
 ## Build the app
 
 You need a Mac with Xcode. The app project lives in `apple/` and is generated with XcodeGen.
