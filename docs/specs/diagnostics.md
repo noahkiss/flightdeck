@@ -1,6 +1,6 @@
 # Diagnostics: behaviour spec
 
-Status: stage 1 parts (a) to (d) built; part (e) and stages 2 to 6 proposed. Owner decisions
+Status: stage 1 built, parts (a) to (e); stages 2 to 6 proposed. Owner decisions
 are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
@@ -728,9 +728,14 @@ user one line of text.
 
 | Client | How |
 |---|---|
-| `gff` | `gff friction "text"`; in a session view, the prefix key then `F` opens a one-line prompt and names the current session. (`!` is warnings, `internal/gffclient/keymap.go:322`) |
-| App | "Note friction" in each session's menu; on macOS also ⌥⌘F. A text field and a Save button |
-| Any client | The method `diag.friction` `{text, session?, pane?}` |
+| `gff` | `gff friction [-session name] [-blocker] text` (it runs `gff-hab friction`). In the workspace, session mode then `F` (Ctrl+O F by default) opens a one-line prompt that names the focused session; Tab marks the note a blocker. The bottom bar shows the trace |
+| App | "Note friction" in the session's More menu on a phone, and an icon in the session header on iPad and Mac; ⌥⌘F with a hardware keyboard. A sheet with a multi-line field, a Blocker switch, Cancel and Send; after Send it shows the trace. It shows only when the hab lists the `friction` capability |
+| Any client | The method `diag.friction` `{text, session?, pane?, blocker?}`, sent to the session's own hab. Capability `friction`. Not over a peer link |
+
+- **Blocker or preference.** A note is a blocker when the work could not be done in Flightdeck
+  and the user went back to another tool; otherwise it is a preference. The project counts
+  blocker fallbacks apart from preferences, so the client asks once per note, and preference is
+  the default.
 
 ### 9.2 What gff-hab stores
 
@@ -738,17 +743,28 @@ user one line of text.
 
 | Field | Meaning |
 |---|---|
-| `t`, `trace` | Time, and a new trace |
-| `client` | Client kind |
+| `t`, `trace` | Time, and a new trace (an `h` trace: gff-hab makes it) |
+| `client` | The client kind from the hello: `app`, `terminal`, `cli`, `script` |
 | `session`, `pane` | When given |
+| `blocker` | `true` for a blocker (9.1); absent for a preference |
 | `text` | The user's own text, at most 2,000 characters |
 | `build`, `version` | gff-hab's |
-| `log` | The merged log tail (4.8) of the last 10 minutes, at most 500 lines |
+| `log` | The merged log tail (4.8) of the last 10 minutes, at most 500 entries: each with its time, its process (`hab`, `holder <instance>`, `hook`) and its text as the file holds it |
+| `log_cut` | Older tail entries dropped so the file stays within 256 KiB (11) |
 
 - gff-hab answers with the note's trace. The client shows it.
-- `gff friction list [--days 30]` prints time, session and text. `gff friction show <trace>`
-  prints one note with its log tail.
+- Surrounding white space is cut. An empty text, or one over 2,000 characters, is refused with
+  `invalid`, not cut. A session or pane id over 128 bytes is refused the same way.
+- gff-hab flushes its log before it reads the tail, so the tail holds the lines up to the note.
+  An entry before the first time stamp in its file is left out: its time is unknown.
+- gff-hab logs one line per note: its trace, blocker or preference, the client kind and the
+  count of tail entries. Never the text, the session or the pane, which a client sends.
+- `gff friction list [-days 30]` prints time, trace, session, blocker or preference, and the
+  text on one line. `gff friction show <trace>` prints one note with its log tail. Both read the
+  files of this host's hab, so they work while gff-hab is down; a note on another host is read
+  there (Q6).
 - The newest 200 notes stay. Log tails of notes older than 90 days are dropped; the text stays.
+  gff-hab prunes after each note and in its hourly sweep.
 - The tail is a copy of local log lines. In a bundle it gets the same passes as the log files.
 
 **Decision: text plus a log tail, no rating, no form.** The first period of use needs the moment
@@ -915,7 +931,7 @@ Each test guards a promise in this spec, at the lowest layer that proves it (`do
 | 3 | A process killed with SIGKILL, then started, writes one `unclean` record; a forced panic writes one `crash` record and one notice | Integration | 1 | 6.3 |
 | 4 | A hook handler panic is a `recovered` record and gff-hab keeps serving | Integration | 1 | 6.2 |
 | 5 | `gff-hab logs` merges hab and holder files in time order and follows across rotation | Unit | 1 | 4.8 |
-| 6 | A friction note stores text, session and a tail that holds that session's lines | Integration | 1 | 9.2 |
+| 6 | A friction note from `gff friction` and one from an app client store text, session, blocker and a tail that holds that session's lines; the text is in no `hab.log` line; Ctrl+O F sends the focused session; the app's sheet sends to the session's hab | Integration | 1 | 9.1, 9.2 |
 | 7 | A blocked loop (test seam) yields one stall line and one stack file; `SIGUSR1` yields a stack file | Integration | 2 | 4.7 |
 | 8 | Tallies: calls and errors per method and client kind; `--unused` against the method table | Unit and integration | 3 | 7 |
 | 9 | A request trace reaches the response and a peer's line; a malformed one is replaced | Integration and end to end | 4 | 5.2, 5.4 |

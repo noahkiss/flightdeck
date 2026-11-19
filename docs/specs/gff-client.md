@@ -1496,7 +1496,7 @@ zellij's mode keys, mapped to gff's actions; no zellij file is read.
 | normal | Ctrl+G lock, Ctrl+P pane mode, Ctrl+T tab mode, Ctrl+O session mode |
 | normal, session, pane, tab | Alt+h focus left, else the previous tab; Alt+l focus right, else the next tab; Alt+j focus down; Alt+k focus up; Alt+i move the tab left; Alt+o move the tab right |
 | locked | Ctrl+G unlock |
-| session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, `R` run sessions, Esc back |
+| session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `F` friction note (`diagnostics.md` 9.1), `r` redraw, `n` nudge, `f` fit, `d` detach, `R` run sessions, Esc back |
 | pane (Ctrl+P) | `n` new pane stacked onto the focused one, `l` or `r` new pane on the right, `j` or `d` below, `h` on the left, `k` above (5.4); `p` or Tab focus the next pane (stays), `f` zoom, `s` turn the split that holds the focused pane the other way, `x` close view, `u` reopen the view closed last (5.8), Esc or Enter back |
 | tab (Ctrl+T) | `n` new tab, `r` rename the tab, `x` close the tab, Tab the last tab (stays), `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
 | sidebar, board | As 4.3 and 7 |
@@ -1539,7 +1539,7 @@ zellij's mode keys, mapped to gff's actions; no zellij file is read.
 Decided (owner, 2026-11-01): A is the default, configurable as zellij's is, and not designed
 for running gff inside zellij. B, one prefix key, ships as a sample config,
 `docs/examples/gff-keys-prefix.toml`: Ctrl+\ then one key, the client core's keys plus `p`
-pane mode, `t` tab mode, `l` lock and `!` warnings. It sets `clear-defaults = true`, so it is
+pane mode, `t` tab mode, `l` lock, `!` warnings and `F` friction note. It sets `clear-defaults = true`, so it is
 the whole keymap: using it is a config change only. `[keys.normal]` takes any action, so one
 chord can also run a command directly.
 
@@ -1584,7 +1584,7 @@ d = "none"                # unbind
   `zoom`, `split`, `new-pane`, `new-pane-right`, `new-pane-down`, `new-pane-left`,
   `new-pane-up`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
   `rename-tab`, `close-tab`, `last-tab`,
-  `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `reopen-view`, `warnings`; in the
+  `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `reopen-view`, `warnings`, `friction`; in the
   `exited` table only `resume` and `shell`; in the sidebar and board
   also `up`, `down`, `open`, `open-tab`, and in the sidebar `new-session`, `rename`,
   `close-session`, `filter`, `group`. `none` unbinds.

@@ -332,6 +332,8 @@ public actor FakeHab {
     public private(set) var capcomCardAnswers: [CapcomCardAnswerParams] = []
     /// Every `device.context.put` received, oldest first.
     public private(set) var deviceContextPuts: [DeviceContextPutParams] = []
+    /// Every `diag.friction` the hab took, oldest first (capability `friction`).
+    public private(set) var frictionNotes: [FrictionParams] = []
 
     /// Lists `device-context` in the welcome: the hab takes `device.context.put`.
     public func setDeviceContext(_ on: Bool) { setCapability("device-context", on) }
@@ -1270,6 +1272,14 @@ public actor FakeHab {
             it.answer = CapcomAnswer(by: c.label ?? "fake-device", choice: p.choice, time: Fixture.stamp(Date()))
             await reply(c, id: id, result: CapcomCardAnswered(item: it, seq: c.seq))
             await putCapcomItem(it)
+        case HabMethods.diagFriction.name where capabilities.contains(FrictionNote.capability):
+            guard let p = try? params.decode(FrictionParams.self),
+                  !p.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, p.text.count <= FrictionNote.maxText else {
+                await fail(c, id: id, kind: .invalid, hint: "diag.friction: the note has no text, or too much")
+                break
+            }
+            frictionNotes.append(p)
+            await reply(c, id: id, result: FrictionNoted(seq: c.seq, trace: String(format: "hDEMO%07d", frictionNotes.count)))
         case HabMethods.deviceContextPut.name where capabilities.contains("device-context"):
             guard let p = try? params.decode(DeviceContextPutParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad device.context.put params")

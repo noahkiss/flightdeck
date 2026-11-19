@@ -2338,8 +2338,13 @@ Rules:
   of the navigation bar in both views. The terminal's Fit and Redraw go in the More menu there, so
   its controls never push the switch off; its microphone stays in the bar. Beside the switch the
   phone's bar holds one control and the More menu: Voice in the chat, the pane's microphone in
-  the terminal. New conversation, and Voice in the terminal, go in the More menu (owner report
-  2026-11-02: four controls covered the switch). iPad and Mac keep their header as it is.
+  the terminal. New conversation, Note friction, and Voice in the terminal, go in the More menu
+  (owner report 2026-11-02: four controls covered the switch). iPad and Mac keep their header as
+  it is, with Note friction as one more icon there.
+- **Note friction** (`diagnostics.md` 9.1) shows when the session's hab lists `friction`. It
+  opens a sheet sized to its content: a multi-line field, a Blocker switch (the work could not
+  be done in Flightdeck), Cancel and Send. ⌥⌘F opens it with a hardware keyboard. After Send the
+  sheet shows the note's trace and Done.
 - **The split is per device.** The iPad's divider position does not change the Mac's.
 - **Narrow iPad windows** (Slide Over, a third of the screen) use the phone layout.
 - **One session in two windows** is allowed. Each window opens its own data stream; only typing
@@ -3197,6 +3202,7 @@ stage that fills it.
 | `content.show`, `content.list`, `content.read`, `content.diff` and event `content.updated` | Rich content: shown files, images from tool calls, modified files with diffs (4.7). Capability `content` |
 | `chat.search {query, limit}` (later) | Full-text search over chat messages on this hab (3.6) |
 | `settings.get {ids?}`, `settings.set {values}`, event `settings.updated`, snapshot field `settings`, error kind `locked` (not in the schema yet) | Read and write hab-side settings, all or nothing per call, with a revision check (20.5). Capability `settings` |
+| `diag.friction {text, session?, pane?, blocker?}` | Note friction: the owner's words about a moment Flightdeck fell short, stored on the session's hab with a tail of its logs; answers the trace (`diagnostics.md` 9). Capability `friction` |
 
 Nothing new is needed for the Watch: it answers through the phone's notification actions (16).
 Voice mode needs no voice call: speech becomes text on the device and goes through
