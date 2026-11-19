@@ -46,7 +46,10 @@
     "flight-rules",
     "session-restart",
     "friction",
-    "pane-read"
+    "pane-read",
+    "trust",
+    "round-actions",
+    "teammates"
   ],
   "methods": [
     {

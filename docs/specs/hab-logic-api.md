@@ -669,7 +669,16 @@ replica and the `logbook.*` methods and the `logbook.updated` and `logbook.confl
 vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
 `friction` means `diag.friction` works: the hab stores a friction note with a tail of its logs
-(`diagnostics.md` 9).
+(`diagnostics.md` 9). `trust` means `trust.answer` works (`app.md` 7.10). `round-actions` means
+the hab knows a `capcom` round's action words, so a client shows its Capcom jobs
+(`capcom-service.md` 9.6). `teammates` means `session.create` takes `report_to`
+(`harness-adapters.md`, Spawn); a spawner's hab checks it on a peer.
+`api.Capabilities` lists every word a hab sends, so the schema's `x-capabilities` and the
+generated clients name them all. A test reads the words `gff-hab serve` and the control server
+put in the welcome. It fails on a word the table lacks, and on a table word no hab sends.
+`devices` and `snapshot-ghostty` are the two table words no hab sends yet. A word a client
+checks before any hab sends it, such as `modules` (`modules.md` 6.6), joins the table with the
+hab code that sends it.
 A client checks for a capability before it uses the feature. Capabilities are
 for features that a host may lack. They are not a second versioning scheme.
 
@@ -682,7 +691,8 @@ holder link), `settings`, `read-tools`, `confirm` and `friction`. With the holde
 `rounds`. It sends `logbook` when its Logbook file opens (`logbook.md` 10.5), and `logbook-vectors` when its
 config file has `[logbook.vectors]` (`logbook.md` 13.2). It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
-engine on (`voice.md`, Built choices).
+engine on (`voice.md`, Built choices). With the holder link on it also sends `trust` and
+`teammates`, and with `rounds` also `round-lock` and `round-actions`.
 
 ### 3.5 Events, seq and epoch
 
