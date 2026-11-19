@@ -453,7 +453,8 @@ struct SessionRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.title)
                         .font(.body.weight(.semibold))
-                        .lineLimit(2)
+                        .lineLimit(4)
+                        .minimumScaleFactor(0.7)
                     Text(row.subtitle(showState: row.showsStateInSubtitle))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -492,7 +493,8 @@ struct ActionRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.title)
                         .font(.body.weight(.semibold))
-                        .lineLimit(3)
+                        .lineLimit(4)
+                        .minimumScaleFactor(0.7)
                     Text(row.subtitle(showState: true) + (row.since.map { " · " + BoardRow.age($0, now: now) } ?? ""))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -530,7 +532,8 @@ struct PermissionRow: View {
                     AdaptiveRow {
                         Text(row.title)
                             .font(.body.weight(.semibold))
-                            .lineLimit(3)
+                            .lineLimit(4)
+                        .minimumScaleFactor(0.7)
                     } trailing: {
                         if let since = row.since {
                             Text(BoardRow.age(since, now: now))
@@ -541,7 +544,8 @@ struct PermissionRow: View {
                     if let c = row.context {
                         Text(c)
                             .font(.callout.monospaced())
-                            .lineLimit(3)
+                            .lineLimit(4)
+                        .minimumScaleFactor(0.7)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -647,7 +651,8 @@ struct ConfirmRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(ConfirmCardContent.title(c))
                     .font(.body.weight(.semibold))
-                    .lineLimit(3)
+                    .lineLimit(4)
+                        .minimumScaleFactor(0.7)
                 Text(byline)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -719,7 +724,8 @@ struct GroupRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.title)
                         .font(.body.weight(.semibold))
-                        .lineLimit(2)
+                        .lineLimit(4)
+                        .minimumScaleFactor(0.7)
                     Text(group.line)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -779,6 +785,9 @@ struct UsageAccessory: View {
             .buttonStyle(.plain)
             .accessibilityHint("Opens usage")
         }
+        // The accessory is one bar tall, as the tab bar is; its text stops growing where the
+        // tab bar's does. VoiceOver reads the full words.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 }
 

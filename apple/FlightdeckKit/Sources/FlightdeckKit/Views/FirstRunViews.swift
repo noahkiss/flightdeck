@@ -5,6 +5,8 @@ import SwiftUI
 struct FirstRunView: View {
     let fleet: Fleet
     @State private var sheet: Sheet?
+    /// The step number's circle grows with the text (app.md 3.8).
+    @ScaledMetric(relativeTo: .subheadline) private var stepSize: CGFloat = 28
 
     enum Sheet: String, Identifiable {
         case scan, type, ssh
@@ -88,7 +90,7 @@ struct FirstRunView: View {
             Text("\(n)")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 28, height: 28)
+                .frame(minWidth: stepSize, minHeight: stepSize)
                 .background(Color.accentColor.opacity(0.12), in: Circle())
                 .accessibilityLabel("Step \(n)")
             VStack(alignment: .leading, spacing: 8, content: content)
