@@ -618,7 +618,7 @@ public final class ChatModel {
             outgoing[j].status = .queued
         } catch {
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
-            outgoing[j].status = .failed(Self.refusal(error))
+            outgoing[j].status = .failed(Self.sendRefusal(error))
         }
     }
 
@@ -653,8 +653,14 @@ public final class ChatModel {
     }
 
     /// The hab's reason for refusing, with its error kind.
-    /// A refused send in plain words (app.md 4.11); the hab's hint stays out of the chat.
     static func refusal(_ error: Error) -> String {
+        if let e = error as? AttachmentRefused { return e.hint }
+        if let e = error as? RPCError, let d = e.data { return "\(d.kind.rawValue): \(d.hint)" }
+        return describe(error)
+    }
+
+    /// A refused send in plain words (app.md 4.11); the hab's hint stays out of the chat.
+    static func sendRefusal(_ error: Error) -> String {
         if let e = error as? AttachmentRefused { return e.hint }
         if let e = error as? RPCError {
             switch e.kind {
