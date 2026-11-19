@@ -563,7 +563,7 @@ func serve(args []string) error {
 				pokeCatalog() // pokes channels too
 			}
 		},
-		Logf: debugf,
+		Logf: logger.Printf, // dropped hooks and missing hooks are plain lines (diagnostics.md 4.4)
 	})
 	// Push (app.md 8): the hab sends to APNs with the user's own key, when it is set up.
 	// The Capcom home host, once the session host below exists: banners carry the Ask action

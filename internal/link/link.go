@@ -99,6 +99,11 @@ type Config struct {
 	// Retired is called on its own goroutine when a holder says bye: it exited cleanly, after its
 	// drain or a shutdown, so its job can go (spec 5.4). pid is the holder's process id.
 	Retired func(instance string, pid int)
+	// Lost is called on its own goroutine when a holder's connection ends with an error while
+	// the link is open: the holder crashed, was killed, or the connection broke. build is the
+	// holder's build, panes how many of its panes the link lost (diagnostics.md 6.3). Nil:
+	// nothing is told.
+	Lost func(instance, build string, panes int)
 
 	// saveDelay delays each write of the retired file, so tests can stand in for a slow fsync.
 	saveDelay time.Duration
@@ -694,6 +699,9 @@ func (l *Link) holderEnded(h *holderclient.Holder, err error) {
 		}
 	} else {
 		l.cfg.Logf("link: holder %s connection ended: %v; %d panes lost", h.Instance(), err, len(ps))
+		if l.cfg.Lost != nil {
+			go l.cfg.Lost(h.Instance(), h.Build(), len(ps))
+		}
 	}
 	var notices []Notice
 	for _, p := range ps {

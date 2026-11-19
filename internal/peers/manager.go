@@ -473,6 +473,15 @@ func (m *Manager) publish(label string) {
 	prev, had := m.published[label]
 	m.published[label] = p
 	m.mu.Unlock()
+	// One line per change between online and not (diagnostics.md 4.6): the reconnect attempts
+	// log their own errors, and these lines make the timeline.
+	if on := p.State == api.PeerStateOnline; on != (had && prev.State == api.PeerStateOnline) && (on || had) {
+		if on {
+			m.cfg.Logf("peers: %s online", label)
+		} else {
+			m.cfg.Logf("peers: %s offline (%s)", label, p.State)
+		}
+	}
 	if (!had || !samePeer(prev, p)) && m.cfg.Publish != nil {
 		m.cfg.Publish(p)
 	}

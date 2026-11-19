@@ -1830,6 +1830,7 @@ func (s *Service) expire() {
 			}
 			if it.Item.Kind == api.MailKindMessage && it.Item.Message != nil {
 				s.setStateLocked(it.Item.Message.ID, dev, api.ChannelStateExpired, "not handed over within 7 days", now)
+				s.cfg.Logf("channels: message %s for %s expired unsent after 7 days", it.Item.Message.ID, dev)
 			}
 		}
 		if len(keep) != len(q) {
