@@ -17,6 +17,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
+	"github.com/noahkiss/flightdeck/internal/friction"
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/logfile"
@@ -385,6 +386,7 @@ func (d *habDiag) sweep() {
 	}
 	d.pruneCrash()
 	d.budget()
+	friction.Prune(frictionDir(d.state), d.now())
 }
 
 // holderInstance returns the instance of a holder's file or one of its old files.

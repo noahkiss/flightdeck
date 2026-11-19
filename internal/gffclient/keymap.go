@@ -87,6 +87,7 @@ const (
 	actResume    = "resume"      // an exited view: resume its session
 	actShell     = "shell"       // an exited view: the hab's shell in its place and folder
 	actWarnings  = "warnings"    // list the warnings on the bottom row
+	actFriction  = "friction"    // a friction note on the focused session (diagnostics.md 9)
 	actTabN      = "tab-"        // tab-1 to tab-9: go to that tab
 	actUp        = "up"
 	actDown      = "down"
@@ -124,7 +125,7 @@ var actionLabels = map[string]string{
 	actNewUp:  "split up",
 	actRedraw: "redraw", actNudge: "nudge", actFit: "fit", actDetach: "detach", actSidebar: "sidebar",
 	actBoard: "board", actBars: "bars", actNewTab: "new tab", actRenameTab: "rename tab", actCloseTab: "close tab", actLastTab: "last tab", actNextTab: "next tab", actPrevTab: "previous tab",
-	actCloseView: "close view", actReopen: "reopen", actResume: "resume", actShell: "shell", actWarnings: "warnings", actUp: "move", actDown: "move", actOpen: "open",
+	actCloseView: "close view", actReopen: "reopen", actResume: "resume", actShell: "shell", actWarnings: "warnings", actFriction: "friction note", actUp: "move", actDown: "move", actOpen: "open",
 	actOpenTab: "open in new tab", actNew: "new", actRename: "rename", actClose: "close", actFilter: "filter",
 	actGroup: "group", actFocusLeft: "move focus", actFocusRight: "move focus", actFocusUp: "move focus",
 	actFocusDown: "move focus", actMoveTabLeft: "move tab", actMoveTabRight: "move tab",
@@ -332,7 +333,7 @@ func DefaultKeymap() *Keymap {
 	}
 	add(ModeLocked, "ctrl-g", actUnlock)
 	add(ModeSession, "w", actSidebar, "g", actBoard, "b", actBars, "!", actWarnings,
-		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "R", actRunSessions, "esc", actBack)
+		"F", actFriction, "r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "R", actRunSessions, "esc", actBack)
 	add(ModePane, "n", actNewPane, "l", actNewRight, "r", actNewRight, "j", actNewDown, "d", actNewDown,
 		"h", actNewLeft, "k", actNewUp, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit,
 		"x", actCloseView, "u", actReopen, "esc", actBack, "enter", actBack)
