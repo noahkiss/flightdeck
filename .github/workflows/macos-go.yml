@@ -119,6 +119,5 @@ jobs:
         HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install bash && export GFF_TEST_BASH="$(brew --prefix)/bin/bash"
         GFF_TEST_TIMEOUT_SCALE=3 go test -race -count=3 ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... ./internal/holderreg/... ./internal/link/... ./internal/service/... ./internal/grants/... ./cmd/gff-hab-holder/...
         GFF_TEST_TIMEOUT_SCALE=3 make test
-        rc=0; scripts/service-check.sh || rc=$?; echo "TEMP: service-check without opt-in exited $rc"; [ "$rc" = 3 ]
         ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'GFF_SVC_RUN=1 scripts/service-check.sh' || '' }}
       timeout-minutes: 60
