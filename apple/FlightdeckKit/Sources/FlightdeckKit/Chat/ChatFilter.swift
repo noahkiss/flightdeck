@@ -239,6 +239,10 @@ public final class ChatShowStore {
         if let s = d.string(forKey: key), let data = s.data(using: .utf8),
            let v = try? JSONDecoder().decode(ChatShowSettings.self, from: data) { return v }
         if let data = d.data(forKey: key), let v = try? JSONDecoder().decode(ChatShowSettings.self, from: data) { return v }
+        // A launch argument in property list form: `-flightdeck.chat.show '{hidden=(reads);}'`.
+        if let dict = d.dictionary(forKey: key), JSONSerialization.isValidJSONObject(dict),
+           let data = try? JSONSerialization.data(withJSONObject: dict),
+           let v = try? JSONDecoder().decode(ChatShowSettings.self, from: data) { return v }
         return ChatShowSettings()
     }
 
