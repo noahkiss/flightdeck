@@ -1,7 +1,8 @@
 # Go on macOS (docs/specs/ci-release.md 3.5): macOS PTYs and launchd differ from Linux, so the
 # holder packages run here when they change, plus a nightly run (owner decision, 2026-10-31).
 # A change: the holder group under -race three times, then every test with libghostty. The
-# nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh); a
+# nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh,
+# with the GFF_SVC_RUN=1 opt-in it needs on macOS); a
 # scheduled run is skipped when main has not moved since the last passing nightly run, and the push
 # that merges a pull request whose own run passed is skipped too: that night's run covers the merge.
 # The paths include the parser (internal/vt), the build pins (Makefile, go.mod, go.sum, mise.toml)
@@ -30,6 +31,7 @@ on:
       - 'mise.toml'
       - 'scripts/go-test-split.sh'
       - 'scripts/service-check.sh'
+      - 'scripts/dev-sweep.sh'
       - 'scripts/macos-bundle.sh'
       - '.github/workflows/macos-go.yml'
   pull_request:
@@ -117,5 +119,6 @@ jobs:
         HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install bash && export GFF_TEST_BASH="$(brew --prefix)/bin/bash"
         GFF_TEST_TIMEOUT_SCALE=3 go test -race -count=3 ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... ./internal/holderreg/... ./internal/link/... ./internal/service/... ./internal/grants/... ./cmd/gff-hab-holder/...
         GFF_TEST_TIMEOUT_SCALE=3 make test
-        ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'scripts/service-check.sh' || '' }}
+        rc=0; scripts/service-check.sh || rc=$?; echo "TEMP: service-check without opt-in exited $rc"; [ "$rc" = 3 ]
+        ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'GFF_SVC_RUN=1 scripts/service-check.sh' || '' }}
       timeout-minutes: 60

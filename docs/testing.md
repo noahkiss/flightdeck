@@ -26,10 +26,17 @@ Every stage's acceptance checks follow it.
   `cmd/gff-hab` build their gff-hab with it. Each seam is off until its variable is set:
   `GFF_TEST_SPAWN_DELAY` (a duration) holds a spawn between the holder's answer and the link
   following the pane.
-- Nothing a test makes outlives the test binary. A test puts its files in `t.TempDir()`; a
-  short socket path from `os.MkdirTemp` gets a `t.Cleanup` that removes it. What a `TestMain`
-  builds once and shares goes in `testtmp.MainDir`, removed with `testtmp.Exit` after `m.Run`.
-  A directory still there fails the run. The next run sweeps one a panic or timeout left.
+- Nothing a test makes outlives the test binary. A test puts its files in `t.TempDir()`. A
+  short socket path comes from `testtmp.Dir`, which removes it when the test ends. What a
+  `TestMain` builds once and shares goes in `testtmp.MainDir`, and the `TestMain` ends with
+  `testtmp.Run(m, dir)`. Each process a test starts (a holder, a gff-hab, a fake harness) runs
+  from one of these folders, so its command line names it, and `testtmp` finds it with `ps`.
+  When the tests end, a process still running 5 s later prints a `FAIL: testtmp` line, is
+  stopped, and fails the run; so does a folder still there. On SIGINT or SIGTERM, and shortly
+  before `-test.timeout` would panic (which skips every cleanup), `testtmp.Run` stops the
+  processes and removes the folders. After a SIGKILL or a crash, the next run's `MainDir` or
+  `Dir` with the same prefix stops the dead binary's processes and removes its folders.
+  `make clean-dev` removes whatever is left, with the build output.
 - A test binary that runs git calls `testgit.Hermetic()` first in its `TestMain`. It points
   `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` at `/dev/null` and sets a test identity, so a
   developer's hooks path, filters or default branch never reach the tests or the gff-hab they
@@ -134,7 +141,14 @@ scrollback rows). `TestSubscribeScrollbackBound` in `internal/link` checks that 
 `internal/vt/ghostty` logs the cost table in spec 2.3 (`-v`; set `GFF_MEASURE_DIR` to a directory
 on a real disk to time the fsync there).
 
-Core tests 2 and 13 are `scripts/service-check.sh`. It installs with its own job prefix and a
+Core tests 2 and 13 are `scripts/service-check.sh`. On macOS it runs only with `GFF_SVC_RUN=1`,
+which CI sets: each launch agent it loads is a new background item, and macOS notifies the user
+of each one. Without the opt-in it prints why and exits 3. On Linux it needs no opt-in. One run
+goes at a time per user. At start it removes what an earlier run left: every `gffsvctest-*` job
+or unit, the processes from an old work folder, and the folder. At every exit, pass, failure or
+signal, it stops its jobs and processes and removes its work folder. Its logic job label is the
+same on every run (`gffsvctest-run`); a holder's label still carries the holder's instance id.
+It installs with its own job prefix and a
 temporary state directory, starts a child in a pane, restarts the logic job 20 times through the
 init system, reinstalls a newer build once, then uninstalls. After each restart it waits for a new
 gff-hab epoch, then checks that the child has the same pid, that its own counter still rises, that
@@ -256,6 +270,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/merge/` | Multi-host merge over three fake habs |
 | `go test ./scripts/hygiene/` | The scan in temporary repositories with invented values |
 | `go test ./internal/testgit/` | `testgit.Hermetic` keeps a failing global post-checkout hook and a global identity out of git |
+| `go test ./internal/testtmp/` | A dead binary's folders and processes are swept, a live one's stay; the process guard finds a process by its folder and stops it |
 | `go test -race ./internal/hosts/ ./internal/board/` | Many hosts over in-process fake habs |
 | `go test -race ./internal/hoststats/ ./internal/control/ && go test -race -run TestHabStats ./cmd/gff-hab` | Shared host stats |
 | `go test -race ./internal/gffclient/` | The workspace over fake habs |

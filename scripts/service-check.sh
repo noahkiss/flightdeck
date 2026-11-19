@@ -25,12 +25,21 @@
 #      is left, nothing else was removed, and only gff-hab's own state stays in the state
 #      directory.
 #
-# It is safe on a developer's machine: the job names carry a unique prefix, every path is in a
-# temporary directory, and a failure uninstalls and removes all of it. Settings come from the
-# environment:
+# On macOS it runs only with GFF_SVC_RUN=1; CI sets it. Each launch agent it loads is a new
+# background item, and macOS notifies the user of each one. Without the opt-in it prints why
+# and exits 3. On Linux it runs without one: systemd user units raise no notification.
 #
+# It leaves nothing behind. The job names carry their own prefix (gffsvctest-), every path is in
+# a temporary directory, and one service check runs at a time per user (a lock in GFF_SVC_TMP).
+# At start it removes what an earlier run left: every gffsvctest-* job or unit, the processes
+# started from an old work directory, and that directory (scripts/dev-sweep.sh). At every exit
+# (pass, fail, SIGINT, SIGTERM, SIGHUP) it uninstalls when it has not yet, stops its jobs and
+# processes, and removes its work directory. Settings come from the environment:
+#
+#   GFF_SVC_RUN              1 to run on macOS
 #   GFF_SVC_LOOPS            restarts before the reinstall (default 20)
-#   GFF_SVC_PREFIX           job name prefix (default gffsvctest-<pid>)
+#   GFF_SVC_PREFIX           job name prefix (default gffsvctest-run; the start sweep covers only
+#                            gffsvctest-*)
 #   GFF_SVC_TMP              where the temporary directory goes (default /tmp; keep it short,
 #                            macOS caps a socket path at 104 bytes)
 #   GFF_SVC_BUNDLE_PREFIX    macOS: bundle id prefix of the dev bundles (default test.gffsvc)
@@ -39,8 +48,12 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=scripts/dev-sweep.sh
+. "$repo/scripts/dev-sweep.sh"
 loops=${GFF_SVC_LOOPS:-20}
-prefix=${GFF_SVC_PREFIX:-gffsvctest-$$}
+# A fixed prefix: each run loads the same logic job label, not a new one.
+prefix=${GFF_SVC_PREFIX:-gffsvctest-run}
+svc_tmp=${GFF_SVC_TMP:-/tmp}
 scale=${GFF_TEST_TIMEOUT_SCALE:-1}
 gocmd=${GO:-go}
 uid=$(id -u)
@@ -52,6 +65,10 @@ Linux)
 	logic=$prefix-gff-hab.service
 	;;
 Darwin)
+	if [ "${GFF_SVC_RUN:-}" != 1 ]; then
+		echo "service-check: skipped: on macOS it loads launch agents, and macOS notifies you of each new background item; set GFF_SVC_RUN=1 to run it" >&2
+		exit 3
+	fi
 	init=launchd
 	unitdir=$HOME/Library/LaunchAgents
 	logic=$prefix.gff-hab
@@ -62,7 +79,20 @@ Darwin)
 	;;
 esac
 
-work=$(mktemp -d "${GFF_SVC_TMP:-/tmp}/gffsvc.XXXXXX")
+svc_lock "$svc_tmp" || exit 1
+# shellcheck disable=SC2317 # called from the traps
+early_exit() {
+	local status=$?
+	svc_unlock "$svc_tmp"
+	exit "$status"
+}
+trap early_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+svc_sweep "$svc_tmp"
+
+work=$(mktemp -d "$svc_tmp/gffsvc.XXXXXX")
 state=$work/state
 holders=$work/holders
 sock=$work/hab.sock
@@ -246,18 +276,24 @@ cleanup() {
 				launchctl bootout "gui/$uid/$(basename "$p" .plist)" 2>/dev/null
 				rm -f "$p"
 			done
+			# A holder job whose plist is gone may still be loaded.
+			note_holders
+			for j in "$logic" $(for i in $seen; do holder_job "$i"; echo; done); do
+				job_loaded "$j" && launchctl bootout "gui/$uid/$j" 2>/dev/null
+			done
 		fi
 		[ -n "$child" ] && kill "$child" 2>/dev/null
 		[ -n "$child2" ] && kill "$child2" 2>/dev/null
-		pkill -f "$work" 2>/dev/null
 	fi
+	# Every process started from the work directory, its bundles' LaunchServices records, and
+	# the directory itself.
 	case $work in
-	*/gffsvc.*) rm -rf "$work" ;;
+	*/gffsvc.*) sweep_remove_dir "$work" 2>/dev/null ;;
 	esac
-	exit $status
+	svc_unlock "$svc_tmp"
+	exit "$status"
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM
 
 say "prefix $prefix, work directory $work, $loops restarts"
 for b in a b; do

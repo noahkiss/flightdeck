@@ -83,7 +83,7 @@ SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFI
 
 .PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty ghostty-id build vet clean-libghostty \
 	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast release-build \
-	notices check-notices
+	notices check-notices clean-dev
 
 # Regenerate api/schema.json, api/client_gen.go and the Swift package.
 gen:
@@ -126,8 +126,16 @@ $(GHOSTTY_STAMP):
 ghostty-id:
 	@echo $(GHOSTTY_ID)
 
+# zig writes its package cache read-only; a plain rm -rf fails on it.
 clean-libghostty:
+	chmod -R u+w $(GHOSTTY_SRC) $(GHOSTTY_PREFIX) $(GHOSTTY_PKGS) $(GHOSTTY_ZIGCACHE) 2>/dev/null || true
 	rm -rf $(GHOSTTY_SRC) $(GHOSTTY_PREFIX) $(GHOSTTY_PKGS) $(GHOSTTY_ZIGCACHE)
+
+# Remove build output (build/ with its read-only zig cache, the Swift .build folders) and what
+# test runs left: service check jobs, test processes, temporary folders. Only this repo's own
+# test prefixes; never an installed service. CLEAN_DEV_FLAGS=-n prints what it would do.
+clean-dev:
+	scripts/clean-dev.sh $(CLEAN_DEV_FLAGS)
 
 # Fetch sherpa-onnx's static C library and its C API header into build/ (ignored by git), check
 # both checksums, and write a pkg-config file for them. Needs curl, tar with bzip2.
