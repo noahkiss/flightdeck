@@ -108,19 +108,21 @@ func (v *Value) UnmarshalTOML(data any) error {
 
 // Server is one inventory entry (spec 8.1).
 type Server struct {
-	Name             string           `toml:"name"`
-	Transport        string           `toml:"transport"`
-	Command          string           `toml:"command"`
-	Args             []string         `toml:"args"`
-	Cwd              string           `toml:"cwd"`
-	URL              string           `toml:"url"`
-	Env              map[string]Value `toml:"env"`
-	Headers          map[string]Value `toml:"headers"`
-	Hosts            []string         `toml:"hosts"`
-	Harnesses        []string         `toml:"harnesses"`
-	Auth             string           `toml:"auth"`
-	Timeout          int              `toml:"timeout"`
-	InstructionsNote string           `toml:"instructions_note"`
+	Name      string           `toml:"name"`
+	Transport string           `toml:"transport"`
+	Command   string           `toml:"command"`
+	Args      []string         `toml:"args"`
+	Cwd       string           `toml:"cwd"`
+	URL       string           `toml:"url"`
+	Env       map[string]Value `toml:"env"`
+	Headers   map[string]Value `toml:"headers"`
+	Hosts     []string         `toml:"hosts"`
+	Harnesses []string         `toml:"harnesses"`
+	Auth      string           `toml:"auth"`
+	Timeout   int              `toml:"timeout"`
+	// InstructionsNote is accepted so a config that sets it still loads, and never used: the
+	// ledger shows what a harness recorded, not the registry (spec 8.1).
+	InstructionsNote string `toml:"instructions_note"`
 }
 
 // Provider is a secret provider (spec 8.5): a command that prints one secret. A reference
