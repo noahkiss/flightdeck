@@ -16,12 +16,12 @@ const MaxLine = 64 << 10
 type state uint8
 
 const (
-	ground state = iota
-	esc          // after ESC
-	escInter     // ESC, then intermediate bytes
-	csi          // ESC [ or C1 CSI: parameters until a final byte
-	str          // OSC, DCS, SOS, PM or APC: until BEL or ST
-	strEsc       // ESC inside a string: \ ends it
+	ground   state = iota
+	esc            // after ESC
+	escInter       // ESC, then intermediate bytes
+	csi            // ESC [ or C1 CSI: parameters until a final byte
+	str            // OSC, DCS, SOS, PM or APC: until BEL or ST
+	strEsc         // ESC inside a string: \ ends it
 )
 
 // Lines splits a byte stream into text lines. LF ends a line; so does CR, and CR LF counts
