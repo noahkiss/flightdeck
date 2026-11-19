@@ -27,6 +27,8 @@ final class TerminalFitTests: XCTestCase {
         XCTAssertEqual(TerminalFit.fontSize(width: 200, textScale: 1), TerminalFit.minPoints)
         // A measured cell aspect replaces the estimate.
         XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: 3, cellAspect: 0.5), 20)
+        // libghostty takes its size a third larger than points.
+        XCTAssertEqual(TerminalFit.ghosttySize(13), 9.75)
     }
 
     func testTheGridFillsTheViewLessHalfACell() {

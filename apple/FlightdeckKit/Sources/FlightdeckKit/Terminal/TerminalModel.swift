@@ -194,7 +194,7 @@ public final class TerminalModel {
         b.withWindowPaddingX(0)
         b.withWindowPaddingY(0)
         #if os(iOS)
-        b.withFontSize(Float(TerminalFit.basePoints))
+        b.withFontSize(Float(TerminalFit.ghosttySize(TerminalFit.basePoints)))
         #else
         b.withFontSize(13)
         #endif
@@ -403,7 +403,7 @@ public final class TerminalModel {
 
     private func applyFont() {
         guard let f = fontPoints, f != appliedFont else { return }
-        let text = f == f.rounded() ? String(Int(f)) : String(format: "%.1f", Double(f))
+        let text = String(format: "%.2f", Double(TerminalFit.ghosttySize(f)))
         guard view.performBindingAction("set_font_size:\(text)") else { return }
         appliedFont = f
         #if canImport(UIKit)

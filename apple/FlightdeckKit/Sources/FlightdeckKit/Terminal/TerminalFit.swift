@@ -16,6 +16,14 @@ public enum TerminalFit {
     /// A cell's width over the point size, before libghostty has measured one.
     public static let defaultCellAspect: CGFloat = 0.6
 
+    /// libghostty's font size for a size in points. On iOS libghostty draws
+    /// its size a third larger than UIKit points (its 13 gives cells 10.5 pt
+    /// wide, as a 17 pt monospace does); this converts, so the rule's sizes
+    /// are the points the owner sees.
+    public static func ghosttySize(_ points: CGFloat) -> CGFloat {
+        points * 72 / 96
+    }
+
     /// The body style's size at each Dynamic Type size, in points (Apple's
     /// type ramp). The terminal grows by the same factor as body text.
     static func bodyPoints(_ size: DynamicTypeSize) -> CGFloat {

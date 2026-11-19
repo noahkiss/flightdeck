@@ -305,6 +305,7 @@ struct TerminalSizeControl: View {
             .padding(5)
             .contentShape(Rectangle())
         }
+        .tint(.white)
         .environment(\.colorScheme, .dark)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .accessibilityLabel(label.spoken)

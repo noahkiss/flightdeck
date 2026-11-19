@@ -1151,13 +1151,17 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   reports that grid and it has held still for 100 ms: libghostty reports a new grid before its
   parser has resized. More than 4 MiB of held output is dropped and a `pane.redraw` snapshot asked
   for instead.
-- **Size rule.** The view's space only gives the size this client wants. It goes out with
-  `pane.set_desired_size` only while this client owns the pane, 120 ms after the last change. The
-  view reads its client id again on every welcome and resize frame, since a control reconnect
-  without the token gives it a new one.
-  Typing takes ownership through the hab's 300 ms debounce, so the app sends nothing extra
-  before it. Viewing, rotating and window resizes never send a size. "Fit to this screen" sends
-  `pane.take`. Pinch zoom with horizontal pan is not built yet.
+- **Size rule.** The view's space and the mode (section 5.4) give the size this client wants
+  (`PaneSizing`, `TerminalFit`). It goes out with `pane.set_desired_size` only while this client
+  owns the pane, 120 ms after the last change, and once when Host size is chosen. The view reads
+  its client id again on every welcome and resize frame, since a control reconnect without the
+  token gives it a new one. Typing takes ownership through the hab's 300 ms debounce, so the app
+  sends nothing extra before it. On iOS, the first welcome or resize frame of a stream that shows
+  no owner sends one `pane.request` while the view is Fitted. Otherwise viewing, rotating and
+  window resizes send no size until this client owns the pane. Fit sends `pane.take`; Host size
+  sends the host's size, then `pane.disown`. The fit font goes to libghostty with its
+  `set_font_size` action, converted from points (libghostty on iOS draws its size a third larger).
+  Pinch zoom with horizontal pan is not built yet.
 - **Input.** What libghostty writes goes to `pane.input` through one pump: one call in flight,
   keys typed meanwhile sent together in the next call, in order, at most 64 KiB per call.
   The cap keeps a large paste alive over a slow uplink (10.5, Large writes on a slow uplink).
@@ -1176,11 +1180,13 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   size after the debounce (`hab-logic-api.md` 6.2). So while this client does not own the pane,
   mouse motion, the mouse wheel and focus reports are dropped. Clicks and keys pass: they are meant
   as input. A wheel in a viewed mouse-mode program therefore does nothing until this client types or
-  presses "Fit to this screen".
+  chooses Fit.
 - **Keyboard.** Hardware keys reach libghostty's view directly on iPad and Mac; the app adds no
-  key shortcuts in the terminal. The phone uses libghostty-spm's keyboard bar: Esc, Tab, Ctrl and
-  Alt (one tap for one key, a double tap locks), arrows, a few symbols and Paste. Owner-added keys,
-  the drawer and the dictation key are not built yet.
+  key shortcuts in the terminal. On iOS the app draws its own key bar (section 5.5,
+  `TerminalKeyBar`) and hides libghostty-spm's. Ctrl and Opt live in `StickyModifiers`; the bar
+  writes that state into libghostty's sticky modifiers and reads it back when a key spends it, so
+  a key from the system keyboard gets them too. `GCKeyboard` tells when a hardware keyboard is
+  attached. Owner-added keys, the drawer and the dictation key are not built yet.
 - **Redraw** sends `pane.redraw` with mode `nudge`: a fresh snapshot, then the PTY one column
   narrower and back. Never Ctrl+L.
 - **One dark scheme** for the terminal, so the space around a scaled pane matches it.
@@ -1188,9 +1194,13 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   `EnvironmentValues.habConnections`. `TerminalScreen(pane:connection:)` is self-contained, for
   the session view to host beside the chat. Debug builds open a pane at launch with
   `-FlightdeckOpenPane <pane>`.
-- **Demo mode.** The fake hab serves tickets, data connections, input, ownership and redraw.
-  Every demo pane has an invented shell screen that echoes typing; the dev server pane prints a
-  request log every 2 s.
+- **Demo mode.** The fake hab serves tickets, data connections, input, ownership (take,
+  request, disown) and redraw. Every demo pane has an invented shell screen that echoes typing;
+  the dev server pane prints a request log every 2 s. The blocked Claude session's pane is a
+  full-screen agent waiting on a permission prompt: it paints its screen again at every new size,
+  so a fitted phone shows it at the phone's width. Debug launch arguments for screenshots:
+  `-FlightdeckKeyBar show` (the bar despite a hardware keyboard), `-FlightdeckKeyBarState armed`
+  or `locked` (Ctrl), `-FlightdeckTerminalSize host`.
 - **Not built:** selection and links, exit "Restart", `pane.activity` markers, thumbnails, more
   scrollback on demand, and closing and resuming data streams when the control connection comes
   back.
