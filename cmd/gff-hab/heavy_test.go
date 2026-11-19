@@ -195,9 +195,13 @@ func TestHeavyKilledCLI(t *testing.T) {
 // back with its ticket: the holder holds again and its command runs on, the waiters keep their
 // order ahead of a run that asked after the restart, and nothing is granted during the
 // restart hold. When the holder ends, the first waiter runs.
+//
+// Every CLI must come back within the restart hold. The hold scales with GFF_TEST_TIMEOUT_SCALE:
+// in a loaded run, a CLI that comes back after the hold finds the next waiter granted, as it
+// should.
 func TestHeavyRestartKeepsPlace(t *testing.T) {
 	t.Parallel()
-	sock, state, work, _, s := heavyHab(t, `restart_hold = "5s"`, nil)
+	sock, state, work, _, s := heavyHab(t, `restart_hold = "`+scaleTimeout(5*time.Second).String()+`"`, nil)
 	a := startHeavyRun(t, sock, work, "a", heavyScript(0))
 	waitUntil(t, "a holds", func() bool { return readLog(work) == "start-a" })
 	startHeavyRun(t, sock, work, "b", heavyScript(0))
@@ -227,10 +231,14 @@ func TestHeavyRestartKeepsPlace(t *testing.T) {
 	})
 	startHeavyRun(t, sock, work, "d", heavyScript(0))
 	var st api.HeavyStatus
-	waitUntil(t, "every run back", func() bool {
-		st = heavyStatus(t, sock)
-		return len(st.Holders) == 1 && len(st.Waiters) == 3
-	})
+	deadline := time.Now().Add(scaleTimeout(15 * time.Second))
+	for st = heavyStatus(t, sock); len(st.Holders) != 1 || len(st.Waiters) != 3; st = heavyStatus(t, sock) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for every run back: %d holders, %d waiters, hold until %q",
+				len(st.Holders), len(st.Waiters), st.HoldUntil)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if st.Holders[0].Ticket != before.Holders[0].Ticket || st.Holders[0].Granted != before.Holders[0].Granted {
 		t.Fatalf("the holder came back as %+v, was %+v", st.Holders[0], before.Holders[0])
 	}
@@ -247,6 +255,11 @@ func TestHeavyRestartKeepsPlace(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(work, "go-a"), nil, 0o600)
 	waitUntil(t, "b runs after a", func() bool { return readLog(work) == "start-a\nend-a\nstart-b" })
+	// Let b, c and d end in turn. Each cleanup lets only its own run end, so a waiter behind a
+	// run that still holds would wait out its cleanup's bound.
+	for _, n := range []string{"b", "c", "d"} {
+		os.WriteFile(filepath.Join(work, "go-"+n), nil, 0o600)
+	}
 }
 
 // TestHeavyPaneClose: `gff-hab heavy` in a pane finds the hab through the pane's GFF_HAB, and
@@ -370,7 +383,7 @@ func TestHeavySignalWhileHabDown(t *testing.T) {
 	select {
 	case <-b.done:
 	case <-time.After(scaleTimeout(5 * time.Second)):
-		t.Fatal("SIGINT did not end a CLI waiting for gff-hab")
+		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab; its stderr: %q", b.stderr.String())
 	}
 	if b.code != 130 || strings.Contains(readLog(work), "start-b") {
 		t.Fatalf("exit %d, log %q", b.code, readLog(work))
