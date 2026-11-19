@@ -18,7 +18,10 @@ import (
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
-// ModulesCapability is the welcome capability of a hab that serves module trees.
+// ModulesCapability is the welcome capability of a hab that serves module trees. No hab sends
+// it yet: the hab's module API comes after the first release (modules.md 6.6, stage 5), and
+// the word joins api.Capabilities with the code that sends it. Until then the board shows no
+// module card, even from a ModuleSource, so a hab never shows a module it does not serve.
 const ModulesCapability = "modules"
 
 // ModuleCard is the latest tree of one module, drawn for the board, on one host.
