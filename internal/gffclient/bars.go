@@ -310,6 +310,9 @@ func (u *workspaceUI) drawBottom() (int, int, bool) {
 		if p.hosts {
 			s = " [" + p.host + "] " + p.label
 		}
+		if len(p.choices) > 0 {
+			s = " [" + p.choices[p.choice] + "] " + p.label
+		}
 		if !p.yesNo {
 			s += ": " + string(p.text)
 		}

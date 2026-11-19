@@ -485,6 +485,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleFlightRules(m)
 		return
 	}
+	if m.Method == "diag.friction" {
+		c.handleFriction(m)
+		return
+	}
 	switch m.Method {
 	case "content.show", "content.list", "content.read", "content.diff":
 		c.handleContent(m)

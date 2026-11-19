@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -4060,6 +4060,48 @@ public struct FlightRulesParams: Codable, Sendable, Hashable {
 
     public init(session: String) {
         self.session = session
+    }
+}
+
+public struct FrictionNoted: Codable, Sendable, Hashable {
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The note's trace, 12 Crockford base32 characters; gff friction show takes it.
+    public var trace: String
+
+    enum CodingKeys: String, CodingKey {
+        case seq = "seq"
+        case trace = "trace"
+    }
+
+    public init(seq: UInt64, trace: String) {
+        self.seq = seq
+        self.trace = trace
+    }
+}
+
+public struct FrictionParams: Codable, Sendable, Hashable {
+    /// The work could not be done in Flightdeck, so the user went back to another tool. Absent or false: a preference.
+    public var blocker: Bool?
+    /// The pane the user was in, when there is one.
+    public var pane: String?
+    /// The session the user was in, when there is one.
+    public var session: String?
+    /// The user's own words, 1 to 2,000 characters.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case blocker = "blocker"
+        case pane = "pane"
+        case session = "session"
+        case text = "text"
+    }
+
+    public init(blocker: Bool? = nil, pane: String? = nil, session: String? = nil, text: String) {
+        self.blocker = blocker
+        self.pane = pane
+        self.session = session
+        self.text = text
     }
 }
 
@@ -10674,6 +10716,8 @@ public enum HabMethods {
     public static let groupAdoptCommit = HabMethod<GroupAdoptCommitParams, Empty>(name: "group.adopt_commit")
     /// A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.
     public static let groupTell = HabMethod<GroupTellParams, Empty>(name: "group.tell")
+    /// Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.
+    public static let diagFriction = HabMethod<FrictionParams, FrictionNoted>(name: "diag.friction")
 }
 
 public enum HabNotification {

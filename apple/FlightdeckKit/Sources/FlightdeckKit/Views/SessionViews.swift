@@ -74,6 +74,8 @@ public struct SessionView: View {
     @State private var consoleShown = false
     /// The content side panel (Mac, iPad) or sheet (iPhone), app.md 4.7.
     @State private var showFiles = Self.filesAtLaunch
+    /// The friction note sheet (diagnostics.md 9.1).
+    @State private var frictionShown = Self.frictionAtLaunch
     @State private var voiceShown = false
     /// Voice from the More menu found the microphone off.
     @State private var voiceDenied = false
@@ -96,6 +98,15 @@ public struct SessionView: View {
     private static var filesAtLaunch: Bool {
         #if DEBUG
         return UserDefaults.standard.bool(forKey: "FlightdeckShowFiles")
+        #else
+        return false
+        #endif
+    }
+
+    /// Debug builds only: `-FlightdeckShowFriction YES` opens the friction note sheet at once.
+    private static var frictionAtLaunch: Bool {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: "FlightdeckShowFriction")
         #else
         return false
         #endif
@@ -143,6 +154,9 @@ public struct SessionView: View {
                     }
                     ToolbarItem(placement: .secondaryAction) {
                         Button("Files", systemImage: "doc.on.doc") { showFiles = true }
+                    }
+                    if model.context.takesFriction {
+                        ToolbarItem(placement: .secondaryAction) { frictionButton }
                     }
                     // A phone's bar holds the back button, the switch, one control and the
                     // More menu. More would cover the switch, so New conversation goes in
@@ -199,6 +213,11 @@ public struct SessionView: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .help(showFiles ? "Hide files" : "Show files")
+                        if model.context.takesFriction {
+                            frictionButton
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                        }
                         if let close {
                             Button("Close", systemImage: "xmark", action: close)
                                 .labelStyle(.iconOnly)
@@ -244,6 +263,10 @@ public struct SessionView: View {
         .sheet(isPresented: $consoleShown) {
             ConsoleSheet(target: model.target)
         }
+        .sheet(isPresented: $frictionShown) {
+            FrictionSheet(note: FrictionNote(session: model.target.session, pane: model.context.pane, connection: model.connection),
+                          host: model.context.hostLabel)
+        }
         .voiceMode($voiceShown, chat: model) {
             mode = .chat
             focusComposer += 1
@@ -275,6 +298,15 @@ public struct SessionView: View {
             }
         }
         .disabled(!VoiceButton.allowed(model))
+    }
+
+    /// "Note friction" (diagnostics.md 9.1): a note on this session, kept on its hab. Option-Command-F
+    /// with a hardware keyboard.
+    private var frictionButton: some View {
+        Button("Note friction", systemImage: "exclamationmark.bubble") { frictionShown = true }
+            .keyboardShortcut("f", modifiers: [.option, .command])
+            .disabled(!model.context.online)
+            .help("Note where Flightdeck fell short")
     }
 
     /// Opens the session's console (app.md 6).

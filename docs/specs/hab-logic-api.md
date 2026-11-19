@@ -668,6 +668,8 @@ replica and the `logbook.*` methods and the `logbook.updated` and `logbook.confl
 (`logbook.md` 10.3, 10.5); without it every `logbook.*` method answers `unavailable`. `logbook-vectors` means the hab keeps a
 vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
+`friction` means `diag.friction` works: the hab stores a friction note with a tail of its logs
+(`diagnostics.md` 9).
 A client checks for a capability before it uses the feature. Capabilities are
 for features that a host may lack. They are not a second versioning scheme.
 
@@ -676,7 +678,7 @@ Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `sn
 (`detect.explain` works), `session-restart` (`session.restart` and `Session.stale` work) and
 `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
-holder link), `settings`, `read-tools` and `confirm`. With the holder link on it also sends
+holder link), `settings`, `read-tools`, `confirm` and `friction`. With the holder link on it also sends
 `rounds`. It sends `logbook` when its Logbook file opens (`logbook.md` 10.5), and `logbook-vectors` when its
 config file has `[logbook.vectors]` (`logbook.md` 13.2). It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the

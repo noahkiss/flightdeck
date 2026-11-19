@@ -49,6 +49,8 @@ type Hab struct {
 	groups map[string]api.Group // groups.go
 	grev   uint64
 	cat    *api.CatalogList // what catalog.list answers; nil: unavailable
+
+	friction []FrictionCall // friction.go
 }
 
 // New makes a hab with its socket and state under dir (keep it short: socket paths are limited
@@ -91,6 +93,7 @@ func (h *Hab) Start() error {
 		Actions:      actions{h},
 		Rounds:       roundsAPI{h},
 		Catalog:      catalogAPI{h},
+		Friction:     frictionAPI{h},
 	})
 	pub.Store(srv)
 	os.Remove(h.Sock)

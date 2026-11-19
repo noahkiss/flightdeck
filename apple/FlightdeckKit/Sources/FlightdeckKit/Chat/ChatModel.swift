@@ -28,6 +28,8 @@ public struct ChatContext: Equatable, Sendable {
     public var hostID = ""
     /// The hab answers folder trust prompts (`trust.answer`, app.md 7.10).
     public var answersTrust = false
+    /// The hab stores friction notes (`diag.friction`, diagnostics.md 9).
+    public var takesFriction = false
 
     public init() {}
 
@@ -742,6 +744,7 @@ extension ChatContext {
         if let r = session?.round { c.round = hab.state.rounds[r.round]?.name ?? "Round" }
         c.hostID = hab.state.welcome?.host.id ?? store.host ?? ""
         c.answersTrust = hab.state.welcome?.capabilities.contains(TrustCard.capability) ?? false
+        c.takesFriction = hab.state.welcome?.capabilities.contains(FrictionNote.capability) ?? false
         c.title = session.map { ($0.title?.isEmpty == false ? $0.title! : $0.name) } ?? (c.pane.map { "Pane \($0)" } ?? "Session")
         return c
     }

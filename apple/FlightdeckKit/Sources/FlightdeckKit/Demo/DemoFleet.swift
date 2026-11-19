@@ -69,6 +69,7 @@ public enum DemoFleet {
         await addConfirmations(hab)
         await addCapcom(hab)
         await addCapcomJobs(hab)
+        await hab.setCapability(FrictionNote.capability, true)
         return hab
     }
 

@@ -44,7 +44,8 @@
     "groups",
     "device-context",
     "flight-rules",
-    "session-restart"
+    "session-restart",
+    "friction"
   ],
   "methods": [
     {
@@ -4893,6 +4894,51 @@
       "x-params": {
         "$ref": "#/components/schemas/GroupTellParams"
       }
+    },
+    {
+      "name": "diag.friction",
+      "summary": "Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "blocker",
+          "description": "The work could not be done in Flightdeck, so the user went back to another tool. Absent or false: a preference.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "pane",
+          "description": "The pane the user was in, when there is one.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The session the user was in, when there is one.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The user's own words, 1 to 2,000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FrictionNoted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/FrictionParams"
+      }
     }
   ],
   "x-notifications": [
@@ -9572,6 +9618,48 @@
         },
         "required": [
           "session"
+        ]
+      },
+      "FrictionNoted": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "trace": {
+            "type": "string",
+            "description": "The note's trace, 12 Crockford base32 characters; gff friction show takes it."
+          }
+        },
+        "required": [
+          "seq",
+          "trace"
+        ]
+      },
+      "FrictionParams": {
+        "type": "object",
+        "properties": {
+          "blocker": {
+            "type": "boolean",
+            "description": "The work could not be done in Flightdeck, so the user went back to another tool. Absent or false: a preference."
+          },
+          "pane": {
+            "type": "string",
+            "description": "The pane the user was in, when there is one."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session the user was in, when there is one."
+          },
+          "text": {
+            "type": "string",
+            "description": "The user's own words, 1 to 2,000 characters."
+          }
+        },
+        "required": [
+          "text"
         ]
       },
       "GovernorConsumer": {

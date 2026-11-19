@@ -46,8 +46,11 @@ type prompt struct {
 	yesNo bool
 	hosts bool // Tab picks the next online host
 	host  string
-	done  func(text string, host string)
-	back  uiMode
+	// choices, when set, are words Tab cycles through; choice is the one shown.
+	choices []string
+	choice  int
+	done    func(text string, host string)
+	back    uiMode
 }
 
 // workspaceUI is the workspace's presentation state.
@@ -333,6 +336,8 @@ func (u *workspaceUI) command(act string) bool {
 		// Mode keys: the key reader moved the mode, and the bar shows it.
 	case actRunSessions:
 		u.toggleRuns()
+	case actFriction:
+		u.noteFriction()
 	case actWarnings:
 		if w := u.warnings(); len(w) > 0 {
 			u.msg = strings.Join(w, " · ")
@@ -846,6 +851,9 @@ func (u *workspaceUI) promptKey(k key) {
 	case "tab":
 		if p.hosts {
 			p.host = u.nextHost(p.host)
+		}
+		if len(p.choices) > 0 {
+			p.choice = (p.choice + 1) % len(p.choices)
 		}
 	case "":
 		p.text = append(p.text, k.r)

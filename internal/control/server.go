@@ -230,6 +230,7 @@ type Config struct {
 	Heavy        Heavy       // nil: the heavy.* methods answer unavailable
 	Groups       Groups      // nil: the group.* methods answer unavailable
 	FlightRules  FlightRules // nil: flightrules.list and flightrules.text answer unavailable
+	Friction     Friction    // nil: diag.friction answers unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

@@ -151,6 +151,9 @@ const usage = `usage:
   gff-hab connect [-socket path]
   gff-hab status  [-socket path] [-state dir] [-holders dir] [-json]
   gff-hab logs    [-state dir] [-f] [-since d|time] [-until d|time] [-proc hab,holder,hook] [-grep text]
+  gff-hab friction [-socket path | -via command] [-session name|id] [-pane id] [-blocker] <text...>   (also gff friction)
+  gff-hab friction list [-state dir] [-days n]
+  gff-hab friction show [-state dir] <trace>
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
@@ -243,6 +246,8 @@ func main() {
 		err = statusCmd(os.Args[2:], os.Stdout)
 	case "logs":
 		err = logsCmd(os.Args[2:], os.Stdout)
+	case "friction":
+		err = frictionCmd(os.Args[2:], os.Stdout)
 	case "api":
 		if len(os.Args) < 3 || os.Args[2] != "call" {
 			fmt.Fprint(os.Stderr, usage)
@@ -1803,6 +1808,7 @@ func serve(args []string) error {
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
 		caps = append(caps, "rounds", capRoundLock, capRoundActions)
 	}
+	caps = append(caps, frictionCapability)
 	s := control.New(control.Config{
 		Epoch:    epoch,
 		Build:    build,
@@ -1856,6 +1862,7 @@ func serve(args []string) error {
 		Groups:       groupsCtl,
 		Logbook:      lbVerbs,
 		FlightRules:  flightRules,
+		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

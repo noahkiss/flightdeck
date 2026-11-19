@@ -1587,3 +1587,10 @@ func (c Client) GroupTell(ctx context.Context, params GroupTellParams) (Empty, e
 	err := c.Caller.Call(ctx, "group.tell", params, &result)
 	return result, err
 }
+
+// DiagFriction calls diag.friction. Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.
+func (c Client) DiagFriction(ctx context.Context, params FrictionParams) (FrictionNoted, error) {
+	var result FrictionNoted
+	err := c.Caller.Call(ctx, "diag.friction", params, &result)
+	return result, err
+}
