@@ -205,7 +205,7 @@ Sources:
 | tallies | Local counts and latencies of API calls and features (7). Not "usage", which means harness plan limits |
 | bundle | One archive of redacted diagnostics a user can attach to an issue (8) |
 | friction note | A user's own note that Flightdeck fell short at this moment (9) |
-| `<state>` | gff-hab's state directory: `control.DefaultState` (`internal/control/state.go:13`). macOS `~/Library/Application Support/gff/hab`; Linux `$XDG_STATE_HOME/gff/hab` |
+| `<state>` | gff-hab's state directory: `control.DefaultState` (`internal/control/state.go:13`). `$GFF_HAB_STATE`, else macOS `~/Library/Application Support/gff/hab`, else `$XDG_STATE_HOME/gff/hab` or `~/.local/state/gff/hab` |
 
 **Decision: "tallies", not "usage".** "Usage" already names plan limits in four specs and the
 `usage.*` methods. One word per concept.
@@ -765,7 +765,7 @@ build.
 
 | Resource | Limit |
 |---|---|
-| `<state>/logs/` | About 60 MiB at most with one holder: hab 40, holder 15, Capcom 15, hook 2, crash 20 files. gff-hab checks the folder at start and every hour, and deletes the oldest old files over 100 MiB |
+| `<state>/logs/` | About 75 MiB at most with one holder: hab 40, holder 15, Capcom 15, hook 2, plus 20 crash files. gff-hab checks the folder at start and every hour, and deletes the oldest old files over 100 MiB |
 | `<state>/tallies/` | 90 day files of a few KiB each, under 5 MiB |
 | `<state>/health.jsonl` | 500 lines |
 | `<state>/friction/` | 200 notes, each at most 256 KiB, under 50 MiB |
