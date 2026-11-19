@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -379,20 +380,55 @@ func TestHeavySignalWhileHabDown(t *testing.T) {
 	waitUntil(t, "b waits", func() bool { return len(heavyStatus(t, sock).Waiters) == 1 })
 	s.stop(t)
 	time.Sleep(300 * time.Millisecond) // b is dialing again
-	b.cmd.Process.Signal(syscall.SIGINT)
+	sent := b.cmd.Process.Signal(syscall.SIGINT)
 	select {
 	case <-b.done:
 	case <-time.After(scaleTimeout(5 * time.Second)):
 		// SIGABRT makes the Go runtime print every goroutine (GOTRACEBACK=all): where it waits.
 		alive := b.cmd.Process.Signal(syscall.Signal(0)) == nil
+		proc := procState(b.cmd.Process.Pid) // on Linux: the signal masks and each thread's state
 		b.cmd.Process.Signal(syscall.SIGABRT)
 		select {
 		case <-b.done:
 		case <-time.After(scaleTimeout(5 * time.Second)):
 		}
-		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab (process alive: %v); its stderr:\n%s", alive, b.stderr.String())
+		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab (send: %v; process alive: %v)\n%s\nits stderr:\n%s", sent, alive, proc, b.stderr.String())
 	}
 	if b.code != 130 || strings.Contains(readLog(work), "start-b") {
 		t.Fatalf("exit %d, log %q", b.code, readLog(work))
 	}
+}
+
+// procState describes process pid from /proc where there is one (Linux): its state and signal
+// masks, each thread's state and kernel wait channel, and its open files. Elsewhere it is "".
+func procState(pid int) string {
+	dir := filepath.Join("/proc", strconv.Itoa(pid))
+	status, err := os.ReadFile(filepath.Join(dir, "status"))
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, l := range strings.Split(string(status), "\n") {
+		if k, _, _ := strings.Cut(l, ":"); slices.Contains([]string{"State", "SigQ", "SigPnd", "ShdPnd", "SigBlk", "SigIgn", "SigCgt", "Threads"}, k) {
+			b.WriteString(l + "\n")
+		}
+	}
+	tasks, _ := os.ReadDir(filepath.Join(dir, "task"))
+	for _, e := range tasks {
+		td := filepath.Join(dir, "task", e.Name())
+		st, _ := os.ReadFile(filepath.Join(td, "stat"))
+		wchan, _ := os.ReadFile(filepath.Join(td, "wchan"))
+		syscallLine, _ := os.ReadFile(filepath.Join(td, "syscall"))
+		comm := string(st)
+		if i := strings.LastIndexByte(comm, ')'); i >= 0 && i+3 <= len(comm) {
+			comm = comm[i+2 : i+3]
+		}
+		fmt.Fprintf(&b, "thread %s: state %s wchan %s syscall %s\n", e.Name(), comm, wchan, strings.TrimSpace(string(syscallLine)))
+	}
+	fds, _ := os.ReadDir(filepath.Join(dir, "fd"))
+	for _, e := range fds {
+		l, _ := os.Readlink(filepath.Join(dir, "fd", e.Name()))
+		fmt.Fprintf(&b, "fd %s: %s\n", e.Name(), l)
+	}
+	return b.String()
 }

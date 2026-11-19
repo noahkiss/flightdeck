@@ -110,6 +110,7 @@ type Lock struct {
 	seq       uint64
 	owners    uint64
 	holdUntil time.Time // zero once the start hold ended
+	stopping  bool      // Stop ran: the hab is shutting down and grants nothing more
 	low       bool
 	volumes   []api.HeavyVolume // the last reading
 	published []api.HeavyVolume // what the catalog section shows
@@ -149,6 +150,16 @@ func New(cfg Config) *Lock {
 		go l.loop()
 	}
 	return l
+}
+
+// Stop grants nothing more: gff-hab is shutting down. Call it before the control server closes
+// its connections. Each closed connection drops the tickets it held; without Stop, a holder's
+// connection that closes first would grant the next waiter, whose connection may still carry
+// the answer, and after the restart both would hold.
+func (l *Lock) Stop() {
+	l.mu.Lock()
+	l.stopping = true
+	l.mu.Unlock()
 }
 
 // Close stops the loop. Waiting calls end with their state as it is.
@@ -435,6 +446,9 @@ func (l *Lock) grantLocked(now time.Time) {
 
 // blockedLocked says why nothing is granted now, or "".
 func (l *Lock) blockedLocked(now time.Time) string {
+	if l.stopping {
+		return "gff-hab is stopping"
+	}
 	if l.low {
 		return fmt.Sprintf("disk low: less than %s free", gib(l.minFree()))
 	}

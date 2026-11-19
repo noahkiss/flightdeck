@@ -196,6 +196,33 @@ func TestOwnerDrop(t *testing.T) {
 	waitFor(t, "d goes with its new connection", func() bool { return len(waiters(l)) == 0 })
 }
 
+// TestStopGrantsNothing: once the hab is stopping, a holder whose connection closes grants
+// no waiter; the waiter's own connection closing then drops it. Without Stop, the waiter would
+// hold and, after the restart, run beside the holder that still runs.
+func TestStopGrantsNothing(t *testing.T) {
+	c := newClock()
+	l := newLock(t, c, Config{})
+	connA, endA := context.WithCancel(context.Background())
+	connB, endB := context.WithCancel(context.Background())
+	defer endB()
+	take(t, l, connA, api.HeavyTakeParams{Command: "a"})
+	b := take(t, l, connB, api.HeavyTakeParams{Command: "b"})
+	l.Stop()
+	endA() // the shutdown closes a's connection first
+	waitFor(t, "a's ticket goes", func() bool { return len(holders(l)) == 0 })
+	if !eq(waiters(l), []string{"b"}) {
+		t.Fatalf("after a's connection closed while stopping: holders %v, waiters %v", holders(l), waiters(l))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	res, err := l.Wait(ctx, b.Ticket)
+	if err != nil || res.State != "waiting" || res.Reason != "gff-hab is stopping" {
+		t.Fatalf("b's wait while stopping: %+v, %v", res, err)
+	}
+	endB()
+	waitFor(t, "b's ticket goes", func() bool { return len(waiters(l)) == 0 })
+}
+
 // TestPane: a pane token names the pane and its session; the pane's close releases its runs;
 // an unknown token is not_found.
 func TestPane(t *testing.T) {

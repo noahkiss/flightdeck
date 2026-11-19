@@ -978,7 +978,9 @@ suites on one laptop at once.
 - **gff-hab restart.** The lock lives in memory. A running CLI reconnects with its ticket and keeps
   its place (holding or waiting). For `[heavy] restart_hold` (10 s; 15.3) after a start gff-hab
   grants nothing, so earlier
-  holders can come back first.
+  holders can come back first. A stopping gff-hab grants nothing either: its shutdown closes the
+  connections one by one, and a holder's closed connection must not grant a waiter whose
+  connection still carries the answer, or both would hold after the restart.
 - **Long holds.** A hold past `heavy.long_hold` (60 minutes; 15.3) raises one notice and
   tells the coordinator of any group with a member waiting. The hab does not kill the run.
 - **Who uses it.** Any session on the host, in a group or not, and the lane's checks. The group's
