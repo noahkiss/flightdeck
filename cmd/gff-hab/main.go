@@ -2062,6 +2062,7 @@ func serve(args []string) error {
 	}, logger.Printf)
 	if tl != nil {
 		hooks.SetTally(tl.Hook)
+		hooks.SetRouteTally(routeTally(tl))
 	}
 	hooks.SetChannels(channelHook(store, chSvc))
 	if paneSvc != nil {

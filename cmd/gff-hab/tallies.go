@@ -161,3 +161,8 @@ func writeJSONLine(out io.Writer, v any) error {
 	_, err = fmt.Fprintf(out, "%s\n", b)
 	return err
 }
+
+// routeTally counts a pane route call as a call of client kind route (diagnostics.md 7.1).
+func routeTally(t *tallies.Tallies) func(method, errKind string, failed bool) {
+	return func(method, errKind string, failed bool) { t.Call(method, tallies.ClientRoute, errKind, failed) }
+}

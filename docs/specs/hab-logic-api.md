@@ -844,6 +844,25 @@ types, new capabilities, new word sets, and new optional fields on existing type
 The owning stage builds the behaviour. Until then a method answers `unavailable` with a hint that
 names the stage, and an event is defined but never sent.
 
+**Route-only methods.** The pane route (`POST /channel/<token>`, `mesh.md` 6.5) takes most of
+its methods from this table. It also takes nine methods outside it: `agent.compact` and
+`agent.name` (`harness-adapters.md`, Self-compact and Agent kit) and the seven `personal.*`
+tools (`capcom-service.md` 8). They stay outside the table on purpose:
+
+- **The token is the caller.** Each acts on the pane or session whose token made the call, or
+  only for the Capcom engine's token. A control socket client has no token, so the control
+  socket does not answer them.
+- **The table is the control socket's surface.** `rpc.discover` serves it, and the generated Go
+  and Swift clients call every method in it over the control socket. A table entry would offer
+  the app and `gff` calls that always fail.
+- **They ship with their callers.** Their callers are the agent kit (`gff agent`, `gff-hab
+  agent` and the MCP tools), which ship in the same release as gff-hab. The agent params are Go
+  types in `api/` (`CompactParams`, `AgentNameParams`); the personal tools take plain JSON
+  objects.
+
+The tallies count them by name all the same (`diagnostics.md` 7.1). A route-only method that
+the control socket starts to answer moves into the table.
+
 | Method | Purpose | Built |
 |---|---|---|
 | `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |

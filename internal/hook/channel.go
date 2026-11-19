@@ -196,7 +196,9 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		}
 		return err
 	}
+	var failed api.ErrorKind // the kind of the answer's error, for the tally
 	fail := func(kind api.ErrorKind, format string, args ...any) {
+		failed = kind
 		_ = answer(channelAnswer{Error: &channelError{Kind: kind, Message: fmt.Sprintf(format, args...)}})
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxChannelBody+1))
@@ -217,6 +219,9 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	if err := json.Unmarshal(body, &call); err != nil {
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
+	}
+	if t := s.routeTally; t != nil {
+		defer func() { t(call.Method, string(failed), failed != "") }()
 	}
 	known, read, conf, round, lb, ag, grp, pers := false, false, false, false, false, false, false, false
 	panes := slices.Contains(PaneMethods, call.Method)

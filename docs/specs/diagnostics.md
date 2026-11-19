@@ -569,13 +569,17 @@ crashes a signal handler cannot catch.
 
 | Tally | Key | Values |
 |---|---|---|
-| API calls | method, client kind (the hello's `client.kind`: `app`, `terminal`, `cli`, `script`, `hab`) | count, error count per error `kind` (`protocol` for a JSON-RPC error with no kind) |
+| API calls | method, client kind (the hello's `client.kind`: `app`, `terminal`, `cli`, `script`, `hab`; `route` for a call on the pane route) | count, error count per error `kind` (`protocol` for a JSON-RPC error with no kind) |
 | Events | event type | count of events sent to clients, once per event however many clients get it |
 | Hook envelopes | harness, event | count, refused count (unknown token, bad envelope, over the size cap) |
 | Features | a fixed word list (7.2) | count |
 | Settings | setting id from the settings registry (`internal/settings/registry.go`) | `set` count (rows `settings.set` wrote), and `in_config` (the hab's config or a flag locks the id at a flush) |
 | Health | process kind: `hab`, `holder` | starts, crashes, unclean ends: gff-hab counts its own start, the previous run's end at the next start, and a lost holder (6.3) |
 
+- A call on the pane route (`POST /channel/<token>`, `mesh.md` 6.5) has no hello. It counts
+  under client kind `route`, by its method, with the error kind when it failed.
+- The method set is the API table and the route-only methods (`hab-logic-api.md` 3.9), so
+  `agent.compact`, `agent.name` and the `personal.*` tools count by name too.
 - The key sets are closed and built at start: the method table, the event types, the hook events
   each harness's hook config posts (`internal/hook/config.go`, and `StatusLine`), the features
   of 7.2, the settings registry, the client kinds and error kinds of the API, the process kinds.

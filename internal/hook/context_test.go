@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -233,7 +235,8 @@ func TestContextNudge(t *testing.T) {
 }
 
 // TestAgentRoute: agent.compact reaches the agent handler with its pane; with none set it is
-// unavailable.
+// unavailable. The route tally counts each call by method, with the error kind of a failed one
+// (diagnostics.md 7.1).
 func TestAgentRoute(t *testing.T) {
 	reg := newTestPanes()
 	sock := filepath.Join(shortDir(t), "hook.sock")
@@ -242,6 +245,13 @@ func TestAgentRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewServer(reg, func(string, harness.Envelope) string { return "" }, t.Logf)
+	var tmu sync.Mutex
+	var tallied []string
+	s.SetRouteTally(func(method, errKind string, failed bool) {
+		tmu.Lock()
+		tallied = append(tallied, fmt.Sprintf("%s %s %v", method, errKind, failed))
+		tmu.Unlock()
+	})
 	go s.Serve(l)
 	t.Cleanup(func() { s.Close() })
 	addr := Addr(sock, reg.mint("pane-9"))
@@ -259,5 +269,22 @@ func TestAgentRoute(t *testing.T) {
 	var c api.Compaction
 	if err := Call(ctx, addr, "agent.compact", api.CompactParams{FollowUp: "go on"}, &c); err != nil || c.Pane != "pane-9" || c.ID != "agent.compact" || !c.FollowUp {
 		t.Fatalf("agent.compact: %+v %v", c, err)
+	}
+	Call(ctx, addr, "no.such", struct{}{}, nil)
+	// The tally runs after the answer is written: wait for the third.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		tmu.Lock()
+		n := len(tallied)
+		tmu.Unlock()
+		if n >= 3 || time.Now().After(deadline) {
+			break
+		}
+	}
+	tmu.Lock()
+	defer tmu.Unlock()
+	want := []string{"agent.compact  false", "agent.compact unavailable true", "no.such invalid true"}
+	slices.Sort(tallied) // each tally runs after its answer: the order is not fixed
+	if !slices.Equal(tallied, want) {
+		t.Errorf("tallied %q, want %q", tallied, want)
 	}
 }
