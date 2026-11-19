@@ -6,6 +6,8 @@
 //	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file]
 //	                [-git-interval d] [-init none|systemd|launchd] [-prefix p] [-unit-dir dir] [-config file]
 //	gff-hab connect [-socket path]
+//	gff-hab status  [-socket path] [-state dir] [-holders dir] [-json]
+//	gff-hab logs    [-state dir] [-f] [-since d|time] [-until d|time] [-proc kinds] [-grep text]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab peers    [-socket path] [-json]
@@ -147,6 +149,8 @@ const usage = `usage:
                   [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file] [-config file]
                   [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
   gff-hab connect [-socket path]
+  gff-hab status  [-socket path] [-state dir] [-holders dir] [-json]
+  gff-hab logs    [-state dir] [-f] [-since d|time] [-until d|time] [-proc hab,holder,hook] [-grep text]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
@@ -235,6 +239,10 @@ func main() {
 		err = serve(os.Args[2:])
 	case "connect":
 		err = connect(os.Args[2:])
+	case "status":
+		err = statusCmd(os.Args[2:], os.Stdout)
+	case "logs":
+		err = logsCmd(os.Args[2:], os.Stdout)
 	case "api":
 		if len(os.Args) < 3 || os.Args[2] != "call" {
 			fmt.Fprint(os.Stderr, usage)
@@ -391,7 +399,12 @@ func serve(args []string) error {
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
 	fs.Parse(args)
-	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
+	// The log goes to <state>/logs/hab.log once gff-hab holds the state lock (diagnostics.md
+	// 4.1). Run by hand, each line goes to stderr too.
+	var diag diagRef
+	logw := newLogWriter(*sf.init == "systemd" || *sf.init == "launchd", diag.touch)
+	logger := log.New(logw, habPrefix, habLogFlags)
+	epoch := control.NewEpoch()
 	// Catch SIGTERM and SIGINT before any socket is up: a stop that arrives while gff-hab starts
 	// waits for the shutdown below instead of killing it with no checkpoint.
 	sigs := make(chan os.Signal, 1)
@@ -457,7 +470,7 @@ func serve(args []string) error {
 		return err
 	}
 	lk, err := openLink(*holders, dir, linkOptions{scrollback: scrollback, budget: budget, retiredTTL: ttl, starter: starter,
-		checkpointEvery: ckEvery, checkpointIdle: ckIdle}, logger)
+		checkpointEvery: ckEvery, checkpointIdle: ckIdle, lost: diag.holderLost}, logger)
 	if err != nil {
 		return err
 	}
@@ -509,6 +522,18 @@ func serve(args []string) error {
 		return err
 	}
 	defer store.Close()
+	// This gff-hab holds the state lock now: its log file, run marker, crash output and health
+	// records (diagnostics.md 4.3, 6).
+	hd := startDiag(dir, holderDirOf(*holders), epoch, logw, logger.Printf)
+	diag.Store(hd)
+	clean := false
+	defer func() { // runs last: after every other deferred close has logged its lines
+		if clean {
+			hd.cleanExit()
+		} else {
+			logw.Flush()
+		}
+	}()
 	if h := store.Health(); h.Problem != "" {
 		logger.Printf("state: %s", h.Problem)
 	}
@@ -609,6 +634,7 @@ func serve(args []string) error {
 		},
 	}, store, agents)
 	defer pushes.Close()
+	hd.raiseNotice(diagNoticeRaiser(pushes))
 	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
 	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
 	// pane the link reports gone loses its token and its agent state.
@@ -1776,6 +1802,7 @@ func serve(args []string) error {
 		caps = append(caps, "rounds", capRoundLock, capRoundActions)
 	}
 	s := control.New(control.Config{
+		Epoch:    epoch,
 		Build:    build,
 		Version:  version,
 		Host:     api.HostInfo{ID: *hostID},
@@ -2045,13 +2072,11 @@ func serve(args []string) error {
 		// server accepts a call, so a client's input to an adopted run takes it over.
 		roundsSvc.start()
 	}
-	go func() {
-		if err := hooks.Serve(hl); err != nil {
-			logger.Printf("%v: %v", errHookServe, err)
-		}
-	}()
+	hooks.SetErrorLog(hd.hookErrorLog())
+	go hd.serveHooks(func() error { return hooks.Serve(hl) })
 	defer hooks.Close()
-	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
+	logger.Printf("epoch %s version %s build %s device %s listening on %s, hooks on %s", s.Epoch(), version, build, key.Fingerprint(), path, hpath)
+	diagStartSeam()
 	if capcomEng != nil && capcomSvc.Home() == key.Fingerprint() {
 		// This hab holds the mark: the service session, and the engine adopted or started
 		// (capcom-service.md 3.2).
@@ -2082,6 +2107,7 @@ func serve(args []string) error {
 		return err
 	}
 	<-stopped
+	clean = true
 	return nil
 }
 

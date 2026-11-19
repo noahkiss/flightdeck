@@ -49,6 +49,8 @@ type Marker struct {
 	CrashFile string `json:"crash_file,omitempty"`
 	// Hook is gff-hab's hook endpoint: "up", or "down" once it stopped (4.6).
 	Hook string `json:"hook,omitempty"`
+	// Debug is set while gff-hab writes its debug lines (4.5).
+	Debug bool `json:"debug,omitempty"`
 }
 
 // Record is one line of health.jsonl (6.3).
