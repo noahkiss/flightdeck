@@ -272,7 +272,7 @@ All files are in `<state>/logs/`, mode 0600, in a directory of mode 0700.
 | File | Writer | Rotated by | Cap |
 |---|---|---|---|
 | `hab.log` | gff-hab's logger | gff-hab, in-process | 10 MiB, 3 old files |
-| `hab.stderr` | The service manager (launchd file, systemd `append:`) | gff-hab, copy-truncate at start and in the hourly sweep | 1 MiB, 1 old file |
+| `hab.stderr` | The service manager (launchd file; on Linux the unit's shell, `>>`) | gff-hab, copy-truncate at start and in the hourly sweep | 1 MiB, 1 old file |
 | `gff-hab-holder.<instance>.log` | The service manager, from the holder's stderr | gff-hab, copy-truncate at start and in the hourly sweep | 5 MiB, 2 old files |
 | `hook.log` | Failed hook runs, append only (4.4) | gff-hab, rename in the hourly sweep | 1 MiB, 1 old file |
 | `capcom.log` (stage 5) | The Capcom engine | The engine, in-process | 5 MiB, 2 old files |
@@ -290,13 +290,17 @@ Rules:
   compares the open file with the path. When the path is gone or is another file, it reopens.
 - **Copy-truncate where another process writes.** The service manager holds the holder's file
   open. gff-hab copies it to `.1` and truncates it in place, so the holder needs no change. Lines
-  written during the copy may be lost; that is accepted. launchd and systemd's `append:` open the
+  written during the copy may be lost; that is accepted. launchd and the units' shell (`>>`) open the
   file for append, so writes after a truncate land at the new end; stage 1's test confirms it on
   both systems.
 - **Never block.** The writer is buffered. When its queue (1,000 lines) is full, it drops lines
   and counts them; the next line written carries the count. A full disk drops lines the same way.
-- **Units on Linux.** Install writes `StandardOutput=append:` and `StandardError=append:` into
-  both units, so Linux and macOS keep the same files (Q2).
+- **Units on Linux.** Both units start their program through `/bin/sh`, which makes the log
+  folder and appends the program's stdout and stderr to the same file launchd writes (Q2). It
+  is not `StandardOutput=append:`: systemd opens that file for each command of the unit,
+  `ExecStartPre` too, so no command could make a missing folder first, and the user may remove
+  `<state>/logs/` (12). The shell
+  execs the program, so the unit's main pid is the program's.
 - **Names.** A holder's file keeps the name launchd's holder jobs already write. A new name would
   need a migration across the holders that run while gff-hab updates, for no gain.
 - **Gone holders.** launchd's sweep removes a gone holder's file (`internal/service`). gff-hab's

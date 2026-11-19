@@ -46,11 +46,10 @@ func TestCopyTruncateUnderInit(t *testing.T) {
 		run(t, "launchctl", "bootstrap", domain, file)
 		t.Cleanup(func() { exec.Command("launchctl", "bootout", domain+"/"+label).Run() })
 	case "linux":
-		unit := label + ".service"
-		run(t, "systemd-run", "--user", "--unit="+unit, "--collect", "--quiet",
-			"--property=StandardOutput=append:"+out, "--property=StandardError=append:"+out,
-			"/bin/sh", "-c", appendScript)
-		t.Cleanup(func() { exec.Command("systemctl", "--user", "stop", unit).Run() })
+		// As the units do (withOutput), with the log folder missing at the start: the job must
+		// make it.
+		out = filepath.Join(dir, "logs", "job.log")
+		startUnit(t, label+".service", out)
 	default:
 		t.Skip("no init system test on " + runtime.GOOS)
 	}
@@ -83,6 +82,25 @@ func TestCopyTruncateUnderInit(t *testing.T) {
 		t.Fatalf("the truncated file starts %q", b[:min(len(b), 40)])
 	}
 	t.Logf("%s: %d bytes before the truncate, %d after; no gap", runtime.GOOS, len(old), len(b))
+	if runtime.GOOS == "linux" {
+		// The user removes the log folder; the next start of the job makes it again.
+		exec.Command("systemctl", "--user", "stop", label+".service").Run()
+		if err := os.RemoveAll(filepath.Dir(out)); err != nil {
+			t.Fatal(err)
+		}
+		startUnit(t, label+"-2.service", out)
+		waitUntil(t, "lines after the log folder was removed", func() bool { return size() > 0 })
+		t.Logf("linux: the job made its log folder again after it was removed")
+	}
+}
+
+// startUnit runs appendScript as a transient systemd user unit with its output through
+// withOutput, and stops it when the test ends.
+func startUnit(t *testing.T, unit, out string) {
+	t.Helper()
+	run(t, "systemd-run", append([]string{"--user", "--unit=" + unit, "--collect", "--quiet"},
+		withOutput(out, []string{"/bin/sh", "-c", appendScript})...)...)
+	t.Cleanup(func() { exec.Command("systemctl", "--user", "stop", unit).Run() })
 }
 
 func run(t *testing.T, name string, args ...string) {

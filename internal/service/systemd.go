@@ -17,9 +17,9 @@ func logicUnit(c Config) []byte {
 	fmt.Fprintf(&b, "# Written by gff-hab install; gff-hab uninstall removes it.\n")
 	fmt.Fprintf(&b, "[Unit]\nDescription=Flightdeck logic process (gff-hab)\nStartLimitIntervalSec=0\n\n")
 	fmt.Fprintf(&b, "[Service]\nType=simple\n")
-	fmt.Fprintf(&b, "ExecStart=%s\n", execLine(c.HabPath(), c.ServeArgs()...))
+	argv := withOutput(c.logicLog(), append([]string{c.HabPath()}, c.ServeArgs()...))
+	fmt.Fprintf(&b, "ExecStart=%s\n", execLine(argv[0], argv[1:]...))
 	writeEnv(&b, c)
-	writeOutput(&b, c.logicLog())
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=1\n\n")
 	fmt.Fprintf(&b, "[Install]\nWantedBy=default.target\n")
 	return b.Bytes()
@@ -34,7 +34,11 @@ func holderUnit(c Config) []byte {
 	fmt.Fprintf(&b, "# Written by gff-hab install; gff-hab uninstall removes it.\n")
 	fmt.Fprintf(&b, "[Unit]\nDescription=Flightdeck holder %%i (gff-hab-holder)\n\n")
 	fmt.Fprintf(&b, "[Service]\nType=simple\n")
-	args := []string{systemdQuote(c.HolderPath(), true)}
+	// The output file names the instance: %i, the same name launchd's holder job writes.
+	var args []string
+	for _, a := range withOutput(c.holderLog("\x00"), []string{c.HolderPath()}) {
+		args = append(args, strings.ReplaceAll(systemdQuote(a, true), "\x00", "%i"))
+	}
 	for _, a := range c.HolderArgs("\x00") {
 		if a == "\x00" {
 			args = append(args, "%i") // the instance name, from the unit name
@@ -44,8 +48,6 @@ func holderUnit(c Config) []byte {
 	}
 	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(args, " "))
 	writeEnv(&b, c)
-	// %i is the instance: the same file name launchd's holder job writes.
-	writeOutput(&b, strings.ReplaceAll(c.holderLog("\x00"), "%", "%%"), "%i")
 	fmt.Fprintf(&b, "Restart=on-failure\nRestartSec=1\nKillMode=process\nTimeoutStopSec=30\n")
 	return b.Bytes()
 }
@@ -60,17 +62,17 @@ func writeEnv(b *bytes.Buffer, c Config) {
 	}
 }
 
-// writeOutput appends the job's stdout and stderr to path, as launchd's job files do, so both
-// init systems keep the same files (diagnostics.md 4.3, Q2). systemd opens the file for append,
-// so gff-hab's copy-truncate leaves no gap. In path, '%' is escaped; a "\x00" in it becomes the
-// specifier spec.
-func writeOutput(b *bytes.Buffer, path string, spec ...string) {
-	if len(spec) == 0 {
-		path = strings.ReplaceAll(path, "%", "%%")
-	} else {
-		path = strings.ReplaceAll(path, "\x00", spec[0])
-	}
-	fmt.Fprintf(b, "StandardOutput=append:%s\nStandardError=append:%s\n", path, path)
+// outputScript makes the output file's folder, then runs the program with its stdout and stderr
+// appended to the file. $0 is the file; the program and its arguments follow.
+const outputScript = `mkdir -p -m 700 "${0%/*}" && exec "$@" >>"$0" 2>&1`
+
+// withOutput wraps argv so its output is appended to file, as launchd's job files are, so both
+// init systems keep the same files (diagnostics.md 4.3, Q2). A shell does it, not systemd's
+// StandardOutput=append:, which systemd opens for each command of the unit, ExecStartPre
+// too, so no command could make a missing folder first. The shell's >> opens the file for append, so gff-hab's
+// copy-truncate leaves no gap; exec keeps the program's pid the unit's main pid.
+func withOutput(file string, argv []string) []string {
+	return append([]string{"/bin/sh", "-c", outputScript, file}, argv...)
 }
 
 // execLine quotes a command line for ExecStart.
