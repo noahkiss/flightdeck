@@ -17,6 +17,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -133,7 +134,9 @@ func newWatchSupTest(t *testing.T, lim rounds.WatchLimits, more ...func(*roundsC
 		c.pane = func(id string) (link.PaneStatus, bool) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			return link.PaneStatus{Exited: f.exited[id]}, true
+			// The exit crash reports, for start's catch-up of a pane that exits before
+			// start names it.
+			return link.PaneStatus{Exited: f.exited[id], Exit: hp.ExitStatus{Code: 3}}, true
 		}
 		c.closePane = func(_ context.Context, pane string) error {
 			f.mu.Lock()
@@ -170,8 +173,28 @@ func createWatchRound(t *testing.T, svc *roundsService, project, name string) st
 	return made.Round.ID
 }
 
-// crash ends a running watcher's pane on its own, as the link's notice would.
-func (f *watchFakes) crash(pane string) {
+// named waits until the supervisor names pane as its watcher's. The fake counts a start when it
+// makes the pane, and start records the pane after that: a test that acts on the pane in
+// between finds no watcher on it.
+func (f *watchFakes) named(t *testing.T, pane string) {
+	t.Helper()
+	f.mu.Lock()
+	svc := f.svc
+	f.mu.Unlock()
+	waitUntil(t, "the supervisor to name pane "+pane, func() bool {
+		svc.watchers.mu.Lock()
+		defer svc.watchers.mu.Unlock()
+		_, ok := svc.watchers.byPane[pane]
+		return ok
+	})
+}
+
+// crash ends a running watcher's pane on its own, as the link's notice would, once the
+// supervisor names it. Start's catch-up of a pane that exited may still take the exit on start's
+// goroutine; the fake's exit code gives it the same text.
+func (f *watchFakes) crash(t *testing.T, pane string) {
+	t.Helper()
+	f.named(t, pane)
 	f.mu.Lock()
 	f.exited[pane] = true
 	svc := f.svc
@@ -187,7 +210,9 @@ func TestWatchSupWakeAndBackoff(t *testing.T) {
 	svc.start()
 	id := createWatchRound(t, svc, project, "w")
 	waitUntil(t, "the first start", func() bool { n, _, _ := f.counts(); return n == 1 })
-	svc.sched.Tick() // the first reading after start is no wake
+	_, _, first := f.counts()
+	f.named(t, first) // a wake hangs up only a watcher whose pane is named
+	svc.sched.Tick()  // the first reading after start is no wake
 
 	// A sleep: the wall clock moves an hour, the monotonic clock does not. The scheduler's tick
 	// sees the wake; past the settle (0 here) the supervisor hangs the watcher up once and starts
@@ -216,7 +241,7 @@ func TestWatchSupWakeAndBackoff(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		_, _, pane := f.counts()
 		clk.move(2*time.Minute, 2*time.Minute) // not a quick exit
-		f.crash(pane)
+		f.crash(t, pane)
 		if w := svc.watchers.state(id); w.State != watchBackoff {
 			t.Fatalf("after crash %d: %+v", i, w)
 		}
@@ -245,14 +270,14 @@ func TestWatchSupPauseAfter(t *testing.T) {
 	id := createWatchRound(t, svc, project, "w")
 	waitUntil(t, "the first start", func() bool { n, _, _ := f.counts(); return n == 1 })
 	_, _, pane := f.counts()
-	f.crash(pane) // quick exit 1: backs off
+	f.crash(t, pane) // quick exit 1: backs off
 	if w := svc.watchers.state(id); w.State != watchBackoff || w.LastExit != "exit status 3" {
 		t.Fatalf("after one quick exit %+v", w)
 	}
 	f.fire(clk)
 	waitUntil(t, "the restart", func() bool { n, _, _ := f.counts(); return n == 2 })
 	_, _, pane = f.counts()
-	f.crash(pane) // quick exit 2: pauses
+	f.crash(t, pane) // quick exit 2: pauses
 	waitUntil(t, "the pause", func() bool {
 		e, _ := svc.store.Get(id)
 		return e.Round.Paused && e.State.PausedReason == rounds.ReasonWatcherPause
@@ -299,10 +324,9 @@ func TestWatchSupPauseInFlight(t *testing.T) {
 	id := createWatchRound(t, svc, project, "w")
 	waitUntil(t, "the first start", func() bool { n, _, _ := f.counts(); return n == 1 })
 	_, _, pane := f.counts()
-	f.crash(pane) // quick exit 1: pauses
-	if !looked.Load() {
-		t.Fatal("the test's look between the exit and the pause never ran")
-	}
+	f.crash(t, pane) // quick exit 1: pauses
+	// Start's catch-up may take the exit on its own goroutine, so the look may come after crash.
+	waitUntil(t, "the test's look between the exit and the pause", looked.Load)
 	waitUntil(t, "the pause", func() bool {
 		e, _ := svc.store.Get(id)
 		return e.Round.Paused && e.State.PausedReason == rounds.ReasonWatcherPause
