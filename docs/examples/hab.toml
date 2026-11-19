@@ -317,6 +317,12 @@ move_retry = "2s"
 tombstone_keep = 30
 queued_move_days = 7
 
+# The [diagnostics] table (docs/specs/diagnostics.md 7). Tallies are local counts of API calls,
+# events, hook envelopes, features, settings and health: names and numbers only, kept in
+# <state>/tallies and never sent anywhere. On unless set false; read at start.
+[diagnostics]
+# tallies = false
+
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and
 # model. Each alias names a harness (claude, codex or opencode) and, optionally, a model. An

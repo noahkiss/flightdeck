@@ -41,8 +41,11 @@ type Config struct {
 	// Notify raises one notice when the config file stops parsing at a reload: gff-hab keeps the
 	// last good locks, but its next start will fail. Called again only after a good read.
 	Notify func(title, body string)
-	Poll   time.Duration // default DefaultPoll
-	Logf   func(format string, args ...any)
+	// OnSet hears the id of each row settings.set wrote, after the save (diagnostics.md 7.1). It
+	// must not block or call back. Nil: none.
+	OnSet func(id string)
+	Poll  time.Duration // default DefaultPoll
+	Logf  func(format string, args ...any)
 }
 
 // Service keeps the hab-side settings. It is safe for concurrent use.
@@ -449,6 +452,9 @@ func (s *Service) Set(p api.SettingsSetParams) (api.SettingsResult, error) {
 	for _, w := range ws {
 		s.emitLocked(w.d)
 		out = append(out, s.settingLocked(w.d))
+		if s.cfg.OnSet != nil {
+			s.cfg.OnSet(w.d.ID)
+		}
 	}
 	return api.SettingsResult{Settings: out}, nil
 }

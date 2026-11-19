@@ -1,6 +1,6 @@
 # Diagnostics: behaviour spec
 
-Status: stage 1 built, parts (a) to (e); stages 2 to 6 proposed. Owner decisions
+Status: stage 1 built, parts (a) to (e); stage 3 built; stages 2 and 4 to 6 proposed. Owner decisions
 are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
@@ -569,33 +569,43 @@ crashes a signal handler cannot catch.
 
 | Tally | Key | Values |
 |---|---|---|
-| API calls | method, client kind (`app-ios`, `app-macos`, `gff`, `hab`, `capcom`, `module`, `other`) | count, error count per error `kind` |
-| Hook envelopes | harness, event | count, refused count |
+| API calls | method, client kind (the hello's `client.kind`: `app`, `terminal`, `cli`, `script`, `hab`) | count, error count per error `kind` (`protocol` for a JSON-RPC error with no kind) |
+| Events | event type | count of events sent to clients, once per event however many clients get it |
+| Hook envelopes | harness, event | count, refused count (unknown token, bad envelope, over the size cap) |
 | Features | a fixed word list (7.2) | count |
-| Settings | setting id from the settings registry (`internal/settings/registry.go`) | `set` count (by `settings.set`), and `in_config` (the id is set in `hab.toml`) |
-| Health | process kind | starts, crashes, unclean ends |
+| Settings | setting id from the settings registry (`internal/settings/registry.go`) | `set` count (rows `settings.set` wrote), and `in_config` (the hab's config or a flag locks the id at a flush) |
+| Health | process kind: `hab`, `holder` | starts, crashes, unclean ends: gff-hab counts its own start, the previous run's end at the next start, and a lost holder (6.3) |
 
-Counters are atomic adds into a table built at start from the method list. A call costs no
-allocation.
+- The key sets are closed and built at start: the method table, the event types, the hook events
+  each harness's hook config posts (`internal/hook/config.go`, and `StatusLine`), the features
+  of 7.2, the settings registry, the client kinds and error kinds of the API, the process kinds.
+  A key outside its set counts under one bucket, `other`. It is never stored by name.
+- Each count is one atomic add into that table: no lock, no allocation, no disk write. The code
+  is `internal/tallies`.
+- Capabilities have no tally. A capability is a word in the welcome, not something a client
+  calls; its methods and events carry its use.
 
 ### 7.2 Features
 
 | Word | Counted at |
 |---|---|
-| `send` | Input sent to a session through the chat or composer path |
-| `session.create`, `session.restart`, `session.resume` | Each method |
+| `send` | A `session.send` that succeeded: input sent through the chat or composer path |
+| `session.create`, `session.restart`, `session.resume` | Each method, when it succeeded |
 | `round.run` | A round run starts |
-| `capcom.job` | A Capcom job starts |
-| `approval.answer` | An approval answered |
-| `channel.send`, `channel.expired` | A channel message queued, or expired unsent |
-| `friction` | A friction note (9) |
+| `capcom.job` | A run of a round in Capcom mode starts |
+| `approval.answer` | An `approval.answer` that succeeded |
+| `channel.send`, `channel.expired` | A channel message this hab sent is queued, or expires unsent |
+| `friction` | A `diag.friction` that succeeded (9) |
 
 ### 7.3 Storage
 
 - One file per local calendar day: `<state>/tallies/<yyyy-mm-dd>.json`. gff-hab flushes every 5
-  minutes when a count changed, and at a clean exit.
-- `<state>/tallies/seen.json` keeps per method, feature and setting the first and last day seen
-  and a total. It also records `since`: the day tallying started.
+  minutes when a count changed, and at a clean exit. Each file is written to a temporary file
+  and renamed, so `gff-hab tallies` never reads half a file.
+- A crash or a kill loses the counts since the last flush: at most 5 minutes. A flush that
+  fails keeps its counts for the next one.
+- `<state>/tallies/seen.json` keeps per method, event, hook event, feature and setting the first
+  and last day seen and a total. It also records `since`: the day tallying started.
 - Day files older than 90 days are deleted. `seen.json` stays.
 - Tallies hold names and numbers only: method names, feature words, setting ids, error kinds.
   Never a host name, path, title or argument value.
@@ -608,12 +618,16 @@ allocation.
 
 | Flag | Meaning |
 |---|---|
-| `--days 7` | Window: calls and errors per method and client kind, features, health |
-| `--unused 30` | Methods, features and settings with no use in the last N days, or never since `since` |
+| `--days 7` | Window: calls and errors per method and client kind, events, hook events, features, settings, health |
+| `--unused 30` | Methods, events, hook events, features and settings with no use in the last N days, or never since `since` |
 | `--json` | The raw figures |
+| `--state` | The state directory |
+| `--clear` | Delete the tallies |
 
-- `--unused` lists against this build's method table (the one `rpc.discover` serves) and the
-  settings registry. A name absent from `seen.json` prints as "never since `<since>`".
+- `--unused` lists against this build's key sets (7.1): the method table `rpc.discover` serves,
+  the event types, the hook events, the features and the settings registry. A name that leaves
+  the build is never listed, though `seen.json` keeps it. A name absent from `seen.json` prints
+  as "never since `<since>`".
 - The output states the window and the client kinds it saw. A method unused on one hab may be
   used against another; the reader runs it on each hab.
 
@@ -879,7 +893,7 @@ None of these is an app row: each is an operator limit or has one right answer (
 | A peer on an older build | It drops the trace member. The caller's lines still show the call |
 | `debug_until` in the past at start | Ignored and removed |
 | A crash loop | One crash notice per hour; one health record per crash; debug stays on while `debug_until` holds |
-| Tallies off, then on | A gap in day files. `seen.json` keeps `since`; `--unused` notes the gap |
+| Tallies off, then on | A gap in day files. `seen.json` keeps `since`; `--unused` prints how many day files its window holds |
 | A method added in a new build | Absent from `seen.json`, so "never since `<since>`" |
 | A friction note with no hab running | `gff friction` fails with a hint; the note is not queued |
 
@@ -933,7 +947,7 @@ Each test guards a promise in this spec, at the lowest layer that proves it (`do
 | 5 | `gff-hab logs` merges hab and holder files in time order and follows across rotation | Unit | 1 | 4.8 |
 | 6 | A friction note from `gff friction` and one from an app client store text, session, blocker and a tail that holds that session's lines; the text is in no `hab.log` line; Ctrl+O F sends the focused session; the app's sheet sends to the session's hab | Integration | 1 | 9.1, 9.2 |
 | 7 | A blocked loop (test seam) yields one stall line and one stack file; `SIGUSR1` yields a stack file | Integration | 2 | 4.7 |
-| 8 | Tallies: calls and errors per method and client kind; `--unused` against the method table | Unit and integration | 3 | 7 |
+| 8 | Tallies: calls and errors per method and client kind; `--unused` against the method table; a key outside the surface stored as `other` only; the counter path allocates nothing | Unit and integration | 3 | 7 |
 | 9 | A request trace reaches the response and a peer's line; a malformed one is replaced | Integration and end to end | 4 | 5.2, 5.4 |
 | 10 | The source check fails its fixture (one case per ban of 10.2) and passes the tree | Unit (source) | 5 | 10.2 |
 | 11 | **Canary.** One random string goes through pane input, terminal output (on screen at bundle time), a chat send, a hook payload, a Capcom turn on a test engine that also echoes it on stderr and in a provider error, a config label and an environment value. Afterwards no file under `<state>/logs`, `<state>/tallies`, `<state>/health.jsonl`, the friction log tails, `gff-hab status` output or the bundle (including `detect.json`) contains it | End to end | 5 | 8.2, 10.1, 10.2 |

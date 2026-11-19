@@ -46,6 +46,8 @@ type Server struct {
 	sink Sink
 	now  func() time.Time
 	logf func(string, ...any)
+	// tally counts each envelope by harness and event (diagnostics.md 7.1); set before Serve.
+	tally func(harness, event string, refused bool)
 
 	mu       sync.Mutex
 	unknown  map[string]bool // tokens already logged as unknown
@@ -107,6 +109,25 @@ func (s *Server) Serve(l net.Listener) error {
 	return err
 }
 
+// SetTally sets the counter of envelopes: each one taken, and each one refused for its token,
+// its form or its size (diagnostics.md 7.1). Call it before Serve.
+func (s *Server) SetTally(f func(harness, event string, refused bool)) { s.tally = f }
+
+// count counts one envelope. A refused one names its harness and event when its body holds
+// them; the counter keeps only names it knows.
+func (s *Server) count(env *harness.Envelope, body []byte, refused bool) {
+	if s.tally == nil {
+		return
+	}
+	var names struct{ Harness, Event string }
+	if env != nil {
+		names.Harness, names.Event = env.Harness, env.Event
+	} else if len(body) <= MaxBody {
+		json.Unmarshal(body, &names)
+	}
+	s.tally(names.Harness, names.Event, refused)
+}
+
 // Close stops the server and closes its listener.
 func (s *Server) Close() error { return s.http.Close() }
 
@@ -130,6 +151,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > MaxBody {
+		s.count(nil, body, true)
 		s.logf("hook: dropped an envelope over %d bytes", MaxBody)
 		http.Error(w, "too large", http.StatusRequestEntityTooLarge)
 		return
@@ -146,15 +168,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if first {
 			s.logf("hook: unknown pane token %s…", token[:min(8, len(token))])
 		}
+		s.count(nil, body, true)
 		http.Error(w, "unknown token", http.StatusNotFound)
 		return
 	}
 	var env harness.Envelope
 	if err := json.Unmarshal(body, &env); err != nil || env.Harness == "" || env.Event == "" || !json.Valid(env.Payload) {
 		s.logf("hook: bad envelope for pane %s: %v", pane, err)
+		s.count(nil, body, true)
 		http.Error(w, "bad envelope", http.StatusBadRequest)
 		return
 	}
+	s.count(&env, nil, false)
 	if env.T <= 0 {
 		env.T = s.now().UnixMilli()
 	}

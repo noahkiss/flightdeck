@@ -1090,6 +1090,7 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 	if e != nil {
 		e.Data.Seq = seq
 		c.logFailed(m, e)
+		c.tally(m, e)
 		return response(m.ID, nil, e)
 	}
 	var raw json.RawMessage
@@ -1101,6 +1102,7 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 			e := &Error{Code: api.ErrorCode, Message: err.Error(),
 				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be encoded", Seq: seq}}
 			c.logFailed(m, e)
+			c.tally(m, e)
 			return response(m.ID, nil, e)
 		}
 		raw = b
@@ -1111,10 +1113,30 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 			e := &Error{Code: api.ErrorCode, Message: err.Error(),
 				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be translated", Seq: seq}}
 			c.logFailed(m, e)
+			c.tally(m, e)
 			return response(m.ID, nil, e)
 		}
 	}
+	c.tally(m, nil)
 	return response(m.ID, raw, nil)
+}
+
+// tally counts one reply (diagnostics.md 7.1). A JSON-RPC error with no API kind counts as
+// protocol. The caller holds c.mu.
+func (c *conn) tally(m message, e *Error) {
+	t := c.s.cfg.Tally
+	if t == nil {
+		return
+	}
+	if e == nil {
+		t.Call(m.Method, string(c.kind), "", false)
+		return
+	}
+	kind := string(e.Data.Kind)
+	if kind == "" {
+		kind = "protocol"
+	}
+	t.Call(m.Method, string(c.kind), kind, true)
 }
 
 // logFailed writes the failed-request line (diagnostics.md 4.6): the method, the error kind, the

@@ -154,6 +154,7 @@ const usage = `usage:
   gff-hab friction [-socket path | -via command] [-session name|id] [-pane id] [-blocker] <text...>   (also gff friction)
   gff-hab friction list [-state dir] [-days n]
   gff-hab friction show [-state dir] <trace>
+  gff-hab tallies [-state dir] [-days n | -unused n] [-json] | -clear
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
@@ -248,6 +249,8 @@ func main() {
 		err = logsCmd(os.Args[2:], os.Stdout)
 	case "friction":
 		err = frictionCmd(os.Args[2:], os.Stdout)
+	case "tallies":
+		err = talliesCmd(os.Args[2:], os.Stdout)
 	case "api":
 		if len(os.Args) < 3 || os.Args[2] != "call" {
 			fmt.Fprint(os.Stderr, usage)
@@ -539,7 +542,14 @@ func serve(args []string) error {
 	defer store.Close()
 	// This gff-hab holds the state lock now: its log file, run marker, crash output and health
 	// records (diagnostics.md 4.3, 6).
-	hd := startDiag(dir, holderDirOf(*holders), epoch, logw, logger.Printf)
+	// Tallies (diagnostics.md 7): counts only, flushed every 5 minutes and at exit.
+	tallyConfig, err := habConfigPath(*habConfig)
+	if err != nil {
+		return err
+	}
+	tl := openTallies(dir, tallyConfig, logger.Printf)
+	defer tl.Close()
+	hd := startDiag(dir, holderDirOf(*holders), epoch, logw, tl, logger.Printf)
 	diag.Store(hd)
 	if h := store.Health(); h.Problem != "" {
 		logger.Printf("state: %s", h.Problem)
@@ -1200,7 +1210,7 @@ func serve(args []string) error {
 		overrides[settings.PermissionWait] = pwaitLock
 	}
 	setSvc, err := settings.Open(settings.Config{
-		State: dir, ConfigPath: cpath, Overrides: overrides,
+		State: dir, ConfigPath: cpath, Overrides: overrides, OnSet: tl.SettingSet,
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
@@ -1224,6 +1234,7 @@ func serve(args []string) error {
 	}
 	defer setSvc.Close()
 	setRef.Store(setSvc)
+	tl.SetInConfig(settingsInConfig(setSvc))
 	caps = append(caps, settings.Capability)
 	detectFacts, err := catalog.DetectFor(os.Getenv("GFF_HAB_DETECT"))
 	if err != nil {
@@ -1354,6 +1365,7 @@ func serve(args []string) error {
 			return dev, ""
 		},
 		Publish: func(r api.ChannelRecord) {
+			channelTally(tl, r)
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: control.EventChannelMessage, ID: r.ID, Data: r})
 			}
@@ -1674,7 +1686,7 @@ func serve(args []string) error {
 		sa := acts.(*actions)
 		roundsSvc, err = newRounds(roundsConfig{
 			state: dir, settings: rset, store: store,
-			exe: sa.exe,
+			exe: sa.exe, tally: tl,
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
 				if s := srv.Load(); s != nil {
 					return s.CreateSession(ctx, p)
@@ -1863,6 +1875,7 @@ func serve(args []string) error {
 		Logbook:      lbVerbs,
 		FlightRules:  flightRules,
 		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
+		Tally:        controlTally(tl),
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -2026,6 +2039,9 @@ func serve(args []string) error {
 		repos.Refresh(store.ProjectOfPane(pane))
 		return opened
 	}, logger.Printf)
+	if tl != nil {
+		hooks.SetTally(tl.Hook)
+	}
 	hooks.SetChannels(channelHook(store, chSvc))
 	if capcomEng != nil {
 		hooks.SetEngine(capcomEng)

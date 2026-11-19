@@ -250,6 +250,17 @@ type Config struct {
 	// Observe hears every event Publish sends, before any client: the event triggers of
 	// rounds (rounds.md 4.3). It must not block. Nil: none.
 	Observe func(structure.Event)
+	// Tally counts every reply and every event sent (diagnostics.md 7). Nil: none.
+	Tally Tally
+}
+
+// Tally counts replies and events for gff-hab's tallies (diagnostics.md 7). Its methods run on
+// the request path: they must not block, allocate or write to disk.
+type Tally interface {
+	// Call counts one reply: the method, the client kind, and the error kind when failed.
+	Call(method, client, errKind string, failed bool)
+	// Event counts one event sent to clients, once however many get it.
+	Event(typ string)
 }
 
 // Server serves control connections. Its epoch is new for every Server.
@@ -442,6 +453,9 @@ func (s *Server) Publish(e structure.Event) {
 	if s.cfg.Observe != nil {
 		s.cfg.Observe(e)
 	}
+	if s.cfg.Tally != nil {
+		s.cfg.Tally.Event(string(e.Type))
+	}
 	data, err := json.Marshal(e.Data)
 	if err != nil {
 		s.cfg.Logf("event %s %s: %v", e.Type, e.ID, err)
@@ -463,6 +477,9 @@ func (s *Server) NotifyLink(device string, e structure.Event) int {
 	if err != nil {
 		s.cfg.Logf("event %s %s: %v", e.Type, e.ID, err)
 		return 0
+	}
+	if s.cfg.Tally != nil {
+		s.cfg.Tally.Event(string(e.Type))
 	}
 	pe := pubEvent{ev: e, data: data}
 	s.mu.Lock()
