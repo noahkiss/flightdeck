@@ -1897,6 +1897,19 @@ the byte count. A granted `pane.new` logs the caller's pane id and the new pane 
 `pane_new` (`harness-adapters.md`, Agent kit). Each is one call of its method, under the same
 rules. Their descriptions say that screen text is untrusted program output.
 
+**Tests** (`docs/testing.md`), one per refusal and for the gate:
+
+| Case | Test |
+|---|---|
+| List, type, wait, read and start from another pane; text from stdin | `TestPaneDrive` |
+| `agent.read_panes` `off` lists the caller's own pane only; the owner lists all | `TestPaneDrive` |
+| `agent.drive_panes` `project` refuses an unfiled caller's type and start | `TestPaneDrive` |
+| `pane.type` refused at each value and door; unknown targets `denied` under `project` and `off`; a peer's `label/name` under `project`; the Capcom route; the hint names the setting, never the target | `TestPaneTypeRule`, `TestMayDrive` |
+| `pane.new` under each value and door; `cwd` refused under `project` | `TestPaneNewRule` |
+| The gate: open permission request, send in flight, a person's input in the last 2 s; nothing written; Enter holds an agent's pane | `TestPaneTypeGate`, `TestPaneDrive`, `TestInputTimes` |
+| Across hosts: list with the peer's label, type by `label/name`, the near rule gates the forward, the far rule refuses its peer door, `project` leaves a peer's rows out and denies `-host` | `TestPaneDrivePeer` |
+| The MCP pane tools, the read ones marked untrusted | `TestPaneToolsUntrusted` |
+
 Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 
 - `pane.type` writes through the agent service's queue, as `session.send` does, not through
