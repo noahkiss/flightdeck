@@ -3534,8 +3534,11 @@ every key, so a change never makes a new key.
   set is client-sent, so it is closed (`hab-logic-api.md` 3.3).
 - **`agent.read_panes`** decides which panes an agent may read with `pane.read` and `pane.wait`,
   through its pane's route or a peer link: `all` every pane on the hab; `project` its own pane and
-  those of its own project, and nothing for a peer; `off` its own pane only. The owner's own
-  clients read every pane at every level (`hab-logic-api.md` 3.11).
+  those of its own project, and nothing for a peer; `off` its own pane only. Under `project` and
+  `off` an agent reads nothing on another hab either: its own hab forwards only under `all`. The
+  Capcom service reads no pane at any level for now, since pane text could carry instructions
+  into its event turns; whether it may is an open owner question (`hab-logic-api.md` 8, Q9). The
+  owner's own clients read every pane at every level (`hab-logic-api.md` 3.11).
 - **`voice.yes_allows`** off: only "allow", "approve", "allow it" and "approve it" answer Allow,
   and "yes" makes the app ask again. The deny words are the same at every level.
 - **`ssh.require_face_id`** is one app-level check over the generated key and every imported key

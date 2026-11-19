@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/panetext"
 )
 
 // `gff-hab screen` and `gff-hab wait -pane` (hab-logic-api.md 3.11).
@@ -30,6 +32,33 @@ type exitError struct {
 }
 
 func (e *exitError) Error() string { return e.msg }
+
+// cleanText drops control characters from every string of a pane.read answer before it is
+// printed: the text, and the names, may come from another hab (hab-logic-api.md 3.11). Bidi
+// controls stay for -json; the plain output drops them as it prints.
+func cleanText(r *api.PaneText) {
+	r.Pane, r.Session = panetext.CleanControls(r.Pane), panetext.CleanControls(r.Session)
+	for i, l := range r.Screen {
+		r.Screen[i] = panetext.CleanControls(l)
+	}
+	for i, l := range r.Scrollback {
+		r.Scrollback[i] = panetext.CleanControls(l)
+	}
+}
+
+// cliErr drops control and bidi characters from an error's text before gff-hab prints it: a
+// refusal may carry another hab's words. A hab's refusal keeps its type, so it still exits 3.
+func cliErr(err error) error {
+	var ce *control.Error
+	if errors.As(err, &ce) {
+		out := *ce
+		out.Message = panetext.StripBidi(panetext.CleanControls(ce.Message))
+		out.Data.Hint = panetext.StripBidi(panetext.CleanControls(ce.Data.Hint))
+		out.Data.Kind = api.ErrorKind(panetext.CleanControls(string(ce.Data.Kind)))
+		return &out
+	}
+	return errors.New(panetext.StripBidi(panetext.CleanControls(err.Error())))
+}
 
 // paneTarget splits a CLI target into the pane or session field: a pane id is a pane, anything
 // else a session (a name, an id or label/name).
@@ -73,8 +102,9 @@ func screenCmd(args []string, out io.Writer) error {
 	defer done()
 	var r api.PaneText
 	if err := c.Call(ctx, "pane.read", api.PaneReadParams{Pane: pane, Session: session, Scrollback: *sb}, &r); err != nil {
-		return err
+		return cliErr(err)
 	}
+	cleanText(&r)
 	if *asJSON {
 		b, err := json.Marshal(r)
 		if err != nil {
@@ -88,10 +118,10 @@ func screenCmd(args []string, out io.Writer) error {
 		rows = rows[:len(rows)-1]
 	}
 	for _, l := range r.Scrollback {
-		fmt.Fprintln(out, l)
+		fmt.Fprintln(out, panetext.StripBidi(l))
 	}
 	for _, l := range rows {
-		fmt.Fprintln(out, l)
+		fmt.Fprintln(out, panetext.StripBidi(l))
 	}
 	return nil
 }
@@ -147,8 +177,10 @@ func paneWait(fs *flag.FlagSet, f paneWaitFlags, sock, via string, timeout time.
 	defer done()
 	var r api.PaneWaitResult
 	if err := c.Call(ctx, "pane.wait", p, &r); err != nil {
-		return err
+		return cliErr(err)
 	}
+	r.Line, r.Pane, r.Session = panetext.CleanControls(r.Line), panetext.CleanControls(r.Pane), panetext.CleanControls(r.Session)
+	r.Reason = api.PaneWaitReason(panetext.CleanControls(string(r.Reason)))
 	if asJSON {
 		b, err := json.Marshal(r)
 		if err != nil {
@@ -158,7 +190,7 @@ func paneWait(fs *flag.FlagSet, f paneWaitFlags, sock, via string, timeout time.
 	} else {
 		fmt.Fprintf(out, "%s %d\n", r.Reason, r.Offset)
 		if r.Reason == api.PaneWaitMatch {
-			fmt.Fprintln(out, r.Line)
+			fmt.Fprintln(out, panetext.StripBidi(r.Line))
 		}
 	}
 	switch r.Reason {

@@ -7,12 +7,18 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// Panes serves pane.read and pane.wait (spec 3.11). peer is true for a call over a peer link
-// (client kind hab): an agent on another hab, under agent.read_panes. Any other client is the
-// owner.
+// PaneCaller says who makes a pane.read or pane.wait call on the control connection. Peer is
+// true for a peer link (client kind hab): an agent on another hab, under agent.read_panes. Any
+// other client is the owner. Conn names the connection, which the wait bound counts by.
+type PaneCaller struct {
+	Peer bool
+	Conn string
+}
+
+// Panes serves pane.read and pane.wait (spec 3.11).
 type Panes interface {
-	Read(ctx context.Context, peer bool, p api.PaneReadParams) (api.PaneText, error)
-	Wait(ctx context.Context, peer bool, p api.PaneWaitParams) (api.PaneWaitResult, error)
+	Read(ctx context.Context, from PaneCaller, p api.PaneReadParams) (api.PaneText, error)
+	Wait(ctx context.Context, from PaneCaller, p api.PaneWaitParams) (api.PaneWaitResult, error)
 }
 
 // maxPaneReadTime bounds one pane.read: a peer's answer at most. A pane.wait has its own time
@@ -27,7 +33,7 @@ const (
 func (c *conn) handlePanes(m message) {
 	seq := c.currentSeq()
 	c.mu.Lock()
-	peer := c.kind == api.ClientKindHab
+	from := PaneCaller{Peer: c.kind == api.ClientKindHab, Conn: c.clientID}
 	c.mu.Unlock()
 	ps := c.s.cfg.Panes
 	var call func(ctx context.Context) (any, error)
@@ -38,7 +44,7 @@ func (c *conn) handlePanes(m message) {
 		var p api.PaneReadParams
 		if e = c.decodeUp(m, &p); e == nil && ps != nil {
 			call = func(ctx context.Context) (any, error) {
-				r, err := ps.Read(ctx, peer, p)
+				r, err := ps.Read(ctx, from, p)
 				return r, err
 			}
 		}
@@ -47,7 +53,7 @@ func (c *conn) handlePanes(m message) {
 		var p api.PaneWaitParams
 		if e = c.decodeUp(m, &p); e == nil && ps != nil {
 			call = func(ctx context.Context) (any, error) {
-				r, err := ps.Wait(ctx, peer, p)
+				r, err := ps.Wait(ctx, from, p)
 				return r, err
 			}
 		}

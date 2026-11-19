@@ -1597,11 +1597,17 @@ of the time, whichever comes first. `reason` says which:
   the screen and then types passes the read's `offset` as `from`: output that arrives between
   the read and the wait still counts. A `from` past the pane's offset is `invalid`. Bytes from
   before the link's buffer come from the holder's ring (5.4). The wait skips bytes the ring lost
-  and goes on with the bytes after them.
+  and goes on with the bytes after them. From an agent's door (the pane route or a peer link) a
+  `from` more than 1 MiB before the pane's offset is raised to 1 MiB before it, so one call
+  cannot pull a whole ring into memory; the owner's door replays any offset the ring holds.
 - **Lines.** The bytes become text as scrollback rows do: escape sequences and control characters
   other than tab are removed. LF ends a line; so does CR, and CR LF counts once, so each redraw of
   a progress line is checked. The open line, such as a prompt with no LF, is checked as it grows,
   so a wait for `$ ` returns at the prompt. A line longer than 64 KiB is checked in 64 KiB parts.
+- **The cost of a long line.** Each ended line is checked once. On the open line, `match` is
+  searched only in the bytes added since the last search, with an overlap of its length, and
+  `pattern` runs at most once per 100 ms, plus once when that time has passed with the line
+  changed. A program that prints a long line a byte at a time therefore costs linear work.
 - **The echo.** A shell echoes the command it is given, so a wait for `done` right after typing
   `make; echo done` matches the echo. Anchor the pattern to the whole line (`^done$`), or print
   a marker the command line does not contain (`echo "do""ne"`).
@@ -1612,14 +1618,28 @@ of the time, whichever comes first. `reason` says which:
 - `timeout_ms` defaults to 180,000 (110,000 from a pane, under a harness's 2 minute tool limit,
   as for `channel.wait` in `mesh.md` 6.5) and is at most 600,000.
 - The wait never writes to the pane and never polls the screen.
+- **Bounds.** A pane route token and a peer link each hold at most 16 waits at once, and the hab
+  at most 64 in all (the owner's waits count toward the 64 only). A wait past a bound answers
+  `unavailable` at once.
 
 **Across hosts.** `label/name` with a peer's label forwards the call to that peer over the link
-this hab dialed, the link mail and `channel.wait` use (`mesh.md` 6.6), with the bare name. The
-peer answers under its own rule (below). The answer comes back as the peer gave it, with
-`session` set to the full address. A call that arrives over a peer link reads only that hab's
-own panes: a forward never forwards. With no online link that has `pane-read`, the call is
-`unavailable`, naming the label and why. A label that names this hab (its own peer row, or its
-host id) reads here. A pane id is never forwarded: pane ids are per hab.
+this hab dialed, the link mail and `channel.wait` use (`mesh.md` 6.6), with the bare name. Both
+rules apply (below): this hab forwards an agent's call only under `all`, and the peer answers
+under its own. A call that arrives over a peer link reads only that hab's own panes: a forward
+never forwards. With no online link that has `pane-read`, the call is `unavailable`, naming the
+label and why. A label that names this hab (its own peer row, or its host id) reads here. A
+pane id is never forwarded: pane ids are per hab.
+
+- **The peer's answer is untrusted.** Another hab may be older, buggy or taken over. This hab
+  drops C0 controls but tab and LF, DEL and C1 controls from every string of the answer, and of
+  a refusal's text, and applies the 1 MiB cap again, to the screen rows too (rows past it come
+  back empty and `truncated` is set). `session` is set to the full address.
+- **A forwarded wait runs in leases.** This hab asks the peer for at most 30 s at a time, each
+  lease from the offset the last one reached, until the wait ends or its time runs out. A near
+  caller that goes away (its connection closes, its route request ends) leaves the far wait
+  running for at most one lease. Quiet carries across leases: a lease that saw no output
+  shortens the next one's `quiet_ms`. Decision: leases rather than a cancel message, since the
+  control protocol has no cancel and a lease needs no new method.
 
 **Who may read.** Reading a pane exposes whatever it shows: a secret typed in a shell, another
 agent's output. The hab-side setting `agent.read_panes` (`app.md` 20.3) decides what an agent
@@ -1638,14 +1658,28 @@ may read. It binds the two doors an agent's call comes through:
 
 - A refused read or wait answers `denied`, the kind the read scope uses (3.6). The hint names the
   setting and its value, never the target or what it shows.
-- A pane with no session, and the Capcom service's route, have no project: under `project` they
-  read only their own pane (Capcom: none).
+- **No existence oracle.** Under `project` and `off`, and always for a peer link under those
+  values, a target the caller may not read answers `denied` whether or not it exists: an unknown
+  pane or session, one with no live pane, and a `label/name` on a peer all answer `denied`. Under
+  `all` they keep their own kinds (`not_found`, `conflict`, `unavailable`).
+- **This hab's rule gates a forward.** From the pane route, a `label/name` on a peer is
+  forwarded only under `all`; under `project` and `off` it is `denied`, with the same hint. So
+  "own pane only" holds across hosts too.
+- A pane with no session has no project: under `project` it reads only its own pane.
+- **The Capcom service reads no pane, at every level, for now.** Its route (`capcom-service.md`)
+  is refused `pane.read` and `pane.wait` before any target is looked up. Capcom acts on events and
+  reads untrusted text; pane text from any session would be a path for injected instructions
+  into its turns. Whether Capcom may read panes, and which, is an open owner question (8, Q9).
 - **Any other client is the owner.** The app, `gff`, and `gff-hab` run outside a pane read every
   pane at every level: they already see every pane through data streams (5). The rule binds the
   agent doors only. It is not a boundary against a process of the same user. An agent that runs
   `gff-hab screen -socket <path>` uses the owner's door, as one that runs `gff-hab api call
   pane.input` already types into any pane (`mesh.md` 6.5, Trust; `capcom.md` 5.3). The rule
   stops an agent that reads through its own tools by mistake, not a hostile process.
+- **The peer door is cooperative in the same way.** The hab knows a peer link by the client kind
+  its hello declares. A peer that says hello as `app` is the owner here, and a peer's own
+  `gff-hab connect` over SSH already has the control socket's full powers (4.2). The peer column
+  binds a peer that follows the protocol; it is not a boundary against a paired host.
 - The hab checks the rule at each call, so a change applies to the next read or wait. A wait
   already running finishes under the value it started with.
 - **Screen text is untrusted program output.** The hab never interprets it. The CLI help says
@@ -1668,6 +1702,10 @@ call logs nothing.
 - **The door** is picked as for `send` and `wait` (`mesh.md` 6.5): `-socket` or `-via` is the
   control connection; else, in a pane, `GFF_HAB` (the pane route, under the rule); else the
   default control socket.
+- **Untrusted text out.** Before it prints, the CLI drops C0 controls but tab and LF, DEL and C1
+  controls from the screen and scrollback rows, the matched line, the pane and session names, and
+  the text of an error. The plain output also drops the bidi controls (U+202A to U+202E, U+2066
+  to U+2069), which can make a line read other than it is; `-json` keeps them, escaped by JSON.
 - **Exit codes:** 0 the read succeeded, or the wait ended on `match` or `quiet`; 1 a local error
   (no hab, a bad flag value); 2 usage; 3 the hab refused the call (`denied`, `not_found` or
   another kind); 4 `timed_out`; 5 `exited`.
@@ -1694,6 +1732,9 @@ Limits:
   on.
 - Under `project`, a peer's agent reads nothing on this hab, since the forward does not say which
   agent asked.
+- A forwarded wait checks each lease from the offset the last one reached, so a line that a
+  lease boundary splits is checked from the boundary on. A quiet wait across hosts may end up to
+  one lease late when output came near a lease's end.
 
 ---
 
@@ -2272,6 +2313,14 @@ so a client keeps its sizes and its claim to restore exactly as long as its toke
 flag.
 
 Decision: 60 s, configurable later. Built as `control.DefaultReconnectGrace`.
+
+### Q9. May Capcom read panes (owner)
+
+Capcom's route is refused `pane.read` and `pane.wait` at every level for now (3.11). Capcom acts
+on events and reads untrusted text, so pane text from any session would be a path for injected
+instructions into its turns. Options: keep it refused; let it read the panes of a session the
+user attached in this conversation (`capcom.md` 8.1); or follow `agent.read_panes` like any
+agent. Recommendation: the second, so a read follows a user's own pick. Open for the owner.
 
 ---
 

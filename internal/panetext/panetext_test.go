@@ -43,10 +43,8 @@ func TestFeedSplitAnywhere(t *testing.T) {
 	for cut := 0; cut <= len(in); cut++ {
 		var l Lines
 		var got []string
-		f := func(line string, done bool) bool {
-			if done {
-				got = append(got, line)
-			}
+		f := func(line string) bool {
+			got = append(got, line)
 			return false
 		}
 		l.Feed(in[:cut], f)
@@ -59,29 +57,42 @@ func TestFeedSplitAnywhere(t *testing.T) {
 	}
 }
 
-// TestFeedOpenLine hands on the open line as it grows, so a wait sees a prompt with no LF, and
-// stops as soon as fn says so.
+// TestFeedOpenLine keeps the open line for the caller to read, changes Gen only when it
+// changes, and stops as soon as fn says so.
 func TestFeedOpenLine(t *testing.T) {
 	var l Lines
 	var seen []string
-	f := func(line string, done bool) bool {
+	f := func(line string) bool {
 		seen = append(seen, line)
-		return strings.HasSuffix(line, "$ ")
+		return line == "stop"
 	}
-	if l.Feed([]byte("out\nuser"), f) {
-		t.Fatal("stopped early")
+	l.Feed([]byte("out\nuser"), f)
+	if want := []string{"out"}; !slices.Equal(seen, want) || l.Open() != "user" || string(l.OpenBytes()) != "user" {
+		t.Fatalf("seen %q open %q", seen, l.Open())
 	}
-	if !l.Feed([]byte("@host $ "), f) {
-		t.Fatalf("no stop at the prompt: %q", seen)
+	l.Feed([]byte("@host $ "), f)
+	if l.Open() != "user@host $ " {
+		t.Fatalf("open %q", l.Open())
 	}
-	if want := []string{"out", "user", "user@host $ "}; !slices.Equal(seen, want) {
-		t.Fatalf("seen %q, want %q", seen, want)
-	}
-	// An unchanged open line is not handed on again.
-	seen = nil
+	g := l.Gen()
 	l.Feed([]byte("\x1b[0m"), f)
-	if len(seen) != 0 {
-		t.Fatalf("unchanged open line handed on: %q", seen)
+	if l.Gen() != g {
+		t.Fatal("an escape sequence changed Gen")
+	}
+	if !l.Feed([]byte("\nstop\nmore\n"), f) || seen[len(seen)-1] != "stop" {
+		t.Fatalf("no stop: %q", seen)
+	}
+}
+
+// TestCleanControls keeps text, tab and LF, and drops every other control; StripBidi drops
+// the bidi controls only.
+func TestCleanControls(t *testing.T) {
+	in := "a\tb\nc\x1b]52;c;eA==\x07d\re\x7ff\u0085g\u009bh\xffi"
+	if got, want := CleanControls(in), "a\tb\nc]52;c;eA==de"+"fgh\uFFFDi"; got != want {
+		t.Fatalf("CleanControls = %q, want %q", got, want)
+	}
+	if got := StripBidi("a\u202eb\u2066c\u2069d\u200fe"); got != "abcd\u200fe" {
+		t.Fatalf("StripBidi = %q", got)
 	}
 }
 
@@ -89,10 +100,8 @@ func TestFeedOpenLine(t *testing.T) {
 func TestFeedLongLine(t *testing.T) {
 	var l Lines
 	var parts []int
-	l.Feed([]byte(strings.Repeat("x", MaxLine*2+5)+"\n"), func(line string, done bool) bool {
-		if done {
-			parts = append(parts, len(line))
-		}
+	l.Feed([]byte(strings.Repeat("x", MaxLine*2+5)+"\n"), func(line string) bool {
+		parts = append(parts, len(line))
 		return false
 	})
 	if want := []int{MaxLine, MaxLine, 5}; !slices.Equal(parts, want) {
