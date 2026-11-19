@@ -669,7 +669,16 @@ replica and the `logbook.*` methods and the `logbook.updated` and `logbook.confl
 vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
 `friction` means `diag.friction` works: the hab stores a friction note with a tail of its logs
-(`diagnostics.md` 9).
+(`diagnostics.md` 9). `trust` means `trust.answer` works (`app.md` 7.10). `round-actions` means
+the hab knows a `capcom` round's action words, so a client shows its Capcom jobs
+(`capcom-service.md` 9.6). `teammates` means `session.create` takes `report_to`
+(`harness-adapters.md`, Spawn); a spawner's hab checks it on a peer.
+`api.Capabilities` lists every word a hab sends, so the schema's `x-capabilities` and the
+generated clients name them all. A test reads the words `gff-hab serve` and the control server
+put in the welcome. It fails on a word the table lacks, and on a table word no hab sends.
+`devices` and `snapshot-ghostty` are the two table words no hab sends yet. A word a client
+checks before any hab sends it, such as `modules` (`modules.md` 6.6), joins the table with the
+hab code that sends it.
 A client checks for a capability before it uses the feature. Capabilities are
 for features that a host may lack. They are not a second versioning scheme.
 
@@ -682,7 +691,8 @@ holder link), `settings`, `read-tools`, `confirm` and `friction`. With the holde
 `rounds`. It sends `logbook` when its Logbook file opens (`logbook.md` 10.5), and `logbook-vectors` when its
 config file has `[logbook.vectors]` (`logbook.md` 13.2). It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
-engine on (`voice.md`, Built choices).
+engine on (`voice.md`, Built choices). With the holder link on it also sends `trust` and
+`teammates`, and with `rounds` also `round-lock` and `round-actions`.
 
 ### 3.5 Events, seq and epoch
 
@@ -833,6 +843,25 @@ and event below is in the revision 1 schema, added under the 3.3 rule: new metho
 types, new capabilities, new word sets, and new optional fields on existing types.
 The owning stage builds the behaviour. Until then a method answers `unavailable` with a hint that
 names the stage, and an event is defined but never sent.
+
+**Route-only methods.** The pane route (`POST /channel/<token>`, `mesh.md` 6.5) takes most of
+its methods from this table. It also takes nine methods outside it: `agent.compact` and
+`agent.name` (`harness-adapters.md`, Self-compact and Agent kit) and the seven `personal.*`
+tools (`capcom-service.md` 8). They stay outside the table on purpose:
+
+- **The token is the caller.** Each acts on the pane or session whose token made the call, or
+  only for the Capcom engine's token. A control socket client has no token, so the control
+  socket does not answer them.
+- **The table is the control socket's surface.** `rpc.discover` serves it, and the generated Go
+  and Swift clients call every method in it over the control socket. A table entry would offer
+  the app and `gff` calls that always fail.
+- **They ship with their callers.** Their callers are the agent kit (`gff agent`, `gff-hab
+  agent` and the MCP tools), which ship in the same release as gff-hab. The agent params are Go
+  types in `api/` (`CompactParams`, `AgentNameParams`); the personal tools take plain JSON
+  objects.
+
+The tallies count them by name all the same (`diagnostics.md` 7.1). A route-only method that
+the control socket starts to answer moves into the table.
 
 | Method | Purpose | Built |
 |---|---|---|

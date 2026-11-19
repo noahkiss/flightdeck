@@ -508,7 +508,7 @@ against `internal/modhost` in-process. To reach them from a hab, the API needs:
 
 | Need | Why |
 |---|---|
-| The `modules` capability in the welcome | `gff` shows the Modules section only for a hab that lists it |
+| The `modules` capability in the welcome, added to `api.Capabilities` with the code that sends it (`hab-logic-api.md` 3.4) | `gff` shows the Modules section only for a hab that lists it. Until a hab sends it, the check keeps the section hidden. The check stays: it is the gate the hab API turns on |
 | The client's vocabulary version in its hello | The hab renders per version (9); `gff` draws vocabulary 1 |
 | A module list per host: id, name, places, and the last state (ok, failing with the message, paused, "Needs a newer Flightdeck") | The card's heading and its error line (8.3) |
 | The tree of each module for a place, in the snapshot and as an event on each change, with a per-module revision | A later render can finish before an earlier one is sent; the client keeps the tree with the higher revision. The test source had to serialize act and render for this reason |

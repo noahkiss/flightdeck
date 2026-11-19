@@ -9,6 +9,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/hook"
 )
 
 func testSurface() Surface {
@@ -341,5 +344,34 @@ func TestCurrentSurface(t *testing.T) {
 		if !slices.Contains(s.Methods, name) {
 			t.Errorf("feature method %s is not in the method table", name)
 		}
+	}
+	if !slices.Contains(s.Clients, ClientRoute) {
+		t.Error("the pane route's client kind is missing")
+	}
+}
+
+// TestRouteMethodsCounted: every method the pane route takes counts by name: it is in the API
+// table, or route-only (hab-logic-api.md 3.9). A route-only method is never in the table too.
+func TestRouteMethodsCounted(t *testing.T) {
+	s := Current()
+	table := map[string]bool{}
+	for _, m := range api.Methods {
+		table[m.Name] = true
+	}
+	for _, set := range [][]string{hook.ChannelMethods, hook.ReadMethods, hook.LogbookMethods, hook.ConfirmMethods,
+		hook.RoundMethods, hook.GroupMethods, hook.AgentMethods, hook.PaneMethods, hook.PersonalMethods} {
+		for _, m := range set {
+			if !slices.Contains(s.Methods, m) {
+				t.Errorf("the route takes %s, which the tallies count under other", m)
+			}
+		}
+	}
+	for _, m := range RouteOnly() {
+		if table[m] {
+			t.Errorf("%s is in the API table: drop it from RouteOnly", m)
+		}
+	}
+	if !slices.Contains(s.Methods, "agent.compact") || !slices.Contains(s.Methods, "personal.weather") {
+		t.Errorf("route-only methods missing: %v", RouteOnly())
 	}
 }

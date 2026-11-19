@@ -4,8 +4,27 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
+
+// TestHabVerbs: every verb gff hands to gff-hab is a gff-hab verb, and `gff group` is one of
+// them (groups.md 15.2).
+func TestHabVerbs(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "gff-hab", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range habVerbs {
+		if !strings.Contains(string(src), "\tcase \""+v+"\":") {
+			t.Errorf("gff hands %q to gff-hab, which has no such verb", v)
+		}
+	}
+	if !slices.Contains(habVerbs, "group") {
+		t.Error("gff group does not reach gff-hab group")
+	}
+}
 
 // TestFindHab: gff round finds gff-hab beside gff, then in GFF Hab.app beside it, then beside
 // the file a link to gff names, then on PATH; a file that does not run is skipped.

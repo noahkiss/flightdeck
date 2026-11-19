@@ -99,15 +99,14 @@ var DefaultLimits = Limits{
 
 // ServiceConfig is the service half of the [capcom] section (capcom-service.md 3.5, 19.2).
 type ServiceConfig struct {
-	Engine          string   // EngineNone, EngineClaude or EngineCodex
-	Model           string   // "": the SDK's default
-	SmallModel      string   // "": the provider's smallest current model
-	Auth            string   // AuthOAuthToken or AuthAPIKey (claude); AuthLogin or AuthAPIKey (codex)
-	OAuthCommand    []string // an argv that prints the OAuth token
-	APIKeyCommand   []string // an argv that prints an API key
-	Limits          Limits
-	Pace            Pace // the usage governor's inputs (10.1)
-	CredentialInKey bool // the file holds an oauth_token or api_key key: refused
+	Engine        string   // EngineNone, EngineClaude or EngineCodex
+	Model         string   // "": the SDK's default
+	SmallModel    string   // "": the provider's smallest current model
+	Auth          string   // AuthOAuthToken or AuthAPIKey (claude); AuthLogin or AuthAPIKey (codex)
+	OAuthCommand  []string // an argv that prints the OAuth token
+	APIKeyCommand []string // an argv that prints an API key
+	Limits        Limits
+	Pace          Pace // the usage governor's inputs (10.1)
 	// Personal is the personal tools' keys (8, 19.2).
 	Personal Personal
 }
@@ -245,7 +244,6 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	c.APIKeyCommand = argv("api_key_command")
 	for _, k := range []string{"oauth_token", "api_key"} {
 		if _, ok := sec[k]; ok {
-			c.CredentialInKey = true
 			bad("%s: the config file holds no credential; set %s_command to an argv that prints it", k, k)
 		}
 	}

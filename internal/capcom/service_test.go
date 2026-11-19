@@ -110,7 +110,7 @@ colour = "blue"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Engine != EngineNone || c.Auth != AuthOAuthToken || c.OAuthCommand != nil || c.Limits != DefaultLimits || !c.CredentialInKey {
+	if c.Engine != EngineNone || c.Auth != AuthOAuthToken || c.OAuthCommand != nil || c.Limits != DefaultLimits {
 		t.Fatalf("%+v", c)
 	}
 	all := strings.Join(problems, "\n")

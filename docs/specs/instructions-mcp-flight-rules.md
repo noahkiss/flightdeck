@@ -261,7 +261,8 @@ Built (`internal/instructions`, `gff-hab instructions render`):
   `hosts`, `harnesses` and `order`, and `write = [...]` with the harness names whose target may
   be written. `~/` resolves against the home directory, a relative path against the config
   file's directory. An unknown key in the table is an error. Project sources are accepted and
-  never rendered (D3).
+  never rendered (D3). `gff` reads the same file and ignores `[instructions]` and `[mcp]`;
+  `docs/examples/gff.toml` holds all the tables.
 - **Opt-in is two steps.** `-write <target>` writes only when the `write` list names that
   target. The default run is the dry run. `-dry-run` given with `-write` is an error, so a
   user who adds `-dry-run` to be safe never gets a write.
@@ -366,7 +367,7 @@ hand since the last render (its digest differs), the dry run shows the edit and 
 | `harnesses` | Allow list; default all four |
 | `auth` | `none`, `secret` (references above) or `oauth` (the harness's own sign-in; Flightdeck holds nothing) |
 | `timeout` | Optional, seconds; rendered into each harness's own key |
-| `instructions_note` | Optional text shown in the ledger beside the server; never rendered |
+| `instructions_note` | Optional text for whoever reads the file. Accepted and never rendered or shown: the flight rules ledger lists what each harness recorded, not the registry |
 
 Which servers each harness gets is the user's choice, through `harnesses`. Lists may differ
 per harness; the registry makes the difference visible, not forbidden.

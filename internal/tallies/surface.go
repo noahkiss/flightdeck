@@ -1,6 +1,8 @@
 package tallies
 
 import (
+	"slices"
+
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/hook"
@@ -16,7 +18,7 @@ type HookSet struct {
 // Surface is the closed key set of each tally: what a Tallies counts by name, and what
 // gff-hab tallies --unused lists against.
 type Surface struct {
-	Methods  []string  // the API method table: what rpc.discover serves
+	Methods  []string  // the API method table (what rpc.discover serves), then RouteOnly
 	Events   []string  // the API event types
 	Hooks    []HookSet // the hook events each harness's hook config posts
 	Settings []string  // the settings registry
@@ -28,6 +30,16 @@ type Surface struct {
 // ErrorProtocol is the error kind of a JSON-RPC protocol error, which has no API kind.
 const ErrorProtocol = "protocol"
 
+// ClientRoute is the client kind of a call on the pane route (POST /channel/<token>), which
+// has no hello and so no client kind of the API.
+const ClientRoute = "route"
+
+// RouteOnly are the methods only the pane route takes: they are outside the API table
+// (hab-logic-api.md 3.9, Route-only methods), and counted by name all the same.
+func RouteOnly() []string {
+	return slices.Concat(hook.AgentMethods, hook.PersonalMethods)
+}
+
 // Current is this build's surface: the method table and event types of package api, the hook
 // events of package hook, the hab-side settings registry.
 func Current() Surface {
@@ -35,6 +47,7 @@ func Current() Surface {
 	for _, m := range api.Methods {
 		s.Methods = append(s.Methods, m.Name)
 	}
+	s.Methods = append(s.Methods, RouteOnly()...)
 	for _, e := range api.Events {
 		s.Events = append(s.Events, string(e.Type))
 	}
@@ -45,7 +58,7 @@ func Current() Surface {
 	for _, d := range settings.Defs {
 		s.Settings = append(s.Settings, d.ID)
 	}
-	s.Clients = append(s.Clients, api.Enums["ClientKind"]...)
+	s.Clients = append(append(s.Clients, api.Enums["ClientKind"]...), ClientRoute)
 	s.Errors = append(append(s.Errors, api.Enums["ErrorKind"]...), ErrorProtocol)
 	return s
 }

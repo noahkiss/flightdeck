@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/settings"
 )
 
@@ -208,5 +210,21 @@ func TestPermissionWaitLock(t *testing.T) {
 		if (err != nil) != c.bad || string(got) != c.want {
 			t.Errorf("%v %v %q: got %q %v", c.flag, c.given, c.env, got, err)
 		}
+	}
+}
+
+// TestApprovalMaxAge: approval.max_age in minutes becomes the agent store's limit, 0 none; an
+// expired request answers conflict (app.md 7.4).
+func TestApprovalMaxAge(t *testing.T) {
+	t.Parallel()
+	for v, want := range map[string]time.Duration{"60": time.Hour, "1": time.Minute, "0": 0, "x": 0} {
+		f := approvalMaxAge(func(string) json.RawMessage { return json.RawMessage(v) })
+		if got := f(); got != want {
+			t.Errorf("%s: %v, want %v", v, got, want)
+		}
+	}
+	var ce *control.Error
+	if err := agentErr(fmt.Errorf("%w: old", harness.ErrExpired)); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindConflict {
+		t.Errorf("expired: %v", err)
 	}
 }

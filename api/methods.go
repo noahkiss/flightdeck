@@ -406,6 +406,9 @@ var Translators = map[int]Translator{}
 // capcom-thread (capcom-service.md 8). "flight-rules" means flightrules.list and
 // flightrules.text work (instructions-mcp-flight-rules.md 11). "session-restart" means
 // session.restart works and a session carries Session.stale (instructions-mcp-flight-rules.md 13.1).
-// "friction" means diag.friction works (diagnostics.md 9).
+// "friction" means diag.friction works (diagnostics.md 9). "trust" means trust.answer works
+// (app.md 7.10). "round-actions" means the hab knows a capcom round's action words, so a client
+// shows its Capcom jobs (capcom-service.md 9.6). "teammates" means session.create takes
+// report_to (harness-adapters.md, Spawn); a spawner's hab checks it on a peer.
 // "pane-read" means pane.read and pane.wait work (spec 3.11).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read"}
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates"}

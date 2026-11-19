@@ -50,6 +50,8 @@ type Store struct {
 	// earlier gff-hab epoch never names a new request.
 	reqPrefix string
 	reqN      uint64
+	// maxAge is approval.max_age (app.md 7.4), read when a request opens; 0 or nil is no limit.
+	maxAge func() time.Duration
 }
 
 type pane struct {
@@ -61,6 +63,7 @@ type pane struct {
 	// pane's harness going away (exit, a new session); PTY bytes never do (see gateSource),
 	// except once Flightdeck answered it (answered): then an OSC idle or a shell prompt may.
 	open     string
+	expires  time.Time     // when open takes no more answers (app.md 7.4); zero: no limit
 	resolved []resolution  // recently resolved requests, oldest first
 	changed  chan struct{} // closed and replaced on every accepted change and OSC report
 	// oscN counts the live OSC reports of the pane's harness; oscLast is the newest one's state.
@@ -314,6 +317,14 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 					r.ID = fmt.Sprintf("%s-%d", s.reqPrefix, s.reqN)
 					next.Request = &r
 				}
+				if next.Request.ID != prev || p.expires.IsZero() {
+					p.expires = s.expiryLocked()
+				}
+				if !p.expires.IsZero() {
+					r := *next.Request
+					r.ExpiresAt = p.expires.UTC().Format(time.RFC3339)
+					next.Request = &r
+				}
 				p.open = next.Request.ID
 				opened = p.open
 			}
@@ -345,6 +356,28 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 // prompt), so idle would mark a pane whose hooks work.
 func turnEnd(s api.AgentStatus) bool {
 	return s == api.AgentStatusDone || s == api.AgentStatusError
+}
+
+// SetMaxAge sets how long a permission request takes a remote answer: approval.max_age (app.md
+// 7.4), read when a request opens, so a change applies to the next request. A request carries
+// its limit as expires_at. Zero is no limit.
+func (s *Store) SetMaxAge(f func() time.Duration) {
+	s.mu.Lock()
+	s.maxAge = f
+	s.mu.Unlock()
+}
+
+// expiryLocked is the expiry of a request that opens now, or zero. The caller holds s.mu.
+func (s *Store) expiryLocked() time.Time {
+	if s.maxAge == nil {
+		return time.Time{}
+	}
+	d := s.maxAge()
+	if d <= 0 {
+		return time.Time{}
+	}
+	// Whole seconds, as expires_at carries them, so the hab refuses no earlier than it says.
+	return s.now().Add(d).Truncate(time.Second).Add(time.Second)
 }
 
 // paneLocked returns the pane's record, made on first use. The caller holds s.mu.

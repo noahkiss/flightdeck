@@ -21,6 +21,9 @@ var (
 	ErrNotOpen = errors.New("no such open permission request")
 	// ErrAnswered: another answer to the request is on its way, or was sent.
 	ErrAnswered = errors.New("the request is already answered")
+	// ErrExpired: the request is older than approval.max_age (app.md 7.4): it takes no remote
+	// answer, only one in the terminal.
+	ErrExpired = errors.New("the request expired")
 	// ErrUnsupported: the harness has no adapter for this input.
 	ErrUnsupported = errors.New("not supported for this harness")
 )
@@ -99,6 +102,9 @@ func (s *Store) BeginAnswer(paneID, request string) (api.AgentState, error) {
 	st, err := s.checkAnswerLocked(p, paneID, request)
 	if err != nil {
 		return st, err
+	}
+	if !p.expires.IsZero() && !s.now().Before(p.expires) {
+		return st, fmt.Errorf("%w: request %s is older than the hab's limit for remote answers (approval.max_age); answer it in the terminal", ErrExpired, request)
 	}
 	switch request {
 	case p.answering:

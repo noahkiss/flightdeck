@@ -48,6 +48,9 @@ type Server struct {
 	logf func(string, ...any)
 	// tally counts each envelope by harness and event (diagnostics.md 7.1); set before Serve.
 	tally func(harness, event string, refused bool)
+	// routeTally counts each call on the pane route by method (diagnostics.md 7.1); set before
+	// Serve.
+	routeTally func(method, errKind string, failed bool)
 
 	mu       sync.Mutex
 	unknown  map[string]bool // tokens already logged as unknown
@@ -113,6 +116,10 @@ func (s *Server) Serve(l net.Listener) error {
 // SetTally sets the counter of envelopes: each one taken, and each one refused for its token,
 // its form or its size (diagnostics.md 7.1). Call it before Serve.
 func (s *Server) SetTally(f func(harness, event string, refused bool)) { s.tally = f }
+
+// SetRouteTally sets the counter of pane route calls: each call by its method, with the error
+// kind when it failed (diagnostics.md 7.1). Call it before Serve.
+func (s *Server) SetRouteTally(f func(method, errKind string, failed bool)) { s.routeTally = f }
 
 // count counts one envelope. A refused one names its harness and event when its body holds
 // them; the counter keeps only names it knows.

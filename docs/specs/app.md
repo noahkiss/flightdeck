@@ -1307,6 +1307,11 @@ the context bar, the title, then the command on one line in the accent colour, t
   terminal to answer in (`capcom-service.md` 5.3).
 - The countdown runs on the device from `expires_at`. The hab's clock decides; the app corrects for
   the offset it measured on connect (3.2).
+- **Built.** The hab reads `approval.max_age` when a request opens, so a change applies to the
+  next request. `expires_at` is the open time plus the limit, rounded up to a whole second, and
+  `approval.answer` from then on answers `conflict`: "answer it in the terminal". The request
+  stays open, so the terminal still answers it. `expires_at` does not yet fold in the answer
+  path's own deadline: it carries the hab's limit only.
 
 ### 7.5 Answered elsewhere
 
@@ -2088,8 +2093,8 @@ The first app stage: the connection to every hab and the status board. Code in
   of the session's fields.
 - **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list, headed
   "Sessions", on the left beside a column with the connections list. No empty cards
-  placeholder shows (3.3). The project and hab grouping
-  switch, search and the usage footer are not built yet.
+  placeholder shows (3.3). The usage footer shows under the list. The project and hab grouping
+  switch and search are not built yet.
 - **Lifecycle.** iPhone and iPad close every connection when the app enters the background and
   reconnect when it becomes active; `inactive` changes nothing. The App reads the app-level
   scene phase, which is active while any window is, so one iPad window going to the background
@@ -3527,7 +3532,7 @@ every key, so a change never makes a new key.
   another host either; Safe is the level for that check.
 - **`approval.max_age`** bounds a remote Allow on an old request (7.4). At 0 the hab sets no
   limit: a request takes a remote answer until the answer path's own deadline, and with no such
-  deadline no countdown shows (7.4). Not built: the hab sends no limit yet.
+  deadline no countdown shows (7.4).
 - **`logbook.approval`** is one setting for both kinds of memory: Logbook writes by agents and
   each harness's native memory. It replaces the per-harness switches
   (`instructions-mcp-flight-rules.md` 12). The user's own writes always land at once. The word
@@ -3669,9 +3674,9 @@ Built choices on the hab (`internal/settings`):
 
 - **What each setting drives.** `hab.permission_wait` sets the blocking hook's wait for the next
   hook; a hook already waiting keeps its wait. `confirm.start_elsewhere` decides whether a start
-  asks for a confirmation (`capcom.md` 6.4). The other two are stored and served
-  only: their consumers are not built (`approval.max_age` waits for the request expiry of 7.4,
-  `logbook.approval` for Logbook).
+  asks for a confirmation (`capcom.md` 6.4). `approval.max_age` sets the expiry of a
+  permission request when it opens (7.4). `logbook.approval` is read at each Logbook write from
+  a pane.
 - **The heavy-run lock** (`groups.md` 8, stage B5) reads `heavy.slots`, `heavy.disk_min_free`
   and `heavy.long_hold` at each grant, disk reading and long-hold check, so a change applies at
   once; a raised `heavy.slots` grants at the next check.
@@ -3784,15 +3789,11 @@ The page is `Views/SettingsViews.swift`.
 - **Today's pages as groups.** Notifications, Voice, SSH keys and the usage warnings open as
   pages linked from their group, not as rows inline. Their rows are in the registry, so search
   finds them and shows the link.
-- **The hab consumers** of `approval.max_age` (the request
-  expiry of 7.4) and `logbook.approval` (Logbook). The hab stores and serves both, and the app
-  writes them.
 - **The Habs group** shows only the SSH page link. Each hab's push status stays on the
   Notifications page.
 - **Rows with no control yet:** `notify.command_done`, `notify.tap`, `widget.hide_titles`,
   `mac.keep_connected` and `voice.language` are in the registry, marked not built, and the page
   leaves them out until their controls exist.
-- **`gff lb status`** waits for Logbook.
 - **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
   usage thresholds are not sent yet.
 

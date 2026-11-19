@@ -671,8 +671,11 @@ the catalog copies.
 - **While a move runs** pause, resume, close and retry answer `unavailable`.
 - **At creation** the plan's card gets the always-on line as a warning. It offers no button:
   the user moves the home after the plan runs.
-- **Not built in B9.** The lane (B4) is not built, so the drain only puts an item in `landing`
-  back to `ready`, and no lane worktree goes; `move_drain` is read but has nothing to wait for.
+- **Not built in B9.** The drain does not wait for a land past its push: it puts every item in
+  `landing` back to `ready`, and the new home lands it again from step 1, which marks it
+  `landed` when its head is already on the target (14). `move_drain` is read and not used yet:
+  the wait needs the lane (B4) to report its push to the move. The move does not stop a lane run
+  in flight, and the old home's lane worktree stays.
   `lane.submit` and `review.verdict` (B7) are not merged; they use the same forwarding when they
   land. Capcom-coordinated groups (B8) do not exist yet, so the move with the Capcom mark waits
   for B8. The app's "Move home" and the home label on the card come with the card.
@@ -1424,7 +1427,7 @@ to 3.6.
 
 CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`. Built in B3 as
 `gff-hab group ls|show|pause|resume|close`; B9 adds `gff-hab group move <group> -host <label>`
-and `-cancel`.
+and `-cancel`. `gff group` runs `gff-hab group` with the same arguments, as `gff round` does.
 
 ### 15.3 Settings
 
