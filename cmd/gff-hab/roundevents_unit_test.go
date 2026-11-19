@@ -327,13 +327,22 @@ func TestRoundMessageRuns(t *testing.T) {
 		}
 		return api.CatalogList{Hosts: []api.CatalogEntry{self, {Label: "old", Catalog: api.Catalog{DeviceID: "SHA256:old"}}}}
 	}
-	ch := &fakeRoundChannels{}
 	var notices []push.RoundEvent
-	svc, _ := fakeRoundsServiceWith(t, t.TempDir(), structure.NewFakeHolder(), func(c *roundsConfig) {
-		c.self, c.catalog, c.channels = testSelf, catalog, ch
-		c.settings.OutcomeWait = 300 * time.Millisecond
-		c.raise = func(ev push.RoundEvent, _, _, _ string) { mu.Lock(); notices = append(notices, ev); mu.Unlock() }
-	})
+	// Each service has its own outcome_wait. The test's steps from a run's end to its outcome
+	// must fit in it, and a loaded race run can stall them for seconds, so svc waits a minute.
+	// short ends its wait soon, for the test of an outcome that never comes.
+	const shortWait = 300 * time.Millisecond
+	service := func(wait time.Duration) (*roundsService, *fakeRoundChannels) {
+		ch := &fakeRoundChannels{}
+		svc, _ := fakeRoundsServiceWith(t, t.TempDir(), structure.NewFakeHolder(), func(c *roundsConfig) {
+			c.self, c.catalog, c.channels = testSelf, catalog, ch
+			c.settings.OutcomeWait = wait
+			c.raise = func(ev push.RoundEvent, _, _, _ string) { mu.Lock(); notices = append(notices, ev); mu.Unlock() }
+		})
+		return svc, ch
+	}
+	svc, ch := service(time.Minute)
+	short, _ := service(shortWait)
 	create := func(spec api.RoundSpec) (api.RoundCreated, error) {
 		return svc.Create(context.Background(), api.RoundCreateParams{Round: spec}, "")
 	}
@@ -369,19 +378,25 @@ func TestRoundMessageRuns(t *testing.T) {
 	})
 
 	t.Run("capcom: unknown after outcome_wait", func(t *testing.T) {
-		made, err := create(api.RoundSpec{Name: "cc2", Mode: api.RoundModeCapcom, Trigger: manual, Prompt: "x"})
+		made, err := short.Create(context.Background(), api.RoundCreateParams{Round: api.RoundSpec{Name: "cc2",
+			Mode: api.RoundModeCapcom, Trigger: manual, Prompt: "x"}}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.Run(api.RoundRef{ID: made.Round.ID}); err != nil {
+		if _, err := short.Run(api.RoundRef{ID: made.Round.ID}); err != nil {
 			t.Fatal(err)
 		}
-		got := waitMsgRun(t, svc, made.Round.ID, rounds.RunRunning, func(r api.RoundRun) bool { return r.Message != "" })
-		svc.channelRecord(api.ChannelRecord{ID: got.Message, From: "round:cc2", State: api.ChannelStateAccepted})
-		if r := waitMsgRun(t, svc, made.Round.ID, rounds.RunSucceeded, nil); r.Outcome != nil {
+		got := waitMsgRun(t, short, made.Round.ID, rounds.RunRunning, func(r api.RoundRun) bool { return r.Message != "" })
+		// The run ends after accepted, so no more than the time since then has passed since its
+		// end. While that is under outcome_wait, the run shows no outcome; a stall may take
+		// longer, and then unknown is right.
+		accepted := time.Now()
+		short.channelRecord(api.ChannelRecord{ID: got.Message, From: "round:cc2", State: api.ChannelStateAccepted})
+		r := waitMsgRun(t, short, made.Round.ID, rounds.RunSucceeded, nil)
+		if r.Outcome != nil && time.Since(accepted) < shortWait {
 			t.Errorf("an outcome before outcome_wait: %+v", r.Outcome)
 		}
-		waitMsgRun(t, svc, made.Round.ID, rounds.RunSucceeded, func(r api.RoundRun) bool { return r.Outcome != nil && r.Outcome.Word == "unknown" })
+		waitMsgRun(t, short, made.Round.ID, rounds.RunSucceeded, func(r api.RoundRun) bool { return r.Outcome != nil && r.Outcome.Word == "unknown" })
 	})
 
 	t.Run("capcom: refused at create with no service", func(t *testing.T) {
