@@ -493,6 +493,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleFriction(m)
 		return
 	}
+	if m.Method == "diag.debug" {
+		c.handleDebug(m)
+		return
+	}
 	switch m.Method {
 	case "content.show", "content.list", "content.read", "content.diff":
 		c.handleContent(m)

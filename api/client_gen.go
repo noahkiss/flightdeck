@@ -1615,3 +1615,10 @@ func (c Client) DiagFriction(ctx context.Context, params FrictionParams) (Fricti
 	err := c.Caller.Call(ctx, "diag.friction", params, &result)
 	return result, err
 }
+
+// DiagDebug calls diag.debug. Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.
+func (c Client) DiagDebug(ctx context.Context, params DebugParams) (DebugState, error) {
+	var result DebugState
+	err := c.Caller.Call(ctx, "diag.debug", params, &result)
+	return result, err
+}

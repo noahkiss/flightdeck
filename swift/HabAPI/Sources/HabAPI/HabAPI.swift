@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -3240,6 +3240,40 @@ public struct DataWelcome: Codable, Sendable, Hashable {
         self.owner = owner
         self.rows = rows
         self.stream = stream
+    }
+}
+
+public struct DebugParams: Codable, Sendable, Hashable {
+    /// RFC 3339 time the debug lines stop, at most 24 hours ahead. Absent, or a time already past: debug off.
+    public var until: String?
+
+    enum CodingKeys: String, CodingKey {
+        case until = "until"
+    }
+
+    public init(until: String? = nil) {
+        self.until = until
+    }
+}
+
+public struct DebugState: Codable, Sendable, Hashable {
+    /// GFF_HAB_DEBUG is set in gff-hab's environment, so the debug lines stay on with no time limit.
+    public var env: Bool?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// RFC 3339 time the debug lines stop. Absent: no window is open.
+    public var until: String?
+
+    enum CodingKeys: String, CodingKey {
+        case env = "env"
+        case seq = "seq"
+        case until = "until"
+    }
+
+    public init(env: Bool? = nil, seq: UInt64, until: String? = nil) {
+        self.env = env
+        self.seq = seq
+        self.until = until
     }
 }
 
@@ -10877,6 +10911,8 @@ public enum HabMethods {
     public static let groupTell = HabMethod<GroupTellParams, Empty>(name: "group.tell")
     /// Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.
     public static let diagFriction = HabMethod<FrictionParams, FrictionNoted>(name: "diag.friction")
+    /// Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.
+    public static let diagDebug = HabMethod<DebugParams, DebugState>(name: "diag.debug")
 }
 
 public enum HabNotification {

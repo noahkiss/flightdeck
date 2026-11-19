@@ -8,6 +8,8 @@
 //	gff-hab connect [-socket path]
 //	gff-hab status  [-socket path] [-state dir] [-holders dir] [-json]
 //	gff-hab logs    [-state dir] [-f] [-since d|time] [-until d|time] [-proc kinds] [-grep text]
+//	gff-hab stacks  [-state dir]
+//	gff-hab debug   [-socket path | -via command] <duration>|off
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab peers    [-socket path] [-json]
@@ -133,6 +135,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/speech"
+	"github.com/noahkiss/flightdeck/internal/stall"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 	habusage "github.com/noahkiss/flightdeck/internal/usage"
@@ -153,6 +156,8 @@ const usage = `usage:
   gff-hab connect [-socket path]
   gff-hab status  [-socket path] [-state dir] [-holders dir] [-json]
   gff-hab logs    [-state dir] [-f] [-since d|time] [-until d|time] [-proc hab,holder,hook] [-grep text]
+  gff-hab stacks  [-state dir]
+  gff-hab debug   [-socket path | -via command] <duration>|off
   gff-hab friction [-socket path | -via command] [-session name|id] [-pane id] [-blocker] <text...>   (also gff friction)
   gff-hab friction list [-state dir] [-days n]
   gff-hab friction show [-state dir] <trace>
@@ -253,6 +258,10 @@ func main() {
 		err = logsCmd(os.Args[2:], os.Stdout)
 	case "friction":
 		err = frictionCmd(os.Args[2:], os.Stdout)
+	case "stacks":
+		err = stacksCmd(os.Args[2:], os.Stdout)
+	case "debug":
+		err = debugCmd(os.Args[2:], os.Stdout)
 	case "tallies":
 		err = talliesCmd(os.Args[2:], os.Stdout)
 	case "api":
@@ -437,6 +446,10 @@ func serve(args []string) error {
 	// waits for the shutdown below instead of killing it with no checkpoint.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+	// SIGUSR1 asks for a stack dump (diagnostics.md 4.7). Caught from the start, so one that
+	// arrives early never ends gff-hab; it waits until the dumps start.
+	usr1 := make(chan os.Signal, 1)
+	signal.Notify(usr1, syscall.SIGUSR1)
 
 	path, err := socketPath(*sock)
 	if err != nil {
@@ -561,6 +574,17 @@ func serve(args []string) error {
 	defer tl.Close()
 	hd := startDiag(dir, holderDirOf(*holders), epoch, logw, tl, logger.Printf)
 	diag.Store(hd)
+	hd.startStacks(usr1)
+	// Debug lines (4.5): a window from diag.debug, kept across restarts, or GFF_HAB_DEBUG.
+	debugSw := openDebug(dir, os.Getenv("GFF_HAB_DEBUG") != "", logger.Printf, time.Now, hd.setDebug)
+	defer debugSw.Close()
+	// The stall watchdog (4.7) probes the store's lock; the link's loop joins it below.
+	probes := []stall.Probe{{Name: "structure", Run: func() { store.Health() }}}
+	if lk != nil {
+		probes = append(probes, stall.Probe{Name: "link", Run: lk.Ping})
+	}
+	defer hd.startWatchdog(probes).Close()
+	diagStoreSeam(store)
 	if h := store.Health(); h.Problem != "" {
 		logger.Printf("state: %s", h.Problem)
 	}
@@ -577,10 +601,7 @@ func serve(args []string) error {
 	// timeout, and change a project only when a value changed.
 	repos := gitstatus.New(gitstatus.Config{Store: store, Interval: gitInterval, Logf: logger.Printf})
 	defer repos.Close()
-	debugf := func(string, ...any) {}
-	if os.Getenv("GFF_HAB_DEBUG") != "" {
-		debugf = logger.Printf
-	}
+	debugf := debugSw.printf
 	var pushes *pushService // set before anything publishes an agent state
 	// Harness runs of rounds follow their agents' states (roundharness.go); set once rounds run.
 	var roundsRef atomic.Pointer[roundsService]
@@ -1840,7 +1861,7 @@ func serve(args []string) error {
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
 		caps = append(caps, "rounds", capRoundLock, capRoundActions)
 	}
-	caps = append(caps, frictionCapability)
+	caps = append(caps, frictionCapability, debugCapability)
 	s := control.New(control.Config{
 		Epoch:    epoch,
 		Build:    build,
@@ -1896,6 +1917,7 @@ func serve(args []string) error {
 		Logbook:      lbVerbs,
 		FlightRules:  flightRules,
 		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
+		Debug:        debugSw,
 		Tally:        controlTally(tl),
 	})
 	srv.Store(s)

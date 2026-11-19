@@ -201,6 +201,7 @@ var Methods = []Method{
 	{"group.adopt_commit", "The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.", GroupAdoptCommitParams{}, Empty{}},
 	{"group.tell", "A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.", GroupTellParams{}, Empty{}},
 	{"diag.friction", "Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.", FrictionParams{}, FrictionNoted{}},
+	{"diag.debug", "Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.", DebugParams{}, DebugState{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -409,6 +410,7 @@ var Translators = map[int]Translator{}
 // "friction" means diag.friction works (diagnostics.md 9). "trust" means trust.answer works
 // (app.md 7.10). "round-actions" means the hab knows a capcom round's action words, so a client
 // shows its Capcom jobs (capcom-service.md 9.6). "teammates" means session.create takes
-// report_to (harness-adapters.md, Spawn); a spawner's hab checks it on a peer.
+// report_to (harness-adapters.md, Spawn); a spawner's hab checks it on a peer. "debug" means diag.debug works
+// (diagnostics.md 4.5).
 // "pane-read" means pane.read and pane.wait work (spec 3.11).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates"}
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug"}

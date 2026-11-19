@@ -108,7 +108,8 @@ type habDiag struct {
 	lastWrite time.Time
 	// markerFailing is set while marker writes fail, so the failure is logged once.
 	markerFailing bool
-	notice        bool // the previous run crashed and a notice is due
+	notice        bool      // the previous run crashed and a notice is due
+	lastDump      time.Time // the watchdog's last stack dump (4.7)
 	stopped       bool
 
 	stop chan struct{}
@@ -237,6 +238,21 @@ func (d *habDiag) touch() {
 		return
 	}
 	d.marker.LastSeen = d.now().UTC()
+	d.writeMarker()
+}
+
+// setDebug records the debug state in the marker, for gff-hab status (4.5). until is zero when
+// no window is open.
+func (d *habDiag) setDebug(on bool, until time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !until.IsZero() {
+		until = until.UTC()
+	}
+	if d.stopped || (d.marker.Debug == on && d.marker.DebugUntil.Equal(until)) {
+		return
+	}
+	d.marker.Debug, d.marker.DebugUntil = on, until
 	d.writeMarker()
 }
 

@@ -49,7 +49,8 @@
     "pane-read",
     "trust",
     "round-actions",
-    "teammates"
+    "teammates",
+    "debug"
   ],
   "methods": [
     {
@@ -5049,6 +5050,29 @@
       "x-params": {
         "$ref": "#/components/schemas/FrictionParams"
       }
+    },
+    {
+      "name": "diag.debug",
+      "summary": "Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "until",
+          "description": "RFC 3339 time the debug lines stop, at most 24 hours ahead. Absent, or a time already past: debug off.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DebugState"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DebugParams"
+      }
     }
   ],
   "x-notifications": [
@@ -8850,6 +8874,36 @@
           "stream",
           "cols",
           "rows"
+        ]
+      },
+      "DebugParams": {
+        "type": "object",
+        "properties": {
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 time the debug lines stop, at most 24 hours ahead. Absent, or a time already past: debug off."
+          }
+        }
+      },
+      "DebugState": {
+        "type": "object",
+        "properties": {
+          "env": {
+            "type": "boolean",
+            "description": "GFF_HAB_DEBUG is set in gff-hab's environment, so the debug lines stay on with no time limit."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 time the debug lines stop. Absent: no window is open."
+          }
+        },
+        "required": [
+          "seq"
         ]
       },
       "Deleted": {

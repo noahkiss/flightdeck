@@ -555,6 +555,11 @@ func (l *Link) prune() {
 	}
 }
 
+// Ping runs a no-op on the event loop and returns once the loop ran it, or the link closed.
+// gff-hab's stall watchdog sends it (diagnostics.md 4.7): a ping that does not return is a
+// stuck loop.
+func (l *Link) Ping() { l.run(func() {}) }
+
 // run runs fn on the event loop and waits for it. It returns false when the link closed first.
 func (l *Link) run(fn func()) bool {
 	done := make(chan struct{})
