@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/capcom"
+	"github.com/noahkiss/flightdeck/internal/logfile"
 )
 
 // Files in the Capcom folder the supervisor writes.
@@ -27,6 +28,9 @@ const (
 	KindVar = "GFF_HAB_CAPCOM_KIND"
 	PidFile = "engine.pid" // ProcessJob's pid
 	LogFile = "engine.log" // the engine's stdout and stderr
+	// LogMax caps engine.log: past it, gff-hab copies it to engine.log.1 and empties it
+	// (diagnostics.md 4.3).
+	LogMax = 1 << 20
 )
 
 // Supervisor states, for the session row (7.6).
@@ -351,6 +355,10 @@ func (s *Supervisor) start(ctx context.Context) {
 	build := s.cfg.Build()
 	prev := s.cfg.Record.Get().Build
 	s.cfg.Record.Update(func(r *Record) { r.Build = build })
+	// engine.log is capped at each start, and in gff-hab's hourly sweep (diagnostics.md 4.3).
+	if _, err := logfile.CopyTruncate(filepath.Join(s.cfg.Dir, LogFile), LogMax, 1); err != nil {
+		s.cfg.Logf("capcom engine: %s: %v", LogFile, err)
+	}
 	p, err := s.cfg.Job.Start(ctx, JobSpec{Argv: argv, Dir: dir, Env: append(s.cfg.BaseEnv(), envs...), Log: filepath.Join(s.cfg.Dir, LogFile)})
 	if err != nil {
 		s.cfg.Record.Update(func(r *Record) {

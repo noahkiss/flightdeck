@@ -481,10 +481,9 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if in == Launchd { // launchd writes the logs
-				for _, l := range []string{c.logicLog(), c.holderLog("aaaa0001"), c.holderLog("aaaa0002")} {
-					os.WriteFile(l, []byte("log"), 0o600)
-				}
+			// The init system writes the logs.
+			for _, l := range []string{c.logicLog(), c.holderLog("aaaa0001"), c.holderLog("aaaa0002")} {
+				os.WriteFile(l, []byte("log"), 0o600)
 			}
 			after := tree(t, root)
 			var added []string
@@ -631,9 +630,7 @@ func TestUninstallKeepsWhatInstallDidNotWrite(t *testing.T) {
 			if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
 				t.Fatal(err)
 			}
-			if in == Launchd {
-				os.WriteFile(c.logicLog(), []byte("log"), 0o600)
-			}
+			os.WriteFile(c.logicLog(), []byte("log"), 0o600)
 			if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
 				t.Fatal(err)
 			}

@@ -19,6 +19,7 @@ func logicUnit(c Config) []byte {
 	fmt.Fprintf(&b, "[Service]\nType=simple\n")
 	fmt.Fprintf(&b, "ExecStart=%s\n", execLine(c.HabPath(), c.ServeArgs()...))
 	writeEnv(&b, c)
+	writeOutput(&b, c.logicLog())
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=1\n\n")
 	fmt.Fprintf(&b, "[Install]\nWantedBy=default.target\n")
 	return b.Bytes()
@@ -43,6 +44,8 @@ func holderUnit(c Config) []byte {
 	}
 	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(args, " "))
 	writeEnv(&b, c)
+	// %i is the instance: the same file name launchd's holder job writes.
+	writeOutput(&b, strings.ReplaceAll(c.holderLog("\x00"), "%", "%%"), "%i")
 	fmt.Fprintf(&b, "Restart=on-failure\nRestartSec=1\nKillMode=process\nTimeoutStopSec=30\n")
 	return b.Bytes()
 }
@@ -55,6 +58,19 @@ func writeEnv(b *bytes.Buffer, c Config) {
 	for _, kv := range c.JobEnv() {
 		fmt.Fprintf(b, "Environment=%s\n", systemdQuote(kv, false))
 	}
+}
+
+// writeOutput appends the job's stdout and stderr to path, as launchd's job files do, so both
+// init systems keep the same files (diagnostics.md 4.3, Q2). systemd opens the file for append,
+// so gff-hab's copy-truncate leaves no gap. In path, '%' is escaped; a "\x00" in it becomes the
+// specifier spec.
+func writeOutput(b *bytes.Buffer, path string, spec ...string) {
+	if len(spec) == 0 {
+		path = strings.ReplaceAll(path, "%", "%%")
+	} else {
+		path = strings.ReplaceAll(path, "\x00", spec[0])
+	}
+	fmt.Fprintf(b, "StandardOutput=append:%s\nStandardError=append:%s\n", path, path)
 }
 
 // execLine quotes a command line for ExecStart.

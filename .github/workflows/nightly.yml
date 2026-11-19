@@ -1,8 +1,9 @@
 # The slow Linux suites, once a night (docs/specs/ci-release.md 3.6): the full Go set on main as
 # it is now (`make ci-full`, so a break from merge skew shows by the next morning), split into the
 # five shards of ci.yml's go (full) jobs; and in a job of its own, so it runs whatever the shards
-# do, the holderproto fuzz targets, the 200-cycle restart loop of core test 1, and core tests 2
-# and 13 under systemd (scripts/service-check.sh). One more job keeps the linux arm64 libghostty
+# do, the holderproto fuzz targets, the 200-cycle restart loop of core test 1, a copy-truncate
+# under systemd (diagnostics.md test 2), and core tests 2 and 13 under systemd
+# (scripts/service-check.sh). One more job keeps the linux arm64 libghostty
 # cache warm for releases. A scheduled night when main has not moved since the last passing run
 # costs one short job; a dispatch always runs everything.
 name: Nightly
@@ -119,6 +120,7 @@ jobs:
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
         [ -S "$XDG_RUNTIME_DIR/bus" ] || { echo "::error::no systemd user bus at $XDG_RUNTIME_DIR/bus after 30 s"; exit 1; }
+        GFF_INIT_APPEND_TEST=1 go test -count=1 -v -run TestCopyTruncateUnderInit ./internal/service/
         scripts/service-check.sh
       timeout-minutes: 40
 

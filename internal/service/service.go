@@ -283,10 +283,12 @@ func (c Config) holderPlist(instance string) string {
 	return filepath.Join(c.UnitDir, c.HolderJob(instance)+".plist")
 }
 
-// logicLog is the launchd log of the logic job.
-func (c Config) logicLog() string { return filepath.Join(c.LogDir(), "gff-hab.log") }
+// logicLog is the file the init system writes the logic job's stdout and stderr to. gff-hab's
+// own log is hab.log beside it; this file gets what reaches stderr, such as a crash's traceback
+// (diagnostics.md 4.3).
+func (c Config) logicLog() string { return filepath.Join(c.LogDir(), "hab.stderr") }
 
-// holderLog is the launchd log of holder instance.
+// holderLog is the file the init system writes holder instance's stdout and stderr to.
 func (c Config) holderLog(instance string) string {
 	return filepath.Join(c.LogDir(), "gff-hab-holder."+instance+".log")
 }
@@ -374,6 +376,13 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 		}
 		out = append(out, c.enableLink())
 	}
+	if m != nil {
+		logs, err := holderLogs(c)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, logs...)
+	}
 	if c.Init == Launchd {
 		plists, err := holderPlists(c)
 		if err != nil {
@@ -381,11 +390,6 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 		}
 		out = append(out, plists...)
 		if m != nil {
-			logs, err := holderLogs(c)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, logs...)
 			// Every build directory goes, with its bundles; uninstall has stopped every job.
 			builds, err := buildDirs(c)
 			if err != nil {
@@ -554,14 +558,13 @@ func Install(ctx context.Context, c Config, o Options) error {
 	} else if err := installBinaries(c, o, m); err != nil {
 		return err
 	}
-	if c.Init == Launchd {
-		// launchd discards a job's output unless it names files; the directory must exist first.
-		if err := m.mkdirAll(c, c.LogDir(), 0o700); err != nil {
-			return err
-		}
-		if err := m.willWrite(c, c.logicLog()); err != nil {
-			return err
-		}
+	// Both init systems write each job's output to a file in the log directory (launchd's
+	// StandardErrorPath, systemd's append:); the directory must exist first.
+	if err := m.mkdirAll(c, c.LogDir(), 0o700); err != nil {
+		return err
+	}
+	if err := m.willWrite(c, c.logicLog()); err != nil {
+		return err
 	}
 	if err := m.mkdirAll(c, c.UnitDir, 0o755); err != nil {
 		return err
