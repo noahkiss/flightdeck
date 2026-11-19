@@ -19,7 +19,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 
 ## Results
 
-18 pass, 3 fail, 11 gap, of 32 rows.
+27 pass, 1 fail, 4 gap, of 32 rows.
 
 | # | Behaviour | Mark | Evidence |
 |---|---|---|---|
