@@ -55,7 +55,7 @@ sweep_stop_pids() {
 # sweep_remove_dir <dir>: stop the processes started from dir, unregister any app bundle in it
 # from LaunchServices (macOS), and delete it, read-only files included.
 sweep_remove_dir() {
-	local dir=${1:?} pids app
+	local dir=${1:?} pids app real
 	case $dir in
 	/*/*) ;;
 	*)
@@ -65,6 +65,11 @@ sweep_remove_dir() {
 	esac
 	[ -d "$dir" ] || return 0
 	pids=$(sweep_pids_naming "$dir")
+	# A process may name the folder by its real path (/tmp is /private/tmp on macOS).
+	real=$(cd "$dir" 2>/dev/null && pwd -P) || real=$dir
+	if [ "$real" != "$dir" ]; then
+		pids=$(printf '%s\n%s\n' "$pids" "$(sweep_pids_naming "$real")" | sed '/^$/d' | sort -u)
+	fi
 	if [ -n "$pids" ]; then
 		# shellcheck disable=SC2086 # one word per pid
 		sweep_say "dev-sweep: stopping processes started from $dir:" $pids
