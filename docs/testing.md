@@ -190,6 +190,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -run TestCapabilitiesDeclared ./cmd/gff-hab` | Every capability word `gff-hab serve` and the control server put in the welcome is in `api.Capabilities`, and every word there is sent or listed as not sent yet with its reason (`hab-logic-api.md` 3.4) |
 | `go test -run 'TestHabVerbs\|TestFindHab' ./cmd/gff` | `gff round`, `restart`, `friction` and `group` run the gff-hab verb of the same name, found beside gff or on PATH (`groups.md` 15.2) |
 | `go test -run 'TestExampleConfig\|TestHostProblems' ./cmd/gff` | `docs/examples/gff.toml` loads in gff with no problem though it holds gff-hab's `[instructions]` and `[mcp]` tables, and each gff-hab reader takes its table; another unknown table is still reported (`instructions-mcp-flight-rules.md` 6.6) |
+| `go test -race -run TestRequestExpiry ./internal/harness/ && go test -run TestApprovalMaxAge ./cmd/gff-hab` | Remote answers expire (`app.md` 7.4): with `approval.max_age` set a permission request carries `expires_at`, takes an answer until then and none after, and stays open for the terminal; a change applies to the next request; 0 sets no limit; the refusal is `conflict` |
 | `go test -race ./internal/procscope/ && go test -race -run TestEscaped ./cmd/gff-hab` | Escaped-process cleanup (`hab-holder.md` Q4) |
 | `go test -race ./internal/holder/... ./cmd/...` | Holder end-to-end tests |
 | `go test ./internal/service/` | Unit and plist rendering |

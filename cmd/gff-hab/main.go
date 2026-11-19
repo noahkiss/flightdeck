@@ -1245,6 +1245,7 @@ func serve(args []string) error {
 	}
 	defer setSvc.Close()
 	setRef.Store(setSvc)
+	agents.SetMaxAge(approvalMaxAge(setSvc.Value)) // remote answers expire (app.md 7.4)
 	tl.SetInConfig(settingsInConfig(setSvc))
 	caps = append(caps, settings.Capability)
 	detectFacts, err := catalog.DetectFor(os.Getenv("GFF_HAB_DETECT"))

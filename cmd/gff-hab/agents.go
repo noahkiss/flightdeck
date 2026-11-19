@@ -588,7 +588,8 @@ func (a *agentService) releaseUnwatched(approvers func(pane string) int) {
 // agentErr gives an adapter refusal its API kind.
 func agentErr(err error) error {
 	switch {
-	case errors.Is(err, harness.ErrBusy), errors.Is(err, harness.ErrNotOpen), errors.Is(err, harness.ErrAnswered):
+	case errors.Is(err, harness.ErrBusy), errors.Is(err, harness.ErrNotOpen), errors.Is(err, harness.ErrAnswered),
+		errors.Is(err, harness.ErrExpired):
 		return control.Errorf(api.ErrorKindConflict, "%v", err)
 	case errors.Is(err, harness.ErrNoAgent), errors.Is(err, harness.ErrUnsupported):
 		return control.Errorf(api.ErrorKindUnavailable, "%v", err)
@@ -625,13 +626,25 @@ func permissionWaitLock(flagValue time.Duration, flagGiven bool, getenv func(str
 
 // applySetting hands a hab-side setting's value to the code that enforces it (app.md 20.5).
 // Only hab.permission_wait has a consumer here; logbook.approval is read at each pane write
-// (logbookHook), confirm.start_elsewhere by the confirmations, and approval.max_age is stored
-// and served only.
+// (logbookHook), confirm.start_elsewhere by the confirmations, and approval.max_age by the agent
+// store when a permission request opens (approvalMaxAge).
 func applySetting(gate *harness.Gate, id string, v json.RawMessage) {
 	if id == settings.PermissionWait {
 		var secs int
 		if json.Unmarshal(v, &secs) == nil {
 			gate.SetWait(time.Duration(secs) * time.Second)
 		}
+	}
+}
+
+// approvalMaxAge reads approval.max_age, whole minutes with 0 for no limit, as the agent store
+// wants it (app.md 7.4).
+func approvalMaxAge(value func(string) json.RawMessage) func() time.Duration {
+	return func() time.Duration {
+		n, err := strconv.Atoi(string(value(settings.ApprovalMaxAge)))
+		if err != nil || n <= 0 {
+			return 0
+		}
+		return time.Duration(n) * time.Minute
 	}
 }
