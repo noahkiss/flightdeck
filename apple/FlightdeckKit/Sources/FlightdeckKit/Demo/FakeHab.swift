@@ -1092,7 +1092,7 @@ public actor FakeHab {
             }
             await reply(c, id: id, result: snap)
         case HabMethods.dataTicket.name, HabMethods.paneInput.name, HabMethods.paneSetDesiredSize.name,
-             HabMethods.paneTake.name, HabMethods.paneRedraw.name:
+             HabMethods.paneTake.name, HabMethods.paneRequest.name, HabMethods.paneDisown.name, HabMethods.paneRedraw.name:
             await terminalCall(method, params, c, id: id)
         case HabMethods.usageList.name where capabilities.contains("usage"):
             usageLists += 1
@@ -1789,6 +1789,14 @@ public actor FakeHab {
                 let p = try params.decode(PaneRef.self)
                 let owner = try await terminals.take(pane: p.pane, client: c.clientID)
                 await reply(c, id: id, result: OwnerResult(owner: owner, seq: c.seq))
+            case HabMethods.paneRequest.name:
+                let p = try params.decode(PaneRef.self)
+                let owner = try await terminals.request(pane: p.pane, client: c.clientID)
+                await reply(c, id: id, result: OwnerResult(owner: owner, seq: c.seq))
+            case HabMethods.paneDisown.name:
+                let p = try params.decode(PaneRef.self)
+                try await terminals.disown(pane: p.pane, client: c.clientID)
+                await reply(c, id: id, result: OwnerResult(owner: nil, seq: c.seq))
             default:
                 let p = try params.decode(RedrawParams.self)
                 try await terminals.redraw(pane: p.pane, client: c.clientID, mode: p.mode ?? .snapshot)
