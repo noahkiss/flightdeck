@@ -382,6 +382,7 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 			return nil, err
 		}
 		out = append(out, logs...)
+		out = append(out, jobLogs(c)...)
 	}
 	if c.Init == Launchd {
 		plists, err := holderPlists(c)
@@ -423,6 +424,29 @@ func dedup(paths []string) []string {
 // holderPlists lists the per-instance holder plists in the LaunchAgents directory.
 func holderPlists(c Config) ([]string, error) {
 	return filepath.Glob(filepath.Join(globEscape(c.UnitDir), globEscape(c.Prefix)+".gff-hab-holder.*.plist"))
+}
+
+// jobLogs lists the other log files the installed jobs write in the log directory: gff-hab's
+// hab.log and hook.log, and the old files that rotation and copy-truncate leave beside them and
+// beside the job output files (diagnostics.md 4.3). Uninstall removes them with the jobs.
+func jobLogs(c Config) []string {
+	dir := globEscape(c.LogDir())
+	var out []string
+	for _, base := range []string{"hab.log", "hook.log"} {
+		if _, err := os.Lstat(filepath.Join(c.LogDir(), base)); err == nil {
+			out = append(out, filepath.Join(c.LogDir(), base))
+		}
+	}
+	for _, pat := range []string{"hab.log.*", "hook.log.*", "hab.stderr.*", "gff-hab-holder.*.log.*"} {
+		m, _ := filepath.Glob(filepath.Join(dir, pat))
+		for _, p := range m {
+			ext := filepath.Ext(p)
+			if len(ext) > 1 && strings.Trim(ext[1:], "0123456789") == "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // holderLogs lists the holder logs in the log directory: gff-hab-holder.<instance>.log, for a
