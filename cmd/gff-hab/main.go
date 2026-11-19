@@ -2118,7 +2118,8 @@ func serve(args []string) error {
 		// within the deadline whatever hangs.
 		shutdownWatchdog(shutdownDeadline, logger.Printf, flushedExit(logw, os.Exit))
 		resumes.flush()
-		s.Close() // sends closing (shutdown) to every client and waits for it to flush
+		heavyLock.Stop() // before s.Close: a holder's closing connection must grant no waiter
+		s.Close()        // sends closing (shutdown) to every client and waits for it to flush
 		if ds != nil {
 			ds.Close() // clients resume each stream from its offset (spec 7.4)
 		}

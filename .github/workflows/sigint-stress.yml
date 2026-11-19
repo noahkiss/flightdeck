@@ -9,7 +9,7 @@ on:
     inputs:
       count:
         description: Iterations per job
-        default: '300'
+        default: '1000'
 
 permissions:
   contents: read
@@ -40,7 +40,7 @@ jobs:
       - name: Run
         env:
           SHAPE: ${{ matrix.shape }}
-          COUNT: ${{ inputs.count || '300' }}
+          COUNT: ${{ inputs.count || '1000' }}
           GFF_TEST_TIMEOUT_SCALE: '3'
         working-directory: cmd/gff-hab
         run: |
@@ -58,8 +58,7 @@ jobs:
             count=$COUNT
           fi
           "$RUNNER_TEMP/gffhab.test" -test.run "$run" -test.count "$count" -test.parallel 2 \
-            -test.timeout 55m -test.v > "$RUNNER_TEMP/out.txt" 2>&1
-          code=$?
+            -test.timeout 55m -test.v > "$RUNNER_TEMP/out.txt" 2>&1 && code=0 || code=$?
           [ "${#pids[@]}" -gt 0 ] && kill "${pids[@]}"
           echo "exit $code"
           echo "pass: $(grep -c -- '--- PASS: TestHeavySignalWhileHabDown' "$RUNNER_TEMP/out.txt")"
