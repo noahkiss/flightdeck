@@ -50,7 +50,7 @@ type heavyRun struct {
 func startHeavyRun(t *testing.T, sock, work, name, script string) *heavyRun {
 	t.Helper()
 	cmd := exec.Command(bin, "heavy", "-socket", sock, "--", "/bin/sh", "-c", script)
-	cmd.Env = append(os.Environ(), "W="+work, "N="+name, "GFF_HAB=", noRaceExitSleep)
+	cmd.Env = append(os.Environ(), "W="+work, "N="+name, "GFF_HAB=", noRaceExitSleep, "GOTRACEBACK=all")
 	r := &heavyRun{cmd: cmd, stdout: &syncBuf{}, stderr: &syncBuf{}, done: make(chan struct{})}
 	cmd.Stdout, cmd.Stderr = r.stdout, r.stderr
 	if err := cmd.Start(); err != nil {
@@ -383,7 +383,14 @@ func TestHeavySignalWhileHabDown(t *testing.T) {
 	select {
 	case <-b.done:
 	case <-time.After(scaleTimeout(5 * time.Second)):
-		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab; its stderr: %q", b.stderr.String())
+		// SIGABRT makes the Go runtime print every goroutine (GOTRACEBACK=all): where it waits.
+		alive := b.cmd.Process.Signal(syscall.Signal(0)) == nil
+		b.cmd.Process.Signal(syscall.SIGABRT)
+		select {
+		case <-b.done:
+		case <-time.After(scaleTimeout(5 * time.Second)):
+		}
+		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab (process alive: %v); its stderr:\n%s", alive, b.stderr.String())
 	}
 	if b.code != 130 || strings.Contains(readLog(work), "start-b") {
 		t.Fatalf("exit %d, log %q", b.code, readLog(work))
