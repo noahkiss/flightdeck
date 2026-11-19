@@ -545,6 +545,7 @@ Decision: proposed (this stage). Calls and the event: 3.9.
   can drive it.
 - Every result is a JSON object, never a bare value, so fields can be added later.
 - Requests on one connection may run side by side. A client must match responses by id.
+- A request may carry a top-level `trace` member, and `diag.*` holds the diagnostics methods (`diagnostics.md` 4.5, 5.2, 9; proposed).
 - Method names are grouped by prefix: `hab.*`, `structure.*`, `pane.*`, `session.*`, `project.*`,
   `data.*`, `events.*`, `devices.*`, `peers.*`, `approval.*`, `chat.*`, `attachment.*`, `push.*`, `usage.*`,
   `rpc.discover`. The calls the clients need are listed in 3.9.
