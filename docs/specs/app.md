@@ -2088,8 +2088,8 @@ The first app stage: the connection to every hab and the status board. Code in
   of the session's fields.
 - **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list, headed
   "Sessions", on the left beside a column with the connections list. No empty cards
-  placeholder shows (3.3). The project and hab grouping
-  switch, search and the usage footer are not built yet.
+  placeholder shows (3.3). The usage footer shows under the list. The project and hab grouping
+  switch and search are not built yet.
 - **Lifecycle.** iPhone and iPad close every connection when the app enters the background and
   reconnect when it becomes active; `inactive` changes nothing. The App reads the app-level
   scene phase, which is active while any window is, so one iPad window going to the background
@@ -3792,7 +3792,6 @@ The page is `Views/SettingsViews.swift`.
 - **Rows with no control yet:** `notify.command_done`, `notify.tap`, `widget.hide_titles`,
   `mac.keep_connected` and `voice.language` are in the registry, marked not built, and the page
   leaves them out until their controls exist.
-- **`gff lb status`** waits for Logbook.
 - **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
   usage thresholds are not sent yet.
 

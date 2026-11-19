@@ -1424,7 +1424,7 @@ to 3.6.
 
 CLI: `gff group ls|show|pause|resume|close|move`, `gff heavy [--] <command...>`. Built in B3 as
 `gff-hab group ls|show|pause|resume|close`; B9 adds `gff-hab group move <group> -host <label>`
-and `-cancel`.
+and `-cancel`. `gff group` runs `gff-hab group` with the same arguments, as `gff round` does.
 
 ### 15.3 Settings
 

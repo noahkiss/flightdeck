@@ -778,7 +778,8 @@ Where this spec was silent, stage 7 decided. Each is a default the owner may rev
 - **`gff-hab mcp serve`** is the agent kit's one MCP server, with Logbook tools beside the catalog
   and channel tools. `gff-hab mcp launch` and `gff-hab mcp header` stay Part 8's subcommands.
 - Every CLI verb prints short human lines by default and JSON with `--json`.
-- On a host with no hab, `gff lb --host <label>` uses that hab's API over SSH.
+- On a host with no hab, `gff lb --host <label>` would use that hab's API over SSH. It is not
+  built (10.5): `gff lb` reaches a hab by `--socket` only.
 
 ### 10.2 Verbs
 

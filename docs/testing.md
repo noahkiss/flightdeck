@@ -188,6 +188,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test ./internal/version/ ./internal/pathfilter/...` | The version request forms and output, release version order |
 | `go test ./internal/notices/` | The notice generator on a hand-made repository |
 | `go test -run TestCapabilitiesDeclared ./cmd/gff-hab` | Every capability word `gff-hab serve` and the control server put in the welcome is in `api.Capabilities`, and every word there is sent or listed as not sent yet with its reason (`hab-logic-api.md` 3.4) |
+| `go test -run 'TestHabVerbs\|TestFindHab' ./cmd/gff` | `gff round`, `restart`, `friction` and `group` run the gff-hab verb of the same name, found beside gff or on PATH (`groups.md` 15.2) |
 | `go test -race ./internal/procscope/ && go test -race -run TestEscaped ./cmd/gff-hab` | Escaped-process cleanup (`hab-holder.md` Q4) |
 | `go test -race ./internal/holder/... ./cmd/...` | Holder end-to-end tests |
 | `go test ./internal/service/` | Unit and plist rendering |

@@ -45,8 +45,12 @@ func findHab(exe string, lookPath func(string) (string, error)) (string, error) 
 	return p, nil
 }
 
+// habVerbs are the gff verbs that run gff-hab's own command: `gff round`, `gff restart`
+// (instructions-mcp-flight-rules.md 13.1), `gff friction` (diagnostics.md 9) and `gff group`
+// (groups.md 15.2).
+var habVerbs = []string{"round", "restart", "friction", "group"}
+
 // habMain replaces gff with `gff-hab <verb> <args>`; it returns only when that cannot start.
-// `gff round` and `gff restart` (instructions-mcp-flight-rules.md 13.1) run this way.
 func habMain(verb string, args []string, stderr io.Writer) int {
 	exe, _ := os.Executable()
 	hab, err := findHab(exe, exec.LookPath)
