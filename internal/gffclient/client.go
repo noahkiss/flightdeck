@@ -511,12 +511,18 @@ func (c *client) addView(t *tab, spec PaneSpec, hs *hostState) *view {
 // addViewAt adds a view of a hab pane to t against anchor, as how says (layout.go), and, when
 // t is shown, opens its stream.
 func (c *client) addViewAt(t *tab, spec PaneSpec, hs *hostState, anchor *view, how place) *view {
+	return c.newView(t, spec, hs, func(v *view) { t.put(v, anchor, how) })
+}
+
+// newView makes a view of a hab pane, has put place it in t and, when t is shown, opens its
+// stream.
+func (c *client) newView(t *tab, spec PaneSpec, hs *hostState, put func(*view)) *view {
 	if spec.Label == "" {
 		spec.Label = spec.ID
 	}
 	v := &view{spec: spec, h: hs}
 	c.startInput(v)
-	t.put(v, anchor, how)
+	put(v)
 	if t == c.tab() {
 		c.openStream(v)
 	}
@@ -801,9 +807,7 @@ func (c *client) typeKeys(p []byte) {
 	case v.spec.Observe:
 		v.note, v.dirty = "observer: input off", true
 	case c.ws && c.ui.resumable(v):
-		if isEnter(p) {
-			c.ui.resumeView(v)
-		}
+		c.ui.exitedKey(v, p)
 	case v.exited != nil || v.ended != nil:
 	case !v.h.online:
 		v.note, v.dirty = "offline: input dropped", true
@@ -1298,7 +1302,10 @@ func (c *client) frameText(v *view, s slot) string {
 	}
 	switch {
 	case c.ws && c.ui.resumable(v):
-		notes = append(notes, c.ui.exitedWord(v), "Enter resume")
+		notes = append(notes, c.ui.exitedWord(v))
+		for _, h := range c.keys.km.hints(ModeExited) {
+			notes = append(notes, h.full())
+		}
 	case v.exited != nil:
 		notes = append(notes, "exited"+exitText(v.exited))
 	case v.ended != nil:

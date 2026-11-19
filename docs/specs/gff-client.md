@@ -675,7 +675,7 @@ the hab reaching a state.
 - **Zoom.** Toggles the focused pane to fill the pane area.
 - **Close view versus end program.** Closing a view removes it from the tab; the program keeps
   running and stays in the sidebar. Ending the program is a separate action that confirms first.
-- **Reopen.** The last ten closed views can be reopened in place.
+- **Reopen.** The last ten closed views can be reopened in place (5.8).
 - **Focus.** Moves on direction keys from normal mode, and wraps to the next tab at the edge when
   the config says so.
 - **Scrolling.** The wheel scrolls a pane's scrollback with no mode change. Scrollback comes from
@@ -685,8 +685,8 @@ the hab reaching a state.
 - **Selection.** A mouse drag selects text in one pane and copies it through the host terminal's
   clipboard (OSC 52). Links (OSC 8 and detected URLs) open on a modifier click.
 - **Bell.** A bell marks the pane frame and its tab for about one second, then clears.
-- **Exit.** A pane whose program exits shows its exit status in the frame note. A clean exit of a
-  console pane offers a new shell; an agent pane offers Resume (6.3).
+- **Exit.** A pane whose program exits shows its exit status in the frame note. It offers
+  Resume (6.4) and a new shell in the same place and folder (5.8), whatever the status.
 
 ### 5.3 Edge cases
 
@@ -896,6 +896,80 @@ scrolled keeps the view where it is.
 
 ---
 
+### 5.8 Built choices (reopen a closed view, a shell after exit)
+
+**Reopen a closed view.** Closing a view leaves its program running (5.2, row 13 of 12), so
+reopening shows the same session again. zellij has no reopen; browsers and editors bring back
+the last closed tab, and gff does that for views.
+
+| Key (pane mode) | Action | What it does |
+|---|---|---|
+| `u` | `reopen-view` | Shows the view closed last again, in its old place. Ends pane mode |
+
+- gff keeps the last ten closed views, newest on top, for this run only; the saved workspace
+  (5.6) does not keep them. Close view (`x`) adds one. Close tab adds each of the tab's views,
+  so `u` brings them back one at a time, the last in tree order first.
+- Each entry keeps the session, its host, its tab and its place: the neighbour it sat beside
+  (the member before it in a stack, else the one after; the child before it in a split, else
+  the one after) and which side of it.
+- **Its old place.** When the tab is still open, the view goes back into it and the tab shows.
+  When the neighbour is still in the tree, the view goes beside it as before: into its stack,
+  or into the split that holds it on the same side, or a new split of the two. When the
+  neighbour has gone (closed, or merged when a split folded), the view goes beside a view that
+  was inside the neighbour, on the same side. With neither, it goes at the end of the tab.
+  When the tab has closed, the view goes at the end of the current tab. The reopened view takes
+  the focus and is expanded in its stack.
+- **The session moved on meanwhile.** The view shows the session's current pane: after a resume
+  it shows the new pane. A session that has exited reopens as an exited view, with Resume and
+  Shell in its frame (below). A session the hab no longer lists (`session.close`, or a host
+  that left the config) is dropped from the list, and `u` tries the next one. A session a view
+  shows already is dropped too, and that view takes the focus, as Open does (4.1).
+- **An offline host.** The entry stays on top and the bottom row says `<host> is offline`.
+- With no entry left, the bottom row says `nothing to reopen`. Outside the workspace (`gff`
+  with panes) the key does nothing.
+- Reopen calls nothing on the hab: the view opens a data stream, as Open does.
+
+**A shell after a command exits.** zellij is the reference: a command pane whose program ended
+shows its exit status with `<ENTER> re-run, <ESC> drop to shell`, and Esc turns it into a shell
+in the same folder. gff does the same in a view whose session has exited (6.4).
+
+- **Keys of an exited view.** While the panes have the keys in normal mode and the focused view
+  is exited and resumable (6.4), the keymap's `exited` table names what a key does. Every other
+  key goes nowhere, as before. The default:
+
+  | Key | Action | What it does |
+  |---|---|---|
+  | Enter | `resume` | Resumes the session in the same view (6.4) |
+  | Esc | `shell` | Starts the hab's shell in the same view, in the session's folder |
+
+- `[keys.exited]` rebinds them, as any mode's table: any key from 8.4's key names, the actions
+  `resume` and `shell`, `none` to unbind, `clear-defaults`. `[keys.shared]` does not bind into
+  it. The Ctrl and Alt keys of normal mode still win: they act before an exited view sees a key.
+- **The frame** lists the table's keys after the status: `sh · one · exited 0 · Enter resume ·
+  Esc shell`. Unbound, a key's hint leaves the frame. The bottom bar shows the same hints first,
+  then normal mode's, while such a view has the focus.
+- **Shell.** gff calls `session.create` with no argv and `cwd_of` naming the exited pane, on the
+  view's host. gff-hab starts its shell in that pane's folder: the folder its shell last
+  reported (OSC 7), else the folder its session started in (5.4, the folder). The new session
+  is filed in the old one's project. When the call answers, the view shows the new session
+  in the same place: its stream, parser and input go with the old pane, as a resume's do.
+  The exited session stays in the sidebar, where Open resumes it.
+- One shell start per view at a time: a second Esc while one is out says
+  `starting a shell on <host>`. A refusal shows on the bottom row as `shell on <host>: <the
+  hab's error>`, and the view stays as it was.
+- Decided: the shell offer stands for any exit status, as zellij's does, not only a clean exit.
+  A failed command is when a shell in its folder helps most.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestLayoutReopen` | Unit: a view taken from a stack (first and middle), from a split (each side) and from the only split in a tab goes back to the same place; a neighbour that left the tree puts it beside a view that was inside it; nothing left puts it at the end |
+| `TestReopenView` | Over a fake hab: pane mode's bar shows `u reopen`; `x` then `u` brings a split view back beside the same view on the same side, focused, with no `session.create`; a closed tab's views come back one by one into the current tab; an entry whose session exited meanwhile reopens with `Enter resume · Esc shell`; one whose session was closed is skipped; with none left the bar says `nothing to reopen`; the list keeps ten |
+| `TestShellAfterExit` | Over a fake hab: an exited view's frame and the bar show `Enter resume · Esc shell`; typed keys start nothing; Esc calls `session.create` with no argv and `cwd_of` the exited pane, and the view shows the new shell in the same place; the exited session stays in the sidebar; `[keys.exited] esc = "none"` and `s = "shell"` move the key and its hints |
+| `TestShellAfterExitInFolder` | Real holder and gff-hab: a command started in a folder exits 0; Esc gives a shell in the view; `pwd -P` there prints the folder |
+| `TestExitedKeymapConfig` | `[keys.exited]` takes plain keys and only `resume`, `shell` and `none`; another action there, and `resume` or `shell` in another mode, are problems on their lines |
+
 ## 6. Sessions across hosts
 
 ### 6.1 Behaviour
@@ -945,10 +1019,11 @@ with "Press ENTER to run" and runs nothing until then. gff does the same per ses
 
 - A view remembers the session it shows (`PaneSpec.Session`), not only the pane. A view whose
   session is exited, on a host that is online, is resumable. Its frame note is
-  `exited <status> · Enter resume`; the status comes from the view's last exit frame, else
-  from the hab's record (none after a holder loss: `exited`).
-- **Enter resumes.** In a resumable view, Enter calls `session.resume`; every other key goes
-  nowhere, as it does in an exited pane. In the sidebar and the board, Open (Enter, or `t` for a
+  `exited <status> · Enter resume · Esc shell`; the status comes from the view's last exit
+  frame, else from the hab's record (none after a holder loss: `exited`). The keys come from the
+  keymap's `exited` table (5.8).
+- **Enter resumes.** In a resumable view, Enter calls `session.resume`; Esc starts a shell
+  (5.8); every other key goes nowhere, as it does in an exited pane. In the sidebar and the board, Open (Enter, or `t` for a
   new tab) on an exited session resumes it. Nothing resumes on its own: after a reboot or a
   holder loss every view shows Resume and waits.
 - **The view follows the session.** When `session.resume` answers, every view of that session,
@@ -1354,7 +1429,7 @@ trims that free program keys, tolerant config); `hab-logic-api.md` 3.8 (one inpu
 
 Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
 
-**Modes.** The keymap has seven modes. The key reader holds the current one.
+**Modes.** The keymap has eight modes. The key reader holds the current one.
 
 | Mode | Keys it takes | Left by |
 |---|---|---|
@@ -1363,6 +1438,7 @@ Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
 | pane, tab | Every key; a key the mode does not bind goes nowhere | Any command but a focus or tab move; a `back` key; Esc or Enter while the mode does not bind it |
 | locked | Only its own Ctrl and Alt keys (unlock); every other key, the leaders included, goes to the pane | Unlock |
 | sidebar, board | The keys while that part has focus (4.3, 7) | Esc or `q` |
+| exited | In normal mode, the keys of a focused exited view that normal mode does not bind (5.8) | Not a mode one enters: it applies while such a view has the focus |
 
 **No mode traps the user.** After loading, `LoadSettings` walks the modes the keymap reaches
 from normal (and the sidebar, where the workspace may start). A reached mode with no way back
@@ -1418,9 +1494,10 @@ zellij's mode keys, mapped to gff's actions; no zellij file is read.
 | normal, session, pane, tab | Alt+h focus left, else the previous tab; Alt+l focus right, else the next tab; Alt+j focus down; Alt+k focus up; Alt+i move the tab left; Alt+o move the tab right |
 | locked | Ctrl+G unlock |
 | session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, `R` run sessions, Esc back |
-| pane (Ctrl+P) | `n` new pane stacked onto the focused one, `l` or `r` new pane on the right, `j` or `d` below, `h` on the left, `k` above (5.4); `p` or Tab focus the next pane (stays), `f` zoom, `s` turn the split that holds the focused pane the other way, `x` close view, Esc or Enter back |
+| pane (Ctrl+P) | `n` new pane stacked onto the focused one, `l` or `r` new pane on the right, `j` or `d` below, `h` on the left, `k` above (5.4); `p` or Tab focus the next pane (stays), `f` zoom, `s` turn the split that holds the focused pane the other way, `x` close view, `u` reopen the view closed last (5.8), Esc or Enter back |
 | tab (Ctrl+T) | `n` new tab, `r` rename the tab, `x` close the tab, Tab the last tab (stays), `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
 | sidebar, board | As 4.3 and 7 |
+| exited | Enter resume, Esc shell (5.8) |
 
 - **Leaders in every command mode.** Each of Ctrl+G, Ctrl+P, Ctrl+T and Ctrl+O also works in
   the other command modes, so Ctrl+P then Ctrl+T moves from pane mode to tab mode, as zellij's
@@ -1504,7 +1581,8 @@ d = "none"                # unbind
   `zoom`, `split`, `new-pane`, `new-pane-right`, `new-pane-down`, `new-pane-left`,
   `new-pane-up`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
   `rename-tab`, `close-tab`, `last-tab`,
-  `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `warnings`; in the sidebar and board
+  `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `reopen-view`, `warnings`; in the
+  `exited` table only `resume` and `shell`; in the sidebar and board
   also `up`, `down`, `open`, `open-tab`, and in the sidebar `new-session`, `rename`,
   `close-session`, `filter`, `group`. `none` unbinds.
 - An unknown mode, key or action, an action the mode cannot take, or a plain key in normal or

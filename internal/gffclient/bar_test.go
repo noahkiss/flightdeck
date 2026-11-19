@@ -210,7 +210,8 @@ func reachable(t *testing.T, km *Keymap) map[Mode]bool {
 func TestPrefixKeymapSample(t *testing.T) {
 	km := prefixKeymap(t)
 	for name, km := range map[string]*Keymap{"sample": km, "default": DefaultKeymap()} {
-		if got := reachable(t, km); len(got) != len(Modes) {
+		// Every mode but exited, which no key enters (gff-client.md 5.8).
+		if got := reachable(t, km); len(got) != len(Modes)-1 || got[ModeExited] {
 			t.Errorf("%s keymap reaches %v, want every mode", name, got)
 		}
 	}

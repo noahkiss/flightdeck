@@ -186,20 +186,35 @@ func (t *tab) put(v, anchor *view, how place) {
 	}
 	a := t.leafOf(anchor)
 	if a == nil || how == placeEnd {
-		r := t.root
-		if r.kind == splitNode && r.dir == t.split {
-			insertKid(r, len(r.kids), n)
-			return
-		}
-		s := &node{kind: splitNode, dir: t.split}
-		t.replace(r, s)
-		insertKid(s, 0, r)
-		insertKid(s, 1, n)
+		t.putEnd(n)
 		return
 	}
+	t.putBeside(n, a, how, false)
+}
+
+// putEnd adds n at the end of the tab, along its split.
+func (t *tab) putEnd(n *node) {
+	r := t.root
+	if r.kind == splitNode && r.dir == t.split {
+		insertKid(r, len(r.kids), n)
+		return
+	}
+	s := &node{kind: splitNode, dir: t.split}
+	t.replace(r, s)
+	insertKid(s, 0, r)
+	insertKid(s, 1, n)
+}
+
+// putBeside adds n against a, a node in the tree, as how says: into a's stack (after a, or
+// before it when before is set), or on one side of a. A split beside a stacked view splits the
+// whole stack.
+func (t *tab) putBeside(n, a *node, how place, before bool) {
 	if how == placeStack {
 		if p := a.up; p != nil && p.kind == stackNode {
-			i := indexOf(p, a) + 1
+			i := indexOf(p, a)
+			if !before {
+				i++
+			}
 			insertKid(p, i, n)
 			p.open = i
 			return
@@ -208,6 +223,9 @@ func (t *tab) put(v, anchor *view, how place) {
 		t.replace(a, s)
 		insertKid(s, 0, a)
 		insertKid(s, 1, n)
+		if before {
+			s.kids[0], s.kids[1], s.open = n, a, 0
+		}
 		return
 	}
 	dir, after := SplitColumns, true
@@ -220,7 +238,7 @@ func (t *tab) put(v, anchor *view, how place) {
 		dir, after = SplitRows, false
 	}
 	unit := a
-	if a.up != nil && a.up.kind == stackNode {
+	if a.kind == leafNode && a.up != nil && a.up.kind == stackNode {
 		unit = a.up // a split beside a stacked view splits the stack
 	}
 	if p := unit.up; p != nil && p.kind == splitNode && p.dir == dir {
@@ -239,6 +257,97 @@ func (t *tab) put(v, anchor *view, how place) {
 	} else {
 		insertKid(s, 0, n)
 		insertKid(s, 1, unit)
+	}
+}
+
+// spot is where a view sat in its tab, so a closed view can go back there (gff-client.md 5.8):
+// beside its neighbour sib, the member or child before it, else the one after; near is a view
+// inside sib, for when sib has left the tree.
+type spot struct {
+	sib    *node
+	near   *view
+	how    place
+	before bool // in a stack: before sib
+}
+
+// spotOf finds where v sits in the tab. With v alone in the tab, sib is nil.
+func (t *tab) spotOf(v *view) spot {
+	n := t.leafOf(v)
+	if n == nil || n.up == nil {
+		return spot{how: placeEnd}
+	}
+	p := n.up
+	i := indexOf(p, n)
+	after := i > 0
+	sib := p.kids[min(i+1, len(p.kids)-1)]
+	if after {
+		sib = p.kids[i-1]
+	}
+	sp := spot{sib: sib, near: edgeView(sib, after)}
+	switch {
+	case p.kind == stackNode:
+		sp.how, sp.before = placeStack, !after
+	case p.dir == SplitColumns && after:
+		sp.how = placeRight
+	case p.dir == SplitColumns:
+		sp.how = placeLeft
+	case after:
+		sp.how = placeDown
+	default:
+		sp.how = placeUp
+	}
+	return sp
+}
+
+// edgeView is the last view under n in tree order, or the first when last is false.
+func edgeView(n *node, last bool) *view {
+	for n.kind != leafNode && len(n.kids) > 0 {
+		if last {
+			n = n.kids[len(n.kids)-1]
+		} else {
+			n = n.kids[0]
+		}
+	}
+	return n.v
+}
+
+// holds reports whether x is in the tab's tree. A node that left it may still point up into
+// it, so the walk starts at the root.
+func (t *tab) holds(x *node) bool {
+	var walk func(n *node) bool
+	walk = func(n *node) bool {
+		if n == nil {
+			return false
+		}
+		if n == x {
+			return true
+		}
+		for _, k := range n.kids {
+			if walk(k) {
+				return true
+			}
+		}
+		return false
+	}
+	return x != nil && walk(t.root)
+}
+
+// putBack adds v where sp says it sat: beside its neighbour when that is still in the tree,
+// else beside the view that was inside it, else at the end of the tab. The focus stays where
+// it was.
+func (t *tab) putBack(v *view, sp spot) {
+	keep := t.focusedView()
+	defer t.relist(keep)
+	n := &node{kind: leafNode, v: v}
+	switch {
+	case t.root == nil:
+		t.root = n
+	case sp.how != placeEnd && t.holds(sp.sib):
+		t.putBeside(n, sp.sib, sp.how, sp.before)
+	case sp.how != placeEnd && sp.near != nil && t.leafOf(sp.near) != nil:
+		t.putBeside(n, t.leafOf(sp.near), sp.how, sp.before)
+	default:
+		t.putEnd(n)
 	}
 }
 

@@ -66,6 +66,8 @@ type workspaceUI struct {
 	seen     map[string]string // host/pane -> the done state's time the owner saw
 	focusAt  map[string]string // host/session -> the last session.focus sent
 	resuming map[string]bool   // host/session -> a session.resume is out
+	shelling map[*view]bool    // an exited view whose shell's session.create is out (reopen.go)
+	closed   []closedView      // the views closed last, newest at the end (reopen.go)
 	pending  []pendingStart    // startup tabs' programs waiting for their hosts (saved.go)
 	msg      string            // one line on the bottom bar until the next key
 	prompt   *prompt
@@ -105,6 +107,7 @@ func (u *workspaceUI) init(c *client) {
 	u.seen = map[string]string{}
 	u.focusAt = map[string]string{}
 	u.resuming = map[string]bool{}
+	u.shelling = map[*view]bool{}
 	u.showRuns = true
 	u.cats, u.catBusy = map[string]catCopy{}, map[string]int{}
 	u.heavy = map[string]heavyCopy{}
@@ -391,9 +394,11 @@ func (u *workspaceUI) command(act string) bool {
 			actNewLeft: placeLeft, actNewUp: placeUp}[act])
 	case actCloseView:
 		if v := c.focused(); v != nil {
-			c.removeView(c.tab(), v)
+			u.closeView(c.tab(), v)
 			c.layoutChanged()
 		}
+	case actReopen:
+		u.reopen()
 	default:
 		if n, ok := strings.CutPrefix(act, actTabN); ok {
 			if i, err := strconv.Atoi(n); err == nil && i >= 1 && i <= len(c.tabs) {
@@ -451,7 +456,7 @@ func (u *workspaceUI) closeTab() {
 	c := u.c
 	t := c.tab()
 	for _, v := range append([]*view(nil), t.views...) {
-		c.removeView(t, v)
+		u.closeView(t, v)
 	}
 	if len(c.tabs) == 1 {
 		c.tabs[0] = &tab{name: "1", split: c.cfg.Split}

@@ -11,7 +11,9 @@
 #   Ctrl+\ w  sidebar        Ctrl+\ p  pane mode     Ctrl+\ l  lock (Ctrl+G unlocks)
 #   Ctrl+\ g  board          Ctrl+\ t  tab mode      Ctrl+\ d  detach
 #   Ctrl+\ c  new tab        Ctrl+\ ]  next tab      Ctrl+\ [  previous tab
-#   Ctrl+\ R  hide or show run sessions
+#   Ctrl+\ u  reopen a view  Ctrl+\ R  hide or show run sessions
+#
+# In a view whose program exited, Enter resumes it and Esc starts a shell in its place.
 #
 # On the board, r runs the selected round now and p pauses or unpauses it; R in the sidebar
 # and on the board hides or shows run sessions.
@@ -39,6 +41,7 @@ c = "new-tab"
 "]" = "next-tab"
 "[" = "prev-tab"
 x = "close-view"
+u = "reopen-view"
 z = "zoom"
 o = "focus-next"
 tab = "focus-next"
@@ -74,6 +77,7 @@ tab = "focus-next"
 z = "zoom"
 s = "split"
 x = "close-view"
+u = "reopen-view"
 r = "redraw"
 n = "nudge"
 f = "fit"
@@ -128,6 +132,10 @@ p = "pause"
 R = "run-sessions"
 esc = "back"
 q = "back"
+
+[keys.exited]
+enter = "resume"
+esc = "shell"
 
 # Host window title; empty disables updates.
 # [workspace]

@@ -27,9 +27,10 @@ func TestDefaultKeymap(t *testing.T) {
 	}{
 		{ModeNormal, "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
 		{ModeLocked, "Ctrl+G unlock"},
+		{ModeExited, "Enter resume  Esc shell"},
 		{ModeSession, "w sidebar  g board  b bars  ! warnings  r redraw  n nudge  f fit  d detach  R run sessions  Esc back  " +
 			"Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Alt+h/l/j/k move focus  Alt+i/o move tab"},
-		{ModePane, "n new pane  l/r split right  j/d split down  h split left  k split up  p/Tab focus  f zoom  s turn split  x close view  Esc/Enter back  Ctrl+G lock  Ctrl+T tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
+		{ModePane, "n new pane  l/r split right  j/d split down  h split left  k split up  p/Tab focus  f zoom  s turn split  x close view  u reopen  Esc/Enter back  Ctrl+G lock  Ctrl+T tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
 		{ModeTab, "n new tab  r rename tab  x close tab  Tab last tab  h/←/k/↑ previous tab  l/→/j/↓ next tab  1-9 go to tab  Esc/Enter back  " +
 			"Ctrl+G lock  Ctrl+P pane  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
 	} {
