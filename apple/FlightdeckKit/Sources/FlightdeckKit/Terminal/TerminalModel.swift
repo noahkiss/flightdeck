@@ -453,6 +453,8 @@ public final class TerminalModel {
             let me = await calls.clientID()
             guard gen == generation else { return }
             setPane(cols: w.cols, rows: w.rows, owner: w.owner, me: me)
+            // A stream opened again on an unchanged pane still asks once.
+            requestIfUnowned()
             status = .live
         case .snapshot(let off, _, let data):
             // A snapshot redraws a new terminal: reset this one, clear its
