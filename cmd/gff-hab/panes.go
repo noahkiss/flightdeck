@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -113,7 +114,7 @@ func samePane(a, b string) bool {
 
 // check applies the rule. A refusal is logged with ids only (diagnostics.md 10.1) and answers
 // denied with a hint that names the setting, never the target.
-func (s *paneService) check(method string, c paneCaller, t paneTarget) (string, error) {
+func (s *paneService) check(method string, c paneCaller, t paneTarget) error {
 	rule := s.rule()
 	project := ""
 	if c.door == doorRoute {
@@ -122,7 +123,7 @@ func (s *paneService) check(method string, c paneCaller, t paneTarget) (string, 
 		}
 	}
 	if mayRead(rule, c, project, t) {
-		return rule, nil
+		return nil
 	}
 	from := c.pane
 	if c.door == doorPeer {
@@ -136,7 +137,7 @@ func (s *paneService) check(method string, c paneCaller, t paneTarget) (string, 
 	case rule == readPanesProject:
 		why = "its own pane and its own project's panes only"
 	}
-	return rule, control.Errorf(api.ErrorKindDenied, "agent.read_panes is %s on this hab: an agent may read %s. The owner changes it in Flightdeck's settings", rule, why)
+	return control.Errorf(api.ErrorKindDenied, "agent.read_panes is %s on this hab: an agent may read %s. The owner changes it in Flightdeck's settings", rule, why)
 }
 
 // resolve finds the target of a call. A label/name for a peer returns the link to forward on,
@@ -184,7 +185,7 @@ func (s *paneService) resolve(c paneCaller, pane, session string) (paneTarget, *
 			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindNotFound, "no peer labelled %q in the peer list", label)
 		case !peer.Online || peer.Caller == nil:
 			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindUnavailable, "peer %s is not online from this hab, so its panes cannot be read; try again once it is online", label)
-		case !containsWord(peer.Caps, paneReadCapability):
+		case !slices.Contains(peer.Caps, paneReadCapability):
 			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindUnavailable, "peer %s runs without pane-read, so its panes cannot be read; update its gff-hab", label)
 		default:
 			return paneTarget{}, peer, bare, nil
@@ -206,15 +207,6 @@ func (s *paneService) resolve(c paneCaller, pane, session string) (paneTarget, *
 // paneReadCapability is the capability of pane.read and pane.wait.
 const paneReadCapability = "pane-read"
 
-func containsWord(ws []string, w string) bool {
-	for _, x := range ws {
-		if x == w {
-			return true
-		}
-	}
-	return false
-}
-
 // Read serves pane.read.
 func (s *paneService) Read(ctx context.Context, c paneCaller, p api.PaneReadParams) (api.PaneText, error) {
 	if p.Scrollback < 0 || p.Scrollback > link.MaxScrollbackPage {
@@ -234,7 +226,7 @@ func (s *paneService) Read(ctx context.Context, c paneCaller, p api.PaneReadPara
 		r.Session = peer.Label + "/" + bare
 		return r, nil
 	}
-	if _, err := s.check("pane.read", c, t); err != nil {
+	if err := s.check("pane.read", c, t); err != nil {
 		return api.PaneText{}, err
 	}
 	u, _ := parseUUID(t.pane)
@@ -266,7 +258,7 @@ func capRows(screen, scrollback []string, max int) ([]string, bool) {
 	return scrollback[i:], i > 0
 }
 
-// Wait serves pane.wait. door decides the default time: 110 s from a pane.
+// Wait serves pane.wait. The default time is 110 s from a pane, else 180 s.
 func (s *paneService) Wait(ctx context.Context, c paneCaller, p api.PaneWaitParams) (api.PaneWaitResult, error) {
 	if p.Match == "" && p.Pattern == "" && p.QuietMS <= 0 {
 		return api.PaneWaitResult{}, control.Errorf(api.ErrorKindInvalid, "pane.wait needs match, pattern or quiet_ms")
@@ -305,7 +297,7 @@ func (s *paneService) Wait(ctx context.Context, c paneCaller, p api.PaneWaitPara
 		r.Session = peer.Label + "/" + bare
 		return r, nil
 	}
-	if _, err := s.check("pane.wait", c, t); err != nil {
+	if err := s.check("pane.wait", c, t); err != nil {
 		return api.PaneWaitResult{}, err
 	}
 	u, _ := parseUUID(t.pane)
@@ -341,7 +333,7 @@ func (s *paneService) Wait(ctx context.Context, c paneCaller, p api.PaneWaitPara
 		sub, err := s.lk.Subscribe(ctx, u, off)
 		if err != nil {
 			if ctx.Err() != nil {
-				return s.ended(res, off, ctx)
+				return s.ended(ctx, res, off)
 			}
 			if errors.Is(err, link.ErrGone) || errors.Is(err, link.ErrNoPane) {
 				res.Reason, res.Offset = api.PaneWaitExited, off
@@ -356,7 +348,7 @@ func (s *paneService) Wait(ctx context.Context, c paneCaller, p api.PaneWaitPara
 		}
 		if !again {
 			if r.Reason == "" {
-				return s.ended(res, off, ctx)
+				return s.ended(ctx, res, off)
 			}
 			res.Reason, res.Line, res.Offset = r.Reason, r.Line, off
 			return res, nil
@@ -365,7 +357,7 @@ func (s *paneService) Wait(ctx context.Context, c paneCaller, p api.PaneWaitPara
 }
 
 // ended answers the end of the time, or the caller going away.
-func (s *paneService) ended(res api.PaneWaitResult, off uint64, ctx context.Context) (api.PaneWaitResult, error) {
+func (s *paneService) ended(ctx context.Context, res api.PaneWaitResult, off uint64) (api.PaneWaitResult, error) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		res.Reason, res.Offset = api.PaneWaitTimedOut, off
 		return res, nil

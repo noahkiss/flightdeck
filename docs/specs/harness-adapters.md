@@ -1247,6 +1247,7 @@ any harness, and see the connected hosts. Nothing in it needs a tool outside Fli
 | Environment | [Environment contract](#environment-contract) |
 | Name itself | `gff agent name <name>` (`gff-hab agent name` is the same), MCP tool `channel_name` |
 | Send and wait | `gff-hab send`, `gff-hab wait`, MCP tools `channel_send` and `channel_wait` (`mesh.md` 6.5, 6.6) |
+| Read other panes | `gff-hab screen`, `gff-hab wait -pane`, under `agent.read_panes` (`hab-logic-api.md` 3.11) |
 | Who runs where | Read tools `agents`, `hosts`, `projects`, `suggest_host` (`gff-hab read`, `gff-hab mcp`; `capcom.md` 5.5) |
 | Envelope and delivery | [Input delivery](#input-delivery) and `mesh.md` 6.5 |
 | Manual | `gff-hab mcp --skill` prints it, made from the tool list of the binary that prints it |
