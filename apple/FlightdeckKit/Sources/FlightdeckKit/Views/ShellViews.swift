@@ -221,7 +221,11 @@ struct SessionsTab: View {
             BoardSessionSplit {
                 NavigationStack { list }
             } session: {
-                session(row, compact: false)
+                // A stack of its own, so the session's header sits under the iPad's top tab bar.
+                NavigationStack {
+                    session(row, compact: false)
+                        .navigationBarTitleDisplayMode(.inline)
+                }
             }
         } else {
             BoardSessionSplit {
