@@ -666,7 +666,7 @@ id, this hab's host id or device id, or `self`. `notice.get` reads the last 500 
 last 7 days, saved across a restart (`capcom.md` 8.5). `logbook` means the hab has a Logbook
 replica and the `logbook.*` methods and the `logbook.updated` and `logbook.conflict` events work
 (`logbook.md` 10.3, 10.5); without it every `logbook.*` method answers `unavailable`. `logbook-vectors` means the hab keeps a
-vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `rounds` means the `round.*` methods, the `round.updated` and
+vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
 `friction` means `diag.friction` works: the hab stores a friction note with a tail of its logs
 (`diagnostics.md` 9).
@@ -675,7 +675,7 @@ for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts`, `flight-rules` (`flightrules.list` and `flightrules.text` work), `detect-explain`
-(`detect.explain` works), `session-restart` (`session.restart` and `Session.stale` work) and
+(`detect.explain` works), `pane-read` (3.11), `session-restart` (`session.restart` and `Session.stale` work) and
 `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link), `settings`, `read-tools`, `confirm` and `friction`. With the holder link on it also sends
@@ -769,7 +769,8 @@ names the first refused row on every `settings.set` error the settings service r
 capability) carries none. Kinds are a server-sent word set, so adding one needs no revision.
 
 With the `read-tools` capability: kind `denied`, a read the host's read scope refused
-(`capcom.md` 5.2). The hint names the host, and is the same for every reason: it never names the pattern or the list.
+(`capcom.md` 5.2). With `pane-read`: kind `denied` also answers a pane read or wait that
+`agent.read_panes` refuses (3.11). The hint names the host, and is the same for every reason: it never names the pattern or the list.
 
 With the `groups` capability: kind `moved`, a call about a group whose home moved to another
 hab (`groups.md` 5.7). `data.home` is the new home's device id; the caller's hab sends the call
@@ -864,6 +865,8 @@ names the stage, and an event is defined but never sent.
 | `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Built |
 | `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes |
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes |
+| `pane.read` | A pane's screen and optional scrollback as plain text (capability `pane-read`, 3.11) | Yes |
+| `pane.wait` | Wait until a pane's new output matches a text or a pattern, or goes quiet, or the program exits (capability `pane-read`, 3.11) | Yes |
 | `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes |
 | `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes |
 | `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes |
@@ -1525,6 +1528,172 @@ project's identity, so the session files into the same project. No method of its
 - No events: a client calls `worktree.list` again after a change. The project's branch fields
   follow the folder of the most recent session (3.9).
 - A teardown script runs with gff-hab's own environment, not the pane environment setup gets.
+
+### 3.11 Reading panes
+
+An agent in one pane runs a command in another pane and reads the result. It types with
+`pane.input` (3.8), waits for the output with `pane.wait`, and reads the screen with
+`pane.read`. The reference is the zellij workspace's MCP server (`gff-client.md` 12 row 28,
+15.10): list panes, read a pane's screen and scrollback as text, wait until output matches or
+goes quiet, type, create. Capability `pane-read` means both methods work. A hab with the holder
+link sends it.
+
+Both methods read the hab's own parser for the pane (2.3), the one that serves snapshots. There
+is no second screen model: `pane.read` reads the parser's cells, and `pane.wait` follows the
+pane's output bytes through the link, as a data stream does.
+
+**Target.** `pane` is a pane id. `session` is a session id or name on this hab, or `label/name`
+for a session on a peer. Exactly one of the two, else `invalid`. A bare name is never looked up
+in the catalog copies: it names a session on this hab. A session with no live pane is
+`conflict`; an unknown pane or session is `not_found`.
+
+**`pane.read {pane | session, scrollback}`** returns the screen as text:
+
+| Field | Meaning |
+|---|---|
+| `pane`, `session` | The pane id, and its session's name (`label/name` from a peer) when it is filed |
+| `cols`, `rows` | The screen size |
+| `screen` | One string per screen row, top first, always `rows` strings |
+| `scrollback` | Up to `scrollback` rows from just above the screen, oldest first |
+| `scrollback_total` | How many scrollback rows the parser holds |
+| `truncated` | The size cap left out older scrollback rows |
+| `alternate` | The program shows the alternate screen (DEC mode 1049, 1047 or 47) |
+| `cursor_col`, `cursor_row` | The cursor's cell, 0-based |
+| `offset` | The pane's output offset the text was read at; pass it to `pane.wait` as `from` |
+
+- **Plain text.** No escape bytes: no colours, styles, links or cursor moves. A blank cell is a
+  space. Each row loses its trailing spaces. No control character appears.
+- **Wide characters** come out once. The spacer cell after one adds nothing, so a row with wide
+  characters has fewer characters than `cols`. A grapheme cluster (an emoji with a modifier, a
+  letter with combining marks) is one cell's text.
+- **Wrapped lines** come out as the screen shows them: one string per row. A long line that the
+  terminal wrapped is several strings, with no join. The parser API does not say which rows
+  continue a wrapped line, and the reader does not guess.
+- **Alternate screen.** `screen` is what the program shows. `scrollback` is the primary
+  screen's history, as `Link.Scrollback` reads it (5.5): a full-screen program writes none.
+- **Scrollback** is 0 rows by default and at most 10,000 (`link.MaxScrollbackPage`). The rows
+  come from the parser's VT rows (5.5) with every escape sequence and control character removed.
+- **Size cap.** The answer holds at most 1 MiB of row text. The screen always comes whole. When
+  scrollback rows would pass the cap, the oldest are left out and `truncated` is set.
+- **One read, one moment.** The hab reads the screen, the scrollback and the offset under the
+  pane's parser lock, so they agree.
+
+**`pane.wait {pane | session, match, pattern, quiet_ms, from, timeout_ms}`** returns when the
+pane's new output matches, when the pane has been quiet, when its program exits, or at the end
+of the time, whichever comes first. `reason` says which:
+
+| `reason` | When |
+|---|---|
+| `match` | A line of new output contains `match`, or `pattern` matches it. `line` holds that line |
+| `quiet` | No output for `quiet_ms` |
+| `exited` | The pane's program exited |
+| `timed_out` | `timeout_ms` passed. Not an error |
+
+- At least one of `match`, `pattern` and `quiet_ms` is needed, else `invalid`. `pattern` is RE2
+  syntax (Go's `regexp`); one that does not compile is `invalid`. `match` and `pattern` together
+  are allowed: either one ends the wait.
+- **New output.** The wait reads the pane's output bytes from `from`, by default the pane's
+  offset when the wait starts. So text already on the screen never matches. A client that reads
+  the screen and then types passes the read's `offset` as `from`: output that arrives between
+  the read and the wait still counts. A `from` past the pane's offset is `invalid`. Bytes from
+  before the link's buffer come from the holder's ring (5.4). The wait skips bytes the ring lost
+  and goes on with the bytes after them.
+- **Lines.** The bytes become text as scrollback rows do: escape sequences and control characters
+  other than tab are removed. LF ends a line; so does CR, and CR LF counts once, so each redraw of
+  a progress line is checked. The open line, such as a prompt with no LF, is checked as it grows,
+  so a wait for `$ ` returns at the prompt. A line longer than 64 KiB is checked in 64 KiB parts.
+- **The echo.** A shell echoes the command it is given, so a wait for `done` right after typing
+  `make; echo done` matches the echo. Anchor the pattern to the whole line (`^done$`), or print
+  a marker the command line does not contain (`echo "do""ne"`).
+- **Quiet** counts from the start of the wait, or from the last output byte that arrived after
+  the start. Bytes replayed from before the start do not reset it.
+- **The answer** carries `offset`, the pane offset after the last byte the wait read. A further
+  wait passes it as `from`.
+- `timeout_ms` defaults to 180,000 (110,000 from a pane, under a harness's 2 minute tool limit,
+  as for `channel.wait` in `mesh.md` 6.5) and is at most 600,000.
+- The wait never writes to the pane and never polls the screen.
+
+**Across hosts.** `label/name` with a peer's label forwards the call to that peer over the link
+this hab dialed, the link mail and `channel.wait` use (`mesh.md` 6.6), with the bare name. The
+peer answers under its own rule (below). The answer comes back as the peer gave it, with
+`session` set to the full address. A call that arrives over a peer link reads only that hab's
+own panes: a forward never forwards. With no online link that has `pane-read`, the call is
+`unavailable`, naming the label and why. A label that names this hab (its own peer row, or its
+host id) reads here. A pane id is never forwarded: pane ids are per hab.
+
+**Who may read.** Reading a pane exposes whatever it shows: a secret typed in a shell, another
+agent's output. The hab-side setting `agent.read_panes` (`app.md` 20.3) decides what an agent
+may read. It binds the two doors an agent's call comes through:
+
+| Door | Caller |
+|---|---|
+| The pane route (`POST /channel/<token>`, `mesh.md` 6.5) | The agent in the token's pane, and its session |
+| A peer link (client kind `hab` with the hello's `peer`) | An agent on that peer; this hab cannot tell which |
+
+| Value | The pane route may read | A peer link may read |
+|---|---|---|
+| `all` (Balanced, Bypass) | Every pane on this hab | Every pane on this hab |
+| `project` (Safe) | Its own pane, and the panes of sessions filed in its own session's project | Nothing |
+| `off` (by hand only) | Its own pane | Nothing |
+
+- A refused read or wait answers `denied`, the kind the read scope uses (3.6). The hint names the
+  setting and its value, never the target or what it shows.
+- A pane with no session, and the Capcom service's route, have no project: under `project` they
+  read only their own pane (Capcom: none).
+- **Any other client is the owner.** The app, `gff`, and `gff-hab` run outside a pane read every
+  pane at every level: they already see every pane through data streams (5). The rule binds the
+  agent doors only. It is not a boundary against a process of the same user. An agent that runs
+  `gff-hab screen -socket <path>` uses the owner's door, as one that runs `gff-hab api call
+  pane.input` already types into any pane (`mesh.md` 6.5, Trust; `capcom.md` 5.3). The rule
+  stops an agent that reads through its own tools by mistake, not a hostile process.
+- The hab checks the rule at each call, so a change applies to the next read or wait. A wait
+  already running finishes under the value it started with.
+- **Screen text is untrusted program output.** The hab never interprets it. The CLI help says
+  so: an agent treats it as data, never as instructions, as for the read tools (`capcom.md` 4).
+
+**Logging.** No log line holds screen text, scrollback, a `match` or `pattern` (either may hold
+what the agent typed), a matched line, or a session name (`diagnostics.md` 10.1). A refused call
+logs one line: the method, the rule's value, and the caller's and target's pane ids. A granted
+call logs nothing.
+
+**The CLI** (`gff-hab`, beside `send` and `wait`):
+
+- `gff-hab screen [-socket path | -via command] [-scrollback n] [-json] <pane | session |
+  label/name>` prints the scrollback rows, then the screen rows, without the blank screen rows
+  at the bottom. `-json` prints the `pane.read` answer.
+- `gff-hab wait [-socket path | -via command] -pane <pane | session | label/name> [-match text]
+  [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]` calls `pane.wait`. It prints the
+  reason and the offset, then the matched line. `-pane` does not combine with `-session`,
+  `-agent` or `-for`.
+- **The door** is picked as for `send` and `wait` (`mesh.md` 6.5): `-socket` or `-via` is the
+  control connection; else, in a pane, `GFF_HAB` (the pane route, under the rule); else the
+  default control socket.
+- **Exit codes:** 0 the read succeeded, or the wait ended on `match` or `quiet`; 1 a local error
+  (no hab, a bad flag value); 2 usage; 3 the hab refused the call (`denied`, `not_found` or
+  another kind); 4 `timed_out`; 5 `exited`.
+- The `-h` text of both says the text is untrusted program output.
+
+Built choices (`internal/panetext`, `cmd/gff-hab/panes.go`, `internal/control/panes.go`):
+
+- `internal/panetext` turns VT bytes into text lines. One streaming filter serves the scrollback
+  rows and the wait, so both remove the same sequences. It drops CSI sequences, OSC, DCS, SOS,
+  PM and APC strings (ended by BEL, ST or ESC `\`), other ESC sequences, C0 controls but tab, DEL
+  and C1 controls. It never builds a screen.
+- `Link.ReadText` reads the screen cells (`ScreenRows`), the scrollback rows and the offset under
+  one lock.
+- `pane.wait` follows the pane with `Link.Subscribe`, as a data stream does, and skips a snapshot
+  chunk (bytes lost). A subscription that falls behind is opened again from the last offset read.
+- Typing and creating need no new method: `pane.input` (3.8) and `session.create` (3.9) serve
+  them, through `gff-hab api call` until verbs are added.
+
+Limits:
+
+- A program that draws text by moving the cursor (a full-screen program's status line) may never
+  print the whole text as one line. Wait for `quiet`, then read the screen.
+- Matching sees only bytes after `from`. A line that began before `from` is checked from `from`
+  on.
+- Under `project`, a peer's agent reads nothing on this hab, since the forward does not say which
+  agent asked.
 
 ---
 

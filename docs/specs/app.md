@@ -3516,6 +3516,7 @@ every key, so a change never makes a new key.
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `capcom.event_actions` | Capcom jobs may act | Agents | `"off"`, `"ask"` or `"allow"`; `off` by hand only | `"ask"` | `"allow"` | `"allow"` | Hab, every hab; the Capcom home hab enforces it (A9) | `capcom-service.md` 9.6, 19.1 |
+| `agent.read_panes` | Agents may read panes | Agents | `"off"`, `"project"` or `"all"`; `off` by hand only | `"project"` | `"all"` | `"all"` | Hab, every hab; each hab enforces it for reads of its own panes | `hab-logic-api.md` 3.11 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
 | `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 |
 
@@ -3531,6 +3532,10 @@ every key, so a change never makes a new key.
   each harness's native memory. It replaces the per-harness switches
   (`instructions-mcp-flight-rules.md` 12). The user's own writes always land at once. The word
   set is client-sent, so it is closed (`hab-logic-api.md` 3.3).
+- **`agent.read_panes`** decides which panes an agent may read with `pane.read` and `pane.wait`,
+  through its pane's route or a peer link: `all` every pane on the hab; `project` its own pane and
+  those of its own project, and nothing for a peer; `off` its own pane only. The owner's own
+  clients read every pane at every level (`hab-logic-api.md` 3.11).
 - **`voice.yes_allows`** off: only "allow", "approve", "allow it" and "approve it" answer Allow,
   and "yes" makes the app ask again. The deny words are the same at every level.
 - **`ssh.require_face_id`** is one app-level check over the generated key and every imported key
