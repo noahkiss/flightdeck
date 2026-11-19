@@ -268,6 +268,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/cmdmarks/ && go test -race -run TestCommandMarks ./cmd/gff-hab` | OSC 133 commands |
 | `go test -race ./internal/opencode/ ./internal/harness/ ./internal/transcript/ && go test -race -run Opencode ./cmd/gff-hab` | opencode 2.x |
 | `go test ./internal/detect/...` | Detection tests |
+| `go test ./internal/panetext/ && go test -race -run TestReadText ./internal/link/ && go test -race -run 'TestPaneRead\|TestMayRead\|TestCapRows' ./cmd/gff-hab` | Reading panes (`hab-logic-api.md` 3.11): VT bytes to text lines split at any byte; screen text for a fixture (plain, colours and a link, wide characters, a wrapped line, the alternate screen) and its scrollback rows; `gff-hab screen` and `gff-hab wait -pane` on a shell, by match, pattern, quiet, timeout and exit, with their exit codes; the scrollback cap; `agent.read_panes` refusing a read from a pane's route, and from a peer link under `project`; a read and a wait of a peer's session by `label/name` |
 | `go test -race -run 'TestDetectExplain\|TestExplainVerdict\|TestExplainPartial\|TestSetProcessErr\|TestRegionTail' ./cmd/gff-hab` | `detect.explain` end to end |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests |
 | `go test ./internal/link/` | Holder link end-to-end tests |

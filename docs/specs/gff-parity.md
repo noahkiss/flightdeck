@@ -19,7 +19,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 
 ## Results
 
-30 pass, 2 gap, of 32 rows.
+31 pass, 1 gap, of 32 rows.
 
 | # | Behaviour | Mark | Evidence |
 |---|---|---|---|
@@ -50,7 +50,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 | 25 | Agent state per pane | pass | Working `~`, blocked `!`, exited `_` in the sidebar; the board puts the blocked session under Needs you; the tab gets `!` and the count `1 need you` |
 | 26 | Restore after a reboot | pass | After the holder is killed and restarted, views show `exited · Enter resume` and nothing runs; Enter starts the harness with its resume id in the same view (`TestResumeAfterHolderLoss`, `gff-client.md` 6.4). The view comes back after a gff restart with the saved workspace (5.6) |
 | 27 | Clean environment for new panes | pass | gff started with `CLAUDECODE=1` and `AGENT_KIND=claude`; a new pane on the clean hab has none of them. A hab started from an agent's shell passes that shell's agent variables on: panes take the hab's environment, and the installed service starts clean |
-| 28 | Agents drive the workspace | gap | `session.create`, `pane.input`, `session.send` and `gff-hab wait` work; no method reads a pane's screen or waits for output, and gff has no CLI verbs |
+| 28 | Agents drive the workspace | pass | An agent reads a pane's screen and scrollback as text (`pane.read`, `gff-hab screen`) and waits until its output matches, goes quiet or exits (`pane.wait`, `gff-hab wait -pane`), here and on a peer by `label/name`, under `agent.read_panes` (`hab-logic-api.md` 3.11). It creates panes with `session.create` and types with `pane.input`, through `gff-hab api call`. `TestPaneReadWait` drives a shell: wait for the prompt, type, wait for `^done$`, read the screen; `TestPaneReadPeer` reads and waits across two habs; `TestPaneReadRule` checks the refusals. No dedicated verbs to type or create yet |
 | 29 | Kitty keyboard and OSC 8 links | pass | OSC 8 links reach the host around the linked cells (`TestLinkSurvivesComposing`); the composed view asks for the kitty protocol, pushes flags 1 and 4 and re-encodes keys per pane (`TestKittyHost`, `TestKittyPaneEncoding`, `gff-client.md` 3.4). Not checked in a real kitty-protocol terminal |
 | 30 | Theme | pass | Chrome colours are host palette indexes (`palette()` in `workspace.go`, `bars.go`), so gff follows the terminal's theme. No theme file yet |
 | 31 | Status notices | pass | A host with no hab raises `1 warning`; Ctrl+O `!` lists `gone connecting`. A hab older than gff or another hab, and panes on a drained holder, are listed too |
@@ -65,7 +65,7 @@ Marks: **pass** (the test passes), **fail** (built, but the test fails), **gap**
 | Bottom shortcut bar | Carry over | Built (rows 5, 6, 9) |
 | Session event feed | Drop | Nothing to do |
 | Agent session hook script | Replace with adapters | Built: OSC 7501 reports drive the frame, sidebar and board (row 25) |
-| Workspace MCP server and CLI verbs | Replace with the hab API and gff verbs | Partly: no screen read, no wait for output, no gff verbs (row 28) |
+| Workspace MCP server and CLI verbs | Replace with the hab API and gff verbs | Built in the hab API: `gff-hab screen` and `gff-hab wait -pane` read and wait; typing and creating go through `gff-hab api call` (row 28). No MCP tools for reading panes yet |
 | `session-manager`, `welcome-screen` | Replace with the sidebar and board | Built, but exited sessions cannot be resumed (row 26) |
 | Stock bars, `strider`, `filepicker`, `plugin-manager`, web client settings, older bar builds | Drop | Nothing to do |
 | `configuration` | Drop; the config file is the source | Bad lines are named at start (8.4 tests) |
@@ -82,7 +82,6 @@ Blocks daily use:
 | Scrollback in the composed view, by wheel, with typing while scrolled | 15, 16 |
 | Resume an exited session from the sidebar and board | 26 |
 | Tab rename, close, go to last, and the workspace name | 3 |
-| Agents read pane screens and wait for output through the hab | 28 |
 | Several windows share one workspace, focus per window | 23 |
 
 Nice to have:
