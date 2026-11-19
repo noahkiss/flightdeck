@@ -2,7 +2,6 @@ import Foundation
 import GhosttyTerminal
 import HabAPI
 import Observation
-import os
 
 /// One pane in the terminal view: its data stream feeds libghostty, the
 /// terminal's key output goes to `pane.input`, and the size rule decides when
@@ -65,7 +64,7 @@ public final class TerminalModel {
     @ObservationIgnored private var needsSnapshot = false
     /// Output held past this is dropped, and a fresh snapshot asked for instead.
     @ObservationIgnored var pendingLimit = 4 << 20
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "terminal")
+    @ObservationIgnored private let log = AppLog(category: "terminal")
 
     /// Wait after a size change before the size goes out; the hab throttles too (6.6).
     @ObservationIgnored public var sizeDelay: Duration = .milliseconds(120)
@@ -220,7 +219,7 @@ public final class TerminalModel {
     private func inputDropped(_ e: InputDropped) {
         inputNotice = Self.inputNoticeText(e)
         lastError = e.description
-        log.notice("pane \(self.pane, privacy: .public): \(e.description, privacy: .public)")
+        log.notice("pane \(id: self.pane): \(e.description)")
     }
 
     /// The pump the terminal's key output goes through; tests type with it.
@@ -425,7 +424,7 @@ public final class TerminalModel {
                 // Not sent: the next change sends it again.
                 if let s = self.sentSize, s == want { self.sentSize = nil }
                 self.lastError = String(describing: error)
-                self.log.notice("pane \(self.pane, privacy: .public): set size: \(String(describing: error), privacy: .public)")
+                self.log.notice("pane \(id: self.pane): set size: \(kind: error) \(error)")
             }
         }
     }

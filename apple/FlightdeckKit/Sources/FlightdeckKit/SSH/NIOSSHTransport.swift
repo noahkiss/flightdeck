@@ -1,7 +1,6 @@
 import Foundation
 import NIOCore
 import NIOSSH
-import os
 
 /// A hab over SSH, in the app: swift-nio-ssh with the device key
 /// (transport.md 4.3, 4.8). Works on iOS and macOS.
@@ -372,7 +371,7 @@ public enum ColdStart {
         }
         if let d {
             let ms = d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000
-            Logger(subsystem: "com.flightdeck.app", category: "ssh").notice("cold start to first hab reply: \(ms) ms")
+            AppLog(category: "ssh").notice("cold start to first hab reply: \(ms) ms")
             #if DEBUG
             print("flightdeck: cold start to first hab reply: \(ms) ms")
             #endif

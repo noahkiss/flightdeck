@@ -329,7 +329,7 @@ public final class DeviceKeys: @unchecked Sendable {
             try store.upgradeProtection()
             lock.withLock { upgraded = true }
         } catch {
-            Self.log.notice("keychain upgrade failed, will retry: \(String(describing: error), privacy: .public)")
+            Self.log.notice("keychain upgrade failed, will retry: \(kind: error) \(error)")
         }
     }
 
@@ -382,7 +382,7 @@ public final class DeviceKeys: @unchecked Sendable {
         }
         if let n = try nextKey() { return n }
         let n = try create(id: Self.nextID)
-        Self.log.notice("key move started: \(n.fingerprint, privacy: .public)")
+        Self.log.notice("key move started: \(n.fingerprint)")
         return n
     }
 
@@ -405,7 +405,7 @@ public final class DeviceKeys: @unchecked Sendable {
             }
             guard added else { return }
         } catch {
-            Self.log.error("key move record: \(String(describing: error), privacy: .public)")
+            Self.log.error("key move record: \(kind: error) \(error)")
             return
         }
         onKeyMove?()
@@ -550,7 +550,7 @@ struct MovingKey: SSHKeySource {
                 out.append((old.fingerprint, try old.privateKey()))
             }
         } catch {
-            DeviceKeys.log.notice("key move: old key left out: \(String(describing: error), privacy: .public)")
+            DeviceKeys.log.notice("key move: old key left out: \(kind: error) \(error)")
         }
         return out
     }
@@ -635,7 +635,7 @@ final class FaceIDState: @unchecked Sendable {
             try store.write(account: account, data: data)
         }
         if !rewrites.isEmpty {
-            DeviceKeys.log.notice("moved \(rewrites.count, privacy: .public) per-key Face ID flags into the setting (on: \(anyOn, privacy: .public))")
+            DeviceKeys.log.notice("moved \(rewrites.count) per-key Face ID flags into the setting (on: \(anyOn))")
         }
         migrated = true
     }

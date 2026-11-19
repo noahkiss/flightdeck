@@ -4,7 +4,11 @@ import SwiftUI
 
 @main
 struct FlightdeckApp: App {
-    @State private var fleet = AppFleet.make()
+    /// app.log opens first, so the fleet's first lines reach it (diagnostics.md 4.10).
+    @State private var fleet: Fleet = {
+        AppLogFile.open()
+        return AppFleet.make()
+    }()
 
     var body: some Scene {
         WindowGroup {

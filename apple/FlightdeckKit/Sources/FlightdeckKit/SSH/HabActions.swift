@@ -1,7 +1,6 @@
 import Foundation
 import FlightdeckShared
 import HabAPI
-import os
 import UserNotifications
 
 /// Notification actions that reach a hab from the background: iOS wakes the
@@ -21,7 +20,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
 
     private let keys: DeviceKeys?
     private let listURL: URL?
-    private let log = Logger(subsystem: "com.flightdeck.app", category: "actions")
+    private let log = AppLog(category: "actions")
     /// Answers and the foreground prompt; set once the fleet is built.
     @MainActor public weak var approvals: ApprovalCenter?
     /// Opens the usage sheet from a usage notification (app.md 14.4).
@@ -218,10 +217,10 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         do {
             let r = try await SSHSetup.perform(entry: entry, keys: keys, HabMethods.habPing, PingParams(), clientLabel: "action")
             let ms = r.elapsed.components.seconds * 1000 + r.elapsed.components.attoseconds / 1_000_000_000_000_000
-            log.notice("ping action: \(name, privacy: .private) answered in \(ms) ms")
+            log.notice("ping action: \(name) answered in \(ms) ms")
             await notify(name, "The hab answered in \(ms) ms.")
         } catch {
-            log.notice("ping action: \(name, privacy: .private) failed: \(String(describing: error), privacy: .private)")
+            log.notice("ping action: \(name) failed: \(kind: error) \(error)")
             await notify(name, "Could not reach the hab: \(error)")
         }
     }

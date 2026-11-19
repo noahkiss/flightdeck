@@ -1,7 +1,6 @@
 import Foundation
 import HabAPI
 import Observation
-import os
 
 // Device context for Capcom's personal tools (capcom-service.md 8.1): the phone's time zone,
 // its latest location fix and a calendar snapshot, sent with `device.context.put` to the
@@ -130,7 +129,7 @@ public final class DeviceContextReporter {
     /// A put failed: the next connection to the home sends the whole context.
     @ObservationIgnored public private(set) var owed = false
     @ObservationIgnored private var started = false
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "device-context")
+    @ObservationIgnored private let log = AppLog(category: "device-context")
 
     public init(prefs: CapcomPrefs, location: DeviceLocationSource, calendar: DeviceCalendarSource,
                 now: @escaping () -> Date = Date.init, timeZone: @escaping () -> TimeZone = { .current }) {

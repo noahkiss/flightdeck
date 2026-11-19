@@ -1,7 +1,6 @@
 import FlightdeckShared
 import Foundation
 import HabAPI
-import os
 #if os(iOS)
 import UIKit
 #endif
@@ -12,7 +11,7 @@ public enum AppFleet {
     @MainActor
     public static func make(defaults: UserDefaults = .standard, environment env: [String: String] = ProcessInfo.processInfo.environment) -> Fleet {
         let fleet = Fleet()
-        let log = Logger(subsystem: "com.flightdeck.app", category: "config")
+        let log = AppLog(category: "config")
         let demo = DemoFleet.isRequested(defaults)
         fleet.usage = usageCenter(demo: demo)
         fleet.confirms = confirmCenter(fleet)
@@ -27,7 +26,7 @@ public enum AppFleet {
         do {
             config = try HabListConfig.load(environment: env)
         } catch {
-            log.error("hab config unreadable, using the local hab only: \(String(describing: error), privacy: .public)")
+            log.error("hab config unreadable, using the local hab only: \(kind: error) \(error)")
             config = .localOnly
         }
         for (i, h) in config.habs.enumerated() {
@@ -35,7 +34,7 @@ public enum AppFleet {
                 let t = try h.transport(environment: env)
                 fleet.add(HabConnection(id: h.id(index: i), transport: t, clientLabel: clientLabel, clientVersion: version), label: h.label)
             } catch {
-                log.notice("hab \(i + 1) skipped: \(String(describing: error), privacy: .public)")
+                log.notice("hab \(i + 1) skipped: \(kind: error) \(error)")
             }
         }
         addSSH(to: fleet, environment: env)

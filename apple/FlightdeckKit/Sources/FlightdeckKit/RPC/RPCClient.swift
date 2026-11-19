@@ -1,6 +1,5 @@
 import Foundation
 import HabAPI
-import os
 
 /// A JSON-RPC error from the hab. Clients branch on `kind`, never on `message`
 /// (hab-logic-api.md 3.6).
@@ -82,7 +81,7 @@ public actor RPCClient {
     private var started = false
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private static let log = Logger(subsystem: "com.flightdeck.app", category: "rpc")
+    private static let log = AppLog(category: "rpc")
 
     /// When the last bytes arrived, and when the last request went out.
     public private(set) var lastReceived = ContinuousClock.now
@@ -177,7 +176,7 @@ public actor RPCClient {
             // and the line's size; never the line, which can hold a user's text
             // (diagnostics.md 4.6).
             let method = Self.method(of: line) ?? "unknown"
-            Self.log.error("dropped a hab line that does not decode: method \(method, privacy: .public), \(Self.kind(of: error), privacy: .public), \(line.count) bytes")
+            Self.log.error("dropped a hab line that does not decode: method \(word: method), \(word: Self.kind(of: error)), \(line.count) bytes")
             return
         }
         if let m = head.method {

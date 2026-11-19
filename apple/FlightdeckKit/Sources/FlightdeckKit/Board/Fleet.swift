@@ -1,6 +1,5 @@
 import Foundation
 import HabAPI
-import os
 
 /// Every hab connection and the board they feed, plus the lifecycle rule:
 /// connected while visible, disconnected in the background (app.md 12.1).
@@ -112,7 +111,7 @@ public final class Fleet {
     private var check: Task<Void, Never>?
     private var wanted = false
     private var transition: Task<Void, Never>?
-    private let log = Logger(subsystem: "com.flightdeck.app", category: "lifecycle")
+    private let log = AppLog(category: "lifecycle")
 
     /// How long after going to the background the open-stream check runs.
     public var checkDelay: Duration = .seconds(10)
