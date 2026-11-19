@@ -94,13 +94,37 @@ func TestCopyTruncateUnderInit(t *testing.T) {
 	}
 }
 
-// startUnit runs appendScript as a transient systemd user unit with its output through
-// withOutput, and stops it when the test ends.
+// startUnit writes a user unit file the way install renders ExecStart (execLine over
+// withOutput, with '$' and '%' escaped), runs appendScript from it, and when the test ends stops
+// it and removes the file. A transient unit from systemd-run would not do: it expands '$' in
+// its arguments, which a unit file escapes.
 func startUnit(t *testing.T, unit, out string) {
 	t.Helper()
-	run(t, "systemd-run", append([]string{"--user", "--unit=" + unit, "--collect", "--quiet"},
-		withOutput(out, []string{"/bin/sh", "-c", appendScript})...)...)
-	t.Cleanup(func() { exec.Command("systemctl", "--user", "stop", unit).Run() })
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg = filepath.Join(home, ".config")
+	}
+	dir := filepath.Join(cfg, "systemd", "user")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, unit)
+	argv := withOutput(out, []string{"/bin/sh", "-c", appendScript})
+	body := "[Service]\nType=simple\nExecStart=" + execLine(argv[0], argv[1:]...) + "\n"
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		exec.Command("systemctl", "--user", "stop", unit).Run()
+		os.Remove(file)
+		exec.Command("systemctl", "--user", "daemon-reload").Run()
+	})
+	run(t, "systemctl", "--user", "daemon-reload")
+	run(t, "systemctl", "--user", "start", unit)
 }
 
 func run(t *testing.T, name string, args ...string) {
