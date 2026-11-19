@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -7252,6 +7252,27 @@ public struct PaneOwner: Codable, Sendable, Hashable {
     }
 }
 
+public struct PaneReadParams: Codable, Sendable, Hashable {
+    /// A pane id on this hab.
+    public var pane: String?
+    /// Scrollback rows to return from just above the screen. Default 0, at most 10000.
+    public var scrollback: Int?
+    /// A session id or name on this hab, or label/name for a session on a peer (spec 3.11).
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case pane = "pane"
+        case scrollback = "scrollback"
+        case session = "session"
+    }
+
+    public init(pane: String? = nil, scrollback: Int? = nil, session: String? = nil) {
+        self.pane = pane
+        self.scrollback = scrollback
+        self.session = session
+    }
+}
+
 public struct PaneRef: Codable, Sendable, Hashable {
     public var pane: String
 
@@ -7261,6 +7282,140 @@ public struct PaneRef: Codable, Sendable, Hashable {
 
     public init(pane: String) {
         self.pane = pane
+    }
+}
+
+public struct PaneText: Codable, Sendable, Hashable {
+    /// The program shows the alternate screen.
+    public var alternate: Bool?
+    public var cols: Int
+    public var cursorCol: Int
+    public var cursorRow: Int
+    /// The pane's output offset the text was read at; pass it to pane.wait as from.
+    public var offset: UInt64
+    public var pane: String
+    public var rows: Int
+    /// One string per screen row, top first: always rows strings, each without trailing spaces.
+    public var screen: [String]
+    /// Scrollback rows from just above the screen, oldest first.
+    public var scrollback: [String]?
+    /// How many scrollback rows the pane's parser holds.
+    public var scrollbackTotal: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The pane's session name when it is filed; label/name for a pane on a peer.
+    public var session: String?
+    /// The 1 MiB cap left out older scrollback rows.
+    public var truncated: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case alternate = "alternate"
+        case cols = "cols"
+        case cursorCol = "cursor_col"
+        case cursorRow = "cursor_row"
+        case offset = "offset"
+        case pane = "pane"
+        case rows = "rows"
+        case screen = "screen"
+        case scrollback = "scrollback"
+        case scrollbackTotal = "scrollback_total"
+        case seq = "seq"
+        case session = "session"
+        case truncated = "truncated"
+    }
+
+    public init(alternate: Bool? = nil, cols: Int, cursorCol: Int, cursorRow: Int, offset: UInt64, pane: String, rows: Int, screen: [String], scrollback: [String]? = nil, scrollbackTotal: Int, seq: UInt64, session: String? = nil, truncated: Bool? = nil) {
+        self.alternate = alternate
+        self.cols = cols
+        self.cursorCol = cursorCol
+        self.cursorRow = cursorRow
+        self.offset = offset
+        self.pane = pane
+        self.rows = rows
+        self.screen = screen
+        self.scrollback = scrollback
+        self.scrollbackTotal = scrollbackTotal
+        self.seq = seq
+        self.session = session
+        self.truncated = truncated
+    }
+}
+
+public struct PaneWaitParams: Codable, Sendable, Hashable {
+    /// The pane offset to read new output from. Absent means the pane's offset when the wait starts.
+    public var from: UInt64?
+    /// Text a line of new output contains.
+    public var match: String?
+    /// A pane id on this hab.
+    public var pane: String?
+    /// An RE2 pattern a line of new output matches.
+    public var pattern: String?
+    /// End the wait once the pane printed nothing for this long.
+    public var quietMs: Int?
+    /// A session id or name on this hab, or label/name for a session on a peer (spec 3.11).
+    public var session: String?
+    /// Default 180000 (110000 from a pane), at most 600000.
+    public var timeoutMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case match = "match"
+        case pane = "pane"
+        case pattern = "pattern"
+        case quietMs = "quiet_ms"
+        case session = "session"
+        case timeoutMs = "timeout_ms"
+    }
+
+    public init(from: UInt64? = nil, match: String? = nil, pane: String? = nil, pattern: String? = nil, quietMs: Int? = nil, session: String? = nil, timeoutMs: Int? = nil) {
+        self.from = from
+        self.match = match
+        self.pane = pane
+        self.pattern = pattern
+        self.quietMs = quietMs
+        self.session = session
+        self.timeoutMs = timeoutMs
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PaneWaitReason: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let match = PaneWaitReason(rawValue: "match")
+    public static let quiet = PaneWaitReason(rawValue: "quiet")
+    public static let exited = PaneWaitReason(rawValue: "exited")
+    public static let timedOut = PaneWaitReason(rawValue: "timed_out")
+}
+
+public struct PaneWaitResult: Codable, Sendable, Hashable {
+    /// The line that matched, for reason match. Untrusted program output.
+    public var line: String?
+    /// The pane offset after the last byte the wait read; pass it as from to wait on.
+    public var offset: UInt64
+    public var pane: String
+    public var reason: PaneWaitReason
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The pane's session name when it is filed; label/name for a pane on a peer.
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case line = "line"
+        case offset = "offset"
+        case pane = "pane"
+        case reason = "reason"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(line: String? = nil, offset: UInt64, pane: String, reason: PaneWaitReason, seq: UInt64, session: String? = nil) {
+        self.line = line
+        self.offset = offset
+        self.pane = pane
+        self.reason = reason
+        self.seq = seq
+        self.session = session
     }
 }
 
@@ -10554,6 +10709,10 @@ public enum HabMethods {
     public static let flightrulesList = HabMethod<FlightRulesParams, FlightRules>(name: "flightrules.list")
     /// The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.
     public static let flightrulesText = HabMethod<FlightRuleTextParams, FlightRuleText>(name: "flightrules.text")
+    /// A pane's screen and optional scrollback as plain text, under agent.read_panes for an agent's call (spec 3.11). Needs the pane-read capability.
+    public static let paneRead = HabMethod<PaneReadParams, PaneText>(name: "pane.read")
+    /// Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.
+    public static let paneWait = HabMethod<PaneWaitParams, PaneWaitResult>(name: "pane.wait")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
     public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
     /// Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.

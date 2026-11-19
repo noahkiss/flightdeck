@@ -45,7 +45,8 @@
     "device-context",
     "flight-rules",
     "session-restart",
-    "friction"
+    "friction",
+    "pane-read"
   ],
   "methods": [
     {
@@ -1884,6 +1885,112 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/FlightRuleTextParams"
+      }
+    },
+    {
+      "name": "pane.read",
+      "summary": "A pane's screen and optional scrollback as plain text, under agent.read_panes for an agent's call (spec 3.11). Needs the pane-read capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "description": "A pane id on this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "scrollback",
+          "description": "Scrollback rows to return from just above the screen. Default 0, at most 10000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneText"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneReadParams"
+      }
+    },
+    {
+      "name": "pane.wait",
+      "summary": "Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The pane offset to read new output from. Absent means the pane's offset when the wait starts.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "match",
+          "description": "Text a line of new output contains.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pane",
+          "description": "A pane id on this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pattern",
+          "description": "An RE2 pattern a line of new output matches.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "quiet_ms",
+          "description": "End the wait once the pane printed nothing for this long.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "timeout_ms",
+          "description": "Default 180000 (110000 from a pane), at most 600000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneWaitResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneWaitParams"
       }
     },
     {
@@ -13073,6 +13180,24 @@
           "rows"
         ]
       },
+      "PaneReadParams": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "type": "string",
+            "description": "A pane id on this hab."
+          },
+          "scrollback": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scrollback rows to return from just above the screen. Default 0, at most 10000."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          }
+        }
+      },
       "PaneRef": {
         "type": "object",
         "properties": {
@@ -13081,6 +13206,162 @@
           }
         },
         "required": [
+          "pane"
+        ]
+      },
+      "PaneText": {
+        "type": "object",
+        "properties": {
+          "alternate": {
+            "type": "boolean",
+            "description": "The program shows the alternate screen."
+          },
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cursor_col": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cursor_row": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane's output offset the text was read at; pass it to pane.wait as from."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "screen": {
+            "type": "array",
+            "description": "One string per screen row, top first: always rows strings, each without trailing spaces.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scrollback": {
+            "type": "array",
+            "description": "Scrollback rows from just above the screen, oldest first.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scrollback_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many scrollback rows the pane's parser holds."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The pane's session name when it is filed; label/name for a pane on a peer."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The 1 MiB cap left out older scrollback rows."
+          }
+        },
+        "required": [
+          "seq",
+          "pane",
+          "cols",
+          "rows",
+          "screen",
+          "scrollback_total",
+          "cursor_col",
+          "cursor_row",
+          "offset"
+        ]
+      },
+      "PaneWaitParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane offset to read new output from. Absent means the pane's offset when the wait starts."
+          },
+          "match": {
+            "type": "string",
+            "description": "Text a line of new output contains."
+          },
+          "pane": {
+            "type": "string",
+            "description": "A pane id on this hab."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "An RE2 pattern a line of new output matches."
+          },
+          "quiet_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "End the wait once the pane printed nothing for this long."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Default 180000 (110000 from a pane), at most 600000."
+          }
+        }
+      },
+      "PaneWaitReason": {
+        "type": "string",
+        "x-known-values": [
+          "match",
+          "quiet",
+          "exited",
+          "timed_out"
+        ]
+      },
+      "PaneWaitResult": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "string",
+            "description": "The line that matched, for reason match. Untrusted program output."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane offset after the last byte the wait read; pass it as from to wait on."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/PaneWaitReason"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The pane's session name when it is filed; label/name for a pane on a peer."
+          }
+        },
+        "required": [
+          "seq",
+          "reason",
+          "offset",
           "pane"
         ]
       },

@@ -46,6 +46,17 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.groupPlan })
     }
 
+    /// agent.read_panes: project at Safe, all at Balanced and Bypass, kept on every hab
+    /// (hab-logic-api.md 3.11, app.md 20.3).
+    func testAgentReadPanesLevels() throws {
+        let d = try XCTUnwrap(R.def(R.agentReadPanes))
+        XCTAssertEqual(d.levels?[.safe], .string("project"))
+        XCTAssertEqual(d.levels?[.balanced], .string("all"))
+        XCTAssertEqual(d.levels?[.bypass], .string("all"))
+        XCTAssertEqual(d.store, .everyHab)
+        XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentReadPanes })
+    }
+
     /// capcom.event_actions: ask at Safe, allow at Balanced and Bypass, and a level pick writes it
     /// (capcom-service.md 9.6, app.md 20.3).
     @MainActor
