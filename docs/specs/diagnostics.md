@@ -302,6 +302,8 @@ Rules:
 - **Gone holders.** launchd's sweep removes a gone holder's file (`internal/service`). gff-hab's
   sweep removes old files whose current file is gone, and a holder's file that no registered
   holder owns and that has not changed in 7 days.
+- **Uninstall.** `gff-hab uninstall` removes the job output files, `hab.log`, `hook.log` and
+  their old files with the jobs. `crash/` and `health.jsonl` are gff-hab's state and stay.
 
 **Decision: rotate inside gff-hab, change no holder code.** macOS has no logrotate, and
 `newsyslog` needs root. The holder stays tiny (`hab-holder.md` 6.6); its file is handled from
