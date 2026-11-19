@@ -380,7 +380,7 @@ func TestHeavySignalWhileHabDown(t *testing.T) {
 	waitUntil(t, "b waits", func() bool { return len(heavyStatus(t, sock).Waiters) == 1 })
 	s.stop(t)
 	time.Sleep(300 * time.Millisecond) // b is dialing again
-	b.cmd.Process.Signal(syscall.SIGINT)
+	sent := b.cmd.Process.Signal(syscall.SIGINT)
 	select {
 	case <-b.done:
 	case <-time.After(scaleTimeout(5 * time.Second)):
@@ -392,7 +392,7 @@ func TestHeavySignalWhileHabDown(t *testing.T) {
 		case <-b.done:
 		case <-time.After(scaleTimeout(5 * time.Second)):
 		}
-		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab (process alive: %v)\n%s\nits stderr:\n%s", alive, proc, b.stderr.String())
+		t.Fatalf("SIGINT did not end a CLI waiting for gff-hab (send: %v; process alive: %v)\n%s\nits stderr:\n%s", sent, alive, proc, b.stderr.String())
 	}
 	if b.code != 130 || strings.Contains(readLog(work), "start-b") {
 		t.Fatalf("exit %d, log %q", b.code, readLog(work))
