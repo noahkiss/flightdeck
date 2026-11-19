@@ -1,6 +1,6 @@
 # Diagnostics: behaviour spec
 
-Status: stage 1 built, parts (a) to (e); stage 3 built; stages 2 and 4 to 6 proposed. Owner decisions
+Status: stages 1 to 3 built; stages 4 to 6 proposed. Owner decisions
 are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
@@ -338,9 +338,15 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
 | `debug` | Detail for one investigation | Each hook envelope, each request |
 
 - `gff-hab debug 30m` turns debug on for a time, through the method `diag.debug` `{until}`.
+  `until` is an RFC 3339 time at most 24 hours ahead; a later one is refused with `invalid`, so
+  every window ends by itself. An empty or past `until` turns debug off. Capability `debug`. Not
+  over a peer link.
 - gff-hab writes `debug_until` to `<state>/run/debug.json`. A start honours it until it
-  expires. A crash loop then keeps its debug lines across restarts.
+  expires. A crash loop then keeps its debug lines across restarts. When the window ends,
+  gff-hab logs "debug off: the window ended" and removes the file.
 - `gff-hab debug off` clears it. `GFF_HAB_DEBUG` stays, with no time limit, for development.
+- Each change logs one line, and the run marker holds `debug` and `debug_until` for
+  `gff-hab status` (6.1).
 - The level floor is set in the hab's config file, `[diagnostics] log_level`. It is an operator
   limit, so it has no app row (`app.md` 20.1).
 - A repeating line with the same message and subsystem logs at most once per 10 seconds; the next
@@ -365,12 +371,24 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
 A deadlocked gff-hab never crashes, so a crash record never sees it.
 
 - **Stack dump on demand.** On `SIGUSR1`, gff-hab writes every goroutine's stack to
-  `crash/hab-<epoch>-stacks-<time>.txt`. A signal works while the control loop is stuck.
-  `gff-hab stacks` sends it to the pid in the run marker, then prints the file's path.
-- **Stall watchdog.** Each long-lived loop that serialises state (the structure store's loop, each
-  holder link's loop) records a tick. A watchdog goroutine checks every 5 seconds. A loop silent
-  for 10 seconds while work waits gets one line "loop stalled", with the loop's name and the
-  wait, and one stack dump, at most once per hour.
+  `crash/hab-<epoch>-stacks-<time>.txt` (UTC, to the millisecond), and logs one line naming the
+  file. A signal works while the control loop is stuck. gff-hab catches `SIGUSR1` from its first
+  line, since Go's default for it ends the process.
+- `gff-hab stacks` sends it to the pid in the run marker, waits for the new file, then prints its
+  path. It needs no answer on the socket. The marker's `stacks` flag says the running gff-hab
+  catches `SIGUSR1`; without it, as from an older build, the command sends nothing.
+- **Stall watchdog.** The long-lived points that serialise state are the structure store's lock
+  and the holder link's event loop (one loop for every holder). The watchdog sends a no-op
+  through each every 5 seconds: it takes the store's lock, and it runs an empty task on the
+  link's loop. The probe is the work that waits, so no loop carries watchdog code.
+- A probe unanswered for 10 seconds is a stall. gff-hab logs one line "loop stalled", with the
+  loop's name and the wait, and writes one stack dump. A stall that lasts logs nothing more. When
+  the probe returns, one line "loop recovered" gives the total wait.
+- A loop reports at most one stall per hour. The watchdog writes at most one dump per hour across
+  both loops: one dump shows every goroutine, and a stuck store also stalls the link.
+- **Privacy.** A dump holds goroutine stacks, which can show argument values. It lives in
+  `crash/` only, mode 0600, within the crash cap (4.3). A log line names the dump's file, never
+  its content. A bundle gives it pass 2 (8.2).
 - The holder gets neither until a holder build needs other changes; its loops are few, and a
   hung holder shows as a stalled holder link in gff-hab.
 
@@ -395,9 +413,9 @@ with the line before it. Until the holder's next build, its lines carry local ti
   unclean ends in the last 7 days (6), hook endpoint up or down, peers online, Capcom state (a
   word, never its last stderr line), debug, log folder size. It is the first command a user
   runs, as `herdr status` is. It reads the run marker and the holder registry, so it works while
-  gff-hab is down; peers and Capcom need gff-hab to answer. Until stage 2, debug means
-  `GFF_HAB_DEBUG` in gff-hab's environment, which the marker records; the holder's version is its
-  protocol version from the registry.
+  gff-hab is down; peers and Capcom need gff-hab to answer. Debug reads "on until <time>" for a
+  window (4.5), "on" for `GFF_HAB_DEBUG`, else "off"; the holder's version is its protocol version
+  from the registry.
 
 ### 4.9 The Capcom engine and the speech helper (stage 5)
 
@@ -417,11 +435,19 @@ with the line before it. Until the holder's next build, its lines carry local ti
 - The app keeps `os.Logger`. The unified log is cheap and rotates by itself.
 - **Privacy (stage 2).** Each interpolated value is `.private` unless it is an enum word, a
   count, a duration, an id Flightdeck minted (trace, session, pane, client) or an error kind. Host
-  names, labels, paths and error descriptions are `.private`. Today some are `.public`
-  (`SSHSetup.swift:395,446`, `AppFleet.swift:28`).
-- **`app.log` (stage 2).** The app writes `diagnostics/app.log` in its container: JSON lines,
-  `notice` and above, 1 MiB with one old file, with the same value rules. The unified log on iOS
-  lets an app read only its current run, so this file keeps a previous run's errors.
+  names, labels, paths and error descriptions are `.private`.
+- Every line goes through one wrapper, `AppLog` (`FlightdeckKit/Diagnostics/AppLog.swift`). Its
+  interpolation makes any value private. Integers, Booleans and Doubles are public, as counts and
+  durations. Three labels make a value public: `\(word: e)` for an enum word or an API method,
+  `\(id: pane)` for a minted id, `\(kind: error)` for an error's type and case, or an NSError's
+  domain and code, never its description.
+- The unified log gets the line with each private value as `<private>`, as public text, and the
+  whole line as one `.private` value.
+- **`app.log` (stage 2).** The app writes `Flightdeck/diagnostics/app.log` under its Application
+  Support folder: JSON lines (`t`, `lvl`, `cat`, `msg`), `notice` and above, 1 MiB with one old
+  file, mode 0600. `msg` is the redacted line: a private value is `<private>` and never reaches
+  the file. The unified log on iOS lets an app read only its current run, so this file keeps a
+  previous run's errors. The app opens it at launch; tests and extensions write none.
 - Export (stage 6) reads the current run through `OSLogStore(scope: .currentProcessIdentifier)`
   and adds `app.log` (8.5).
 
@@ -493,8 +519,8 @@ pane. A reader joins by session id and time.
 | Each holder | `<state>/run/holder.<instance>.json` | pid and start time; the holder has no epoch (`api/types.go:62` is gff-hab's) |
 
 Fields: `proc`, `instance`, the run id, `pid`, `build`, `version`, `started`, `last_seen`,
-`clean`. gff-hab's marker also holds `crash_file` (6.2), `hook` (`up` or `down`, 4.6) and
-`debug` (4.5), for `gff-hab status`.
+`clean`. gff-hab's marker also holds `crash_file` (6.2), `hook` (`up` or `down`, 4.6), `debug`
+and `debug_until` (4.5), and `stacks` (4.7), for `gff-hab status` and `gff-hab stacks`.
 
 - `clean` is `false` until a clean exit sets it `true`.
 - `last_seen` changes only when the process flushes a log line, and at a clean exit. An idle
@@ -837,7 +863,7 @@ Other guards:
 | Canary (test 11) | One random string goes through every content path, then is found in no diagnostics file and no bundle |
 | Bundle sources | Only the files of 8.2; command output only through a no-content mode (8.2) |
 | Capcom | SDK stderr counted only; provider errors and crash causes as classes (4.9, 6.3) |
-| App | A unit test on the app's logging wrapper checks that a string defaults to `.private`; a source check fails on `privacy: .public` outside a listed set of safe values |
+| App | A unit test on the app's logging wrapper checks that a string defaults to `.private`. A source check (`AppLogSourceTests`) fails on `privacy:`, `Logger(` or `os_log(` outside the wrapper, and on a `\(id: …)` or `\(word: …)` whose expression is not in its listed set of safe values; it has its own fixture |
 
 ### 10.3 Consent
 
@@ -874,7 +900,7 @@ None of these is an app row: each is an operator limit or has one right answer (
 | CPU per request | One atomic add per tally. A failed request adds one line |
 | Hot paths | No logging per PTY read, frame, ring write, keystroke, data stream chunk or terminal query |
 | Disk wake-ups | An idle hab writes nothing: no marker update, no tally flush when nothing changed |
-| Watchdog | One tick per loop iteration (an atomic store), one check every 5 seconds |
+| Watchdog | Nothing on a loop's own path. One no-op probe per loop every 5 seconds, and one check |
 
 - A full disk stops log writes. The writer counts dropped lines and never blocks or crashes the
   process.
@@ -886,7 +912,7 @@ None of these is an app row: each is an operator limit or has one right answer (
 
 | Case | Behaviour |
 |---|---|
-| The laptop sleeps for hours | Nothing is written. The watchdog ignores a gap in wall time across sleep: it measures loop ticks against the monotonic clock and skips a check that spans a sleep. A day boundary passed in sleep closes the old tally day at the next flush |
+| The laptop sleeps for hours | Nothing is written. The watchdog measures a probe's wait on the monotonic clock, which stops while the machine sleeps on macOS and Linux. A check whose wall-clock gap runs more than 2 seconds past its monotonic gap spans a sleep: it reports nothing and restarts the wait of each probe in flight. A day boundary passed in sleep closes the old tally day at the next flush |
 | The clock jumps | Lines keep their wall time. Rotation is by size. Tally days follow local date at flush |
 | Two gff-hab processes by accident (`hab-holder.md` 6.8) | The second fails at the state-directory lock before it opens `hab.log`, so one writer holds the file; its lines go to stderr |
 | A crash in the middle of a line | `gff-hab logs` and the bundle skip a line that does not parse, and count it |
@@ -930,7 +956,7 @@ Smallest useful first. Stage 1 is what one person needs in the first week of dai
 | # | Stage | Acceptance |
 |---|---|---|
 | 1 | **Week one.** (a) The size-capped writer behind the existing `log.Logger`, UTC microsecond time, no call-site change; `hab.stderr`, holder files and `engine.log` copy-truncated by gff-hab; Linux units `append:` to files; version and build on gff-hab's start line. (b) `SetCrashOutput`, the run marker, `health.jsonl`, the next-start line, the crash notice; hook server `ErrorLog` with `recovered` records; holder-loss records from the link. (c) The lines of 4.6, including one per failed request. (d) `gff-hab status`, and `gff-hab logs` merged by time with `-f`, `--since`, `--proc`, `--grep`. (e) Friction notes: `diag.friction`, `gff friction` with `list` and `show`, the app's menu item; text plus the merged log tail | A killed gff-hab leaves a health record of kind `unclean`, and a forced panic one of kind `crash`, both read at the next start; a crash raises one notice. Files rotate at the cap in a test with a small cap, and a copy-truncated file keeps receiving lines on macOS and Linux. A failed request, a hook server failure and a peer going offline each produce one line. A friction note from `gff` and one from the app each land with text, session and a log tail |
-| 2 | **Hangs, debug and the app's errors.** `SIGUSR1` stack dumps and `gff-hab stacks`; the stall watchdog; `diag.debug`, `gff-hab debug` and `debug_until` across restarts; the app's `.private` fix, its source check, and `app.log` | A test seam that blocks the store loop yields one "loop stalled" line and one stack file. Debug set before a forced crash is still on after restart. The app source check passes |
+| 2 | **Hangs, debug and the app's errors.** `SIGUSR1` stack dumps and `gff-hab stacks`; the stall watchdog; `diag.debug`, `gff-hab debug` and `debug_until` across restarts; the app's `.private` fix, its source check, and `app.log` | A test seam that holds the structure store's lock yields one "loop stalled" line and one stack file. Debug set before a forced crash is still on after restart. The app source check passes |
 | 3 | **Tallies.** Calls and errors per method and client kind; hook envelopes; features; settings; health counts; day files and `seen.json`; `gff-hab tallies` with `--days` and `--unused` | After an e2e run, `--unused 1` lists the methods the run did not call. The counter path allocates nothing (an allocation test) |
 | 4 | **Trace.** The member on requests and responses, its check, context; `gff` and the app send one; peer calls carry it; it appears on failed-request and peer lines; `gff-hab logs --trace` | A failing call from `gff` to a session on a peer hab yields one line on each hab with one trace; a malformed trace is replaced |
 | 5 | **Structured logs and the bundle.** `internal/diaglog`, slog JSON, levels, the legacy shim, the source check and its fixture test; the free text of 1.5 moved to `text`; Capcom `capcom.log`, crash handlers, SDK stderr counted only, error classes, the 1.2 #12 fix; `hook.log`; `detect explain --no-text`; `gff-hab bundle` with both passes, `--dir`, the manifest, the config allowlist; the canary e2e test | The source check fails its fixture and passes the tree. The canary test passes, including an engine that echoes the canary on stderr and the canary on screen at bundle time. A fixture state folder seeded with host names, paths, IPs, keys and tokens yields a bundle with none of them, and the manifest counts each rule |
