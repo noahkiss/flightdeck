@@ -356,13 +356,19 @@ func workspaceHosts(path string, flags []string, single habconn.Transport, sshHo
 	return specs, nil
 }
 
+// habTables are the tables of gff's config file that gff-hab reads, through `gff-hab
+// instructions render` and `gff-hab mcp` (instructions-mcp-flight-rules.md 6.6, 8.4). gff
+// ignores them; those commands check them.
+var habTables = []string{"instructions", "mcp"}
+
 // hostProblems drops the host reader's "unknown key" problems for the tables the keymap and
-// bar reader owns (gffclient.SettingsTables); LoadSettings reports its own.
+// bar reader owns (gffclient.SettingsTables), as LoadSettings reports its own, and for the
+// tables gff-hab owns (habTables).
 func hostProblems(path string, problems []string) []string {
 	var out []string
 	for _, p := range problems {
 		owned := false
-		for _, t := range gffclient.SettingsTables {
+		for _, t := range slices.Concat(gffclient.SettingsTables, habTables) {
 			k := path + ": unknown key " + t
 			if p == k || strings.HasPrefix(p, k+".") {
 				owned = true

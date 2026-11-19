@@ -1,0 +1,49 @@
+# gff's config file: $GFF_CONFIG, else gff/config.toml in the user config directory.
+#
+# gff reads [[hosts]], [keys], [bar] and [workspace] (gff-client.md 8). gff-hab reads
+# [instructions] and [mcp] from the same file, through `gff-hab instructions render` and
+# `gff-hab mcp render`, `launch` and `header` (instructions-mcp-flight-rules.md 6.6, 8.4).
+# gff ignores those two tables, and gff-hab's readers ignore the rest.
+# Every name below is a placeholder.
+
+[[hosts]]
+label = "laptop"
+endpoints = ["/run/user/1000/gff-hab/control.sock"]
+
+[[hosts]]
+label = "devbox"
+endpoints = ["devbox.example"]
+
+[bar]
+clock = "15:04"
+
+[workspace]
+name = "default"
+
+[[workspace.tabs]]
+name = "code"
+host = "devbox"
+dir = "/srv/src"
+
+# Instruction files rendered for each harness (instructions-mcp-flight-rules.md 6).
+[instructions]
+write = ["codex"]
+
+[[instructions.source]]
+path = "~/notes/agents.md"
+scope = "global"
+
+# MCP servers rendered for each harness (instructions-mcp-flight-rules.md 8).
+[mcp]
+write = ["claude"]
+
+[[mcp.server]]
+name = "search"
+transport = "stdio"
+command = "search-mcp"
+args = ["--stdio"]
+env = { SEARCH_TOKEN = { secret = "vault:search-token" } }
+
+[[mcp.provider]]
+name = "vault"
+command = ["vault-read"]

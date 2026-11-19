@@ -261,7 +261,8 @@ Built (`internal/instructions`, `gff-hab instructions render`):
   `hosts`, `harnesses` and `order`, and `write = [...]` with the harness names whose target may
   be written. `~/` resolves against the home directory, a relative path against the config
   file's directory. An unknown key in the table is an error. Project sources are accepted and
-  never rendered (D3).
+  never rendered (D3). `gff` reads the same file and ignores `[instructions]` and `[mcp]`;
+  `docs/examples/gff.toml` holds all the tables.
 - **Opt-in is two steps.** `-write <target>` writes only when the `write` list names that
   target. The default run is the dry run. `-dry-run` given with `-write` is an error, so a
   user who adds `-dry-run` to be safe never gets a write.
