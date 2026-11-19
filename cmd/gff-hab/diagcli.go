@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -80,7 +83,7 @@ func statusCmd(args []string, out io.Writer) error {
 	now := time.Now()
 	r := statusReport{Hooks: "unknown", Peers: "unknown", Capcom: "unknown", Debug: "off", Logs: logsDir(dir)}
 	m, ok, _ := health.ReadMarker(filepath.Join(dir, runDir, habMarkerFile))
-	alive := ok && !m.Clean && m.Pid > 0 && syscall.Kill(m.Pid, 0) == nil
+	alive := ok && markerAlive(m, procStarted)
 	switch {
 	case !ok:
 		r.Hab.State = "never started"
@@ -138,10 +141,60 @@ func statusCmd(args []string, out io.Writer) error {
 		statusFromHab(*sock, &r)
 	}
 	if *asJSON {
-		return printJSON(r)
+		b, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "%s\n", b)
+		return err
 	}
 	printStatus(out, r)
 	return nil
+}
+
+// markerAlive reports whether the process of a marker that is not clean still runs: its pid
+// answers, and that process started no later than the marker says gff-hab did. A pid that a
+// later process took after a crash started after the marker.
+func markerAlive(m health.Marker, started func(pid int) (time.Time, bool)) bool {
+	if m.Clean || m.Pid <= 0 || syscall.Kill(m.Pid, 0) != nil {
+		return false
+	}
+	t, ok := started(m.Pid)
+	return ok && !t.After(m.Started.Add(2*time.Second)) // ps rounds to the second
+}
+
+// procStarted is when process pid started, from ps's elapsed time ([[dd-]hh:]mm:ss).
+func procStarted(pid int) (time.Time, bool) {
+	out, err := exec.Command("ps", "-o", "etime=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return time.Time{}, false
+	}
+	d, ok := parseEtime(strings.TrimSpace(string(out)))
+	return time.Now().Add(-d), ok
+}
+
+func parseEtime(s string) (time.Duration, bool) {
+	var days int
+	if d, rest, found := strings.Cut(s, "-"); found {
+		n, err := strconv.Atoi(d)
+		if err != nil {
+			return 0, false
+		}
+		days, s = n, rest
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	total := 0
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return 0, false
+		}
+		total = total*60 + n
+	}
+	return time.Duration(days)*24*time.Hour + time.Duration(total)*time.Second, true
 }
 
 // statusFromHab asks a running gff-hab for its peers and its Capcom state. Capcom is a state
