@@ -66,6 +66,26 @@ func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 	return st, fmt.Errorf("%w: the pane's agent state is %s; start or resume the harness", ErrNoAgent, st.State)
 }
 
+// CheckType says whether pane.type may write to the pane now (hab-logic-api.md 3.12): not while
+// its agent has an open permission request or is blocked, since a key could answer the dialog.
+// A pane with no agent state, or whose agent exited, takes the text: a shell has no dialog the
+// hab knows of. A working agent takes it too: its prompt queues it. It wraps ErrBusy.
+func (s *Store) CheckType(paneID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.st.Revision == 0 || p.st.State == api.AgentStatusExited {
+		return nil
+	}
+	if p.open != "" {
+		return fmt.Errorf("%w: %s waits for permission request %s; a typed key could answer it", ErrBusy, p.st.Harness, p.open)
+	}
+	if p.st.State == api.AgentStatusBlocked {
+		return fmt.Errorf("%w: %s is blocked and waits for an answer; a typed key could give it", ErrBusy, p.st.Harness)
+	}
+	return nil
+}
+
 // CheckAnswer returns the pane's state when request is its open permission request. Only a hook
 // or server opens a request, so OSC 7501 or the screen alone never enables an answer
 // (harness-adapters.md, rule 2), and neither can close one: a request stays answerable through

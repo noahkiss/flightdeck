@@ -57,6 +57,17 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentReadPanes })
     }
 
+    /// agent.drive_panes: off at Safe, project at Balanced, all at Bypass, one step tighter
+    /// than reading; kept on every hab (hab-logic-api.md 3.12, app.md 20.3).
+    func testAgentDrivePanesLevels() throws {
+        let d = try XCTUnwrap(R.def(R.agentDrivePanes))
+        XCTAssertEqual(d.levels?[.safe], .string("off"))
+        XCTAssertEqual(d.levels?[.balanced], .string("project"))
+        XCTAssertEqual(d.levels?[.bypass], .string("all"))
+        XCTAssertEqual(d.store, .everyHab)
+        XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentDrivePanes })
+    }
+
     /// capcom.event_actions: ask at Safe, allow at Balanced and Bypass, and a level pick writes it
     /// (capcom-service.md 9.6, app.md 20.3).
     @MainActor
@@ -174,6 +185,7 @@ final class SettingsTests: XCTestCase {
         offline.settings[R.startElsewhere]?.value = .bool(true)
         offline.settings[R.capcomEventActions]?.value = .string("ask")
         offline.settings[R.agentReadPanes]?.value = .string("project")
+        offline.settings[R.agentDrivePanes]?.value = .string("off")
         let st = LevelMatcher.match(app: app(.safe), habs: [safe, locked, offline])
         XCTAssertEqual(st.level, .safe)
         XCTAssertEqual(st.exceptions.map(\.habLabel), ["beta", "gamma"])
@@ -272,6 +284,7 @@ final class SettingsTests: XCTestCase {
         h.settings[R.startElsewhere] = setting(R.startElsewhere, .bool(true), rev: 2, source: .config)
         h.settings[R.capcomEventActions] = setting(R.capcomEventActions, .string("allow"), rev: 2, source: .client)
         h.settings[R.agentReadPanes] = setting(R.agentReadPanes, .string("all"), rev: 2, source: .client)
+        h.settings[R.agentDrivePanes] = setting(R.agentDrivePanes, .string("project"), rev: 2, source: .client)
         let q = QueuedSettingWrite(habID: "h1", settingID: R.logbookApproval, value: .string("off"), revision: 1, epoch: "e1", seen: .string("off"))
         XCTAssertTrue(SettingsWrites.connectPlan(hab: h, queued: [q], picked: .safe).send.isEmpty, "logbook is queued; the others stand")
         let p = SettingsWrites.connectPlan(hab: h, queued: [], picked: .safe)
@@ -365,20 +378,21 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(sent["h1"], [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true)),
                                      SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents")),
                                      SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask")),
-                                     SettingWrite(id: R.agentReadPanes, revision: 1, value: .string("project"))])
+                                     SettingWrite(id: R.agentReadPanes, revision: 1, value: .string("project")),
+                                     SettingWrite(id: R.agentDrivePanes, revision: 1, value: .string("off"))])
         XCTAssertNil(sent["h2"])
-        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2", "h2", "h2"])
+        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2", "h2", "h2", "h2"])
         XCTAssertFalse(yes)
         XCTAssertFalse(faceID)
-        // Rows count once each, however many habs take them: the four hab-side rows, "Yes"
+        // Rows count once each, however many habs take them: the five hab-side rows, "Yes"
         // counts as Allow, and on iOS the refused Face ID row (macOS does not show it).
         #if os(iOS)
-        XCTAssertEqual(c.notice, "Safe: 5 of 6 changed. Require Face ID for SSH keys did not change: authentication was refused. "
+        XCTAssertEqual(c.notice, "Safe: 6 of 7 changed. Require Face ID for SSH keys did not change: authentication was refused. "
                        + "beta gets the change when it connects.")
         #else
-        XCTAssertEqual(c.notice, "Safe: 5 settings changed. beta gets the change when it connects.")
+        XCTAssertEqual(c.notice, "Safe: 6 settings changed. beta gets the change when it connects.")
         #endif
-        XCTAssertEqual(SettingsQueue.load(d).items.count, 4, "the queue is saved")
+        XCTAssertEqual(SettingsQueue.load(d).items.count, 5, "the queue is saved")
         XCTAssertEqual(d.string(forKey: SettingsCenter.levelKey), "safe")
 
         // The offline hab connects in the same epoch: its queued write goes, and the queue empties.
@@ -387,7 +401,8 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(sent["h2"], [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true)),
                                      SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents")),
                                      SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask")),
-                                     SettingWrite(id: R.agentReadPanes, revision: 1, value: .string("project"))])
+                                     SettingWrite(id: R.agentReadPanes, revision: 1, value: .string("project")),
+                                     SettingWrite(id: R.agentDrivePanes, revision: 1, value: .string("off"))])
         XCTAssertTrue(c.queue.items.isEmpty)
     }
 

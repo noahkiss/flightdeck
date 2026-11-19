@@ -1,0 +1,34 @@
+{
+  "panes": [
+    {
+      "agent": "agent-10",
+      "agent_state": "exited",
+      "host": "host-9",
+      "own": true,
+      "pane": "pane-4",
+      "project": "project-7",
+      "project_name": "project_name-8",
+      "session": "session-5",
+      "session_id": "session_id-6",
+      "state": "exited",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "unreached": [
+    {
+      "label": "label-11",
+      "reason": "reason-12",
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

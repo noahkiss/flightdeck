@@ -1042,6 +1042,27 @@ func (c Client) PaneWait(ctx context.Context, params PaneWaitParams) (PaneWaitRe
 	return result, err
 }
 
+// PaneList calls pane.list. The panes the caller may read under agent.read_panes, on this hab and on online peers: ids, session and project names, host, state and agent, never a title (spec 3.12). Needs the pane-drive capability.
+func (c Client) PaneList(ctx context.Context, params PaneListParams) (PaneList, error) {
+	var result PaneList
+	err := c.Caller.Call(ctx, "pane.list", params, &result)
+	return result, err
+}
+
+// PaneType calls pane.type. Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.
+func (c Client) PaneType(ctx context.Context, params PaneTypeParams) (PaneTyped, error) {
+	var result PaneTyped
+	err := c.Caller.Call(ctx, "pane.type", params, &result)
+	return result, err
+}
+
+// PaneNew calls pane.new. Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.
+func (c Client) PaneNew(ctx context.Context, params PaneNewParams) (PaneStarted, error) {
+	var result PaneStarted
+	err := c.Caller.Call(ctx, "pane.new", params, &result)
+	return result, err
+}
+
 // DetectExplain calls detect.explain. Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
 func (c Client) DetectExplain(ctx context.Context, params DetectExplainParams) (DetectExplain, error) {
 	var result DetectExplain

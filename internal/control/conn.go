@@ -481,7 +481,7 @@ func (c *conn) handleLine(line []byte) {
 		c.handleExplain(m)
 		return
 	}
-	if m.Method == "pane.read" || m.Method == "pane.wait" {
+	if IsPaneMethod(m.Method) {
 		c.handlePanes(m)
 		return
 	}

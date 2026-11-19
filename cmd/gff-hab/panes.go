@@ -90,8 +90,9 @@ func (c paneCaller) key() string {
 type paneService struct {
 	lk    *link.Link
 	store *structure.Store
-	// rule returns agent.read_panes now.
-	rule func() string
+	// rule returns agent.read_panes now; drive returns agent.drive_panes (hab-logic-api.md 3.12).
+	rule  func() string
+	drive func() string
 	// links lists the peer links this hab dialed; channelPeers over the peer manager.
 	links func() []channels.Link
 	// self and host are this hab's device id and host id: a label/name that names this hab
@@ -99,6 +100,8 @@ type paneService struct {
 	self, host string
 	logf       func(string, ...any)
 	slots      waitSlots
+	// The pane-drive part (panedrive.go). Nil fields answer unavailable.
+	drv paneDrive
 }
 
 // paneTarget is a resolved local target: the pane, and its session when it is filed.
@@ -111,10 +114,15 @@ type paneTarget struct {
 // ruleValue reads agent.read_panes: a word the settings service checked, else all (its
 // default).
 func ruleValue(s *settings.Service) func() string {
+	return wordSetting(s, settings.AgentReadPanes, readPanesAll)
+}
+
+// wordSetting reads a word setting: a word the settings service checked, else def.
+func wordSetting(s *settings.Service, id, def string) func() string {
 	return func() string {
 		var w string
-		if err := json.Unmarshal(s.Value(settings.AgentReadPanes), &w); err != nil || w == "" {
-			return readPanesAll
+		if err := json.Unmarshal(s.Value(id), &w); err != nil || w == "" {
+			return def
 		}
 		return w
 	}
@@ -156,67 +164,84 @@ func samePane(a, b string) bool {
 	return ok1 && ok2 && ua == ub
 }
 
-// deny logs a refusal with ids only (diagnostics.md 10.1) and answers denied with a hint that
-// names the setting, never the target. target is "" when the call names no pane here.
+// deny logs a refusal of a read with ids only (diagnostics.md 10.1) and answers denied with a
+// hint that names the setting, never the target. target is "" when the call names no pane here.
 func (s *paneService) deny(method string, c paneCaller, rule, target string) error {
+	return s.denyBy(gateRead, method, c, rule, target)
+}
+
+// denyBy is deny for either setting (hab-logic-api.md 3.11, 3.12).
+func (s *paneService) denyBy(g paneGate, method string, c paneCaller, rule, target string) error {
 	from := c.pane
-	if c.door == doorPeer {
+	switch c.door {
+	case doorPeer:
 		from = "peer link"
+	case doorOwner:
+		from = "owner"
 	}
 	if target == "" {
 		target = "none"
 	}
-	s.logf("panes: %s denied: agent.read_panes %s, caller %s, target pane %s", method, rule, from, target)
-	why := "its own pane only"
-	switch {
-	case c.isCapcom():
+	s.logf("panes: %s denied: %s %s, caller %s, target pane %s", method, g.setting(), rule, from, target)
+	if c.isCapcom() {
+		if g == gateDrive {
+			return control.Errorf(api.ErrorKindDenied, "the Capcom service lists, types into and starts no pane for now: pane text could carry instructions into its event turns")
+		}
 		return control.Errorf(api.ErrorKindDenied, "the Capcom service reads no pane for now: pane text could carry instructions into its event turns")
-	case c.door == doorPeer:
-		why = "no pane for an agent on another hab"
-	case rule == readPanesProject:
-		why = "its own pane and its own project's panes only"
 	}
-	return control.Errorf(api.ErrorKindDenied, "agent.read_panes is %s on this hab: an agent may read %s. The owner changes it in Flightdeck's settings", rule, why)
+	return control.Errorf(api.ErrorKindDenied, "%s is %s on this hab: an agent may %s. The owner changes it in Flightdeck's settings", g.setting(), rule, g.allowed(rule, c))
 }
 
 // prepare resolves the target of a call and applies the rule. A limited caller learns nothing
 // about a target it may not read: an unknown or exited target answers denied too, and so does
 // a label/name on a peer, since only all lets an agent read past its own hab.
 func (s *paneService) prepare(method string, c paneCaller, pane, session string) (paneTarget, *channels.Link, string, error) {
-	rule := s.rule()
+	return s.prepareBy(gateRead, method, c, pane, session)
+}
+
+// prepareBy is prepare under either setting: agent.read_panes for reads and lists,
+// agent.drive_panes for typing (hab-logic-api.md 3.12).
+func (s *paneService) prepareBy(g paneGate, method string, c paneCaller, pane, session string) (paneTarget, *channels.Link, string, error) {
+	rule := s.ruleOf(g)
 	if c.isCapcom() {
-		return paneTarget{}, nil, "", s.deny(method, c, rule, "")
+		return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, "")
 	}
 	lim := limited(rule, c)
-	t, peer, bare, err := s.resolve(c, pane, session)
+	t, peer, bare, err := s.resolve(c, pane, session, g.capability())
 	if err != nil {
 		var ce *control.Error
 		if lim && errors.As(err, &ce) && ce.Data.Kind != api.ErrorKindInvalid {
-			return paneTarget{}, nil, "", s.deny(method, c, rule, "")
+			return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, "")
 		}
 		return paneTarget{}, nil, "", err
 	}
 	if peer != nil {
 		if lim {
-			return paneTarget{}, nil, "", s.deny(method, c, rule, "")
+			return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, "")
 		}
 		return t, peer, bare, nil
 	}
-	project := ""
-	if c.door == doorRoute {
-		if ss, ok := s.store.SessionByPane(c.pane); ok {
-			project = ss.Project
-		}
-	}
-	if !mayRead(rule, c, project, t) {
-		return paneTarget{}, nil, "", s.deny(method, c, rule, t.pane)
+	if !g.may(rule, c, s.callerProject(c), t) {
+		return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, t.pane)
 	}
 	return t, nil, "", nil
 }
 
+// callerProject is the project of the route caller's own session; "" for none, and for any
+// other door.
+func (s *paneService) callerProject(c paneCaller) string {
+	if c.door != doorRoute {
+		return ""
+	}
+	if ss, ok := s.store.SessionByPane(c.pane); ok {
+		return ss.Project
+	}
+	return ""
+}
+
 // resolve finds the target of a call. A label/name for a peer returns the link to forward on,
 // with the bare name.
-func (s *paneService) resolve(c paneCaller, pane, session string) (paneTarget, *channels.Link, string, error) {
+func (s *paneService) resolve(c paneCaller, pane, session, capability string) (paneTarget, *channels.Link, string, error) {
 	if (pane == "") == (session == "") {
 		return paneTarget{}, nil, "", control.Errorf(api.ErrorKindInvalid, "give pane or session, not both")
 	}
@@ -254,13 +279,13 @@ func (s *paneService) resolve(c paneCaller, pane, session string) (paneTarget, *
 		case here:
 			name = bare
 		case c.door == doorPeer:
-			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindInvalid, "a call over a peer link reads only this hab's own panes: a forward never forwards")
+			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindInvalid, "a call over a peer link reaches only this hab's own panes: a forward never forwards")
 		case peer == nil:
 			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindNotFound, "no peer labelled %q in the peer list", label)
 		case !peer.Online || peer.Caller == nil:
-			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindUnavailable, "peer %s is not online from this hab, so its panes cannot be read; try again once it is online", label)
-		case !slices.Contains(peer.Caps, paneReadCapability):
-			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindUnavailable, "peer %s runs without pane-read, so its panes cannot be read; update its gff-hab", label)
+			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindUnavailable, "peer %s is not online from this hab, so its panes cannot be reached; try again once it is online", label)
+		case !slices.Contains(peer.Caps, capability):
+			return paneTarget{}, nil, "", control.Errorf(api.ErrorKindUnavailable, "peer %s runs without %s, so this call cannot reach its panes; update its gff-hab", label, capability)
 		default:
 			return paneTarget{}, peer, bare, nil
 		}
@@ -371,9 +396,14 @@ type waitSlots struct {
 // take holds a slot for key ("" counts only toward the hab's bound), or answers false when a
 // bound is reached. release gives it back.
 func (w *waitSlots) take(key string) (release func(), ok bool) {
+	return w.takeN(key, paneWaitsPerCaller, paneWaitsAll)
+}
+
+// takeN is take with its own bounds: per for each caller key, all on the hab.
+func (w *waitSlots) takeN(key string, per, all int) (release func(), ok bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.all >= paneWaitsAll || (key != "" && w.by[key] >= paneWaitsPerCaller) {
+	if w.all >= all || (key != "" && w.by[key] >= per) {
 		return nil, false
 	}
 	if w.by == nil {
@@ -732,6 +762,18 @@ func (c controlPanes) Wait(ctx context.Context, from control.PaneCaller, p api.P
 	return c.s.Wait(ctx, controlCaller(from), p)
 }
 
+func (c controlPanes) List(ctx context.Context, from control.PaneCaller, p api.PaneListParams) (api.PaneList, error) {
+	return c.s.List(ctx, controlCaller(from), p)
+}
+
+func (c controlPanes) Type(ctx context.Context, from control.PaneCaller, p api.PaneTypeParams) (api.PaneTyped, error) {
+	return c.s.Type(ctx, controlCaller(from), p)
+}
+
+func (c controlPanes) New(ctx context.Context, from control.PaneCaller, p api.PaneNewParams) (api.PaneStarted, error) {
+	return c.s.New(ctx, controlCaller(from), p)
+}
+
 func controlCaller(from control.PaneCaller) paneCaller {
 	if from.Peer {
 		return paneCaller{door: doorPeer, conn: from.Conn}
@@ -739,24 +781,35 @@ func controlCaller(from control.PaneCaller) paneCaller {
 	return paneCaller{door: doorOwner}
 }
 
-// paneHook serves pane.read and pane.wait on the pane route: the token's pane is the caller.
+// paneHook serves the pane methods on the pane route: the token's pane is the caller.
 func paneHook(s *paneService) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		c := paneCaller{door: doorRoute, pane: pane}
-		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
-		if method == "pane.read" {
-			var p api.PaneReadParams
-			if err := json.Unmarshal(params, &p); err != nil {
-				return nil, nil, bad(err)
-			}
-			r, err := s.Read(ctx, c, p)
-			return r, nil, err
+		var r any
+		var err error
+		switch method {
+		case "pane.read":
+			r, err = routeCall(params, method, func(p api.PaneReadParams) (any, error) { return s.Read(ctx, c, p) })
+		case "pane.wait":
+			r, err = routeCall(params, method, func(p api.PaneWaitParams) (any, error) { return s.Wait(ctx, c, p) })
+		case "pane.list":
+			r, err = routeCall(params, method, func(p api.PaneListParams) (any, error) { return s.List(ctx, c, p) })
+		case "pane.type":
+			r, err = routeCall(params, method, func(p api.PaneTypeParams) (any, error) { return s.Type(ctx, c, p) })
+		case "pane.new":
+			r, err = routeCall(params, method, func(p api.PaneNewParams) (any, error) { return s.New(ctx, c, p) })
+		default:
+			err = control.Errorf(api.ErrorKindInvalid, "%q is not a pane method", method)
 		}
-		var p api.PaneWaitParams
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, nil, bad(err)
-		}
-		r, err := s.Wait(ctx, c, p)
 		return r, nil, err
 	}
+}
+
+// routeCall decodes a route call's params and runs it.
+func routeCall[P any](params json.RawMessage, method string, run func(P) (any, error)) (any, error) {
+	var p P
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err)
+	}
+	return run(p)
 }

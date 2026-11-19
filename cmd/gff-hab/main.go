@@ -973,7 +973,8 @@ func serve(args []string) error {
 		explain = &detectService{lk: linkPanes{lk}, store: store, agents: agents,
 			manifests: mcache.Set, group: detect.GroupProcesses}
 		caps = append(caps, "detect-explain")
-		caps = append(caps, paneReadCapability) // pane.read and pane.wait (hab-logic-api.md 3.11)
+		caps = append(caps, paneReadCapability)  // pane.read and pane.wait (hab-logic-api.md 3.11)
+		caps = append(caps, paneDriveCapability) // pane.list, pane.type and pane.new (3.12)
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.
 		activity := newActivityEvents(lk, func(e structure.Event) {
@@ -1378,12 +1379,25 @@ func serve(args []string) error {
 	for old := range swapsToFinish {
 		heldAtStart = append(heldAtStart, old)
 	}
-	// Reading panes (hab-logic-api.md 3.11): with the holder link only.
+	// Reading and driving panes (hab-logic-api.md 3.11, 3.12): with the holder link only.
 	var paneSvc *paneService
 	var panesCtl control.Panes
+	typedAt := &inputTimes{} // client input times: pane.type's "a person comes first"
 	if lk != nil {
 		paneSvc = &paneService{lk: lk, store: store, rule: ruleValue(setSvc), links: channelPeers{pm}.Links,
-			self: key.Fingerprint(), host: *hostID, logf: logger.Printf}
+			drive: wordSetting(setSvc, settings.AgentDrivePanes, readPanesProject),
+			self:  key.Fingerprint(), host: *hostID, logf: logger.Printf}
+		paneSvc.drv = paneDrive{agent: agents.Get, typed: typedAt.within,
+			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				s := srv.Load()
+				if s == nil {
+					return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "gff-hab is starting; try again")
+				}
+				return s.CreateSession(ctx, p)
+			}}
+		if agentSvc != nil {
+			paneSvc.drv.typer = agentSvc
+		}
 		panesCtl = controlPanes{paneSvc}
 	}
 	chSvc, err := channels.New(channels.Config{
@@ -1860,6 +1874,9 @@ func serve(args []string) error {
 		input = roundInput{Input: input, rounds: roundsSvc}
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
 		caps = append(caps, "rounds", capRoundLock, capRoundActions)
+	}
+	if input != nil {
+		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
 	caps = append(caps, frictionCapability, debugCapability)
 	s := control.New(control.Config{
