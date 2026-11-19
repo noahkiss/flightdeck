@@ -286,7 +286,7 @@ var actionTools = []kitTool{
 
 // allTools is every tool, read tools first.
 func allTools() []kitTool {
-	return append(append(append(slices.Clip(readTools), actionTools...), channelTools...), roundTools...)
+	return append(append(append(append(slices.Clip(readTools), actionTools...), channelTools...), roundTools...), paneTools...)
 }
 
 func findIn(tools []kitTool, name string) (kitTool, bool) {

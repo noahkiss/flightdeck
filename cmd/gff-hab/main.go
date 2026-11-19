@@ -21,6 +21,9 @@
 //	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
 //	gff-hab wait     [-socket path | -via command] -pane <pane|session|label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]
 //	gff-hab screen   [-socket path | -via command] [-scrollback n] [-json] <pane|session|label/name>
+//	gff-hab panes    [-socket path | -via command] [-host label] [-json]
+//	gff-hab type     [-socket path | -via command] [-enter] [-json] <pane|session|label/name> <text... | ->
+//	gff-hab new      [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [-- argv...]
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab capcom assign [-socket path | -via command] <peer label|self>
 //	gff-hab capcom open   [-socket path | -via command] [-new]
@@ -175,6 +178,9 @@ const usage = `usage:
   gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for state,...] [-timeout d] [-json]
   gff-hab wait     [-socket path | -via command] -pane <pane|session|label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]
   gff-hab screen   [-socket path | -via command] [-scrollback n] [-json] <pane|session|label/name>
+  gff-hab panes    [-socket path | -via command] [-host label] [-json]
+  gff-hab type     [-socket path | -via command] [-enter] [-json] <pane|session|label/name> <text... | ->
+  gff-hab new      [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [-- argv...]
   gff-hab worktree list   [-socket path | -via command] [-project id | -dir path]
   gff-hab worktree create [-socket path | -via command] [-project id | -dir path] [-branch b] [-base ref] [-path dir] [-setup auto|run|skip]
   gff-hab worktree setup  [-socket path | -via command] [-project id | -dir path] <worktree>
@@ -288,6 +294,12 @@ func main() {
 		err = waitCmd(os.Args[2:], os.Stdout)
 	case "screen":
 		err = screenCmd(os.Args[2:], os.Stdout)
+	case "panes":
+		err = panesCmd(os.Args[2:], os.Stdout)
+	case "type":
+		err = typeCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "new":
+		err = newCmd(os.Args[2:], os.Stdout)
 	case "worktree":
 		err = worktreeCmd(os.Args[2:])
 	case "capcom":
