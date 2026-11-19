@@ -417,7 +417,8 @@ final class SettingsTests: XCTestCase {
         let h = balancedHab()
         c2.update(habID: h.habID, label: h.label, state: state(h))
         await c2.connectionOnline(habID: h.habID)
-        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan], "Bypass turns the plan card off too")
+        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan, R.agentDrivePanes],
+                       "Bypass turns the plan card off too, and lets agents drive every pane")
     }
 
     /// A refused queued write on connect is dropped and named in the notice.
