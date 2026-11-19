@@ -58,6 +58,10 @@ var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.l
 // and Agent kit). The pane's token names the agent: it can act only on its own pane.
 var AgentMethods = []string{"agent.compact", "agent.name"}
 
+// PaneMethods read other panes (hab-logic-api.md 3.11): the pane's token names the caller,
+// and agent.read_panes decides which panes it may read.
+var PaneMethods = []string{"pane.read", "pane.wait"}
+
 // PersonalMethods are Capcom's personal tools (capcom-service.md 8, E12). The route takes them
 // from the Capcom engine's token only; a pane's call is refused.
 var PersonalMethods = []string{"personal.location", "personal.calendar", "personal.weather", "personal.places", "personal.place",
@@ -145,6 +149,14 @@ func (s *Server) SetAgent(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetPanes sets the handler of the pane methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetPanes(h ChannelHandler) {
+	s.mu.Lock()
+	s.panes = h
+	s.mu.Unlock()
+}
+
 // SetPersonal sets the handler of the personal tools on the route. With none, each answers
 // unavailable. The handler gets the route id and refuses any but the Capcom engine's.
 func (s *Server) SetPersonal(h ChannelHandler) {
@@ -207,6 +219,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		return
 	}
 	known, read, conf, round, lb, ag, grp, pers := false, false, false, false, false, false, false, false
+	panes := slices.Contains(PaneMethods, call.Method)
 	for _, m := range PersonalMethods {
 		pers = pers || m == call.Method
 	}
@@ -266,8 +279,8 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "only a person decides a proposal (logbook.md 9.2): logbook.decide is not on a pane's route. The user approves or rejects it with gff lb approve or reject, run outside a pane, or in the app")
 		return
 	}
-	if !known && !conf && !round && !lb && !ag && !grp && !pers {
-		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods, GroupMethods)
+	if !known && !conf && !round && !lb && !ag && !grp && !pers && !panes {
+		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods, GroupMethods, PaneMethods)
 		return
 	}
 	if len(call.Params) == 0 {
@@ -343,6 +356,8 @@ func (s *Server) handler(method string) (ChannelHandler, error) {
 		h = s.groups
 	case in(PersonalMethods):
 		h = s.personal
+	case in(PaneMethods):
+		h = s.panes
 	default:
 		s.mu.Unlock()
 		return nil, control.Errorf(api.ErrorKindInvalid, "%q is not a route method", method)
@@ -351,6 +366,8 @@ func (s *Server) handler(method string) (ChannelHandler, error) {
 	switch {
 	case h == nil && in(PersonalMethods):
 		return nil, control.Errorf(api.ErrorKindUnavailable, "%s is a Capcom personal tool, served only on the Capcom service's route (capcom-service.md 8)", method)
+	case h == nil && in(PaneMethods):
+		return nil, control.Errorf(api.ErrorKindUnavailable, "%s needs gff-hab serve with its holder link", method)
 	case h == nil && in(LogbookMethods):
 		return nil, control.Errorf(api.ErrorKindUnavailable, "%s needs Logbook, which this hab is running without", method)
 	case h == nil:

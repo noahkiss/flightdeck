@@ -82,6 +82,30 @@ func TestReadText(t *testing.T) {
 	}
 }
 
+// TestReadTextWrappedScrollback keeps a wrapped line as two rows in the scrollback too, as the
+// screen shows it.
+func TestReadTextWrappedScrollback(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "tw", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: time.Hour})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(82)
+	spawn(t, l, u, `x=''; i=0; while [ $i -lt 100 ]; do x="${x}y"; i=$((i+1)); done; printf '%s\n' "$x"; i=0; while [ $i -lt 30 ]; do printf 'row %04d\n' $i; i=$((i+1)); done; exec sleep 1000`)
+	var tx Text
+	waitFor(t, "the last row", func() bool {
+		var err error
+		tx, err = l.ReadText(u, 100)
+		return err == nil && slices.Contains(tx.Screen, "row 0029")
+	})
+	y := strings.Repeat("y", 100)
+	if len(tx.Scrollback) < 3 || tx.Scrollback[0] != y[:80] || tx.Scrollback[1] != y[80:] || tx.Scrollback[2] != "row 0000" {
+		t.Fatalf("scrollback %q, want the wrapped line as two rows, then row 0000", tx.Scrollback)
+	}
+	if len(tx.Scrollback) != tx.ScrollbackTotal {
+		t.Errorf("%d scrollback rows, total %d", len(tx.Scrollback), tx.ScrollbackTotal)
+	}
+}
+
 // TestReadTextAlternate reads what a full-screen program shows, and says it is the alternate
 // screen.
 func TestReadTextAlternate(t *testing.T) {

@@ -481,6 +481,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleExplain(m)
 		return
 	}
+	if m.Method == "pane.read" || m.Method == "pane.wait" {
+		c.handlePanes(m)
+		return
+	}
 	if m.Method == "flightrules.list" || m.Method == "flightrules.text" {
 		c.handleFlightRules(m)
 		return
