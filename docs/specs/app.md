@@ -415,9 +415,12 @@ tab bar minimising on scroll, settings split by area).
 - **Message kinds.** User text, agent text (Markdown), tool call, and session event (compaction,
   mode change, usage limit, harness restart). Unknown kinds render as a plain "unsupported message"
   line, never as an error.
-- **Tool calls are cards.** Header: tool name, a short target (file, command), status (running,
-  done, error, denied). Body: input and output, collapsed by default. Reads and searches fold to one
-  line. Edits show a diff. Shell commands show the exact command.
+- **Tool calls are cards.** Header: one sentence, "Edited `src/api/stations.ts` +3 -1", with
+  the status when it is not done (4.11). Body: input as labelled fields and output, collapsed by
+  default. Reads and searches fold to one line. Edits show a diff. Shell commands show the exact
+  command.
+- **The owner chooses what shows** ("Show in chat", 4.11): kinds of steps hide, and hidden steps
+  fold into one line.
 - **Subagents** show as one card with their own nested messages, folded by default.
 - **Plans** render as a checklist (4.5), not as a tool card.
 - **Capcom's hand-offs and proposals** render as a hand-off card and a proposal line (4.8).
@@ -430,8 +433,8 @@ tab bar minimising on scroll, settings split by area).
 ### 4.2 The composer
 
 - The full system keyboard, with autocorrect. Multi-line text stays one message.
-- **Controls:** an attach button (4.4), a button that opens the terminal view, a microphone for
-  dictation (13.4), and Send.
+- **Controls:** an attach button (4.4), a microphone for dictation (13.4) that becomes Send once
+  the draft holds something, and Stop while the agent works (4.11).
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Send follows the hab's input rules** (`harness-adapters.md`, Input delivery):
 
@@ -439,11 +442,11 @@ tab bar minimising on scroll, settings split by area).
 |---|---|
 | `idle`, `done` | Message sent; its status clears when the agent starts working |
 | `working` | "Sends after this turn"; the owner can cancel it until then |
-| `blocked` | Send is off. The pending request is shown above the composer instead, as a card that answers in place |
+| `blocked` | The pending request shows above the composer as a card that answers in place. Send answers a question with options; for a permission the message waits until the agent is at its prompt; otherwise send is off (4.11) |
 | `none`, `exited` | Send is off. "Start" or "Resume" is offered |
 
 - **The request card answers in place.** A permission shows Deny and Allow on the card; a plan
-  shows Keep planning and Approve plan; questions show Answer, which opens the approval sheet. A
+  shows Keep planning and Approve plan; a question shows its options as buttons (4.11). A
   tap on the card opens the approval sheet (7.2) at that request, with every choice it offers. The
   card answers through the sheet's path, so the same rules hold: one answer, the expiry, answered
   elsewhere. A failed answer shows its reason on the card and leaves the buttons on. An expired
@@ -677,9 +680,10 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
 - **Markdown.** A small line parser splits blocks: paragraphs, headings, fenced code, list
   items (task boxes too), quotes and rules. Inline Markdown uses
   `AttributedString(markdown:)`. No third-party renderer.
-- **Tool cards** are folded. Reads and searches fold to one line. Shell tools show the exact
-  command, edits a removed and added diff, `Write` its content as added lines, Codex's
-  `apply_patch` the changed lines of each file's diff, other tools their input as JSON. Output shows 12 lines with "show all"; a truncated output says the hab
+- **Tool cards** are folded, under a one-sentence header (4.11). Reads and searches fold to one
+  line. Shell tools show the exact command, edits a diff with a file header and line numbers
+  where known, `Write` its content as added lines, Codex's `apply_patch` each file's diff, other
+  tools their input as labelled fields. Output shows 12 lines with "show all"; a truncated output says the hab
   sent the first part (no call fetches more yet).
 - **Banners.** Offline or reconnecting shows a banner and turns the composer off. An agent
   state with a version warning shows "chat view may be incomplete" with a Terminal button.
@@ -1064,6 +1068,170 @@ Limits, at the bar of herdr, Rex and Paseo:
 - A picker refusal is shared by every window: a picker that appears in one window clears a
   refusal still shown in another.
 
+### 4.11 Chat content
+
+The chat view's content: what pins to the top, how tool calls read, diffs and code, what the
+owner chooses to show, answers from the chat, and the empty and error states. Code:
+`Chat/ToolSentence.swift`, `Chat/ChatFilter.swift`, `Chat/PinnedSummary.swift`,
+`Views/ChatViews.swift`, `Views/ChatContentViews.swift`, `Views/ChatFilterViews.swift`. Tests:
+`ToolSentenceTests`, `ChatFilterTests`, `PinnedSummaryTests`, `ChatAnswerTests`.
+
+**Pinned cards never cover the chat.**
+
+- A session's open confirmation cards (7.9) and the groups it coordinates (`groups.md` 5.4) show
+  as one-line banners under the toolbar, one per card, each at least 44 pt tall. A confirmation
+  reads "Start a session? · from claude-2 · 56 min left"; a group reads "Group: Split the
+  parser · 1 working, 1 waiting". A closed confirmation leaves the banners.
+- A tap opens the full card in a sheet sized to its content (a detent at the card's height, up
+  to large). The chat stays where it was underneath. A sheet, not an inline disclosure: an open
+  disclosure pushes the chat down again, which is the fault this fixes, and the sheet brings
+  the system's dismiss gesture and its own scroll for a tall group.
+- The group line counts members and items: working (a member whose agent works), waiting (an
+  item queued behind another, or a member blocked), failed, landed. Zero counts are left out. A
+  paused group says "Paused"; an ended or dropped one says so.
+
+**Tool calls read as sentences.**
+
+- The header of a tool card is one sentence: a verb, then what it acted on. The verb is past
+  tense once the call is done and "-ing" while it runs. A failed or denied call keeps its
+  sentence and adds "failed" or "denied".
+
+| Tool | Sentence |
+|---|---|
+| Claude `Edit`, `MultiEdit`; opencode `edit`, `patch`; Codex `apply_patch` | Edited `src/api/stations.ts` +3 -1 (one file); Edited 2 files +5 -2 |
+| `Write`, `write` | Wrote `docs/api/stations.md` +3 |
+| `Read`, `read`, `NotebookRead` | Read `src/db/schema.ts` |
+| `view_image` | Viewed `icon.png` |
+| `Grep`, `grep` | Searched for "readings" · 6 matches in 3 files |
+| `Glob`, `glob` | Found files matching "src/api/*.ts" · 3 files |
+| `LS`, `list` | Listed `src/` |
+| `Bash`, `shell`, `exec`, `exec_command`, `local_shell` | Ran `npm test` (the command's first line) |
+| `WebFetch`, `webfetch` | Fetched example.com/docs |
+| `WebSearch`, `websearch`, `web_search` | Searched the web for "pytest fixtures" |
+| `TodoWrite`, `todowrite`, `update_plan` | Updated the plan |
+| `Task`, `Agent`, Codex `agent_*` | Asked a subagent: <its description> |
+| `mcp__<server>__<tool>` | Asked Linear for issue TIDE-41; Asked Docs to search "pytest fixtures" |
+| `image_gen` | Made an image `icon.png` |
+| Any other tool | Used <tool> `<target>` |
+
+- **Counts.** An edit counts the lines its diff adds and removes. A search counts its output: a
+  `path:line:` line is a match; bare paths count files only ("in 3 files"). An output the app
+  cannot read gives no count.
+- **MCP and connector calls name the server.** `mcp__claude_ai_Linear__get_issue` reads
+  "Asked Linear …": a `claude_ai_` prefix goes, underscores become spaces, and a lower-case
+  name gets a capital (`github` reads GitHub). The tool name gives the rest: `get_<noun>` with an
+  id reads "for <noun> <id>"; a `query` reads "to search "<query>""; any other tool reads "to
+  <tool words>" with its target.
+- **Expanded input shows labelled fields,** not JSON: one row per input key, the key in plain
+  words ("file_path" reads File, "old_string" reads Old text), the value as text. A nested value
+  shows as compact JSON on its row. Fields the card already shows (the command, the diff's text)
+  are left out. An input that is not an object shows as text.
+
+**Diffs and code.**
+
+- An edit's diff has a file header: the path and the added and removed counts. Each line has a
+  gutter with its line number where it is known: a unified diff's hunk header gives them (Codex
+  `apply_patch`, the hab's `content.diff`); a Claude `Edit` takes the start from its result's
+  `cat -n` snippet, found by the first new line; otherwise the gutter is blank.
+- Lines never soft-wrap. The diff scrolls sideways as one block, so lines stay aligned, with the
+  scroll indicator shown and a fade at the trailing edge while more lies to the right.
+- Colours: removed lines on a light red, added on a light green, each with a darker text of the
+  same hue; dark mode uses dark tints and light text. Every pair passes 4.5:1 (WCAG AA), and the
+  gutter passes 4.5:1 on each background.
+- A code block in a reply scrolls sideways the same way, with the indicator and the fade.
+- An image in the chat sits on a neutral panel. In dark mode the panel is dark grey with a thin
+  border, so a white chart does not glare against the black chat.
+
+**Show in chat.** The owner chooses which kinds of content the chat shows (owner requirement).
+
+- "Show in chat" in the chat's More menu (iPhone) or the session header (iPad, Mac) opens a
+  sheet with one switch per kind. Scope: "Every session" (the default) or "Only this one". The
+  footer says: "Replies, questions, approvals and errors always show. Hidden steps fold into one
+  line you can open."
+- Kinds, in the sheet's order: Plans and progress; MCP and connector calls; Messages from other
+  agents; Commands; Edits and diffs; File reads and searches; Thinking. Every kind shows by
+  default.
+- Hidden rows that follow each other fold into one line: "6 steps hidden: 3 reads, 2 edits, 1
+  command" (largest count first, ties in the sheet's order). A tap opens those rows in place;
+  a second tap folds them. A single hidden row folds too, so the chat never hides work silently.
+- Always shown: the owner's own messages, the agent's replies, events (permission lines,
+  interrupts, compactions, notices, errors), Capcom's hand-off cards and proposal lines, and
+  unsupported rows. A tool call that failed or was denied shows whatever its kind, since it is an
+  error.
+- **Storage.** On the device (`UserDefaults`, key `flightdeck.chat.show`): the global set of
+  hidden kinds, and per-session overrides keyed by hab and session id. "Only this one" writes an
+  override; switching back to "Every session" removes it. When a hab that is online no longer
+  lists a session, its override goes; an offline hab's overrides stay.
+
+How each transcript item maps to a kind:
+
+| Item | Claude Code | Codex | opencode | Kind |
+|---|---|---|---|---|
+| Plan message, todo and plan tools | `TodoWrite`, `TodoRead`, `ExitPlanMode`, `Task*` progress tools | `update_plan` | `todowrite`, `todoread` | Plans and progress |
+| MCP calls | `mcp__*`, `ListMcpResourcesTool`, `ReadMcpResourceTool` | `mcp__<server>__<tool>` | (no prefix the reader keeps: falls back) | MCP and connector calls |
+| Messages with a sender (channels), subagents | user or agent text with `sender`; `Task`, `Agent` | `agent_*` | `task` | Messages from other agents |
+| Shell commands | `Bash`, `BashOutput`, `KillShell` | `exec`, `exec_command`, `local_shell` | `shell`, `bash` | Commands |
+| Edits | `Edit`, `MultiEdit`, `Write`, `NotebookEdit` | `apply_patch`, `image_gen` | `edit`, `write`, `patch`, `multiedit` | Edits and diffs |
+| Reads and searches | `Read`, `Grep`, `Glob`, `LS`, `NotebookRead`, `WebFetch`, `WebSearch` | `web_search`, `view_image` | `read`, `grep`, `glob`, `list`, `webfetch`, `websearch`, `codesearch` | File reads and searches |
+| Thinking | dropped by the reader | dropped (`Reasoning`) | dropped (`reasoning`) | Thinking: no reader sends it today; the switch applies when one does |
+| Any other tool | | | | Commands (the fallback kind) |
+
+**Answer from chat.** The request area above the composer answers in place (4.2 keeps its rules:
+one answer, the expiry, answered elsewhere).
+
+- **A permission** shows its title, the exact command (or file list) in a monospaced box, "Runs
+  in <cwd> on <hab>", and Deny, Always allow, Allow at equal width, Allow on the right. Always
+  allow shows only when the request offers it; no hab answer path offers it yet (the API's
+  choices are allow, deny and answer), so today the row holds Deny and Allow. A plan keeps
+  Keep planning and Approve plan.
+- **A question with options** (Claude's `AskUserQuestion`, a request with an id) shows each
+  option as a full-width button: its label and its description. One question with single choice
+  answers on the tap. Several questions or multiple choice take taps, then "Send answer". Free
+  text goes through the composer: its placeholder reads "Message, or answer above", and Send
+  answers the question with the text.
+- **The composer stays on while a request is open** where the harness can take input then:
+
+| Request | Claude Code | Codex | opencode | The composer |
+|---|---|---|---|---|
+| Question with options and an id | `AskUserQuestion` through the permission hook | none sent | none sent | On: Send answers the question (`approval.answer`, choice `answer`) |
+| Permission or plan | the dialog holds the TUI | the dialog holds the TUI | the server takes a reply only | On: the message waits in the app ("Sends after this turn") and goes when the agent is at its prompt again |
+| Question with no id (`elicitation_dialog`), sign-in, folder trust | the dialog holds the TUI | none sent | none sent | Off: answer in the terminal |
+
+- The hab answers choice `answer` with `unavailable` today ("answering a question is not built
+  yet"). The card then says "Flightdeck can't answer this question yet. Answer it in the
+  terminal." with Open terminal. Where unsure, the smaller behaviour holds: nothing types into
+  a pane that shows a dialog.
+- **After an answer** a short line replaces the request for 5 seconds: "Allowed · npm run
+  migrate", "Denied · npm run migrate", "Answered · Harbor at night". A new request replaces it
+  at once.
+
+**States and copy.**
+
+| State | Title | Line | Actions |
+|---|---|---|---|
+| No reader for this harness, or the hab cannot serve the chat | No chat for this session | "<harness> on <hab> keeps no conversation Flightdeck can show. The terminal shows the session as it runs." | Open terminal |
+| The transcript does not exist yet | Waiting for the first message | "The conversation shows here once the agent writes it." | Open terminal |
+| The chat did not load | The chat didn't load | "Flightdeck couldn't read this conversation from <hab>." | Try again, Open terminal |
+| A send the hab refused | under the message | Plain words per error kind: "Not sent: the agent is waiting for an answer" | Retry, Dismiss |
+
+No hab hint, error kind or method name shows in these states; the log keeps them.
+
+**Dynamic Type.** Everything above works at the largest accessibility size. Banners and fold
+lines wrap rather than truncate. Request buttons stack when they do not fit side by side. At
+accessibility sizes the composer puts its text field on its own row and its buttons on the row
+below. Every composer control is a 44 pt target with a VoiceOver label: "Attach a file",
+"Dictate", "Send", "Stop".
+
+**Composer controls.** Attach, the text field, then Dictate, which becomes Send once the draft
+holds text or a file; Stop shows while the agent works. The terminal button leaves the composer:
+the header's Chat and Terminal switch does the same, and the 44 pt targets need the room.
+
+**Demo mode** shows each element: the tide session (workbench) has a group banner, a diff with
+line numbers, an MCP call and a pending migration; the palette session (attic) asks a question
+with two options, which the demo hab accepts; the search session has a message from another
+agent. Debug builds take `-FlightdeckShowChatFilter YES` to open the Show in chat sheet and
+`-FlightdeckShowPinned YES` to open the first banner's sheet at launch.
+
 ---
 
 ## 5. Terminal view
@@ -1427,7 +1595,7 @@ Live Activity after an answer, so 7.5 keeps the behaviour from Moshi's docs.
 
 | Surface | Shows | Answers |
 |---|---|---|
-| Chat view | The request as a card above the composer: title, exact command, working directory (4.2) | Allow, Deny, plan choices on the card; a tap opens the approval sheet |
+| Chat view | The request as a card above the composer: title, exact command, working directory (4.2) | Allow, Deny, plan choices and question options on the card; free text from the composer (4.11); a tap opens the approval sheet |
 | Status board | The row in rank 1 with its title and command | Tap opens the approval sheet |
 | Approval sheet | Everything in 7.2 | Allow, Deny; "Open chat" for broader choices |
 | Push banner and lock screen | Project, model, context bar, title, the command (shortened to fit) | Allow, Deny; a text reply for questions |
