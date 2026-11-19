@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -425,6 +426,7 @@ func (c *conn) handleLine(line []byte) {
 		c.send(response(nil, nil, c.withSeq(protoErr(codeParse, "parse error: %v", err))))
 		return
 	}
+	m.start = time.Now()
 	if m.JSONRPC != "2.0" || m.Method == "" {
 		if len(m.ID) == 0 {
 			return
@@ -1083,6 +1085,7 @@ func (c *conn) reply(m message, seq uint64, result any, e *Error) {
 func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 	if e != nil {
 		e.Data.Seq = seq
+		c.logFailed(m, e)
 		return response(m.ID, nil, e)
 	}
 	var raw json.RawMessage
@@ -1091,20 +1094,57 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 	} else {
 		b, err := json.Marshal(api.NonNil(result))
 		if err != nil {
-			return response(m.ID, nil, &Error{Code: api.ErrorCode, Message: err.Error(),
-				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be encoded", Seq: seq}})
+			e := &Error{Code: api.ErrorCode, Message: err.Error(),
+				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be encoded", Seq: seq}}
+			c.logFailed(m, e)
+			return response(m.ID, nil, e)
 		}
 		raw = b
 	}
 	if m.Method != "rpc.discover" {
 		var err error
 		if raw, err = downResult(c.revision, m.Method, raw); err != nil {
-			return response(m.ID, nil, &Error{Code: api.ErrorCode, Message: err.Error(),
-				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be translated", Seq: seq}})
+			e := &Error{Code: api.ErrorCode, Message: err.Error(),
+				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be translated", Seq: seq}}
+			c.logFailed(m, e)
+			return response(m.ID, nil, e)
 		}
 	}
 	return response(m.ID, raw, nil)
 }
+
+// logFailed writes the failed-request line (diagnostics.md 4.6): the method, the error kind, the
+// client kind and the duration. It never writes the error's message, params or hint, which can
+// hold a user's text; a method name the API does not list is written as "unknown". The caller
+// holds c.mu.
+func (c *conn) logFailed(m message, e *Error) {
+	kind := string(e.Data.Kind)
+	if kind == "" {
+		kind = fmt.Sprintf("code %d", e.Code)
+	}
+	method := m.Method
+	if !knownMethods[method] {
+		method = "unknown"
+	}
+	client := string(c.kind)
+	if client == "" {
+		client = "none"
+	}
+	var d time.Duration
+	if !m.start.IsZero() {
+		d = time.Since(m.start).Round(time.Microsecond)
+	}
+	c.s.cfg.Logf("request failed: method %s, error %s, client %s, %v", method, kind, client, d)
+}
+
+// knownMethods are the method names the API lists, and the hello.
+var knownMethods = func() map[string]bool {
+	m := map[string]bool{"hab.hello": true, "rpc.discover": true}
+	for _, x := range api.Methods {
+		m[x.Name] = true
+	}
+	return m
+}()
 
 func decodeParams(m message, v any) *Error {
 	if len(m.Params) == 0 || string(m.Params) == "null" {

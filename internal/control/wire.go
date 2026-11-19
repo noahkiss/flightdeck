@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 )
@@ -24,6 +25,8 @@ type message struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *wireError      `json:"error,omitempty"`
+
+	start time.Time // when the server read the request, for the failed-request line
 }
 
 type wireError struct {
