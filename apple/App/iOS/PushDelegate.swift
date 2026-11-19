@@ -8,8 +8,8 @@ import UserNotifications
 final class PushDelegate: NSObject, UIApplicationDelegate {
     @MainActor private weak var push: PushRegistrar?
 
-    /// Asks for notification permission, then for a device token. Runs on
-    /// every start: iOS returns the stored answer and the current token.
+    /// Asks for a device token and reads the stored notification answer. Runs on every
+    /// start. The permission prompt waits for `askPermission` (app.md 3.9).
     @MainActor
     func start(_ push: PushRegistrar?) {
         guard let push else { return }
@@ -18,9 +18,22 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         // alerts off, so ask for it first rather than after the prompt.
         UIApplication.shared.registerForRemoteNotifications()
         Task { @MainActor in
-            let center = UNUserNotificationCenter.current()
+            switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+            case .authorized, .provisional, .ephemeral: push.setPermission(.granted)
+            case .denied: push.setPermission(.denied)
+            default: break
+            }
+        }
+    }
+
+    /// Asks for notification permission: once a hab is online, never on the first frame
+    /// (app.md 3.9). iOS shows the prompt once and then returns the stored answer.
+    @MainActor
+    func askPermission() {
+        guard let push else { return }
+        Task { @MainActor in
             do {
-                let ok = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                let ok = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
                 push.setPermission(ok ? .granted : .denied)
             } catch {
                 push.setPermission(.denied)

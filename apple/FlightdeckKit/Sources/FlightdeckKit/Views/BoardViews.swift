@@ -1,7 +1,8 @@
 import HabAPI
 import SwiftUI
 
-/// The app's root: the status board. On the Mac it also counts windows for
+/// The app's root: the tab shell on iPhone and iPad, the status board on the Mac. On the Mac
+/// it also counts windows for
 /// the lifecycle rule. On iPhone and iPad the `App` drives the rule with
 /// `Fleet.apply(_:)` from its own scene phase, which combines every window.
 public struct FlightdeckRoot: View {
@@ -29,7 +30,8 @@ public struct FlightdeckRoot: View {
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
         #else
-        BoardScreen(fleet: fleet)
+        // iPhone and iPad: the tab shell (app.md 3.8).
+        AppShell(fleet: fleet)
             .environment(\.habConnections, fleet.lookup)
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)

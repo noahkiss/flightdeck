@@ -337,9 +337,9 @@ On iPad and Mac, inside a session, a sidebar lists every session grouped by proj
 One bar per harness account in use: harness name, a bar for its tightest window, and the used
 percentage. Tap opens the usage sheet (14).
 
-- **iOS 26 and later:** the strip is the tab bar's bottom accessory (3.8), on every tab. It hides
+- **iOS 26.1 and later:** the strip is the tab bar's bottom accessory (3.8), on every tab. It hides
   while no account has a reading.
-- **iOS 17 to 25:** the strip sits under the Sessions list as a footer.
+- **Before iOS 26.1:** the strip sits under the Sessions list as a footer.
 - **Mac:** the footer under the board list.
 
 ### 3.8 The app shell (iPhone and iPad)
@@ -363,8 +363,8 @@ The root is a stock tab view with four tabs, in this order:
 - **Mac.** The window keeps the board and session split with the connections column. The Mac's own
   chrome (a Settings window, a sidebar) is a later stage.
 - **Deployment.** The app targets iOS 17. `Tab` items, the sidebar-adaptable style, the bottom
-  accessory and the minimise-on-scroll behaviour sit behind an iOS 26 availability check. Before
-  iOS 26 the app shows the same four tabs with `tabItem` labels and the usage strip as the
+  accessory and the minimise-on-scroll behaviour sit behind an iOS 26.1 availability check. Before
+  iOS 26.1 the app shows the same four tabs with `tabItem` labels and the usage strip as the
   Sessions list's footer.
 - **The Sessions tab.** A large title, "Sessions", that collapses on scroll. The toolbar holds a
   hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its

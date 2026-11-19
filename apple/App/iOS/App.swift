@@ -8,6 +8,8 @@ struct FlightdeckApp: App {
     @State private var fleet = AppFleet.make()
     /// At the App level this phase combines every window: active while any is.
     @Environment(\.scenePhase) private var phase
+    /// The push prompt was asked for in this run (app.md 3.9).
+    @State private var pushAsked = false
 
     var body: some Scene {
         WindowGroup {
@@ -29,6 +31,12 @@ struct FlightdeckApp: App {
                     }
                     // On-device Parakeet for voice mode; loaded only while voice mode or dictation runs.
                     fleet.voice.parakeet.install(FluidParakeetRuntime())
+                }
+                // Ask for push once a hab is online, not on the first frame (app.md 3.9).
+                .onChange(of: fleet.board.onlineCount, initial: true) { _, online in
+                    guard FirstRun.asksForPush(online: online, demo: fleet.isDemo, asked: pushAsked) else { return }
+                    pushAsked = true
+                    pushDelegate.askPermission()
                 }
         }
         .onChange(of: phase, initial: true) { _, p in

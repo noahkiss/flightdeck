@@ -164,14 +164,18 @@ struct LevelSection: View {
 struct SettingRow: View {
     let def: SettingDef
     let center: SettingsCenter
+    /// Off by default: the key shows only while "Show setting keys" is on (app.md 20.7).
+    @AppStorage(SettingKeys.showKeysDefault) private var showKeys = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             control
             caption
-            Text(def.id)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
+            if showKeys {
+                Text(def.id)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -211,7 +215,7 @@ struct SettingRow: View {
             let row = center.row(def.id)
             Group {
                 if row.unavailable {
-                    Text("No hab serves this setting")
+                    Text("No paired computer has this setting")
                 } else {
                     Text("On every hab")
                     if !row.lockedOn.isEmpty { Text("Set in the hab's config on \(row.lockedOn.joined(separator: ", "))") }
@@ -222,7 +226,7 @@ struct SettingRow: View {
             .foregroundStyle(.secondary)
         case .oneHab:
             if center.habs.allSatisfy({ !$0.hasSettings || $0.settings[def.id] == nil }) {
-                Text("No hab serves this setting").font(.caption).foregroundStyle(.secondary)
+                Text("No paired computer has this setting").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
