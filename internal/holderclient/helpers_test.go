@@ -66,7 +66,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 	binDir = dir
-	testtmp.Exit(m.Run(), dir)
+	testtmp.Run(m, dir)
 }
 
 // regDir returns a fresh registry directory with a short path (macOS caps socket paths at 104

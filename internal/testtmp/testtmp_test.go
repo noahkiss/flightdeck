@@ -6,8 +6,104 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// startIn runs a shell loop from a script in dir, in its own session as a holder runs, so its
+// command line names dir.
+func startIn(t *testing.T, dir string) *exec.Cmd {
+	t.Helper()
+	script := filepath.Join(dir, "loop.sh")
+	if err := os.WriteFile(script, []byte("while :; do sleep 0.05; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { cmd.Wait(); close(done) }()
+	t.Cleanup(func() { cmd.Process.Kill(); <-done })
+	return cmd
+}
+
+// waitGone waits for pid to end (the starter reaps it).
+func waitGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for alive(pid) {
+		if time.Now().After(deadline) {
+			t.Fatalf("process %d still runs", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// waitListed waits until ps lists a process under dir.
+func waitListed(t *testing.T, dir string) []Proc {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if ps := ProcsUnder([]string{dir}); len(ps) > 0 {
+			return ps
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ps never listed a process under %s", dir)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestGuardFindsAndStops: ProcsUnder finds a process by its directory and no other, leaked
+// reports it while it runs, and Stop ends it.
+func TestGuardFindsAndStops(t *testing.T) {
+	d := Dir(t, "ttg")
+	if b, err := os.ReadFile(filepath.Join(d, pidFile)); err != nil || string(b) != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("pid file %q, %v", b, err)
+	}
+	cmd := startIn(t, d)
+	ps := waitListed(t, d)
+	if len(ps) != 1 || ps[0].Pid != cmd.Process.Pid || !strings.Contains(ps[0].Args, d) {
+		t.Fatalf("ProcsUnder(%s) = %+v, want pid %d", d, ps, cmd.Process.Pid)
+	}
+	if other := ProcsUnder([]string{d + "x"}); len(other) != 0 {
+		t.Fatalf("a sibling directory matched: %+v", other)
+	}
+	if left := leaked(0); len(left) != 1 || left[0].Pid != cmd.Process.Pid {
+		t.Fatalf("leaked = %+v, want the loop", left)
+	}
+	Stop(ps, time.Second)
+	waitGone(t, cmd.Process.Pid)
+	if left := leaked(time.Second); len(left) != 0 {
+		t.Fatalf("leaked after Stop = %+v", left)
+	}
+}
+
+// TestSweepStopsProcesses: sweeping a dead owner's directory ends the process started from it
+// before it removes the directory.
+func TestSweepStopsProcesses(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	dead := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	d := filepath.Join(tmp, "tts1")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(d, pidFile), []byte(strconv.Itoa(dead.Process.Pid)), 0o600)
+	cmd := startIn(t, d)
+	waitListed(t, d)
+	Sweep("tts")
+	waitGone(t, cmd.Process.Pid)
+	if _, err := os.Stat(d); !os.IsNotExist(err) {
+		t.Fatalf("directory still there: %v", err)
+	}
+}
 
 // TestMainDir: a dead owner's directory goes, a live owner's and a foreign one stay, the new
 // directory names this process, and Remove leaves nothing.
