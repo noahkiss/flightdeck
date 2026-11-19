@@ -279,7 +279,10 @@ func TestMergeAndFollow(t *testing.T) {
 	var mu sync.Mutex
 	var followed []string
 	done := make(chan struct{})
-	fw := NewFollower(func() []Source { return srcs }, Filter{})
+	fw, err := MergeFollow(func() []Source { return srcs }, Filter{}, func(Entry) {})
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		fw.Run(ctx, 10*time.Millisecond, func(e Entry) {
 			mu.Lock()
@@ -337,4 +340,46 @@ func TestCapRefusesSymlink(t *testing.T) {
 	if st, _ := os.Stat(target); st.Size() != 100 {
 		t.Fatalf("the target is %d bytes", st.Size())
 	}
+}
+
+// TestFollowRotationInFlight: lines written just before a rotation, in the poll gap, print once
+// from the old file's tail, and the new file's lines after them; a line written while Merge ran
+// prints once, from Merge or from the Follower, never from both (spec 4.8).
+func TestFollowRotationInFlight(t *testing.T) {
+	dir := t.TempDir()
+	hab := filepath.Join(dir, "hab.log")
+	appendLine(t, hab, "gff-hab: 2026/11/19 10:00:00.000000 m1")
+	appendPartial(t, hab, "gff-hab: 2026/11/19 10:00:01.000000 m2") // no newline yet: a line being written
+	srcs := []Source{{Kind: "hab", Name: "hab", Path: hab}}
+	var got []string
+	out := func(e Entry) { got = append(got, e.Text) }
+	fw, err := MergeFollow(func() []Source { return srcs }, Filter{}, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fw.Close()
+	if strings.Join(got, "|") != "m1" {
+		t.Fatalf("Merge printed %q", got)
+	}
+	appendLine(t, hab, " done")
+	appendLine(t, hab, "gff-hab: 2026/11/19 10:00:02.000000 x1") // in flight at the rotation
+	os.Rename(hab, Old(hab, 1))
+	appendLine(t, Old(hab, 1), "gff-hab: 2026/11/19 10:00:03.000000 x2") // the writer has not reopened yet
+	appendLine(t, hab, "gff-hab: 2026/11/19 10:00:04.000000 y1")
+	fw.poll(out)
+	fw.poll(out)
+	want := "m1|m2 done|x1|x2|y1"
+	if strings.Join(got, "|") != want {
+		t.Fatalf("followed %q, want %q", strings.Join(got, "|"), want)
+	}
+}
+
+func appendPartial(t *testing.T, path, text string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprint(f, text)
+	f.Close()
 }

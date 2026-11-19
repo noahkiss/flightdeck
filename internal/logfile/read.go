@@ -127,6 +127,11 @@ type reader struct {
 	next  *Entry // the entry being gathered
 	last  time.Time
 	err   error
+	// follow: Merge hands the source's current file on to a Follower. The reader stops before
+	// a last line with no newline yet, and keeps the file open at off, the end of what it read.
+	follow bool
+	off    int64
+	tail   *os.File
 }
 
 func newReader(s Source) *reader { return &reader{src: s, files: s.Files()} }
@@ -145,17 +150,23 @@ func (r *reader) line() (string, bool) {
 				}
 				continue
 			}
-			r.f, r.br = f, bufio.NewReaderSize(f, 64<<10)
+			r.f, r.br, r.off = f, bufio.NewReaderSize(f, 64<<10), 0
 		}
 		s, err := r.br.ReadString('\n')
-		if s != "" {
+		current := len(r.files) == 0
+		if s != "" && (err == nil || !r.follow || !current) {
+			r.off += int64(len(s))
 			return strings.TrimRight(s, "\r\n"), true
 		}
 		if err != nil {
 			if err != io.EOF {
 				r.err = err
 			}
-			r.f.Close()
+			if r.follow && current && err == io.EOF {
+				r.tail = r.f // the Follower reads on from r.off, the partial line included
+			} else {
+				r.f.Close()
+			}
 			r.f, r.br = nil, nil
 		}
 	}
@@ -219,6 +230,11 @@ func (h *entryHeap) Pop() any {
 // Entries of one source keep their file order. It never loads a file whole. It returns the
 // first read error after it read what it could.
 func Merge(sources []Source, f Filter, out func(Entry)) error {
+	_, err := merge(sources, f, out, false)
+	return err
+}
+
+func merge(sources []Source, f Filter, out func(Entry), follow bool) ([]*reader, error) {
 	var h entryHeap
 	var readers []*reader
 	for i, s := range sources {
@@ -226,6 +242,7 @@ func Merge(sources []Source, f Filter, out func(Entry)) error {
 			continue
 		}
 		r := newReader(s)
+		r.follow = follow
 		readers = append(readers, r)
 		if e := r.entry(); e != nil {
 			h = append(h, heapItem{e, r, i})
@@ -246,42 +263,44 @@ func Merge(sources []Source, f Filter, out func(Entry)) error {
 	}
 	for _, r := range readers {
 		if r.err != nil {
-			return r.err
+			return readers, r.err
 		}
 	}
-	return nil
+	return readers, nil
 }
 
-// followed is what Follow knows of one file.
+// followed is what a Follower knows of one file: its open descriptor, which outlives a rename,
+// and the end of what was printed.
 type followed struct {
-	info os.FileInfo
+	file *os.File
 	off  int64
 	last time.Time
 }
 
-// Follower prints the lines added to sources' current files after it was made.
+// Follower prints the lines added to the sources' current files.
 type Follower struct {
 	sources func() []Source
 	f       Filter
 	seen    map[string]*followed
 }
 
-// NewFollower notes where each source's current file ends now. sources is called again at
-// each poll, so a new holder's file is picked up.
-func NewFollower(sources func() []Source, f Filter) *Follower {
+// MergeFollow is Merge, then a Follower that goes on exactly where Merge stopped in each
+// source's current file: a line written while Merge ran prints once. sources is called again
+// at each poll, so a new holder's file is picked up.
+func MergeFollow(sources func() []Source, f Filter, out func(Entry)) (*Follower, error) {
+	readers, err := merge(sources(), f, out, true)
 	fw := &Follower{sources: sources, f: f, seen: map[string]*followed{}}
-	for _, s := range sources() {
-		if st, err := os.Stat(s.Path); err == nil && f.kind(s.Kind) {
-			fw.seen[s.Path] = &followed{info: st, off: st.Size()}
+	for _, r := range readers {
+		if r.tail != nil {
+			fw.seen[r.src.Path] = &followed{file: r.tail, off: r.off, last: r.last}
 		}
 	}
-	return fw
+	return fw, err
 }
 
-// Run prints new lines every poll until ctx ends. A file that was renamed away, replaced or
-// truncated is read again from its start; a file that appeared is read from its start. Each
-// line is one entry; a line with no time stamp carries the time of the line before it.
+// Run prints new lines every poll until ctx ends, then closes its files.
 func (fw *Follower) Run(ctx context.Context, poll time.Duration, out func(Entry)) {
+	defer fw.Close()
 	for {
 		fw.poll(out)
 		select {
@@ -292,47 +311,75 @@ func (fw *Follower) Run(ctx context.Context, poll time.Duration, out func(Entry)
 	}
 }
 
+// Close closes the files the Follower holds.
+func (fw *Follower) Close() {
+	for p, fl := range fw.seen {
+		fl.file.Close()
+		delete(fw.seen, p)
+	}
+}
+
+// poll prints what each current file gained since the last poll. When the path names another
+// file (a rename rotation, or a file removed), the old file's tail is printed first, from its
+// open descriptor, then the new file from its start. A file truncated in place (copy-truncate)
+// is read again from its start. Each line is one entry; a line with no time stamp carries the
+// time of the line before it.
 func (fw *Follower) poll(out func(Entry)) {
 	for _, s := range fw.sources() {
 		if !fw.f.kind(s.Kind) {
 			continue
 		}
 		st, err := os.Stat(s.Path)
+		fl := fw.seen[s.Path]
+		if fl != nil {
+			fi, ferr := fl.file.Stat()
+			switch {
+			case ferr != nil || err != nil || !os.SameFile(fi, st):
+				if ferr == nil {
+					fl.off = readFrom(s, fl, fi.Size(), true, fw.f, out)
+				}
+				fl.file.Close()
+				delete(fw.seen, s.Path)
+				fl = nil
+			case fi.Size() < fl.off:
+				fl.off = 0
+			}
+		}
 		if err != nil {
-			delete(fw.seen, s.Path)
 			continue
 		}
-		fl := fw.seen[s.Path]
-		switch {
-		case fl == nil:
-			fl = &followed{info: st}
+		if fl == nil {
+			f, err := os.Open(s.Path)
+			if err != nil {
+				continue
+			}
+			fl = &followed{file: f}
 			fw.seen[s.Path] = fl
-		case !os.SameFile(fl.info, st) || st.Size() < fl.off:
-			fl.off = 0
 		}
-		fl.info = st
-		if st.Size() > fl.off {
-			fl.off = readFrom(s, fl, st.Size(), fw.f, out)
+		if fi, err := fl.file.Stat(); err == nil && fi.Size() > fl.off {
+			fl.off = readFrom(s, fl, fi.Size(), false, fw.f, out)
 		}
 	}
 }
 
-// readFrom prints the whole lines between fl.off and size and returns the offset after the
-// last one.
-func readFrom(s Source, fl *followed, size int64, f Filter, out func(Entry)) int64 {
-	file, err := os.Open(s.Path)
-	if err != nil {
+// readFrom prints the lines between fl.off and size and returns the offset after the last one
+// it printed. A last line with no newline waits for the next poll, unless all is set: a file
+// that was rotated away gets no more lines.
+func readFrom(s Source, fl *followed, size int64, all bool, f Filter, out func(Entry)) int64 {
+	if size <= fl.off {
 		return fl.off
 	}
-	defer file.Close()
 	b := make([]byte, size-fl.off)
-	n, _ := file.ReadAt(b, fl.off)
-	b = b[:n]
-	end := strings.LastIndexByte(string(b), '\n')
-	if end < 0 {
+	n, _ := fl.file.ReadAt(b, fl.off)
+	text := string(b[:n])
+	end := len(text)
+	if !all {
+		end = strings.LastIndexByte(text, '\n') + 1
+	}
+	if end == 0 {
 		return fl.off
 	}
-	for _, line := range strings.Split(string(b[:end]), "\n") {
+	for _, line := range strings.Split(strings.TrimSuffix(text[:end], "\n"), "\n") {
 		t, msg, ok := ParseLine(line, s.Loc)
 		if ok {
 			fl.last = t
@@ -344,5 +391,5 @@ func readFrom(s Source, fl *followed, size int64, f Filter, out func(Entry)) int
 			out(e)
 		}
 	}
-	return fl.off + int64(end) + 1
+	return fl.off + int64(end)
 }

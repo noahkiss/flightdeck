@@ -327,15 +327,13 @@ func logsCmd(args []string, out io.Writer) error {
 	}
 	f.Grep = *grep
 	print := func(e logfile.Entry) { fmt.Fprint(out, formatEntry(e)) }
-	var fw *logfile.Follower
-	if *follow {
-		fw = logfile.NewFollower(func() []logfile.Source { return logSources(dir) }, f)
+	if !*follow {
+		return logfile.Merge(logSources(dir), f, print)
 	}
-	if err := logfile.Merge(logSources(dir), f, print); err != nil {
+	fw, err := logfile.MergeFollow(func() []logfile.Source { return logSources(dir) }, f, print)
+	if err != nil {
+		fw.Close()
 		return err
-	}
-	if fw == nil {
-		return nil
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
