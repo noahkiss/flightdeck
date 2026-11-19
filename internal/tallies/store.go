@@ -227,6 +227,16 @@ func (s *Seen) note(day string, d *Day) {
 	}
 }
 
+// SetInConfig sets the reader of the settings the config locks, once the settings run.
+func (t *Tallies) SetInConfig(f func() []string) {
+	if t == nil {
+		return
+	}
+	t.flushMu.Lock()
+	t.inConfig = f
+	t.flushMu.Unlock()
+}
+
 // Start flushes every FlushEvery until Close.
 func (t *Tallies) Start() {
 	if t == nil {
@@ -416,9 +426,10 @@ func startOfDay(t time.Time) time.Time {
 
 // Window is the sum of the day files of the last days, today included.
 type Window struct {
-	From, To string // first and last day of the window
-	Files    int    // day files found in it
-	Sum      Day
+	From  string `json:"from"`  // first day of the window
+	To    string `json:"to"`    // last day: today
+	Files int    `json:"files"` // day files found in it
+	Sum   Day    `json:"sum"`
 }
 
 // ReadWindow sums the day files of the days days up to now.

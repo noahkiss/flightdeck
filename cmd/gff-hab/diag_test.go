@@ -164,7 +164,7 @@ func testDiag(t *testing.T) (*habDiag, func() string) {
 	var lines []string
 	logf := func(f string, a ...any) { mu.Lock(); lines = append(lines, fmt.Sprintf(f, a...)); mu.Unlock() }
 	w := logfile.New(logfile.Config{})
-	d := startDiag(state, "", control.NewEpoch(), w, logf)
+	d := startDiag(state, "", control.NewEpoch(), w, nil, logf)
 	t.Cleanup(d.cleanExit)
 	return d, func() string { mu.Lock(); defer mu.Unlock(); return strings.Join(lines, "\n") }
 }

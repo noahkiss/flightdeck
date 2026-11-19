@@ -27,6 +27,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/tallies"
 )
 
 // Rounds in gff-hab (rounds.md 3, 7, 8.4, 13): the round.* methods over internal/rounds, the
@@ -385,6 +386,7 @@ func (w *runWatch) stopLocked() {
 // roundsConfig is what newRounds needs.
 type roundsConfig struct {
 	state    string
+	tally    *tallies.Tallies // counts each run start (diagnostics.md 7.2); nil: none
 	settings roundsSettings
 	store    *structure.Store
 	// create runs session.create for the hab itself, with its idempotency key.
@@ -672,6 +674,17 @@ func (s *roundsService) Close() {
 // a new pane. It returns at the spawn, with the session id; the end comes back through the
 // pane's exit, or the agent's turn.
 func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
+	session, err := s.startRun(r, run)
+	if err == nil {
+		s.cfg.tally.Feature(tallies.FeatureRoundRun)
+		if r.Mode == rounds.ModeCapcom {
+			s.cfg.tally.Feature(tallies.FeatureCapcomJob)
+		}
+	}
+	return session, err
+}
+
+func (s *roundsService) startRun(r rounds.Round, run rounds.Run) (string, error) {
 	if r.Mode.Messages() {
 		return s.startMessage(r, run)
 	}

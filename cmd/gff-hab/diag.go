@@ -21,6 +21,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/logfile"
+	"github.com/noahkiss/flightdeck/internal/tallies"
 )
 
 // The files and caps of docs/specs/diagnostics.md 4.3, 6 and 11.
@@ -100,6 +101,7 @@ type habDiag struct {
 	w         *logfile.Writer
 	now       func() time.Time
 	hookEvery time.Duration
+	tally     *tallies.Tallies // nil: tallies are off
 
 	mu        sync.Mutex
 	marker    health.Marker
@@ -130,10 +132,10 @@ func (r *diagRef) holderLost(instance, build string, panes int) {
 
 // startDiag runs once gff-hab holds the state lock, so one gff-hab owns these files. It opens
 // hab.log, reads the previous run's marker (6.3), writes this run's, points crash output at
-// crash/hab-<epoch>.txt (6.2) and starts the sweep.
-func startDiag(state, holderDir, epoch string, w *logfile.Writer, logf func(string, ...any)) *habDiag {
+// crash/hab-<epoch>.txt (6.2) and starts the sweep. tl counts the previous run's end (7.1).
+func startDiag(state, holderDir, epoch string, w *logfile.Writer, tl *tallies.Tallies, logf func(string, ...any)) *habDiag {
 	d := &habDiag{state: state, holderDir: holderDir, logf: logf, w: w, now: time.Now, hookEvery: hookDownEvery,
-		stop: make(chan struct{})}
+		tally: tl, stop: make(chan struct{})}
 	if err := w.Open(filepath.Join(logsDir(state), habLogFile)); err != nil {
 		logf("log file: %v; lines go to stderr only", err)
 	}
@@ -184,6 +186,7 @@ func (d *habDiag) previous() {
 	if err := health.Append(filepath.Join(d.state, healthFile), r); err != nil {
 		d.logf("health record: %v", err)
 	}
+	d.tally.Health("hab", r.Kind)
 	d.logf("previous run ended %s: %s (epoch %s, build %s, version %s, last seen %s); this run: build %s, version %s",
 		r.Kind, r.Cause, r.Run, r.Build, r.Version, r.LastSeen.Format(time.RFC3339), build, version)
 	if r.Kind == health.KindCrash && health.NoticeDue(filepath.Join(d.state, runDir, crashNotice), d.now(), noticeEvery) {
@@ -254,6 +257,7 @@ func (d *habDiag) holderLost(instance, build string, panes int) {
 	if err := health.Append(filepath.Join(d.state, healthFile), r); err != nil {
 		d.logf("health record: %v", err)
 	}
+	d.tally.Health("holder", r.Kind)
 }
 
 // serveHooks runs the hook server; the caller marks the endpoint up first. When it stops with an

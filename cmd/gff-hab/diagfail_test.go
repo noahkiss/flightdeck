@@ -24,7 +24,7 @@ func TestMarkerWriteFails(t *testing.T) {
 	var ref diagRef
 	w := logfile.New(logfile.Config{OnFlush: ref.touch})
 	lg := log.New(w, "", 0)
-	d := startDiag(state, "", control.NewEpoch(), w, lg.Printf)
+	d := startDiag(state, "", control.NewEpoch(), w, nil, lg.Printf)
 	ref.Store(d)
 	run := filepath.Join(state, runDir)
 	if err := os.Chmod(run, 0o500); err != nil {
