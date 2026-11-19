@@ -327,3 +327,9 @@ queued_move_days = 7
 # gpt = { harness = "codex", model = "gpt-5.5" }
 # opus = { harness = "claude", model = "opus" }
 # sonnet = { harness = "claude", model = "sonnet" }
+
+# The [diagnostics] table (docs/specs/diagnostics.md 7). Tallies are local counts of API calls,
+# events, hook envelopes, features, settings and health: names and numbers only, kept in
+# <state>/tallies and never sent anywhere. On unless set false; read at start.
+[diagnostics]
+# tallies = false
