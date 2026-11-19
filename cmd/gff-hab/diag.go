@@ -232,11 +232,10 @@ func (d *habDiag) holderLost(instance, build string, panes int) {
 	}
 }
 
-// serveHooks runs the hook server. When it stops with an error, the hook endpoint is down for
-// the rest of the run: the marker says so for gff-hab status, and a line repeats every 10
-// minutes (4.6).
+// serveHooks runs the hook server; the caller marks the endpoint up first. When it stops with an
+// error, the hook endpoint is down for the rest of the run: the marker says so for gff-hab
+// status, and a line repeats every 10 minutes (4.6).
 func (d *habDiag) serveHooks(serve func() error) {
-	d.setHook("up")
 	err := serve()
 	if err == nil {
 		return

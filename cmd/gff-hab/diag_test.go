@@ -145,7 +145,7 @@ func TestHealthRecords(t *testing.T) {
 
 	// gff-hab status and logs read the same files.
 	out := run(t, "status", "-state", state, "-socket", sock)
-	for _, want := range []string{"gff-hab  running, pid ", "version dev", "2 crashes, 1 unclean ends", "hooks    up", "peers    0 of 0 online"} {
+	for _, want := range []string{"gff-hab  running, pid ", "version dev", "crashes 2, unclean ends 1", "capcom   off", "hooks    up", "peers    0 of 0 online"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)
 		}

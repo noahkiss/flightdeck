@@ -2073,6 +2073,7 @@ func serve(args []string) error {
 		roundsSvc.start()
 	}
 	hooks.SetErrorLog(hd.hookErrorLog())
+	hd.setHook("up")
 	go hd.serveHooks(func() error { return hooks.Serve(hl) })
 	defer hooks.Close()
 	logger.Printf("epoch %s version %s build %s device %s listening on %s, hooks on %s", s.Epoch(), version, build, key.Fingerprint(), path, hpath)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/logfile"
@@ -153,7 +154,8 @@ func statusFromHab(sock string, r *statusReport) {
 		return
 	}
 	defer c.Close()
-	if _, err := c.Hello(ctx, cliClient, "", ""); err != nil {
+	w, err := c.Hello(ctx, cliClient, "", "")
+	if err != nil {
 		return
 	}
 	r.Hab.State = "running"
@@ -167,10 +169,11 @@ func statusFromHab(sock string, r *statusReport) {
 		}
 		r.Peers = fmt.Sprintf("%d of %d online", on, len(pl.Peers))
 	}
-	if st, err := cl.CapcomStatus(ctx, api.CapcomServiceParams{}); err == nil {
-		r.Capcom = string(st.State)
-	} else {
-		r.Capcom = "off"
+	r.Capcom = "off"
+	if slices.Contains(w.Capabilities, capcom.ServiceCapability) { // else the call fails, and logs a failed request
+		if st, err := cl.CapcomStatus(ctx, api.CapcomServiceParams{}); err == nil {
+			r.Capcom = string(st.State)
+		}
 	}
 }
 
@@ -199,7 +202,7 @@ func printStatus(out io.Writer, r statusReport) {
 		}
 		fmt.Fprintf(tw, "%s\t%s: build %s, protocol %s, up %s%s\n", label, x.Instance, x.Build, x.Protocol, x.Uptime, d)
 	}
-	hl := fmt.Sprintf("last 7 days: %d crashes, %d unclean ends, %d recovered panics", r.Health.Crashes, r.Health.Unclean, r.Health.Recovered)
+	hl := fmt.Sprintf("last 7 days: crashes %d, unclean ends %d, recovered panics %d", r.Health.Crashes, r.Health.Unclean, r.Health.Recovered)
 	fmt.Fprintf(tw, "health\t%s\n", hl)
 	if l := r.Health.Last; l != nil {
 		who := l.Proc
