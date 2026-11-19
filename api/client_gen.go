@@ -249,6 +249,13 @@ const (
 )
 
 const (
+	PaneWaitReasonMatch    PaneWaitReason = "match"
+	PaneWaitReasonQuiet    PaneWaitReason = "quiet"
+	PaneWaitReasonExited   PaneWaitReason = "exited"
+	PaneWaitReasonTimedOut PaneWaitReason = "timed_out"
+)
+
+const (
 	PeerStateOnline       PeerState = "online"
 	PeerStateConnecting   PeerState = "connecting"
 	PeerStateOffline      PeerState = "offline"
@@ -1018,6 +1025,20 @@ func (c Client) FlightrulesList(ctx context.Context, params FlightRulesParams) (
 func (c Client) FlightrulesText(ctx context.Context, params FlightRuleTextParams) (FlightRuleText, error) {
 	var result FlightRuleText
 	err := c.Caller.Call(ctx, "flightrules.text", params, &result)
+	return result, err
+}
+
+// PaneRead calls pane.read. A pane's screen and optional scrollback as plain text, under agent.read_panes for an agent's call (spec 3.11). Needs the pane-read capability.
+func (c Client) PaneRead(ctx context.Context, params PaneReadParams) (PaneText, error) {
+	var result PaneText
+	err := c.Caller.Call(ctx, "pane.read", params, &result)
+	return result, err
+}
+
+// PaneWait calls pane.wait. Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.
+func (c Client) PaneWait(ctx context.Context, params PaneWaitParams) (PaneWaitResult, error) {
+	var result PaneWaitResult
+	err := c.Caller.Call(ctx, "pane.wait", params, &result)
 	return result, err
 }
 

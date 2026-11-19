@@ -126,6 +126,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.deviceContextPut)
         result(HabMethods.habPermissions)
         result(HabMethods.detectExplain)
+        result(HabMethods.paneRead)
+        result(HabMethods.paneWait)
         result(HabMethods.channelSend)
         result(HabMethods.channelStatus)
         result(HabMethods.channelWait)

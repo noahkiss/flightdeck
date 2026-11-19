@@ -109,6 +109,7 @@ public enum SettingsRegistry {
     public static let capcomEventActions = "capcom.event_actions"
     public static let capcomEventActionsPerTurn = "capcom.event_actions_per_turn"
     public static let capcomEventActionMaxAge = "capcom.event_action_max_age"
+    public static let agentReadPanes = "agent.read_panes"
 
     /// The levelled settings, in registry order (app.md 20.3).
     public static let levelled: [SettingDef] = [
@@ -126,6 +127,11 @@ public enum SettingsRegistry {
         SettingDef(id: capcomEventActions, title: "Capcom jobs may act", area: .agents,
                    kind: .word([(word: "off", title: "Off"), (word: "ask", title: "Ask first"), (word: "allow", title: "Allow")]), store: .everyHab,
                    levels: [.safe: .string("ask"), .balanced: .string("allow"), .bypass: .string("allow")]),
+        // Which panes an agent may read (hab-logic-api.md 3.11): its project at Safe, all at
+        // Balanced and Bypass; off is picked by hand. Each hab enforces it for its own panes.
+        SettingDef(id: agentReadPanes, title: "Agents may read panes", area: .agents,
+                   kind: .word([(word: "off", title: "Own pane only"), (word: "project", title: "Own project"), (word: "all", title: "All panes")]), store: .everyHab,
+                   levels: [.safe: .string("project"), .balanced: .string("all"), .bypass: .string("all")]),
         SettingDef(id: voiceYesAllows, title: "\"Yes\" counts as Allow", area: .voice, kind: .bool, store: .app,
                    levels: [.safe: .bool(false), .balanced: .bool(true), .bypass: .bool(true)]),
         SettingDef(id: sshRequireFaceID, title: "Require Face ID for SSH keys", area: .security, kind: .bool, store: .app,

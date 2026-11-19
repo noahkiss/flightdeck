@@ -1,0 +1,28 @@
+{
+  "alternate": true,
+  "cols": 6,
+  "cursor_col": 11,
+  "cursor_row": 12,
+  "offset": 13,
+  "pane": "pane-4",
+  "rows": 7,
+  "screen": [
+    "screen-8"
+  ],
+  "scrollback": [
+    "scrollback-9"
+  ],
+  "scrollback_total": 10,
+  "seq": 3,
+  "session": "session-5",
+  "truncated": true,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

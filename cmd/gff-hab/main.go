@@ -17,6 +17,8 @@
 //	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
 //	gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <address> <text... | ->
 //	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
+//	gff-hab wait     [-socket path | -via command] -pane <pane|session|label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]
+//	gff-hab screen   [-socket path | -via command] [-scrollback n] [-json] <pane|session|label/name>
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab capcom assign [-socket path | -via command] <peer label|self>
 //	gff-hab capcom open   [-socket path | -via command] [-new]
@@ -166,6 +168,8 @@ const usage = `usage:
   gff-hab show     [-socket path | -via command] [-session id] [-kind k] [-title t] <path>
   gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <label/name | name> <text... | ->
   gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for state,...] [-timeout d] [-json]
+  gff-hab wait     [-socket path | -via command] -pane <pane|session|label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]
+  gff-hab screen   [-socket path | -via command] [-scrollback n] [-json] <pane|session|label/name>
   gff-hab worktree list   [-socket path | -via command] [-project id | -dir path]
   gff-hab worktree create [-socket path | -via command] [-project id | -dir path] [-branch b] [-base ref] [-path dir] [-setup auto|run|skip]
   gff-hab worktree setup  [-socket path | -via command] [-project id | -dir path] <worktree>
@@ -273,6 +277,8 @@ func main() {
 		err = sendCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "wait":
 		err = waitCmd(os.Args[2:], os.Stdout)
+	case "screen":
+		err = screenCmd(os.Args[2:], os.Stdout)
 	case "worktree":
 		err = worktreeCmd(os.Args[2:])
 	case "capcom":
@@ -316,6 +322,10 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gff-hab: %v\n", err)
+		var xe *exitError
+		if errors.As(err, &xe) {
+			os.Exit(xe.code)
+		}
 		var ce *control.Error
 		if errors.As(err, &ce) {
 			os.Exit(3)
@@ -942,6 +952,7 @@ func serve(args []string) error {
 		explain = &detectService{lk: linkPanes{lk}, store: store, agents: agents,
 			manifests: mcache.Set, group: detect.GroupProcesses}
 		caps = append(caps, "detect-explain")
+		caps = append(caps, paneReadCapability) // pane.read and pane.wait (hab-logic-api.md 3.11)
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.
 		activity := newActivityEvents(lk, func(e structure.Event) {
@@ -1344,6 +1355,14 @@ func serve(args []string) error {
 	var heldAtStart []string
 	for old := range swapsToFinish {
 		heldAtStart = append(heldAtStart, old)
+	}
+	// Reading panes (hab-logic-api.md 3.11): with the holder link only.
+	var paneSvc *paneService
+	var panesCtl control.Panes
+	if lk != nil {
+		paneSvc = &paneService{lk: lk, store: store, rule: ruleValue(setSvc), links: channelPeers{pm}.Links,
+			self: key.Fingerprint(), host: *hostID, logf: logger.Printf}
+		panesCtl = controlPanes{paneSvc}
 	}
 	chSvc, err := channels.New(channels.Config{
 		Self: key.Fingerprint(), Host: *hostID, State: dir, Held: heldAtStart,
@@ -1853,6 +1872,7 @@ func serve(args []string) error {
 		Permissions:  permissionService{perms},
 		Trust:        trustCtl,
 		Detect:       explain,
+		Panes:        panesCtl,
 		Peers:        pm,
 		Catalog:      cs,
 		Push:         pushCtl,
@@ -2043,6 +2063,9 @@ func serve(args []string) error {
 		hooks.SetTally(tl.Hook)
 	}
 	hooks.SetChannels(channelHook(store, chSvc))
+	if paneSvc != nil {
+		hooks.SetPanes(paneHook(paneSvc))
+	}
 	if capcomEng != nil {
 		hooks.SetEngine(capcomEng)
 		hooks.SetPersonal(capcomEng.personal.hook)

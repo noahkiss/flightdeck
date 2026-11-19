@@ -61,6 +61,7 @@ type Server struct {
 	reads    ReadHandler
 	agent    ChannelHandler
 	personal ChannelHandler
+	panes    ChannelHandler
 	guard    Guard
 	engine   EngineHandler
 	http     *http.Server

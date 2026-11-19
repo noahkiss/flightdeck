@@ -117,6 +117,8 @@ var Methods = []Method{
 	{"speech.transcribe", "Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.", SpeechTranscribeParams{}, SpeechTranscript{}},
 	{"flightrules.list", "A session's flight rules: every instruction file, memory, hook injection, skill listing and MCP instruction block its harness recorded, with scope, digest and size, never the text (instructions-mcp-flight-rules.md 11). Needs the flight-rules capability.", FlightRulesParams{}, FlightRules{}},
 	{"flightrules.text", "The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.", FlightRuleTextParams{}, FlightRuleText{}},
+	{"pane.read", "A pane's screen and optional scrollback as plain text, under agent.read_panes for an agent's call (spec 3.11). Needs the pane-read capability.", PaneReadParams{}, PaneText{}},
+	{"pane.wait", "Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.", PaneWaitParams{}, PaneWaitResult{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 	{"channel.send", "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.", ChannelSendParams{}, ChannelSent{}},
 	{"channel.status", "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.", ChannelStatusParams{}, ChannelStatusResult{}},
@@ -342,6 +344,8 @@ var Enums = map[string][]string{
 	"CapcomAuthorKind": {"user", "capcom", "agent", "flightdeck"},
 	// Sets added for agent groups (groups.md 2.1).
 	"GroupRole": {"lead", "worker", "reviewer"},
+	// Sets added for reading panes (spec 3.11); open, sent by the server.
+	"PaneWaitReason": {"match", "quiet", "exited", "timed_out"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -403,4 +407,5 @@ var Translators = map[int]Translator{}
 // flightrules.text work (instructions-mcp-flight-rules.md 11). "session-restart" means
 // session.restart works and a session carries Session.stale (instructions-mcp-flight-rules.md 13.1).
 // "friction" means diag.friction works (diagnostics.md 9).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction"}
+// "pane-read" means pane.read and pane.wait work (spec 3.11).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read"}

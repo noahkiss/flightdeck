@@ -68,6 +68,10 @@ const (
 	GroupFreshAfterCompacts = "group.fresh_after_compacts"
 	GroupFreshTranscriptMB  = "group.fresh_transcript_mb"
 	GroupHandoffAt          = "group.handoff_at" // percent
+	// AgentReadPanes decides which panes an agent may read with pane.read and pane.wait,
+	// through its pane route or a peer link (hab-logic-api.md 3.11): off, project or all.
+	// Levelled: Safe project, Balanced and Bypass all; off is picked by hand.
+	AgentReadPanes = "agent.read_panes"
 )
 
 // DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
@@ -120,6 +124,7 @@ var Defs = []Def{
 	{ID: GroupFreshAfterCompacts, Default: json.RawMessage(`4`), check: checkInt(1, 20), integer: true},
 	{ID: GroupFreshTranscriptMB, Default: json.RawMessage(`4`), check: checkInt(1, 64), integer: true},
 	{ID: GroupHandoffAt, Default: json.RawMessage(`60`), check: checkInt(20, 95), integer: true},
+	{ID: AgentReadPanes, Default: json.RawMessage(`"all"`), check: checkWord("off", "project", "all")},
 }
 
 func mustJSON(v any) json.RawMessage {

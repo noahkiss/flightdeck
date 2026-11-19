@@ -210,6 +210,7 @@ type Config struct {
 	Permissions  Permissions // nil: hab.permissions answers unavailable
 	Trust        Trust       // nil: trust.answer answers unavailable
 	Detect       Detect      // nil: detect.explain answers unavailable
+	Panes        Panes       // nil: pane.read and pane.wait answer unavailable
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
 	Catalog      Catalog     // nil: the catalog methods answer unavailable
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable

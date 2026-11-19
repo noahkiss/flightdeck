@@ -1,0 +1,17 @@
+{
+  "line": "line-4",
+  "offset": 5,
+  "pane": "pane-6",
+  "reason": "timed_out",
+  "seq": 3,
+  "session": "session-7",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

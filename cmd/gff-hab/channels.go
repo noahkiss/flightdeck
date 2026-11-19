@@ -367,6 +367,13 @@ func waitCmd(args []string, out io.Writer) error {
 	forStates := fs.String("for", "", "comma-separated agent states that end the wait for -agent (default: any change)")
 	timeout := fs.Duration("timeout", channels.DefaultWait, "give up after this long (default 110s from a pane, under a harness's 2 min tool limit)")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
+	pf := addPaneWaitFlags(fs)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "usage: gff-hab wait [-socket path | -via command] [-session name] [-agent name] [-for state,...] [-timeout d] [-json]\n"+
+			"       gff-hab wait [-socket path | -via command] -pane <pane | session | label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]\n\n")
+		fs.PrintDefaults()
+		fmt.Fprint(fs.Output(), untrustedNote)
+	}
 	fs.Parse(args)
 	if fs.NArg() > 0 {
 		return errors.New("wait takes flags only")
@@ -374,6 +381,9 @@ func waitCmd(args []string, out io.Writer) error {
 	set := false
 	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "timeout" })
 	*timeout = waitTimeout(*timeout, set, *sock != "" || *via != "", os.Getenv(hook.Env) != "")
+	if *pf.pane != "" {
+		return paneWait(fs, pf, *sock, *via, *timeout, *asJSON, out)
+	}
 	p := api.ChannelWaitParams{Session: *session, Agent: *agent, TimeoutMS: int(*timeout / time.Millisecond)}
 	if *forStates != "" {
 		for _, s := range strings.Split(*forStates, ",") {
