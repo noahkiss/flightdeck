@@ -2,6 +2,7 @@ package logfile
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 )
@@ -12,15 +13,9 @@ import (
 // opened it for append, so its next line lands at the new end. Lines written during the copy
 // may be lost. It reports whether it truncated. A missing file is not an error.
 func CopyTruncate(path string, max int64, keep int) (bool, error) {
-	st, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
+	st, err := regular(path)
+	if err != nil || st == nil || st.Size() <= max {
 		return false, err
-	}
-	if !st.Mode().IsRegular() || st.Size() <= max {
-		return false, nil
 	}
 	if keep > 0 {
 		// Shift the old files only: path itself stays, as the writer's file.
@@ -38,18 +33,31 @@ func CopyTruncate(path string, max int64, keep int) (bool, error) {
 // RenameCap renames path to path.1 (Shift) once it is over max bytes. It is for a file whose
 // writers open it fresh for each line, such as hook.log (4.4). It reports whether it renamed.
 func RenameCap(path string, max int64, keep int) (bool, error) {
-	st, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
+	st, err := regular(path)
+	if err != nil || st == nil || st.Size() <= max {
 		return false, err
-	}
-	if st.Size() <= max {
-		return false, nil
 	}
 	Shift(path, keep)
 	return true, nil
+}
+
+// ErrNotRegular is CopyTruncate's and RenameCap's answer for a path that is a symlink, a folder
+// or any other file that is not a regular one: they never follow a link to cap its target.
+var ErrNotRegular = errors.New("logfile: not a regular file")
+
+// regular returns path's info when it is a regular file, nil when it is missing.
+func regular(path string) (os.FileInfo, error) {
+	st, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s", ErrNotRegular, path)
+	}
+	return st, nil
 }
 
 func copyFile(from, to string) error {

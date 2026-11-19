@@ -3,6 +3,7 @@ package logfile
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -316,4 +317,24 @@ func appendLine(t *testing.T, path, line string) {
 	}
 	fmt.Fprintln(f, line)
 	f.Close()
+}
+
+// TestCapRefusesSymlink: CopyTruncate and RenameCap never follow a symlink to cap its target.
+func TestCapRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	os.WriteFile(target, []byte(strings.Repeat("x", 100)), 0o600)
+	link := filepath.Join(dir, "hab.stderr")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if did, err := CopyTruncate(link, 10, 1); did || !errors.Is(err, ErrNotRegular) {
+		t.Fatalf("CopyTruncate of a symlink: %v %v", did, err)
+	}
+	if did, err := RenameCap(link, 10, 1); did || !errors.Is(err, ErrNotRegular) {
+		t.Fatalf("RenameCap of a symlink: %v %v", did, err)
+	}
+	if st, _ := os.Stat(target); st.Size() != 100 {
+		t.Fatalf("the target is %d bytes", st.Size())
+	}
 }

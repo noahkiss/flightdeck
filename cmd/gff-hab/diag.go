@@ -90,6 +90,8 @@ type habDiag struct {
 	mu        sync.Mutex
 	marker    health.Marker
 	lastWrite time.Time
+	// markerFailing is set while marker writes fail, so the failure is logged once.
+	markerFailing bool
 	notice    bool // the previous run crashed and a notice is due
 	stopped   bool
 
@@ -193,12 +195,20 @@ func (d *habDiag) raiseNotice(raise func(api.NoticeRaiseParams) error) {
 	}
 }
 
+// writeMarker writes the run marker. A write that fails counts as a write for touch's minute,
+// so a full disk or a read-only folder costs one try a minute, and its line is logged once per
+// change between failing and working: the line itself flushes the log, which calls touch.
 func (d *habDiag) writeMarker() {
-	if err := health.WriteMarker(filepath.Join(d.state, runDir, habMarkerFile), d.marker); err != nil {
-		d.logf("run marker: %v", err)
-		return
-	}
 	d.lastWrite = d.now()
+	err := health.WriteMarker(filepath.Join(d.state, runDir, habMarkerFile), d.marker)
+	switch {
+	case err != nil && !d.markerFailing:
+		d.markerFailing = true
+		d.logf("run marker: %v; retrying once a minute", err)
+	case err == nil && d.markerFailing:
+		d.markerFailing = false
+		d.logf("run marker: written again")
+	}
 }
 
 // touch moves last_seen when gff-hab flushed log lines, at most once a minute (6.1). An idle
@@ -327,9 +337,13 @@ func (d *habDiag) sweep() {
 	if _, err := logfile.RenameCap(filepath.Join(logs, hookLogFile), hookLogMax, hookLogKeep); err != nil {
 		d.logf("logs: %v", err)
 	}
+	// The gone-holder rule needs the full holder list: with none, or an error, it is skipped, so
+	// the file of a live holder is never removed.
 	live := map[string]bool{}
+	listed := false
 	if d.holderDir != "" {
-		es, _ := holderreg.List(d.holderDir)
+		es, errs := holderreg.List(d.holderDir)
+		listed = len(errs) == 0
 		for _, e := range es {
 			live[e.Instance] = true
 		}
@@ -345,7 +359,7 @@ func (d *habDiag) sweep() {
 		cur := filepath.Join(logs, holderLogPrefix+inst+".log")
 		if name == filepath.Base(cur) {
 			info, err := e.Info()
-			if err == nil && !live[inst] && d.now().Sub(info.ModTime()) > goneHolderAge {
+			if err == nil && listed && !live[inst] && d.now().Sub(info.ModTime()) > goneHolderAge {
 				logfile.Shift(cur, 0)
 				continue
 			}

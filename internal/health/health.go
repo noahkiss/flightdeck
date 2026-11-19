@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -93,16 +94,35 @@ func WriteMarker(path string, m Marker) error {
 	return writeAtomic(path, append(b, '\n'))
 }
 
+// writeAtomic writes b to path in one rename, from a temporary file of its own.
 func writeAtomic(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, 0o600)
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
+
+// appendMu serializes Append: each is a read, then a write of the whole file, and the link and
+// the hook server call it from their own goroutines.
+var appendMu sync.Mutex
 
 // CrashCause finds the cause in a crash file's text: the first line that starts with "panic:"
 // or "fatal error:", with the value cut to CauseMax bytes. ok is false when there is none.
@@ -147,6 +167,8 @@ func Previous(prev Marker, crash []byte, now time.Time) (r Record, ok bool) {
 
 // Append adds r to the records file at path and keeps the newest Keep.
 func Append(path string, r Record) error {
+	appendMu.Lock()
+	defer appendMu.Unlock()
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err

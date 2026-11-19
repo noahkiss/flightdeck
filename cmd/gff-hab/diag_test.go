@@ -246,6 +246,7 @@ func TestHookServerDown(t *testing.T) {
 func TestSweep(t *testing.T) {
 	t.Parallel()
 	d, _ := testDiag(t)
+	d.holderDir = t.TempDir() // an empty registry: no holder is live
 	logs := logsDir(d.state)
 	big := func(name string, n int) string {
 		p := filepath.Join(logs, name)

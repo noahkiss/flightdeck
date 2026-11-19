@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -70,5 +71,28 @@ func TestNoticeDue(t *testing.T) {
 	}
 	if !NoticeDue(path, now.Add(61*time.Minute), time.Hour) {
 		t.Fatal("no notice after the hour")
+	}
+}
+
+// TestAppendConcurrent: Appends from many goroutines, as the link and the hook server make,
+// keep every record.
+func TestAppendConcurrent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "health.jsonl")
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := Append(path, Record{Kind: KindUnclean, Cause: fmt.Sprint(i)}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if rs, err := Read(path); err != nil || len(rs) != 20 {
+		t.Fatalf("%d records, want 20: %v", len(rs), err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".*")); len(m) != 0 {
+		t.Fatalf("temporary files left: %v", m)
 	}
 }
