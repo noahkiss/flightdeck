@@ -515,8 +515,9 @@ programs can never reach those resources.
 - The plist names a stable absolute binary path and sets a working directory.
 - Built (stage 6): the logic plist has `KeepAlive` true and `ThrottleInterval` 1. Each holder
   plist has `KeepAlive` with `SuccessfulExit` false, `AbandonProcessGroup` true (launchd signals
-  only the holder when the job ends) and `ExitTimeOut` 30 (above the 5 s grace of 2.8). Logs go
-  to `<state>/logs/gff-hab.log` and `<state>/logs/gff-hab-holder.<instance>.log`.
+  only the holder when the job ends) and `ExitTimeOut` 30 (above the 5 s grace of 2.8). Job
+  output goes to `<state>/logs/hab.stderr` and `<state>/logs/gff-hab-holder.<instance>.log`; the
+  systemd units append to the same files (`diagnostics.md` 4.3).
 
 **Responsible process.** macOS charges a pane's protected access to the holder: launchd starts
 the holder, so the holder is the responsible process for every program in its panes. Two
