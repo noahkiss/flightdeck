@@ -40,14 +40,19 @@ struct SettingsTab: View {
     }
 
     private var computers: some View {
-        Section("Computers") {
+        Section {
             ForEach(board.habs) { h in
                 NavigationLink(value: HabLink(id: h.id)) {
                     HabRow(hab: h, capcomHome: fleet.capcom.homeDevice)
                 }
             }
-            if ssh != nil {
-                Button("Pair another computer") { pairing = true }
+            Button("Pair another computer") { pairing = true }
+                .disabled(ssh == nil)
+        } header: {
+            Text("Computers")
+        } footer: {
+            if ssh == nil, fleet.isDemo {
+                Text("Demo data is on. Restart the app to pair a computer.")
             }
         }
     }

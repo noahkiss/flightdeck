@@ -120,6 +120,16 @@ public enum SessionsList {
         }
     }
 
+    /// The sections without `row`, unless it needs you; an emptied section goes.
+    public static func without(_ row: BoardRow, in sections: [BoardSection]) -> [BoardSection] {
+        sections.compactMap { s in
+            guard s.kind != .needsYou else { return s }
+            var s = s
+            s.rows.removeAll { $0.id == row.id }
+            return s.rows.isEmpty ? nil : s
+        }
+    }
+
     /// The item for one board row: a waiting permission or question gets its own kind.
     public static func item(_ row: BoardRow) -> SessionItem {
         guard row.state == .blocked, row.rank == .blocked else { return .session(row) }

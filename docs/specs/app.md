@@ -350,7 +350,7 @@ The root is a stock tab view with four tabs, in this order:
 |---|---|---|
 | Sessions | `rectangle.stack` | The status board (3.1), with a badge of the needs-you count |
 | Capcom | `dot.radiowaves.left.and.right` | The Capcom view (4.10) |
-| Rounds | `clock` | The rounds list (21.2), its "Show run sessions" switch and New round, and Capcom jobs (21.5) |
+| Rounds | `clock.arrow.circlepath` | The rounds list (21.2), its "Show run sessions" switch and New round, and Capcom jobs (21.5) |
 | Settings | `slider.horizontal.3` | The Settings tab (20.7) |
 
 - **iPhone.** The tab bar floats at the bottom and shrinks while a list scrolls down. The usage
@@ -370,9 +370,11 @@ The root is a stock tab view with four tabs, in this order:
   hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its
   state and opens Computers. The app has no start-session flow (3.3's floating button is not
   built), so the toolbar shows no start control; it joins the toolbar when that flow exists. The
-  Capcom row and the Groups and Rounds sections are gone from this list (3.1).
-- **Colour.** Amber means "needs you" and nothing else: the Needs you header, its rows' marks and
-  the tab badge. Green means done. One accent colour marks actions (Allow, Answer, Review, links).
+  Capcom row and the Groups and Rounds sections are gone from this list (3.1). The standing Capcom
+  session shows here only while it needs you; otherwise it lives on its tab.
+- **Colour.** Amber means "needs you" and nothing else: the Needs you header and its rows' marks.
+  The tab badge keeps the system's colour, since SwiftUI's tab view offers no badge tint. Green
+  means done. One accent colour marks actions (Allow, Answer, Review, links).
   Working rows show a teal dot; idle and other rows a grey one. Errors sit in Needs you, so they
   are amber, with an exclamation mark.
 - **Dynamic Type.** Every row and button group fits at the largest accessibility size. A row's

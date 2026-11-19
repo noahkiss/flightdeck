@@ -20,8 +20,8 @@ public enum Fixture {
         AgentState(at: Self.stamp(at), harness: harness, kind: kind, pane: pane, request: request, revision: revision, session: session, source: .hook, state: state)
     }
 
-    public static func request(title: String, tool: String, command: String? = nil) -> PermissionRequest {
-        PermissionRequest(command: command, title: title, tool: tool)
+    public static func request(title: String, tool: String, command: String? = nil, id: String? = nil) -> PermissionRequest {
+        PermissionRequest(command: command, id: id, title: title, tool: tool)
     }
 
     /// An RFC 3339 stamp, as the hab writes `AgentState.at`.

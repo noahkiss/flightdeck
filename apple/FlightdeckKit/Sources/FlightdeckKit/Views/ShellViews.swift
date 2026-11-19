@@ -2,6 +2,7 @@
 import FlightdeckShared
 import HabAPI
 import SwiftUI
+import UIKit
 
 /// The tabs of the app shell (app.md 3.8).
 enum ShellTab: String, Hashable {
@@ -97,7 +98,7 @@ struct AppShell: View {
             Tab("Capcom", systemImage: "dot.radiowaves.left.and.right", value: ShellTab.capcom) {
                 CapcomTab(fleet: fleet)
             }
-            Tab("Rounds", systemImage: "clock", value: ShellTab.rounds) {
+            Tab("Rounds", systemImage: "clock.arrow.circlepath", value: ShellTab.rounds) {
                 RoundsTab(center: fleet.rounds)
             }
             Tab("Settings", systemImage: "slider.horizontal.3", value: ShellTab.settings) {
@@ -121,7 +122,7 @@ struct AppShell: View {
                 .tabItem { Label("Capcom", systemImage: "dot.radiowaves.left.and.right") }
                 .tag(ShellTab.capcom)
             RoundsTab(center: fleet.rounds)
-                .tabItem { Label("Rounds", systemImage: "clock") }
+                .tabItem { Label("Rounds", systemImage: "clock.arrow.circlepath") }
                 .tag(ShellTab.rounds)
             SettingsTab(fleet: fleet)
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
@@ -133,12 +134,19 @@ struct AppShell: View {
 #if DEBUG
 /// Debug builds only: launch arguments that open a screen with no taps, so a build can be
 /// checked and screenshotted headlessly. `-FlightdeckTab capcom|rounds|settings`,
-/// `-FlightdeckOpenCapcom YES`, `-FlightdeckOpenSession <session>`, `-FlightdeckOpenCapcomJobs YES`.
+/// `-FlightdeckOpenCapcom YES`, `-FlightdeckOpenSession <session>`, `-FlightdeckOpenCapcomJobs YES`,
+/// `-FlightdeckShow review|group|hab`.
 struct ShellLaunchArguments: ViewModifier {
     let fleet: Fleet
     @Binding var tab: ShellTab
     @Binding var opened: BoardRow?
     @Binding var capcomJobsShown: Bool
+    /// `-FlightdeckShow review|group|hab` opens that screen in a sheet.
+    @State private var shown: String?
+
+    struct DebugSheet: Identifiable {
+        let id: String
+    }
 
     func body(content: Content) -> some View {
         content
@@ -156,6 +164,25 @@ struct ShellLaunchArguments: ViewModifier {
                         return
                     }
                     try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            .task {
+                guard let what = UserDefaults.standard.string(forKey: "FlightdeckShow") else { return }
+                try? await Task.sleep(for: .seconds(3))
+                shown = what
+            }
+            .sheet(item: Binding(get: { shown.map(DebugSheet.init) }, set: { shown = $0?.id })) { s in
+                switch s.id {
+                case "review":
+                    if let c = fleet.confirms, let card = c.approvals.first {
+                        ConfirmReviewSheet(center: c, cardID: card.id) { shown = nil }
+                    }
+                case "group":
+                    if let card = fleet.groups.boardCards.first {
+                        NavigationStack { GroupPage(center: fleet.groups, id: card.id) }
+                    }
+                default:
+                    NavigationStack { HabDetailPage(fleet: fleet, habID: fleet.board.habs.first?.id ?? "") }
                 }
             }
             .sheet(isPresented: $capcomJobsShown) {
@@ -285,7 +312,11 @@ struct SessionsListView: View {
     private var board: Board { fleet.board }
 
     private var sections: [SessionsSection] {
-        let rows = RoundCenter.filter(board.sections, showRunSessions: fleet.rounds.showRunSessions)
+        var rows = RoundCenter.filter(board.sections, showRunSessions: fleet.rounds.showRunSessions)
+        // The standing Capcom conversation has its own tab; it shows here only when it needs you.
+        if let capcom = fleet.capcom.standingRow(in: board.rows) {
+            rows = SessionsList.without(capcom, in: rows)
+        }
         let groups = fleet.groups.boardCards.map { card in
             GroupSummary.make(card) { fleet.groups.target(card, $0) }
         }
@@ -295,6 +326,7 @@ struct SessionsListView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
             let sections = sections
+            ScrollViewReader { proxy in
             List {
                 ForEach(board.habs.filter(\.needsUpdate)) { h in
                     Label("\(h.label): \(h.updateText)", systemImage: "exclamationmark.triangle")
@@ -306,7 +338,17 @@ struct SessionsListView: View {
                         Text(section.title)
                             .foregroundStyle(section.kind == .needsYou ? Color.orange : Color.secondary)
                     }
+                    .id(section.kind)
                 }
+            }
+            #if DEBUG
+            // Debug builds only: `-FlightdeckScrollTo Working` scrolls to a section, for screenshots.
+            .task {
+                guard let k = UserDefaults.standard.string(forKey: "FlightdeckScrollTo").flatMap(BoardSectionKind.init(rawValue:)) else { return }
+                try? await Task.sleep(for: .seconds(2))
+                proxy.scrollTo(k, anchor: .top)
+            }
+            #endif
             }
             .overlay {
                 if sections.isEmpty {
@@ -558,7 +600,7 @@ struct AnswerButtons: View {
             Text("Deny").lineLimit(1).frame(maxWidth: .infinity)
         }
         .buttonStyle(.bordered)
-        .tint(.secondary)
+        .tint(Color(uiColor: .label))
     }
 
     private var allowButton: some View {
@@ -808,7 +850,7 @@ struct RoundsTab: View {
                 }
                 .overlay {
                     if !center.any && !center.jobs.available {
-                        ContentUnavailableView("No rounds", systemImage: "clock",
+                        ContentUnavailableView("No rounds", systemImage: "clock.arrow.circlepath",
                                                description: Text("Scheduled jobs on your computers show here."))
                     }
                 }

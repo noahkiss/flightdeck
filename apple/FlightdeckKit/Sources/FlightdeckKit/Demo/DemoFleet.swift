@@ -69,7 +69,7 @@ public enum DemoFleet {
                 + [Fixture.pane("%6", session: nil)],
             agents: [
                 Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission,
-                              request: Fixture.request(title: "Run the database migration?", tool: "Bash", command: "npm run migrate"), at: ago(2)),
+                              request: Fixture.request(title: "Run the database migration?", tool: "Bash", command: "npm run migrate", id: "req-demo-migrate"), at: ago(2)),
                 Fixture.agent(pane: "%2", harness: "codex", state: .error, at: ago(6)),
                 Fixture.agent(pane: "%3", harness: "claude", state: .done, at: ago(1)),
                 Fixture.agent(pane: "%4", harness: "opencode", state: .working, at: ago(4)),
@@ -220,7 +220,7 @@ public enum DemoFleet {
             await workbench.put(Fixture.agent(pane: "%4", harness: "opencode", state: .done))
             try? await Task.sleep(for: step)
             await attic.put(Fixture.agent(pane: "%12", harness: "claude", state: .blocked, kind: .permission,
-                                          request: Fixture.request(title: "Delete the build cache?", tool: "Bash", command: "rm -rf .cache/build")))
+                                          request: Fixture.request(title: "Delete the build cache?", tool: "Bash", command: "rm -rf .cache/build", id: "req-demo-cache")))
             try? await Task.sleep(for: step)
             await workbench.put(Fixture.agent(pane: "%4", harness: "opencode", state: .working))
             await attic.put(Fixture.agent(pane: "%12", harness: "claude", state: .working))
