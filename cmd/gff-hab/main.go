@@ -404,6 +404,16 @@ func serve(args []string) error {
 	var diag diagRef
 	logw := newLogWriter(*sf.init == "systemd" || *sf.init == "launchd", diag.touch)
 	logger := log.New(logw, habPrefix, habLogFlags)
+	// Registered first, so it runs last: after every deferred close has logged its lines. A
+	// clean exit marks the run clean and closes the log; any other return writes what is queued.
+	clean := false
+	defer func() {
+		if hd := diag.Load(); hd != nil && clean {
+			hd.cleanExit()
+		} else {
+			logw.FlushTimeout(exitFlush)
+		}
+	}()
 	epoch := control.NewEpoch()
 	// Catch SIGTERM and SIGINT before any socket is up: a stop that arrives while gff-hab starts
 	// waits for the shutdown below instead of killing it with no checkpoint.
@@ -526,14 +536,6 @@ func serve(args []string) error {
 	// records (diagnostics.md 4.3, 6).
 	hd := startDiag(dir, holderDirOf(*holders), epoch, logw, logger.Printf)
 	diag.Store(hd)
-	clean := false
-	defer func() { // runs last: after every other deferred close has logged its lines
-		if clean {
-			hd.cleanExit()
-		} else {
-			logw.Flush()
-		}
-	}()
 	if h := store.Health(); h.Problem != "" {
 		logger.Printf("state: %s", h.Problem)
 	}
@@ -2091,7 +2093,7 @@ func serve(args []string) error {
 		// A logout, restart or shutdown ends the holder's programs too, maybe first
 		// (hab-holder.md 2.11). Write what the restore needs before anything slower, and exit
 		// within the deadline whatever hangs.
-		shutdownWatchdog(shutdownDeadline, logger.Printf, os.Exit)
+		shutdownWatchdog(shutdownDeadline, logger.Printf, flushedExit(logw, os.Exit))
 		resumes.flush()
 		s.Close() // sends closing (shutdown) to every client and waits for it to flush
 		if ds != nil {

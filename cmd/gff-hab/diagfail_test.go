@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,5 +59,32 @@ func TestSweepKeepsOnListError(t *testing.T) {
 	d.sweep()
 	if _, err := os.Stat(idle); err != nil {
 		t.Fatalf("the sweep removed a holder's file with no holder list: %v", err)
+	}
+}
+
+// TestFlushedExit: run by a service manager, gff-hab copies no line to stderr, so the shutdown
+// watchdog's exit waits for the lines still queued, its own "did not finish" among them.
+func TestFlushedExit(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), habLogFile)
+	gate, reached := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	w := newLogWriter(true, func() { once.Do(func() { close(reached); <-gate }) })
+	defer w.Close()
+	if err := w.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	lg := log.New(w, habPrefix, habLogFlags)
+	lg.Print("first") // written; then the writer waits on the gate
+	<-reached
+	lg.Print("queued") // waits in the queue
+	time.AfterFunc(50*time.Millisecond, func() { close(gate) })
+	var got string
+	flushedExit(w, func(int) {
+		b, _ := os.ReadFile(path)
+		got = string(b)
+	})(1)
+	if !strings.Contains(got, "queued") {
+		t.Fatalf("at exit the log holds %q", got)
 	}
 }

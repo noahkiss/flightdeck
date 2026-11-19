@@ -140,6 +140,18 @@ func (w *Writer) Flush() {
 	}
 }
 
+// FlushTimeout is Flush that gives up after d. It reports whether the queue was written.
+func (w *Writer) FlushTimeout(d time.Duration) bool {
+	done := make(chan struct{})
+	go func() { w.Flush(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
 // Close writes what is queued, when the file is open, and closes it. Later writes go to Tee
 // only.
 func (w *Writer) Close() error {

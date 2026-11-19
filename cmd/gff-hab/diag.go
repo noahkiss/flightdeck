@@ -60,6 +60,19 @@ func logsDir(state string) string { return filepath.Join(state, "logs") }
 // name the service manager writes (internal/service).
 const holderLogPrefix = "gff-hab-holder."
 
+// exitFlush bounds the wait for the log's queue at an exit: a disk that hangs must not hold the
+// exit up.
+const exitFlush = time.Second
+
+// flushedExit is exit after the log's queued lines are in the file, or exitFlush passed. Run by
+// a service manager, gff-hab copies no line to stderr, so a line still queued at os.Exit is lost.
+func flushedExit(w *logfile.Writer, exit func(int)) func(int) {
+	return func(code int) {
+		w.FlushTimeout(exitFlush)
+		exit(code)
+	}
+}
+
 // newLogWriter makes gff-hab's log writer (4.1, 4.3). Run by hand, each line goes to stderr too;
 // run by a service manager, a line goes to stderr only before the file opens.
 func newLogWriter(service bool, onFlush func()) *logfile.Writer {
@@ -92,8 +105,8 @@ type habDiag struct {
 	lastWrite time.Time
 	// markerFailing is set while marker writes fail, so the failure is logged once.
 	markerFailing bool
-	notice    bool // the previous run crashed and a notice is due
-	stopped   bool
+	notice        bool // the previous run crashed and a notice is due
+	stopped       bool
 
 	stop chan struct{}
 	wg   sync.WaitGroup
