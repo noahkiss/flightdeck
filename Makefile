@@ -213,8 +213,12 @@ include race-pkgs.mk
 RACE_COUNT ?= 3
 # cmd/gff-hab under -race -count=3 runs past go test's 10-minute default on a loaded machine.
 RACE_TIMEOUT ?= 30m
+# RACE_PARALLEL caps the parallel tests of one package under the race detector. The detector
+# multiplies each test's CPU, and at go test's default (one per CPU) the parallel cmd/gff-hab
+# tests starved each other's timers on a 4-CPU runner.
+RACE_PARALLEL ?= 2
 race:
-	GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -race -count=$(RACE_COUNT) -timeout $(RACE_TIMEOUT) -- $(RACE_PKGS)
+	GO=$(GO) scripts/go-test-split.sh $(GO_TEST_SHARD) $(SPLIT_PKG) -race -count=$(RACE_COUNT) -parallel $(RACE_PARALLEL) -timeout $(RACE_TIMEOUT) -- $(RACE_PKGS)
 
 # Run each fuzz target in internal/holderproto for FUZZTIME, one after the other. For nightly use.
 FUZZTIME ?= 30s

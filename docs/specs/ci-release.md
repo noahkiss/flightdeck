@@ -179,7 +179,10 @@ input. Without the flags, a cache miss would build a native-CPU libghostty and s
 | `timeout-minutes` | `75`. The full set ran about 40 minutes by 2026-11; a train of several stages passed 45 |
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
-binaries. `make race` runs the race list `RACE_COUNT` times, 3 by default. Both pass a 30-minute
+binaries. `make race` runs the race list `RACE_COUNT` times, 3 by default, with at most
+`RACE_PARALLEL` (default 2) parallel tests in a package: the detector multiplies each test's CPU,
+and at go test's default of one per CPU the parallel `cmd/gff-hab` tests missed their timing
+bounds on a 4-CPU runner (November 2026). Both pass a 30-minute
 `-timeout` (`TEST_TIMEOUT`, `RACE_TIMEOUT`), and `make test-pure` passes `TEST_TIMEOUT` too:
 `cmd/gff-hab` once ran past go test's 10-minute default on a hosted macOS runner, when its tests
 ran one after another.
