@@ -38,7 +38,10 @@ func (c *client) updateTitle() {
 			title = v.spec.Label
 		}
 	}
-	title = cleanTitle(strings.NewReplacer("{host}", host, "{workspace}", c.cfg.Workspace, "{title}", title).Replace(template))
+	title = strings.NewReplacer("{host}", host, "{workspace}", c.cfg.Workspace, "{title}", title).Replace(template)
+	// An empty token leaves its separator at an end: an empty tab's default title is the
+	// workspace's name alone (gff-client.md 3.4).
+	title = cleanTitle(strings.Trim(title, " ·|"))
 	if c.titleSaved && title == c.windowTitle {
 		return
 	}

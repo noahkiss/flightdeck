@@ -187,8 +187,8 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
   lacks one. The kitty protocol is asked for with a query first; a host that does not answer gets
   no push and sends legacy keys as before (3.4, 8.2). It writes a pane's OSC 8 links to the host around the linked cells; a host without
   links ignores the sequence and shows the text (3.4).
-- **Terminal title.** `gff` sets the host window title to `<host> · <workspace> | <pane title>`.
-  An empty part drops with its separator.
+- **Terminal title.** `gff` sets the host window title from a template over the focused pane:
+  its host, the workspace and the pane's own title (3.4, Window title).
 - **Theme.** Chrome uses theme tokens. The default theme maps the tokens to the host terminal's
   own ANSI colours, so `gff` matches any terminal theme with no config. A theme file can override
   them.
@@ -225,6 +225,27 @@ top to bottom (`-split columns|rows`). Nested splits and stacks came later (5.4)
 sets how the panes named on the command line join. Each composed pane has a one-row frame on top
 with its label and notes (exited, gone, offline, observer, the owner and size when they differ
 from the view). Zoom shows the focused pane alone.
+
+**Window title.** zellij is the reference: the host window's title names the session and the
+focused pane's title, and follows focus.
+
+- `[workspace] title` in gff's config file sets the template. The default is
+  `{host} · {workspace} | {title}`. An empty template turns host title updates off. Each
+  token expands once; an unknown token stays as written.
+- The focused view supplies `{host}` (its host's label) and `{title}` (the title its program
+  set with OSC 0 or 2, else the view's label). In a tab with no view both are empty.
+  `{workspace}` is the workspace's name (5.5); outside the workspace it is empty.
+- The expanded title loses spaces, `·` and `|` at either end, so an empty tab's default title
+  is the workspace's name alone, not ` · default | `.
+- Titles are plain text. gff removes control and format characters (C0, C1, DEL, bidi
+  controls, line and paragraph separators) and keeps at most 512 characters. A pane's title is
+  text its program chose, so this holds for every title gff writes.
+- gff writes the title as OSC 2, ended by ST, only when it changes. Before the first one it
+  pushes the host's own title (`CSI 22;2 t`); on exit, detach included, it pops it
+  (`CSI 23;2 t`). A host without the title stack ignores both.
+- A pane's OSC 0 and 2 never reach the host directly, also in pass-through. gff reads the title
+  from the stream and from snapshots; a snapshot with no title keeps the last one known. The
+  frame shows the pane's title too (3.1).
 
 **Pass-through or composed.** One pane passes its bytes straight through when it is the only
 pane shown, it is live, the hab is online, and its size equals the host terminal's. Otherwise
@@ -402,6 +423,10 @@ request, and a debounce timer the test fires.
 | `TestTypingTakesOwnership` | With another client owning the pane, gff shows it composed with the owner note; typing makes gff the owner (reason `typed`) with no `pane.take`; the program gets gff's size and gff passes its bytes through |
 | `TestHostResizeDebounced` | Five host resizes send no size until the debounce fires, then one, for the last size; the program sees only that size |
 | `TestQueriesNeverAnswered` | A host that answers every query it sees gets none, in pass-through and composed: the program reads only the keys typed after its queries (pixel size reports, a clipboard read, a size report with a control byte inside). The program prints them only after gff shows it and a key comes, so in pass-through they arrive as live bytes; the test fails with the filter off |
+| `TestWindowTitleFocus` | Real holder and gff-hab: two panes set titles with OSC 0 and OSC 2; each frame shows its pane's title; the host gets `OSC 2 ; one · work \| <title> ST` for the focused view, and a focus move changes it |
+| `TestTitleBeforeAttach` | A title set before gff opens the stream comes in the snapshot, to the frame and the host title |
+| `TestTitleTemplateAndSanitizing` | `[workspace] title` loads; a C1 character and a bidi control in a pane title are removed; the template expands; an empty tab gives the workspace's name alone; exit pops the host's title |
+| `TestLongPaneTitle` | A title of 5000 characters, read one byte at a time, is cut to 512 and writes nothing to the host |
 | `TestDetach` | Ctrl+O and `d` end `Run` and leave the host's own screen |
 | `TestTypeaheadKept` | Keys typed while the data dial hangs reach the program once the pane opens, before its first snapshot |
 | `TestDetachWhileOpening` | With the data dial hung, Ctrl+O and `d` end `Run` with `ErrDetached` |
@@ -429,7 +454,6 @@ request, and a debounce timer the test fires.
 | With a host that has no kitty protocol, keys reach a kitty program in legacy form | As before; programs that push flag 1 still read legacy keys |
 | No mouse in the composed view; no wheel scrolling of scrollback; no selection (5.2) | Pass-through gets the pane's mouse modes. Later stages |
 | Kitty graphics and other APC strings are dropped in pass-through | The host would answer them; images are a later stage |
-| Window titles | Built: pane OSC 0/2 titles appear in frames and the configurable host title follows focus |
 | The cursor style (DECSCUSR) is not mirrored in the composed view | Cosmetic |
 | A link's OSC 8 id from the program is not kept: libghostty's API gives the URI only, so gff makes the id from the pane and the URI. Two links with one URI in one pane join on hover | They lead to the same place |
 | With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
@@ -1997,7 +2021,7 @@ Results of the review, with a mark and evidence per row and the ranked gaps: `gf
 | Bell marker | A bell marks the pane briefly, then clears | Bell mark on pane and tab for about 1 s (5.2) | Screen test: the mark appears, then clears (needs the bell event, 14) |
 | Finished command drops to a shell | A command pane that exits cleanly becomes a shell | Console pane offers a new shell (5.2) | E2E: a console command exits 0; one key gives a shell in the same directory |
 | Large floating pane | Temporary panes (an image, a quick command) float over the tab at most of its size | A zoomed pane in a scratch tab first (15.9) | Decided in 15.9 |
-| Window title names the host | The terminal window title shows host, workspace and pane | Title template (3.2) | Screen test: the OSC 2 output matches the template |
+| Window title names the host | The terminal window title shows host, workspace and pane | Title template (3.2, 3.4) | Screen test: the OSC 2 output matches the template (`TestWindowTitleFocus`) |
 | Several windows mirror one workspace | Two terminal windows on one machine show the same tabs and focus | Open question 15.4 | Decided in 15.4 |
 | Agents on every host | Lists coding agents in every session on every listed host | Sidebar and board across habs (4, 6, 7) | E2E: two habs; the sidebar lists both hosts' sessions, ranked |
 | Agent state per pane | Sees which agent is working, blocked or done | State marks from adapter events (4.1) | Screen test: each fake state shows its mark and rank |
@@ -2229,15 +2253,3 @@ Opened while writing this spec, 2026-10-31.
 
 Not opened: the herdr, tssh and earlier GFF sources. Facts marked *(gk)* need a check when the
 stage that relies on them starts.
-
-### Window titles
-
-`[workspace] title` sets the host window title template. The default is
-`{host} · {workspace} | {title}`. Empty disables host title updates. Tokens expand once;
-unknown tokens stay literal. Without a pane title, `{title}` uses the view label.
-The focused pane supplies `{host}` and `{title}`. Empty tabs leave both empty.
-Pane OSC 0 and 2 titles also appear in its frame. Titles are plain text: control and
-format characters are removed, and output is capped at 512 runes. gff saves the host
-window title once and restores it when it exits. Pane title sequences never pass through
-to the host directly. A title is learned from VT snapshots and subsequent output;
-a snapshot without title data keeps the last title known, or the view label.

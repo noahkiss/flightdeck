@@ -95,6 +95,13 @@ func TestTitleTemplateAndSanitizing(t *testing.T) {
 	if !strings.Contains(c.out.String(), "\x1b]2;titleevil / box\x1b\\") {
 		t.Fatal(c.out.String())
 	}
+	// An empty tab: the default template's separators at the ends go.
+	c.cfg.TitleTemplate, c.cfg.Workspace = nil, "work"
+	c.tabs = []*tab{{}}
+	c.updateTitle()
+	if !strings.HasSuffix(c.out.String(), "\x1b]2;work\x1b\\") {
+		t.Fatalf("empty tab title: %q", c.out.String())
+	}
 	c.restoreHost()
 	if !strings.HasSuffix(c.out.String(), "\x1b[23;2t") {
 		t.Fatal("host title not restored")
