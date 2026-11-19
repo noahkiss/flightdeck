@@ -965,10 +965,13 @@ in the same folder. gff does the same in a view whose session has exited (6.4).
 | Test | Proves |
 |---|---|
 | `TestLayoutReopen` | Unit: a view taken from a stack (first and middle), from a split (each side) and from the only split in a tab goes back to the same place; a neighbour that left the tree puts it beside a view that was inside it; nothing left puts it at the end |
-| `TestReopenView` | Over a fake hab: pane mode's bar shows `u reopen`; `x` then `u` brings a split view back beside the same view on the same side, focused, with no `session.create`; a closed tab's views come back one by one into the current tab; an entry whose session exited meanwhile reopens with `Enter resume · Esc shell`; one whose session was closed is skipped; with none left the bar says `nothing to reopen`; the list keeps ten |
-| `TestShellAfterExit` | Over a fake hab: an exited view's frame and the bar show `Enter resume · Esc shell`; typed keys start nothing; Esc calls `session.create` with no argv and `cwd_of` the exited pane, and the view shows the new shell in the same place; the exited session stays in the sidebar; `[keys.exited] esc = "none"` and `s = "shell"` move the key and its hints |
+| `TestReopenView` | Over a fake hab: pane mode's bar shows `u reopen`; `x` on the middle of three views side by side, then `u`, brings it back between the same two, at the same column, focused, with no `session.create`; an entry whose session exited meanwhile reopens with `Enter resume · Esc shell`; one whose session was closed is skipped and the bar says `nothing to reopen`; a closed tab's views come back one by one into the current tab, the last first |
+| `TestReopenKeepsTen` | The list keeps the newest ten |
+| `TestShellAfterExit` | Over a fake hab: an exited view's frame and the bar show `Enter resume · Esc shell`; typed keys start nothing; Esc calls `session.create` with no argv, `cwd_of` the exited pane and the view's size, and the view shows the new shell in the same place; the exited session stays in the sidebar |
+| `TestShellKeyRebound` | `[keys.exited] esc = "none"` and `s = "shell"`: the frame shows `s shell`, Esc starts nothing, `s` starts the shell |
 | `TestShellAfterExitInFolder` | Real holder and gff-hab: a command started in a folder exits 0; Esc gives a shell in the view; `pwd -P` there prints the folder |
 | `TestExitedKeymapConfig` | `[keys.exited]` takes plain keys and only `resume`, `shell` and `none`; another action there, and `resume` or `shell` in another mode, are problems on their lines |
+| `TestDefaultKeymap`, `TestPrefixKeymapSample` | Pane mode's bar with `u reopen`, the exited table's `Enter resume  Esc shell`; the sample binds both and reaches every mode but exited, which no key enters |
 
 ## 6. Sessions across hosts
 
@@ -2091,13 +2094,13 @@ Results of the review, with a mark and evidence per row and the ranked gaps: `gf
 | Splits on direction keys | Splits left, right, up or down from pane mode | Splits (5.2) | Screen test: each direction places the new pane on that side |
 | Focus moves on direction keys | Moves focus with one chord from normal mode | Focus keys (5.2) | Screen test: focus moves and wraps in a stack |
 | Zoom and close | Zooms a pane to full size; closes a pane | Zoom; close view versus end program (5.2) | Screen test: close view leaves the session in the sidebar; end program confirms first |
-| Reopen a closed pane | Brings back a pane closed by mistake | Reopen the last ten views (5.2) | Screen test: close, reopen; same pane, same place |
+| Reopen a closed pane | Brings back a pane closed by mistake | Reopen the last ten views (5.2, 5.8) | Screen test: close, reopen; same pane, same place (`TestReopenView`) |
 | Scroll without a mode | Scrolls with the wheel, no scroll mode | Local scrollback on the wheel (5.2) | Screen test: wheel up shows earlier lines; no bytes reach the hab |
 | Typing while scrolled up | Types into a pane while reading back; the view stays put | Key goes to the program; view stays (5.2) | Screen test: scrolled view unchanged after typing; input reached the hab |
 | Thin pane frames with agent names | One title line per pane shows its handle, agent name and state | Top-line frames with title, host, agent and state (3.1) | Screen test: frame shows the fake agent's name and state |
 | Exit status on the frame | A pane that exited non-zero is marked with its status | Frame note (5.2) | Screen test: an `exited` frame shows the status |
 | Bell marker | A bell marks the pane briefly, then clears | Bell mark on pane and tab for about 1 s (5.2) | Screen test: the mark appears, then clears (needs the bell event, 14) |
-| Finished command drops to a shell | A command pane that exits cleanly becomes a shell | Console pane offers a new shell (5.2) | E2E: a console command exits 0; one key gives a shell in the same directory |
+| Finished command drops to a shell | A command pane that exits cleanly becomes a shell | An exited view offers a new shell (5.2, 5.8) | E2E: a console command exits 0; one key gives a shell in the same directory (`TestShellAfterExitInFolder`) |
 | Large floating pane | Temporary panes (an image, a quick command) float over the tab at most of its size | A zoomed pane in a scratch tab first (15.9) | Decided in 15.9 |
 | Window title names the host | The terminal window title shows host, workspace and pane | Title template (3.2, 3.4) | Screen test: the OSC 2 output matches the template (`TestWindowTitleFocus`) |
 | Several windows mirror one workspace | Two terminal windows on one machine show the same tabs and focus | Open question 15.4 | Decided in 15.4 |

@@ -274,7 +274,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race ./internal/hosts/ ./internal/board/` | Many hosts over in-process fake habs |
 | `go test -race ./internal/hoststats/ ./internal/control/ && go test -race -run TestHabStats ./cmd/gff-hab` | Shared host stats |
 | `go test -race ./internal/gffclient/` | The workspace over fake habs |
-| `go test -race -run 'TestWindowTitleFocus\|TestTitleTemplateAndSanitizing' ./internal/gffclient/` | Window titles |
+| `go test -race -run 'TestWindowTitleFocus\|TestTitleBeforeAttach\|TestTitleTemplateAndSanitizing\|TestLongPaneTitle' ./internal/gffclient/` | Window titles (`gff-client.md` 3.4) |
 | `go test -race -run TestCanvasLinks ./internal/gffclient/ && go test -race -tags ghostty -run 'TestLinkSurvivesComposing' ./internal/gffclient/ && go test -tags ghostty -run TestReadScreenLinks ./internal/vt/ghostty/` | OSC 8 links in the composed view (`gff-client.md` 3.4) |
 | `go test -race -run 'TestKittyHost\|TestLegacyKeyGoldens\|TestLegacyCSIGoldens\|TestKittyInTranslate\|TestKittyReplies' ./internal/gffclient/ && go test -race -tags ghostty -run TestKittyPaneEncoding ./internal/gffclient/ && go test -tags ghostty -run 'TestEncodeKeyGoldens\|TestKeyboardFlagsInSnapshot' ./internal/vt/ghostty/` | The kitty keyboard protocol in the composed view (`gff-client.md` 3.4, 8.2) |
 | `go test -tags ghostty -run TestSnapshotMidSequence ./internal/vt/ghostty/ && go test -race -tags ghostty -run TestDumpAcross ./internal/link/` | A snapshot of a libghostty terminal whose output stops inside an escape sequence or a UTF-8 character, on either screen and after a restore (`hab-logic-api.md`, checkpoints) |
@@ -286,6 +286,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race -run 'TestTabRenameCloseLast\|TestWorkspaceConfig' ./internal/gffclient/` | Tab actions and the workspace name (`gff-client.md` 5.5) |
 | `go test -race -run 'TestWorkspaceSaved\|TestStartupTabs\|TestWorkspaceFile' ./internal/gffclient/` | The saved workspace (`gff-client.md` 5.6) |
 | `go test -race -run 'TestWheelScrollsLocally\|TestParseMouse' ./internal/gffclient/` | Scrollback and the mouse (`gff-client.md` 5.7) |
+| `go test -race -run 'TestLayoutReopen\|TestReopen\|TestShellAfterExit\|TestShellKeyRebound\|TestExitedKeymapConfig' ./internal/gffclient/` | Reopen a closed view and a shell after a command exits (`gff-client.md` 5.8); `TestShellAfterExitInFolder` runs the real holder and gff-hab |
 | `go test -race ./internal/grants/ ./cmd/gff/ ./cmd/gff-hab/` | Permission check |
 | `go test ./api/modules/` | Block vocabulary and manifest (`docs/specs/modules.md` 6.5) |
 | `go test -race ./internal/modhost/` | The module runtime (`docs/specs/modules.md` 7.3, 7.4, 8.4) over the hand-written bundles in `internal/modhost/testdata/bundles/` |

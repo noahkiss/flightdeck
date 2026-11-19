@@ -133,10 +133,12 @@ func (u *workspaceUI) shellView(v *view) {
 		u.msg = host + " is offline"
 		return
 	}
-	p := api.SessionCreateParams{CwdOf: v.spec.ID}
-	p.Cols, p.Rows = v.sentCols, v.sentRows
-	if p.Cols <= 0 || p.Rows <= 0 {
-		p.Cols, p.Rows = v.cols, v.rows
+	// The shell starts at the view's size, so it gets no resize as it starts.
+	p := api.SessionCreateParams{CwdOf: v.spec.ID, Cols: v.cols, Rows: v.rows}
+	for _, s := range c.arrangement().slots {
+		if c.tab().views[s.view] == v && s.content.h > 0 {
+			p.Cols, p.Rows = s.wantCols, s.wantRows
+		}
 	}
 	u.shelling[v] = true
 	u.msg = "starting a shell on " + host
