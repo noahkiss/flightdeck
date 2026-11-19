@@ -172,17 +172,10 @@ func (s *paneService) deny(method string, c paneCaller, rule, target string) err
 
 // denyBy is deny for either setting (hab-logic-api.md 3.11, 3.12).
 func (s *paneService) denyBy(g paneGate, method string, c paneCaller, rule, target string) error {
-	from := c.pane
-	switch c.door {
-	case doorPeer:
-		from = "peer link"
-	case doorOwner:
-		from = "owner"
-	}
 	if target == "" {
 		target = "none"
 	}
-	s.logf("panes: %s denied: %s %s, caller %s, target pane %s", method, g.setting(), rule, from, target)
+	s.logf("panes: %s denied: %s %s, caller %s, target pane %s", method, g.setting(), rule, c.name(), target)
 	if c.isCapcom() {
 		if g == gateDrive {
 			return control.Errorf(api.ErrorKindDenied, "the Capcom service lists, types into and starts no pane for now: pane text could carry instructions into its event turns")
