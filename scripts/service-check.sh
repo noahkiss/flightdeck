@@ -162,6 +162,9 @@ no_test_process() { ! pgrep -f "$work" >/dev/null; }
 holder_count() { find "$holders" -maxdepth 1 -name '*.json' | wc -l | tr -d ' '; }
 holder_count_is() { [ "$(holder_count)" -eq "$1" ]; }
 
+# build_count_is <n>: exactly n build directories under <state>/builds (macOS).
+build_count_is() { [ "$(find "$state/builds" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" -eq "$1" ]; }
+
 # note_holders: remember each registered holder instance, for the job checks after uninstall.
 note_holders() {
 	local f i
@@ -384,8 +387,9 @@ wait_until "holder $inst_a to unregister" 30 holder_count_is 1
 holder_of_build "svc-a-$$" >/dev/null 2>&1 && fail "holder $inst_a is still registered"
 wait_until "holder $inst_a's job to go" 90 holder_job_gone "$inst_a"
 if [ "$init" = launchd ]; then
-	n=$(find "$state/builds" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
-	[ "$n" = 1 ] || fail "$n build directories after build A's holder retired, want 1: $(ls "$state/builds")"
+	# Retire removes the job first and the build directory after it, so the count drops a moment
+	# after the job goes.
+	wait_until "build A's directory to go" 30 build_count_is 1
 	[ -x "$state/current/GFF Hab.app/Contents/MacOS/gff-hab" ] || fail "current does not name build B's bundles"
 	dir_b=$(ls "$state/builds")
 	[ "$(registered_builds)" = "$dir_b" ] ||

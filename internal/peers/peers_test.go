@@ -189,9 +189,15 @@ func (s emptySource) Snapshot(h api.HostInfo) api.Structure {
 
 func startHab(t *testing.T, dir, name, id, peers string, caps ...string) *hab {
 	t.Helper()
+	return startHabPoll(t, dir, name, id, peers, 50*time.Millisecond, caps...)
+}
+
+// startHabPoll is startHab with the peer file checked every poll.
+func startHabPoll(t *testing.T, dir, name, id, peers string, poll time.Duration, caps ...string) *hab {
+	t.Helper()
 	h := &hab{sock: filepath.Join(dir, name+".sock"), id: id, file: filepath.Join(dir, name+".toml")}
 	write(t, h.file, peers)
-	m, err := Open(Config{Path: h.file, Self: id, Host: name, Build: "test", Poll: 50 * time.Millisecond,
+	m, err := Open(Config{Path: h.file, Self: id, Host: name, Build: "test", Poll: poll,
 		Publish: func(p api.Peer) { h.mu.Lock(); h.evs = append(h.evs, p); h.mu.Unlock() },
 		Conn: func(c *habconn.Config) {
 			c.MinBackoff, c.MaxBackoff = 10*time.Millisecond, 100*time.Millisecond
@@ -464,11 +470,14 @@ endpoints = ["`+a.sock+`"]
 
 // TestPinReadsNoHalfWrite: the reload after a pin applies the last read with the pin and never
 // reads the file, which a writer may have cut short; the watch reads it once it holds.
+//
+// The test drives a's watch by hand. A running watch reads the truncated file, as it should, once
+// the test stalls for a poll between the truncate and List.
 func TestPinReadsNoHalfWrite(t *testing.T) {
 	d := shortDir(t)
 	b := startHab(t, d, "b", "SHA256:bbbbbbbbbbbb", "")
-	a := startHab(t, d, "a", "SHA256:aaaaaaaaaaaa", "")
-	write(t, a.file, "[[peers]]\nlabel = \"b\"\nendpoints = [\""+b.sock+"\"]\n")
+	a := startHabPoll(t, d, "a", "SHA256:aaaaaaaaaaaa",
+		"[[peers]]\nlabel = \"b\"\nendpoints = [\""+b.sock+"\"]\n", time.Hour)
 	wait(t, "a pins b", func() bool { return strings.Contains(read(t, a.file), `device_id = "`+b.id+`"`) })
 	write(t, a.file, "") // a writer's truncate, its write still to come
 	a.m.reapply("b", b.id)
@@ -476,10 +485,11 @@ func TestPinReadsNoHalfWrite(t *testing.T) {
 		t.Fatalf("after the pin's reload: %+v", l)
 	}
 	write(t, a.file, "[[peers]]\nlabel = \n")
-	wait(t, "a parse problem with the last good list", func() bool {
-		l := a.m.List()
-		return len(l.Problems) == 1 && strings.Contains(l.Problems[0], "line 2") && len(l.Peers) == 1
-	})
+	a.m.check() // sees the change
+	a.m.check() // the file held for a poll: reads it
+	if l := a.m.List(); len(l.Problems) != 1 || !strings.Contains(l.Problems[0], "line 2") || len(l.Peers) != 1 {
+		t.Fatalf("after the watch read the file: want a parse problem and the last good list, got %+v", l)
+	}
 }
 
 // oldHab listens on sock and answers every hello as a gff-hab from before peer links does: it
