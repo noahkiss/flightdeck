@@ -83,6 +83,7 @@ public enum DemoFleet {
         await addConfirmations(hab)
         await addCapcom(hab)
         await addCapcomJobs(hab)
+        await addRounds(workbench: hab)
         await hab.setCapability(FrictionNote.capability, true)
         return hab
     }
@@ -141,6 +142,30 @@ public enum DemoFleet {
         await hab.loadRoundOutcome(named: "morning-brief", "told")
     }
 
+    /// Rounds that run an agent on a schedule (app.md 21.2): one failed last night, one
+    /// paused. attic holds a third that passed.
+    static func addRounds(workbench hab: FakeHab) async {
+        try? await hab.loadRound(RoundSpec(
+            harness: "claude", mode: .fresh, name: "nightly-link-check", project: "p-lantern",
+            prompt: "Check every link in the docs and fix the broken ones.",
+            trigger: RoundTrigger(every: "1d", kind: .cron)))
+        await hab.loadRoundRun(named: "nightly-link-check", .failed, ended: ago(9 * 60), result: "3 links still broken")
+        try? await hab.loadRound(RoundSpec(
+            harness: "claude", mode: .fresh, name: "weekly-summary", project: "p-tide",
+            prompt: "Write a summary of the week's merged changes.",
+            trigger: RoundTrigger(cron: "0 16 * * 5", kind: .cron)))
+        await hab.loadRoundPaused(named: "weekly-summary")
+    }
+
+    static func addRounds(attic hab: FakeHab) async {
+        await hab.setCapability(RoundCenter.capability, true)
+        try? await hab.loadRound(RoundSpec(
+            harness: "codex", mode: .fresh, name: "update-dependencies", project: "p-tide",
+            prompt: "Bump what is safe, run the tests, open a pull request.",
+            trigger: RoundTrigger(cron: "0 7 * * 1", kind: .cron)))
+        await hab.loadRoundRun(named: "update-dependencies", .succeeded, ended: ago(3 * 24 * 60 + 30))
+    }
+
     /// One start that waits for the owner and one that ran at once (capcom.md 6.1).
     static func addConfirmations(_ hab: FakeHab) async {
         await hab.setCapability(ConfirmBook.capability, true)
@@ -197,6 +222,7 @@ public enum DemoFleet {
         // attic knows Capcom runs on workbench.
         await hab.setCapability("capcom", true)
         await hab.setCapcomHome(assignment: 1, home: FakeHab.deviceID(host: "workbench"))
+        await addRounds(attic: hab)
         return hab
     }
 

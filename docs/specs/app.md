@@ -349,8 +349,8 @@ The root is a stock tab view with four tabs, in this order:
 | Tab | Symbol | Holds |
 |---|---|---|
 | Sessions | `rectangle.stack` | The status board (3.1), with a badge of the needs-you count |
-| Capcom | `dot.radiowaves.left.and.right` | The Capcom view (4.10) |
-| Rounds | `clock.arrow.circlepath` | The rounds list (21.2), its "Show run sessions" switch and New round, and Capcom jobs (21.5) |
+| Capcom | `dot.radiowaves.left.and.right` | The Capcom view (4.10) under a large "Capcom" title |
+| Rounds | `clock.arrow.circlepath` | The rounds list (21.2) with New round and the "Show run sessions" switch in its bar |
 | Settings | `slider.horizontal.3` | The Settings tab (20.7) |
 
 - **iPhone.** The tab bar floats at the bottom and shrinks while a list scrolls down. The usage
@@ -1030,13 +1030,25 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   state change, resumes it again. Design call: opening the view is the user's request to talk to Capcom, so a
   resume here is expected; merely viewing an older Capcom session still never resumes it (4.9).
 - **The view.** The session view of the Capcom session, in a Capcom style. On iPhone it is
-  chat first with the Chat and Terminal switch, as for any session. On iPad and Mac the chat
+  chat first with the Chat and Terminal switch, as for any session, except on the Capcom tab
+  (below). On iPad and Mac the chat
   fills the width, with the same switch in the header instead of the 50/50 split. Design call:
   Capcom has no project to watch in a terminal; the terminal is there for a first-start trust
   prompt (`capcom.md` 7.5). Every session with kind `capcom` gets this style, opened from its
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
+- **The Capcom tab (iPhone).** The tab's root is the Capcom view under a large "Capcom"
+  title. The subtitle says where Capcom runs: "Runs on <hab> · answers and routes anything",
+  else the entry row's words for the state. The compose button (New conversation) sits in the
+  bar; a pane Capcom's terminal is "Show terminal" in the More menu, not a switch in the
+  title's place. The composer reads "Ask Capcom", and the usage pacing line sits over the
+  composer as plain text. The subtitle needs iOS 26; before it the title shows alone. Design
+  call: the tab is Capcom's home, so its title names it, as the approved artboard does. The
+  artboard's "New topic" stays "New conversation": the hab writes that label on its divider
+  (`capcom-service.md` 7.5), and one concept keeps one word. Code: `CapcomCenter.tabSubtitle`,
+  `CapcomScreen(tab:)`. Tests: `RoundsListTests.testCapcomTabWords`.
 - **Usage pacing.** While the home's catalog lists the `capcom` consumer of the usage
-  governor at a pace other than `ok`, or unpaced, a line sits above the thread:
+  governor at a pace other than `ok`, or unpaced, a line sits above the thread (over the
+  composer on the Capcom tab):
   "Pacing usage until 15:04 · 40% of the week used, share 30%", "Small model · $6.12 of $5.00
   today", "Event turns wait until Thu 09:30 · …", or "Unpaced: 12.3k tokens today". A time on
   another day carries its weekday. A tap opens the usage sheet (14.2). A catalog with no
@@ -1055,8 +1067,8 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   its close button returns to the board. The Capcom view and an open session never show at
   once: opening one closes the other. "Ask an agent", "Attach to Capcom" and New conversation
   from an older session still open the session's board row (4.9, 8.8).
-- **Demo mode.** Workbench runs Capcom with a standing conversation and one notice waiting as a
-  chip; attic's catalog names workbench as the home. Debug builds take
+- **Demo mode.** Workbench runs Capcom with a standing conversation (two questions, then a
+  hand-off card for the CSV import) and one notice waiting as a chip; attic's catalog names workbench as the home. Debug builds take
   `-FlightdeckOpenCapcom YES` to open the Capcom view at launch.
 
 Limits, at the bar of herdr, Rex and Paseo:
@@ -1408,7 +1420,9 @@ the cell width, rows the height over the cell height, each less half a cell so r
 loses one (5.3, Grid equals the PTY). At least 2 columns and 1 row.
 
 **Two modes.** A control at the top right of the terminal shows the mode and the pane's size in
-cells: "Fitted · 50 × 38" or "Host size · 100 × 30". It opens a menu: Fit to this screen, Host
+cells: "Fitted · 50 × 38" or "Host size · 100 × 30". It sits in a strip of its own over the
+pane, in the pane's background colour, so it never covers the pane's top lines; the fitted grid
+leaves the strip out. It opens a menu: Fit to this screen, Host
 size, and Redraw, with a check on the current mode. iPad shows the same control in its terminal
 column. The mode lives as long as the view; a new view opens fitted.
 
@@ -4236,10 +4250,10 @@ The page is `Views/SettingsViews.swift`.
 
 The app side of rounds (`rounds.md` 10.2, 10.3, 13). Code: `Rounds/RoundCenter.swift` (the
 lists, the actions, the session to open, live run panes), `Rounds/RoundEvents.swift` (round
-events into `HabState`), `Rounds/RoundText.swift` (the words), `Rounds/RoundForm.swift` (the
-form's fields), `Views/RoundViews.swift` (the board's Rounds part, the round page, the form,
-the badge), `Demo/FakeRounds.swift` (the fake hab). Tests: `RoundTests`,
-`LiveTests.testLiveRounds`.
+events into `HabState`), `Rounds/RoundText.swift` (the words), `Rounds/RoundsList.swift` (the Rounds tab's
+sections and rows), `Rounds/RoundForm.swift` (the form's fields), `Views/RoundViews.swift` (the board's Rounds part, the round page, the form,
+the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/FakeRounds.swift`
+(the fake hab). Tests: `RoundTests`, `RoundsListTests`, `LiveTests.testLiveRounds`.
 
 ### 21.1 State
 
@@ -4257,14 +4271,34 @@ the badge), `Demo/FakeRounds.swift` (the fake hab). Tests: `RoundTests`,
 
 ### 21.2 The status board
 
-- **Rounds list.** On iPhone and iPad the Rounds tab (3.8), on the Mac the board below the session sections: a "Rounds" section holds the "Show run
-  sessions" switch and New round, then one section per hab, "Rounds on <hab>" ("· offline"
+- **The Rounds tab (iPhone and iPad).** A large "Rounds" title, with New round (a plus) in the
+  bar and "Show run sessions" in its More menu. One list holds every hab's rounds, split by
+  what starts them: "On a schedule" (cron and once), "When something happens" (event and
+  watch), then "By hand". An empty section does not show. A section whose rows are all Capcom
+  jobs says "Capcom handles these" beside its header. Each row: the name; the prompt's first
+  line (else the command); then the trigger, the project's name and the hab ("<hab>
+  (offline)" when it is), led by "Paused" or "Completed". On the right: the last run's state
+  and how long ago it ended ("Succeeded", "3 days ago"), else "Next" and the next run; a paused
+  round shows Unpause there instead. A Capcom job's row leads its third line with the last
+  outcome and its time ("Acted today 14:02", "No run yet") and shows on the right what the job
+  may do. With no rounds yet, the list says so and offers New round. Design call: the approved
+  artboard puts the hab in the row, not one section per hab, and splits by trigger; "By hand"
+  keeps "On a schedule" true. The artboard's "Passed" and "Resume" stay "Succeeded" and
+  "Unpause": they are the round page's words, and a round's mode can be `resume`.
+- **What a job may do.** "Acts alone", "Asks first" or "Tells you", from the job's words and the
+  Capcom home's `capcom.event_actions` (`capcom-service.md` 9.4, 9.6): `all` acts alone for
+  every job; `ask` asks first for a job with words; `off`, or no words below `all`, tells you.
+  An unknown value (no settings on the home) reads as the built-in `allow`, so a job with words
+  acts alone. Design call: the row never claims a check the hab may skip. The pill does not
+  count `card` and `fetch`, which need a word at every value. Code: `CapcomJobReach`.
+- **The Mac's rounds list.** On the Mac the board below the session sections: a "Rounds"
+  section holds the "Show run sessions" switch and New round, then one section per hab, "Rounds on <hab>" ("· offline"
   when it is). Each row: the name, the mode, the trigger in the catalog's words ("every 1h",
   "every 1d in Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
   on the right the mark (Paused, Completed) or the last run's state.
 - **Order.** Rounds that will run, soonest next slot first; then rounds with no next slot (by
-  hand); then paused; then completed. The name breaks ties. Design call: the board ranks
-  sessions by what needs the owner; for rounds the next thing to happen leads, and what will
+  hand); then paused; then completed. The name breaks ties, then the hab's label on the tab.
+  Design call: the board ranks sessions by what needs the owner; for rounds the next thing to happen leads, and what will
   not run sinks.
 - **Times.** The next run shows in the viewer's zone ("today 09:00", "tomorrow 09:00", else the
   short date), with the round's zone beside it when its clock differs: "tomorrow 15:00 (09:00
@@ -4343,7 +4377,8 @@ reports, mouse motion and wheel reports while the client owns the pane.
 The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/CapcomJobs.swift`
 (the list, the switches, the grant), `Views/CapcomJobViews.swift`. Tests: `CapcomJobTests`.
 
-- **Where.** Capcom settings (the "Capcom host" page) has a "Capcom jobs" row with the count; on iPhone and iPad the Rounds tab has one too.
+- **Where.** Capcom settings (the "Capcom host" page) has a "Capcom jobs" row with the count.
+  On iPhone and iPad the Rounds tab lists each job as a round (21.2); its page holds the switches.
   It opens the list: one section per job, by name, with its trigger, its hab and "Last:" and
   the outcome ("Told you", "Stayed quiet", "Acted", "Not seen", "No answer", "No run yet"),
   "Paused" when it is, a link to the round's page, and the switches. A `capcom` round's page

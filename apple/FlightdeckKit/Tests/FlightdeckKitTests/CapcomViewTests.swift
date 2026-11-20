@@ -234,7 +234,7 @@ final class CapcomViewTests: XCTestCase {
         XCTAssertEqual(m.target.session, "capcom-s1", "the loaded standing conversation, not a new one")
         XCTAssertEqual(m.pending.map(\.title), ["Tests failed in seed-catalog"])
         m.start()
-        await eventually("messages") { m.messages.count == 4 }
+        await eventually("messages") { m.messages.count == 8 }
         m.stop()
         await f.setActive(false)
     }

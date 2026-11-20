@@ -102,20 +102,41 @@ public final class RoundCenter {
     /// The list order: rounds that will run, soonest next slot first; then rounds run only by
     /// hand; then paused; then completed. Name breaks ties.
     public static func order(_ rounds: [Round]) -> [Round] {
+        rounds.sorted { a, b in
+            if precedes(a, b) { return true }
+            if precedes(b, a) { return false }
+            return a.id < b.id
+        }
+    }
+
+    /// Whether `a` goes before `b` in the list order, ids aside.
+    public nonisolated static func precedes(_ a: Round, _ b: Round) -> Bool {
         func group(_ r: Round) -> Int {
             if r.completed == true { return 3 }
             if r.paused == true { return 2 }
             return r.nextSlot == nil ? 1 : 0
         }
-        return rounds.sorted { a, b in
-            let ga = group(a), gb = group(b)
-            if ga != gb { return ga < gb }
-            if ga == 0, let na = a.nextSlot.flatMap(RoundText.parse), let nb = b.nextSlot.flatMap(RoundText.parse), na != nb {
-                return na < nb
-            }
-            if a.name != b.name { return a.name < b.name }
-            return a.id < b.id
+        let ga = group(a), gb = group(b)
+        if ga != gb { return ga < gb }
+        if ga == 0, let na = a.nextSlot.flatMap(RoundText.parse), let nb = b.nextSlot.flatMap(RoundText.parse), na != nb {
+            return na < nb
         }
+        return a.name < b.name
+    }
+
+    /// The Rounds tab's sections (app.md 21.2). `home` is the Capcom home, whose
+    /// `capcom.event_actions` sets what a Capcom job's row says it may do.
+    public func listSections(home: String?, now: Date = Date()) -> [RoundsListSection] {
+        var names: [String: [String: String]] = [:]
+        for h in board.habs {
+            names[h.id] = h.state.store.projects.mapValues(\.name)
+        }
+        let actions = home.flatMap { id in board.habs.first { $0.id == id } }?
+            .state.settings[SettingsRegistry.capcomEventActions].flatMap { s -> String? in
+                if case .string(let v) = s.value { return v }
+                return nil
+            }
+        return RoundsList.sections(habs, projectNames: names, eventActions: actions, now: now)
     }
 
     public func row(habID: String, round: String) -> RoundRow? {

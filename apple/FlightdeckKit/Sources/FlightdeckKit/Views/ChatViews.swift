@@ -17,6 +17,8 @@ public struct ChatView: View {
     /// Files a Capcom composer could not attach as chips: they stay in the draft.
     @State private var keptFiles: Set<UUID> = []
     @Environment(\.sendFiles) private var sendFiles
+    /// A line over the composer, such as the Capcom tab's pacing line.
+    @Environment(\.chatAboveComposer) private var aboveComposer
 
     public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0, draft: Binding<String>? = nil) {
         self.model = model
@@ -43,6 +45,7 @@ public struct ChatView: View {
             } else {
                 ChatTranscript(model: model, openTerminal: openTerminal)
             }
+            if let aboveComposer { aboveComposer }
             Divider()
             ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
         }
@@ -75,6 +78,11 @@ public struct ChatView: View {
         }
         .onDisappear { model.stop() }
     }
+}
+
+extension EnvironmentValues {
+    /// A view the chat shows over its composer; nil shows none.
+    @Entry var chatAboveComposer: AnyView? = nil
 }
 
 /// The header line: harness and host, with the state.
@@ -767,7 +775,7 @@ struct ComposerView: View {
     }
 
     private func field(_ mode: ChatAnswer.ComposerMode, gate: SendGate) -> some View {
-        TextField(ChatAnswer.placeholder(mode, gate: gate, agent: model.context.agent), text: $draft, axis: .vertical)
+        TextField(ChatAnswer.placeholder(mode, gate: gate, agent: model.context.agent, capcom: model.context.isCapcom), text: $draft, axis: .vertical)
             .lineLimit(1...8)
             .textFieldStyle(.plain)
             .focused($focused)
