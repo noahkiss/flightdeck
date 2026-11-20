@@ -447,7 +447,9 @@ func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentS
 	} else {
 		p.Cwd = folder // an unfiled session stays unfiled, in any folder
 	}
-	made, err := w.create(ctx, p)
+	// The fresh session starts in the mode the old one was started in, not the current
+	// setting (harness-adapters.md, Start mode).
+	made, err := w.create(withRecordedMode(ctx, ss.StartMode), p)
 	if err != nil {
 		// A create that timed out may have made the session all the same: then go on with it.
 		id, ok := swapSuccessor(w.store, ss.ID, name, "")

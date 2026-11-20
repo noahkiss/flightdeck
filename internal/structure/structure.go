@@ -563,6 +563,9 @@ type SessionSpec struct {
 	// confirmed plan allows its later starts (groups.md 3.3); it stays out of the API.
 	Group    *api.SessionGroup
 	Envelope *api.GroupEnvelope
+	// StartMode is the start mode the hab added flags for (harness-adapters.md, Start mode):
+	// auto or bypass; empty for none. Session.start_mode.
+	StartMode string
 }
 
 // CreateSession adds a session record for a live pane, or for a pane about to be spawned
@@ -600,7 +603,7 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 		return api.Session{}, fmt.Errorf("%w: pane %s belongs to session %s", ErrConflict, spec.Pane, other.ID)
 	}
 	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning,
-		Spawning: spec.NewPane, Kind: spec.Kind, Dir: spec.Dir}
+		Spawning: spec.NewPane, Kind: spec.Kind, Dir: spec.Dir, StartMode: spec.StartMode}
 	if spec.Round != nil {
 		r := *spec.Round
 		ss.Round = &r
@@ -1147,7 +1150,7 @@ func sessionAPI(ss *sessionRecord) api.Session {
 		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit), Round: copyRound(ss.Round),
 		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir, Group: copyGroup(ss.Group),
 		ContextPct: copyPct(ss.ContextPct), Compacts: ss.Compacts, Replaced: ss.Replaced,
-		Stale: slices.Clone(ss.Stale),
+		Stale: slices.Clone(ss.Stale), StartMode: ss.StartMode,
 	})
 }
 

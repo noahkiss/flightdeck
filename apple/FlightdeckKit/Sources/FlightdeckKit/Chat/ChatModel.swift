@@ -24,6 +24,9 @@ public struct ChatContext: Equatable, Sendable {
     public var isCapcomService = false
     /// A run session's round name ("Round" when the round is gone), for the badge (rounds.md 10.3).
     public var round: String?
+    /// The start mode the hab started the harness in, when it added a flag: auto or bypass
+    /// (harness-adapters.md, Start mode). Nil for ask, a plain program and an older hab.
+    public var startMode: String?
     /// The hab's host id, which names this hab in a chip's host.
     public var hostID = ""
     /// The hab answers folder trust prompts (`trust.answer`, app.md 7.10).
@@ -775,6 +778,7 @@ extension ChatContext {
         c.agent = c.pane.flatMap { store.agents[$0] }
         c.harness = c.agent?.harness
         c.model = session?.model
+        c.startMode = session?.startMode
         c.sessionExited = session?.state == .exited
         c.isConsole = session.map { ConsoleOpener.isConsole($0, in: store) } ?? false
         c.isCapcom = session?.kind == .capcom

@@ -269,7 +269,7 @@ func TestSessionRestart(t *testing.T) {
 		t.Fatalf("session after restart: %+v", ss)
 	}
 	waitUntil(t, "claude started again", func() bool { return lines() == 2 })
-	if got := readLines(t, log)[1]; got != "claude --resume "+native {
+	if got := readLines(t, log)[1]; got != "claude --permission-mode auto --resume "+native {
 		t.Fatalf("restart start %q", got)
 	}
 	if b, err := os.ReadFile(path); err != nil || string(b) != body {

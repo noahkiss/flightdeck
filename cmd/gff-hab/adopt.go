@@ -321,7 +321,9 @@ func (d *adopter) Adopt(ctx context.Context, p api.SessionAdoptParams) (api.Sess
 	if _, _, _, err := gitIdentity(ctx, cwd); err == nil {
 		cp.ProjectDir = cwd
 	}
-	session, pane, err := d.acts.CreateSession(ctx, cp)
+	// The owner started this conversation by hand: it resumes in the harness's own default,
+	// with no start mode added (harness-adapters.md, Start mode).
+	session, pane, err := d.acts.CreateSession(withRecordedMode(ctx, ""), cp)
 	if err != nil {
 		return api.SessionAdopted{}, err
 	}

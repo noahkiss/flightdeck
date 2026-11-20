@@ -105,8 +105,20 @@ public struct ChatHeader: View {
     private var subtitle: String {
         var parts = [harnessName(context.harness), context.hostLabel]
         if let m = context.model { parts.append(m) }
+        if let s = startModeLabel(context.startMode) { parts.append(s) }
         if !context.online { parts.append("offline") }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+/// The words the session details show for a start mode other than ask (harness-adapters.md,
+/// Start mode). Nil for ask or none; an unknown word shows as it is.
+func startModeLabel(_ mode: String?) -> String? {
+    switch mode {
+    case nil, ""?, "ask"?: return nil
+    case "auto"?: return "Auto mode"
+    case "bypass"?: return "Bypass permissions"
+    case let x?: return "Start mode \(x)"
     }
 }
 

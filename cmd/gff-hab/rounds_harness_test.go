@@ -270,7 +270,7 @@ func TestRoundHarnessEnds(t *testing.T) {
 		t.Fatalf("session id gff-hab chose: %q", sid)
 	}
 	argv, _ := os.ReadFile(filepath.Join(work, "argv-success"))
-	if want := "--fake success --len " + strconv.Itoa(deliveredLen) + " --session-id " + id + " --model model-x"; strings.TrimSpace(string(argv)) != want {
+	if want := "--permission-mode auto --fake success --len " + strconv.Itoa(deliveredLen) + " --session-id " + id + " --model model-x"; strings.TrimSpace(string(argv)) != want {
 		t.Errorf("argv %q, want %q", argv, want)
 	}
 	if _, err := os.Stat(filepath.Join(work, "claude", "projects", "-work-app", id+".jsonl")); err != nil {
@@ -415,7 +415,7 @@ func TestRoundHarnessCodex(t *testing.T) {
 		t.Errorf("result %q", got.Result)
 	}
 	argv, _ := os.ReadFile(filepath.Join(work, "argv-success"))
-	if want := "--no-daemon --fake success --len " + strconv.Itoa(deliveredLen); strings.TrimSpace(string(argv)) != want {
+	if want := "--approve-for-me --no-daemon --fake success --len " + strconv.Itoa(deliveredLen); strings.TrimSpace(string(argv)) != want {
 		t.Errorf("argv %q, want %q", argv, want)
 	}
 }

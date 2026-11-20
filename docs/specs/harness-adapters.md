@@ -1536,41 +1536,69 @@ and several questions all go this way (checked live against Claude Code 2.1.329)
 
 ## Start mode
 
-One setting decides how far a new agent session may go without asking: `agent.start_mode`
-(`app.md` 20.4). The hab adds the harness's own permission flag when it starts a harness.
+One levelled setting decides how far a new agent session may go without asking:
+`agent.start_mode` (`app.md` 20.3). Safe sets `ask`, Balanced `auto`, Bypass `bypass`. The hab
+adds the harness's own permission flag when it starts a harness.
 
-| Value | Means | Claude Code | Codex | opencode |
-|---|---|---|---|---|
-| `ask` (default) | The harness's own default: it asks before edits and commands | No flag | No flag | No change |
-| `edits` | File edits without asking; commands still ask | `--permission-mode acceptEdits` *(gk)* | `--full-auto` *(gk)* | Unverified |
-| `bypass` | No permission prompts | `--permission-mode bypassPermissions` *(gk)* | `--dangerously-bypass-approvals-and-sandbox` *(gk)* | Unverified |
+| Value | Level | Means | Claude Code | Codex | opencode |
+|---|---|---|---|---|---|
+| `ask` | Safe | The harness's own default: it asks before edits and commands | No flag | No flag | No change |
+| `auto` | Balanced | The harness decides what to allow, and asks for the rest | `--permission-mode auto` | `--approve-for-me` | Unverified |
+| `bypass` | Bypass | No permission prompts | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` | Unverified |
 
-- **Unverified.** The Claude Code and Codex flags are general knowledge *(gk)*: no page was read
-  for them and no test runs them against the pinned versions. opencode sets permissions in its config, and a
-  per-process override is not checked. Until a row is checked, the hab adds nothing for it and
-  logs one line per start. The stage that builds this checks each flag first.
+- **Checked flags.** Each flag was read from the harness's `--help`: Claude Code 2.1.329 lists
+  `--permission-mode` with the choices `acceptEdits`, `auto`, `bypassPermissions`, `manual`,
+  `dontAsk` and `plan`. Codex 0.171.0 has `--approve-for-me` ("route approval requests through
+  automatic review using the workspace-write sandbox") and
+  `--dangerously-bypass-approvals-and-sandbox`, at the top level and on `codex resume`. It has
+  no `--full-auto`. `auto` is the closest Codex mode to Claude Code's auto mode. `ask` adds no
+  flag for any harness, so Claude Code's `manual` is never named.
+- **Unverified.** opencode sets permissions in its config, and a per-process override is not
+  checked. Until its row is checked, the hab adds nothing for it and logs one line per start.
 - **Where it applies.** Every start of a harness through `session.create` with `harness` set:
   the app, `gff`, `spawn`, Capcom's `start_session`, rounds (`rounds.md` 3), group members and
-  `recreate` (`hab-logic-api.md` 3.13). Not a plain program, and not a pane the user starts by
-  hand.
-- **An explicit flag wins.** When `argv`, `harness_args` or an alias already names a permission
-  mode for that harness, the hab adds nothing.
-- **Kept on the session.** The record keeps the mode it started with. `session.resume`,
-  `session.restart` and `recreate` start again with that mode, not the current setting.
+  `recreate` (`hab-logic-api.md` 3.13). Not a plain program (an `argv` with no `harness`, such
+  as `pane.new`), not the Capcom service's own session, not a pane the user starts by hand, and
+  not `session.adopt`: an adopted conversation was started by hand, so it resumes with no flag.
+- **Where the flag goes.** Right after the program, before its other arguments and any
+  subcommand (`codex <flags> --no-daemon resume <id>`). The recorded start (`resume.json`) keeps
+  the argv without the added flag, so a recreate never adds a second one.
+- **An explicit flag wins.** When the argv (a round's `harness_args` included) already names a
+  permission mode, the hab adds nothing. Claude Code: `--permission-mode`,
+  `--dangerously-skip-permissions`, and `--settings` (its settings may set
+  `permissions.defaultMode`). Codex: `-s`, `--sandbox`, `-a`, `--ask-for-approval`, `-p`,
+  `--profile` (a profile may set the sandbox or the approval policy), `--full-auto`,
+  `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--approve-for-me`, and a `-c` or
+  `--config` that sets `sandbox_mode` or `approval_policy`. A short flag counts with its value
+  apart or attached (`-s read-only`, `-sread-only`, `-csandbox_mode=...`). An alias names only a
+  harness and a model, so it never names a mode. A value in the hab's config file locks the setting
+  on that hab, so no level changes it (`app.md` 20.5). On connect, the app writes the level's
+  value only where the setting's `source` is `default` (`app.md` 20.2).
+- **Kept on the session.** The session record keeps the mode the hab added flags for, as
+  `Session.start_mode` (`auto` or `bypass`; absent when the hab added nothing).
+  `session.resume`, `session.restart`, `recreate` and a group member's fresh session start
+  again with the lower of that mode and the current setting (`ask` below `auto` below
+  `bypass`). A lowered level lowers an old session at its next start; a raised level never
+  raises it. A session recorded with none starts again with none.
 - **Read at each start.** A change applies to the next start; a running session keeps its mode.
-- The app shows the mode on a session's details when it is not `ask`.
+  Decision (coordinator, 2026-11-20, after the security review): the owner's level wins when
+  it is lowered, so a Capcom restart or recreate after Bypass to Safe does not start a session
+  at bypass.
+- **The added flag wins over the harness's own config.** A Claude Code `defaultMode` or a Codex
+  `approval_policy` in the user's config does not apply to a session the hab started with a
+  flag.
+- The app shows the mode on a session's details when it is not `ask`: "Auto mode" or "Bypass
+  permissions" after the model.
 
-Recommended, open for the owner (`capcom-service.md` 16, Q15): one hab-side preference for the
-harness permission mode every new session starts in, with no level. Reason: the owner asked for
-one global setting for the level a new pane starts at, and named Claude Code's bypass mode as
-the value wanted. No pane has a level of its own today: levels are the app's picker. The other reading
-is the level the picker starts at for a new device or hab. A level never sets a harness's own
-bypass flag (`app.md` 20.2), so the level picker leaves this preference alone.
+Decision (owner, 2026-11-20; `capcom-service.md` 16, Q15): the start setting and the autonomy
+level are the same thing, so the level sets the harness's own permission mode for every new
+session. The owner picked Claude Code's `auto` for Balanced.
 
-Not built yet. Its acceptance: each value adds its flag on a fake harness's argv for Claude Code
-and Codex; an explicit flag in `harness_args` or an alias suppresses it; `session.resume` and
-`recreate` keep the recorded mode after the setting changed; a plain program gets nothing; an
-unverified row adds nothing and logs once.
+Built: `cmd/gff-hab/startmode.go` (the flags and the explicit-flag check), `actions.prepare`
+(adds the flags), the session record's `start_mode`. Tests: `TestWithStartMode`,
+`TestCreateStartMode`, `TestResumeStartMode`, `TestRecreateStartMode`. Not checked live:
+whether a root flag placed before `codex resume` or `codex fork` takes effect (the parse
+succeeds), and what Claude Code's `manual` choice means.
 
 ## Edge cases
 

@@ -9360,6 +9360,8 @@ public struct Session: Codable, Sendable, Hashable {
     public var round: SessionRound?
     /// What the running agent loaded that a newer render replaced: instructions. session.restart picks the new one up. Absent when nothing is stale, or the hab cannot tell.
     public var stale: [String]?
+    /// The start mode the hab started the harness in, from agent.start_mode: auto or bypass. Resume, restart and recreate start again with the lower of it and the current setting. Absent when the hab added no permission flag: ask, a plain program, a harness with no checked flag, or a start whose arguments named a mode.
+    public var startMode: String?
     public var state: SessionState
     /// The agent session's title, from its adapter. Absent when the harness has none.
     public var title: String?
@@ -9380,11 +9382,12 @@ public struct Session: Codable, Sendable, Hashable {
         case revision = "revision"
         case round = "round"
         case stale = "stale"
+        case startMode = "start_mode"
         case state = "state"
         case title = "title"
     }
 
-    public init(compacts: Int? = nil, contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, replaced: String? = nil, revision: UInt64, round: SessionRound? = nil, stale: [String]? = nil, state: SessionState, title: String? = nil) {
+    public init(compacts: Int? = nil, contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, group: SessionGroup? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, replaced: String? = nil, revision: UInt64, round: SessionRound? = nil, stale: [String]? = nil, startMode: String? = nil, state: SessionState, title: String? = nil) {
         self.compacts = compacts
         self.contextPct = contextPct
         self.dir = dir
@@ -9400,6 +9403,7 @@ public struct Session: Codable, Sendable, Hashable {
         self.revision = revision
         self.round = round
         self.stale = stale
+        self.startMode = startMode
         self.state = state
         self.title = title
     }

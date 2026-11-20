@@ -2124,7 +2124,8 @@ Built choices (A10; `cmd/gff-hab/sessionaction.go`, `sessionactioncli.go`):
   it at every value; the Capcom route and its marked forward under `pane.type`'s rule for
   Capcom; every other agent door answers `denied`. The forward needs `session-action` on the
   peer. The owner's `label/name` forward carries no mark, so the far hab judges it as a peer.
-- **Start mode** is not recorded or carried yet (`harness-adapters.md`, Start mode).
+- **Start mode.** `recreate` starts the fresh session with the lower of the start mode the old
+  one's record holds and the current setting (`harness-adapters.md`, Start mode).
 
 Tests: `TestSessionActionClear`, `TestSessionActionCompact`, `TestSessionActionRefusals`,
 `TestSessionActionAfterTurn`, `TestSessionActionDoors`, `TestSessionActionReauthorize`,

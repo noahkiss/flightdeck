@@ -195,7 +195,8 @@ func TestSessionResumeAfterHolderLoss(t *testing.T) {
 	}
 	waitSession(t, c, agent.Session, "running again", func(s api.Session) bool { return s.State == api.SessionStateRunning && s.Pane == res.Pane })
 	waitUntil(t, "claude started again", func() bool { return len(readLines(t, log)) == 2 })
-	if got := readLines(t, log)[1]; got != "claude --session-id "+native {
+	// The create recorded the default start mode, auto; the resume keeps it.
+	if got := readLines(t, log)[1]; got != "claude --permission-mode auto --session-id "+native {
 		t.Fatalf("second start %q", got)
 	}
 
@@ -222,7 +223,7 @@ func TestSessionResumeAfterHolderLoss(t *testing.T) {
 		t.Fatalf("resume again: %v", err)
 	}
 	waitUntil(t, "claude started a third time", func() bool { return len(readLines(t, log)) == 3 })
-	if got := readLines(t, log)[2]; got != "claude --resume "+native {
+	if got := readLines(t, log)[2]; got != "claude --permission-mode auto --resume "+native {
 		t.Fatalf("third start %q", got)
 	}
 }

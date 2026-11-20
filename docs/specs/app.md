@@ -3877,11 +3877,17 @@ every key, so a change never makes a new key.
     as `default`. The first connect after the update writes `all`: from then on event turns act
     with no job, as Bypass means. The owner chose this (least friction). A user who wants
     `allow` picks Custom and sets it; a written value is never moved again.
+  - **`agent.start_mode` moves the same way.** A hab updated to a build with the setting holds
+    `auto` (Balanced) as `default` before any client connects, so its next harness start adds
+    `--permission-mode auto`, also for a Safe user and for unattended rounds. The first connect
+    of a Safe app writes `ask`, and of a Bypass app `bypass`.
 - **What Bypass never touches.**
-  - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
-  - The harness's own bypass flag, such as `--dangerously-skip-permissions`. A level never sets
-    it. The user picks it per session, in the harness or its config, or once for every new
-    session with the preference `agent.start_mode` (20.4; `harness-adapters.md`, Start mode).
+  - Harness permissions inside a running session: allow and deny rules, the harness's own
+    prompts, a mode the user switched to in the harness.
+  - A new session's start mode is the exception: `agent.start_mode` is levelled (20.3), so
+    Bypass starts each new harness with its own bypass flag, such as
+    `--permission-mode bypassPermissions` (`harness-adapters.md`, Start mode). A running session
+    keeps its mode.
   - The foreign worktree setup yes (20.1).
   - Unlock for an answer from a banner or a Live Activity (7.6): the device key signs only while
     the device is unlocked (`transport.md` 7.2).
@@ -3899,6 +3905,7 @@ every key, so a change never makes a new key.
 | `capcom.event_actions` | Capcom may act on events | Agents | `"off"`, `"ask"`, `"allow"` or `"all"`; `off` by hand only | `"ask"` | `"allow"` | `"all"` | Hab, every hab; the Capcom home hab enforces it (A9; `all` A10) | `capcom-service.md` 9.4, 9.6, 19.1 |
 | `agent.read_panes` | Agents may read panes | Agents | `"off"`, `"project"` or `"all"`; `off` by hand only | `"project"` | `"all"` | `"all"` | Hab, every hab; each hab enforces it for reads of its own panes | `hab-logic-api.md` 3.11 |
 | `agent.drive_panes` | Agents may type into and start panes | Agents | `"off"`, `"agents"`, `"project"` or `"all"`; `project` by hand only | `"off"` | `"agents"` | `"all"` | Hab, every hab; each hab enforces it for its own panes | `hab-logic-api.md` 3.12 |
+| `agent.start_mode` | New sessions start in | Agents | `"ask"`, `"auto"` or `"bypass"` | `"ask"` | `"auto"` | `"bypass"` | Hab, every hab; each hab reads it at each harness start | `harness-adapters.md` (Start mode) |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
 | `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 |
 
@@ -3931,6 +3938,13 @@ every key, so a change never makes a new key.
   its scope, and sends a raw line under `all` (`hab-logic-api.md` 3.12; `capcom-service.md`
   5.4). Whoever may type into a pane may also run a session action on it (`hab-logic-api.md`
   3.13).
+- **`agent.start_mode`** is the harness permission mode a new session starts in
+  (`harness-adapters.md`, Start mode): `ask` adds no flag, `auto` starts Claude Code with
+  `--permission-mode auto` and Codex with `--approve-for-me`, `bypass` with each harness's
+  bypass flag. A permission flag in the start's own arguments wins. Resume, restart and
+  recreate start a session again with the lower of the mode it started with and the current
+  value, so a lowered level lowers it and a raised one does not raise it. Its details show the
+  mode when it is not `ask` (`Session.start_mode`).
 - **`capcom.event_actions`** decides what an event turn may do (`capcom-service.md` 9.4, 9.6).
   `off`: read and message only. `ask`: a granted job's action raises a card first. `allow`: a
   granted job's actions run. `all`: every event turn may act with no grant, under each action's
@@ -3959,7 +3973,6 @@ picker never changes them.
 | `mac.keep_connected` | Stay connected in the background | Connection | bool | Off | App (Mac) | 12.1 |
 | `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | integer seconds, 0 = off, else 1 to 120 | 60; the switch sets 60 | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
 | `logbook.habits.brief`, `logbook.habits.reminder`, `logbook.habits.closeout` | Brief at session start; remind to record; ask to record before stopping | Agents | bool | On | Hab, every hab; `[logbook.habits_off]` in the hab's config file turns one off per project | `logbook.md` 11.1, 11.4 |
-| `agent.start_mode` | New sessions start in | Agents | `"ask"`, `"edits"` or `"bypass"` | `"ask"` | Hab, every hab; each hab reads it at each harness start (not built) | `harness-adapters.md` (Start mode) |
 | `agent.context_nudge` | Remind agents about context, from | Agents | integer percent, 0 = off, else 1 to 99 | 0 | Hab, this hab only | `harness-adapters.md` (context nudge) |
 | `agent.context_nudge_step` | Remind again every | Agents | integer percent, 1 to 100 | 10 | Hab, this hab only | `harness-adapters.md` (context nudge) |
 | `agent.context_nudge_text` | Reminder text | Agents | text, 1 to 1000 characters; `{percent}` is the percentage | The built-in note | Hab, this hab only | `harness-adapters.md` (context nudge) |

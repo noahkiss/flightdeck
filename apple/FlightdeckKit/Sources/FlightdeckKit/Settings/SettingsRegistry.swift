@@ -111,6 +111,7 @@ public enum SettingsRegistry {
     public static let capcomEventActionMaxAge = "capcom.event_action_max_age"
     public static let agentReadPanes = "agent.read_panes"
     public static let agentDrivePanes = "agent.drive_panes"
+    public static let agentStartMode = "agent.start_mode"
 
     /// The levelled settings, in registry order (app.md 20.3).
     public static let levelled: [SettingDef] = [
@@ -140,6 +141,12 @@ public enum SettingsRegistry {
         SettingDef(id: agentDrivePanes, title: "Agents may type into and start panes", area: .agents,
                    kind: .word([(word: "off", title: "Off"), (word: "agents", title: "Agents in own project"), (word: "project", title: "Own project"), (word: "all", title: "All panes")]), store: .everyHab,
                    levels: [.safe: .string("off"), .balanced: .string("agents"), .bypass: .string("all")]),
+        // The harness permission mode a new session starts in (harness-adapters.md, Start mode):
+        // the harness's own default at Safe, its auto mode at Balanced, no prompts at Bypass.
+        // Each hab reads it at each harness start.
+        SettingDef(id: agentStartMode, title: "New sessions start in", area: .agents,
+                   kind: .word([(word: "ask", title: "Ask (harness default)"), (word: "auto", title: "Auto"), (word: "bypass", title: "Bypass permissions")]), store: .everyHab,
+                   levels: [.safe: .string("ask"), .balanced: .string("auto"), .bypass: .string("bypass")]),
         SettingDef(id: voiceYesAllows, title: "\"Yes\" counts as Allow", area: .voice, kind: .bool, store: .app,
                    levels: [.safe: .bool(false), .balanced: .bool(true), .bypass: .bool(true)]),
         SettingDef(id: sshRequireFaceID, title: "Require Face ID for SSH keys", area: .security, kind: .bool, store: .app,

@@ -67,6 +67,21 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentDrivePanes })
     }
 
+    /// agent.start_mode: ask at Safe, auto at Balanced, bypass at Bypass; kept on every hab
+    /// (harness-adapters.md, Start mode; app.md 20.3). The session details name a mode other than ask.
+    func testAgentStartModeLevels() throws {
+        let d = try XCTUnwrap(R.def(R.agentStartMode))
+        XCTAssertEqual(d.levels?[.safe], .string("ask"))
+        XCTAssertEqual(d.levels?[.balanced], .string("auto"))
+        XCTAssertEqual(d.levels?[.bypass], .string("bypass"))
+        XCTAssertEqual(d.store, .everyHab)
+        XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentStartMode })
+        XCTAssertNil(startModeLabel(nil))
+        XCTAssertNil(startModeLabel("ask"))
+        XCTAssertEqual(startModeLabel("auto"), "Auto mode")
+        XCTAssertEqual(startModeLabel("bypass"), "Bypass permissions")
+    }
+
     /// capcom.event_actions: ask at Safe, allow at Balanced, all at Bypass (from A10), and a level
     /// pick writes it (capcom-service.md 9.4, 9.6, app.md 20.3).
     @MainActor
@@ -188,6 +203,7 @@ final class SettingsTests: XCTestCase {
         offline.settings[R.capcomEventActions]?.value = .string("ask")
         offline.settings[R.agentReadPanes]?.value = .string("project")
         offline.settings[R.agentDrivePanes]?.value = .string("off")
+        offline.settings[R.agentStartMode]?.value = .string("ask")
         let st = LevelMatcher.match(app: app(.safe), habs: [safe, locked, offline])
         XCTAssertEqual(st.level, .safe)
         XCTAssertEqual(st.exceptions.map(\.habLabel), ["beta", "gamma"])
@@ -287,6 +303,7 @@ final class SettingsTests: XCTestCase {
         h.settings[R.capcomEventActions] = setting(R.capcomEventActions, .string("allow"), rev: 2, source: .client)
         h.settings[R.agentReadPanes] = setting(R.agentReadPanes, .string("all"), rev: 2, source: .client)
         h.settings[R.agentDrivePanes] = setting(R.agentDrivePanes, .string("project"), rev: 2, source: .client)
+        h.settings[R.agentStartMode] = setting(R.agentStartMode, .string("bypass"), rev: 2, source: .client)
         let q = QueuedSettingWrite(habID: "h1", settingID: R.logbookApproval, value: .string("off"), revision: 1, epoch: "e1", seen: .string("off"))
         XCTAssertTrue(SettingsWrites.connectPlan(hab: h, queued: [q], picked: .safe).send.isEmpty, "logbook is queued; the others stand")
         let p = SettingsWrites.connectPlan(hab: h, queued: [], picked: .safe)
@@ -381,20 +398,21 @@ final class SettingsTests: XCTestCase {
                                      SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents")),
                                      SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask")),
                                      SettingWrite(id: R.agentReadPanes, revision: 1, value: .string("project")),
-                                     SettingWrite(id: R.agentDrivePanes, revision: 1, value: .string("off"))])
+                                     SettingWrite(id: R.agentDrivePanes, revision: 1, value: .string("off")),
+                                     SettingWrite(id: R.agentStartMode, revision: 1, value: .string("ask"))])
         XCTAssertNil(sent["h2"])
-        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2", "h2", "h2", "h2"])
+        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2", "h2", "h2", "h2", "h2"])
         XCTAssertFalse(yes)
         XCTAssertFalse(faceID)
-        // Rows count once each, however many habs take them: the five hab-side rows, "Yes"
+        // Rows count once each, however many habs take them: the six hab-side rows, "Yes"
         // counts as Allow, and on iOS the refused Face ID row (macOS does not show it).
         #if os(iOS)
-        XCTAssertEqual(c.notice, "Safe: 6 of 7 changed. Require Face ID for SSH keys did not change: authentication was refused. "
+        XCTAssertEqual(c.notice, "Safe: 7 of 8 changed. Require Face ID for SSH keys did not change: authentication was refused. "
                        + "beta gets the change when it connects.")
         #else
-        XCTAssertEqual(c.notice, "Safe: 6 settings changed. beta gets the change when it connects.")
+        XCTAssertEqual(c.notice, "Safe: 7 settings changed. beta gets the change when it connects.")
         #endif
-        XCTAssertEqual(SettingsQueue.load(d).items.count, 5, "the queue is saved")
+        XCTAssertEqual(SettingsQueue.load(d).items.count, 6, "the queue is saved")
         XCTAssertEqual(d.string(forKey: SettingsCenter.levelKey), "safe")
 
         // The offline hab connects in the same epoch: its queued write goes, and the queue empties.
@@ -404,7 +422,8 @@ final class SettingsTests: XCTestCase {
                                      SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents")),
                                      SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask")),
                                      SettingWrite(id: R.agentReadPanes, revision: 1, value: .string("project")),
-                                     SettingWrite(id: R.agentDrivePanes, revision: 1, value: .string("off"))])
+                                     SettingWrite(id: R.agentDrivePanes, revision: 1, value: .string("off")),
+                                     SettingWrite(id: R.agentStartMode, revision: 1, value: .string("ask"))])
         XCTAssertTrue(c.queue.items.isEmpty)
     }
 
@@ -419,8 +438,8 @@ final class SettingsTests: XCTestCase {
         let h = balancedHab()
         c2.update(habID: h.habID, label: h.label, state: state(h))
         await c2.connectionOnline(habID: h.habID)
-        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan, R.agentDrivePanes, R.capcomEventActions],
-                       "Bypass turns the plan card off too, lets agents drive every pane, and lets event turns act (A10)")
+        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan, R.agentDrivePanes, R.capcomEventActions, R.agentStartMode],
+                       "Bypass turns the plan card off too, lets agents drive every pane, lets event turns act (A10), and starts sessions in bypass")
     }
 
     /// A hab whose capcom.event_actions a client already wrote as allow keeps it at Bypass until

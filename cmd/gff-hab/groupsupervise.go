@@ -130,7 +130,9 @@ func (w *memberSwap) swapFrom(ctx context.Context, ss api.Session, st api.AgentS
 	} else if seed != "" && validSeedFrom(seedFrom) {
 		p.SeedFrom = seedFrom
 	}
-	made, err := w.create(withOwnCover(ctx), p)
+	// The fresh member starts in the mode the old one was started in (harness-adapters.md,
+	// Start mode).
+	made, err := w.create(withRecordedMode(withOwnCover(ctx), ss.StartMode), p)
 	if err != nil {
 		// A create that timed out may have made the session all the same: then the swap goes on
 		// with it, so the group never has two sessions named for the member (review M6).
