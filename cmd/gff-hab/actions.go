@@ -91,16 +91,21 @@ type actions struct {
 	startMode func() string
 }
 
-// modeFor is the start mode a new session starts with: the recorded one ctx carries (a
-// recreate, a swap, an adopt), else agent.start_mode for a harness start. A Capcom session
-// (kind set) and a plain program start with none.
+// modeFor is the start mode a new session starts with: agent.start_mode for a harness start;
+// with a recorded mode on ctx (a recreate, a swap, an adopt), the lower of the two. A Capcom
+// session (kind set) and a plain program start with none.
 func (a *actions) modeFor(ctx context.Context, p api.SessionCreateParams, kind string) string {
 	if kind != "" || p.Harness == "" {
 		return ""
 	}
 	if m, ok := recordedModeFrom(ctx); ok {
-		return m
+		return lowerMode(m, a.currentMode())
 	}
+	return a.currentMode()
+}
+
+// currentMode is agent.start_mode now, "" when the hab has no reader.
+func (a *actions) currentMode() string {
 	if a.startMode == nil {
 		return ""
 	}
@@ -317,12 +322,13 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 
 // resumeSession starts an exited session's program again in a new pane, in the folder cwd
 // (session.resume). p gives the harness and argv; its name, project and cwd fields are not
-// read. The session keeps its id, and the start mode its record holds: never the current
-// setting. If the spawn fails, the session is exited again.
+// read. The session keeps its id. It starts in the lower of the mode its record holds and the
+// current setting: a lowered level lowers it, a raised one does not raise it. If the spawn
+// fails, the session is exited again.
 func (a *actions) resumeSession(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error) {
 	mode := ""
 	if ss, ok := a.store.Session(session); ok && p.Harness != "" {
-		mode = ss.StartMode
+		mode = lowerMode(ss.StartMode, a.currentMode())
 	}
 	p, l, _, err := a.prepare(p, mode)
 	if err != nil {

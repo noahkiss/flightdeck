@@ -3941,9 +3941,10 @@ every key, so a change never makes a new key.
 - **`agent.start_mode`** is the harness permission mode a new session starts in
   (`harness-adapters.md`, Start mode): `ask` adds no flag, `auto` starts Claude Code with
   `--permission-mode auto` and Codex with `--approve-for-me`, `bypass` with each harness's
-  bypass flag. A permission flag in the start's own arguments wins. The session keeps the mode
-  it started with through resume, restart and recreate, and its details show it when it is not
-  `ask` (`Session.start_mode`).
+  bypass flag. A permission flag in the start's own arguments wins. Resume, restart and
+  recreate start a session again with the lower of the mode it started with and the current
+  value, so a lowered level lowers it and a raised one does not raise it. Its details show the
+  mode when it is not `ask` (`Session.start_mode`).
 - **`capcom.event_actions`** decides what an event turn may do (`capcom-service.md` 9.4, 9.6).
   `off`: read and message only. `ask`: a granted job's action raises a card first. `allow`: a
   granted job's actions run. `all`: every event turn may act with no grant, under each action's

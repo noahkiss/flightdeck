@@ -1563,19 +1563,26 @@ adds the harness's own permission flag when it starts a harness.
   subcommand (`codex <flags> --no-daemon resume <id>`). The recorded start (`resume.json`) keeps
   the argv without the added flag, so a recreate never adds a second one.
 - **An explicit flag wins.** When the argv (a round's `harness_args` included) already names a
-  permission mode, the hab adds nothing. Claude Code: `--permission-mode` and
-  `--dangerously-skip-permissions`. Codex: `-s`, `--sandbox`, `-a`, `--ask-for-approval`,
-  `--full-auto`, `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--approve-for-me`,
-  and a `-c` or `--config` that sets `sandbox_mode` or `approval_policy`. An alias names only a
+  permission mode, the hab adds nothing. Claude Code: `--permission-mode`,
+  `--dangerously-skip-permissions`, and `--settings` (its settings may set
+  `permissions.defaultMode`). Codex: `-s`, `--sandbox`, `-a`, `--ask-for-approval`, `-p`,
+  `--profile` (a profile may set the sandbox or the approval policy), `--full-auto`,
+  `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--approve-for-me`, and a `-c` or
+  `--config` that sets `sandbox_mode` or `approval_policy`. A short flag counts with its value
+  apart or attached (`-s read-only`, `-sread-only`, `-csandbox_mode=...`). An alias names only a
   harness and a model, so it never names a mode. A value in the hab's config file locks the setting
   on that hab, so no level changes it (`app.md` 20.5). On connect, the app writes the level's
   value only where the setting's `source` is `default` (`app.md` 20.2).
 - **Kept on the session.** The session record keeps the mode the hab added flags for, as
   `Session.start_mode` (`auto` or `bypass`; absent when the hab added nothing).
   `session.resume`, `session.restart`, `recreate` and a group member's fresh session start
-  again with that mode, not the current setting. A session recorded with none starts again with
-  none.
+  again with the lower of that mode and the current setting (`ask` below `auto` below
+  `bypass`). A lowered level lowers an old session at its next start; a raised level never
+  raises it. A session recorded with none starts again with none.
 - **Read at each start.** A change applies to the next start; a running session keeps its mode.
+  Decision (coordinator, 2026-11-20, after the security review): the owner's level wins when
+  it is lowered, so a Capcom restart or recreate after Bypass to Safe does not start a session
+  at bypass.
 - **The added flag wins over the harness's own config.** A Claude Code `defaultMode` or a Codex
   `approval_policy` in the user's config does not apply to a session the hab started with a
   flag.

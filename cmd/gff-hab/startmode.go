@@ -36,12 +36,16 @@ var startFlags = map[string]map[string][]string{
 	},
 }
 
-// claudeModeFlags and codexModeFlags name a permission mode when argv already holds one: then
-// the hab adds nothing. Codex's -c keys count too.
+// claudeModeFlags, codexModeFlags and codexModeShort name a permission mode when argv already
+// holds one: then the hab adds nothing. Claude Code's --settings may set permissions.defaultMode
+// and a Codex profile (-p) may set the sandbox or the approval policy, so each counts as naming
+// one. A Codex -c that sets one of codexModeKeys counts too.
 var (
-	claudeModeFlags = []string{"--permission-mode", "--dangerously-skip-permissions"}
-	codexModeFlags  = []string{"-s", "--sandbox", "-a", "--ask-for-approval", "--full-auto",
+	claudeModeFlags = []string{"--permission-mode", "--dangerously-skip-permissions", "--settings"}
+	codexModeFlags  = []string{"--sandbox", "--ask-for-approval", "--profile", "--full-auto",
 		"--dangerously-bypass-approvals-and-sandbox", "--yolo", "--approve-for-me"}
+	// codexModeShort are the short forms, with the value attached (-sread-only) or apart.
+	codexModeShort = []byte{'s', 'a', 'p'}
 	// codexModeKeys are the config keys a -c override may set the mode with.
 	codexModeKeys = []string{"sandbox_mode", "approval_policy"}
 )
@@ -61,25 +65,49 @@ func namesMode(harness string, argv []string) bool {
 		})
 	case detect.KindCodex:
 		for i, a := range args {
-			name, val, inline := strings.Cut(a, "=")
-			if slices.Contains(codexModeFlags, name) {
-				return true
-			}
-			if name == "-c" || name == "--config" {
-				if !inline {
-					if i+1 >= len(args) {
-						continue
-					}
-					val = args[i+1]
-				}
-				key, _, _ := strings.Cut(val, "=")
-				if slices.Contains(codexModeKeys, strings.TrimSpace(key)) {
+			var val string
+			switch {
+			case strings.HasPrefix(a, "--"):
+				name, v, inline := strings.Cut(a, "=")
+				if slices.Contains(codexModeFlags, name) {
 					return true
 				}
+				if name != "--config" {
+					continue
+				}
+				val = v
+				if !inline {
+					val = argAfter(args, i)
+				}
+			case len(a) >= 2 && a[0] == '-':
+				if slices.Contains(codexModeShort, a[1]) {
+					return true
+				}
+				if a[1] != 'c' {
+					continue
+				}
+				val = strings.TrimPrefix(a[2:], "=")
+				if val == "" {
+					val = argAfter(args, i)
+				}
+			default:
+				continue
+			}
+			key, _, _ := strings.Cut(val, "=")
+			if slices.Contains(codexModeKeys, strings.TrimSpace(key)) {
+				return true
 			}
 		}
 	}
 	return false
+}
+
+// argAfter is the argument after args[i], or "".
+func argAfter(args []string, i int) string {
+	if i+1 < len(args) {
+		return args[i+1]
+	}
+	return ""
 }
 
 // withStartMode adds a harness's flags for mode to argv, right after the program. It returns
@@ -104,6 +132,29 @@ func withStartMode(harness string, argv []string, mode string) (out []string, ad
 	out = slices.Clone(argv)
 	out = slices.Insert(out, 1, flags...)
 	return out, mode, ""
+}
+
+// modeRank orders the start modes: ask (or none) below auto below bypass. An unknown word
+// ranks as ask, so it never wins a comparison.
+func modeRank(m string) int {
+	switch m {
+	case startAuto:
+		return 1
+	case startBypass:
+		return 2
+	}
+	return 0
+}
+
+// lowerMode is the lower of two start modes; "" for ask.
+func lowerMode(a, b string) string {
+	if modeRank(b) < modeRank(a) {
+		a = b
+	}
+	if modeRank(a) == 0 {
+		return ""
+	}
+	return a
 }
 
 // startModeKey carries a start mode a start must use in place of the current setting: the

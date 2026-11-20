@@ -47,6 +47,19 @@ func TestWithStartMode(t *testing.T) {
 		{"codex", "bypass", []string{"codex", "-c", "model=\"o3\""}, []string{"codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=\"o3\""}, "bypass", false},
 		// The flag's own value is no flag: a claude prompt that mentions it still gets the mode.
 		{"claude", "auto", []string{"claude", "explain --permission-mode"}, []string{"claude", "--permission-mode", "auto", "explain --permission-mode"}, "auto", false},
+		// Attached short values, a Codex profile and Claude Code's --settings name a mode too.
+		{"codex", "bypass", []string{"codex", "-sread-only"}, []string{"codex", "-sread-only"}, "", false},
+		{"codex", "bypass", []string{"codex", "-auntrusted"}, []string{"codex", "-auntrusted"}, "", false},
+		{"codex", "bypass", []string{"codex", "-csandbox_mode=\"read-only\""}, []string{"codex", "-csandbox_mode=\"read-only\""}, "", false},
+		{"codex", "bypass", []string{"codex", "-capproval_policy=never"}, []string{"codex", "-capproval_policy=never"}, "", false},
+		{"codex", "bypass", []string{"codex", "-c=approval_policy=never"}, []string{"codex", "-c=approval_policy=never"}, "", false},
+		{"codex", "bypass", []string{"codex", "-p", "careful"}, []string{"codex", "-p", "careful"}, "", false},
+		{"codex", "bypass", []string{"codex", "-pcareful"}, []string{"codex", "-pcareful"}, "", false},
+		{"codex", "bypass", []string{"codex", "--profile=careful"}, []string{"codex", "--profile=careful"}, "", false},
+		{"claude", "bypass", []string{"claude", "--settings", "/s.json"}, []string{"claude", "--settings", "/s.json"}, "", false},
+		{"claude", "bypass", []string{"claude", "--settings={}"}, []string{"claude", "--settings={}"}, "", false},
+		// Other short flags are no mode: -m, and a -c that sets something else.
+		{"codex", "auto", []string{"codex", "-mo3", "-cmodel=o3"}, []string{"codex", "--approve-for-me", "-mo3", "-cmodel=o3"}, "auto", false},
 		// Unverified rows add nothing.
 		{"opencode", "bypass", []string{"opencode"}, []string{"opencode"}, "", true},
 		{"opencode", "ask", []string{"opencode"}, []string{"opencode"}, "", false},
@@ -178,6 +191,28 @@ func TestCreateStartMode(t *testing.T) {
 	if got := r.last(t); !slices.Equal(got, []string{"claude"}) || ss.StartMode != "" {
 		t.Fatalf("recorded ask at bypass: argv %q, recorded %q", got, ss.StartMode)
 	}
+	// A lowered setting lowers a recorded mode: the lower of the two wins.
+	r.set(startAuto)
+	ss = r.create(t, withRecordedMode(ctx, startBypass), api.SessionCreateParams{Harness: "claude", Cwd: r.a.home})
+	if got := r.last(t); !slices.Equal(got, []string{"claude", "--permission-mode", "auto"}) || ss.StartMode != startAuto {
+		t.Fatalf("recorded bypass at auto: argv %q, recorded %q", got, ss.StartMode)
+	}
+	r.set(startAsk)
+	ss = r.create(t, withRecordedMode(ctx, startBypass), api.SessionCreateParams{Harness: "claude", Cwd: r.a.home})
+	if got := r.last(t); !slices.Equal(got, []string{"claude"}) || ss.StartMode != "" {
+		t.Fatalf("recorded bypass at ask: argv %q, recorded %q", got, ss.StartMode)
+	}
+
+	// The Capcom service's own session gets no flag, whatever the setting.
+	r.set(startBypass)
+	id, _, err := r.a.createSession(ctx, api.SessionCreateParams{Name: "capcom-test", Harness: "claude", Cwd: r.a.home}, string(api.SessionKindCapcom), r.a.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss, _ = r.st.Session(id)
+	if got := r.last(t); !slices.Equal(got, []string{"claude"}) || ss.StartMode != "" {
+		t.Fatalf("the Capcom session at bypass: argv %q, recorded %q", got, ss.StartMode)
+	}
 
 	// opencode's row is unverified: nothing added, one line per start. This rig cannot start
 	// opencode, so the start fails after the mode is read.
@@ -198,12 +233,14 @@ func TestCreateStartMode(t *testing.T) {
 }
 
 // TestResumeStartMode: session.resume (and so session.restart) starts a session again in the
-// mode its record holds, not the current setting: auto stays auto at bypass, and a session
-// started at ask stays at ask.
+// lower of the mode its record holds and the current setting: auto stays auto at bypass, a
+// session started at ask stays at ask, and bypass drops to auto at auto and to none at ask.
 func TestResumeStartMode(t *testing.T) {
 	t.Parallel()
 	const p1, p2 = "00000000-0000-0000-0000-0000000000a1", "00000000-0000-0000-0000-0000000000a2"
-	r := newStartRig(t, structure.HolderPane{ID: p1, Exit: &api.ExitStatus{}}, structure.HolderPane{ID: p2, Exit: &api.ExitStatus{}})
+	const p3, p4 = "00000000-0000-0000-0000-0000000000a3", "00000000-0000-0000-0000-0000000000a4"
+	r := newStartRig(t, structure.HolderPane{ID: p1, Exit: &api.ExitStatus{}}, structure.HolderPane{ID: p2, Exit: &api.ExitStatus{}},
+		structure.HolderPane{ID: p3, Exit: &api.ExitStatus{}}, structure.HolderPane{ID: p4, Exit: &api.ExitStatus{}})
 	auto1, err := r.st.CreateSession(structure.SessionSpec{Name: "auto", Pane: p1, Index: -1, StartMode: startAuto})
 	if err != nil || auto1.State != api.SessionStateExited || auto1.StartMode != startAuto {
 		t.Fatalf("session: %+v %v", auto1, err)
@@ -229,11 +266,34 @@ func TestResumeStartMode(t *testing.T) {
 	if ss, _ := r.st.Session(auto1.ID); ss.StartMode != startAuto {
 		t.Fatalf("the record lost its mode: %+v", ss)
 	}
+
+	byp, err := r.st.CreateSession(structure.SessionSpec{Name: "byp", Pane: p3, Index: -1, StartMode: startBypass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.set(startAuto)
+	if _, err := r.a.resumeSession(ctx, byp.ID, api.SessionCreateParams{Harness: "claude", Argv: []string{"claude", "--resume", "n3"}}, r.a.home); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.last(t); !slices.Equal(got, []string{"claude", "--permission-mode", "auto", "--resume", "n3"}) {
+		t.Fatalf("resume of a bypass session at auto: %q", got)
+	}
+	byp2, err := r.st.CreateSession(structure.SessionSpec{Name: "byp2", Pane: p4, Index: -1, StartMode: startBypass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.set(startAsk)
+	if _, err := r.a.resumeSession(ctx, byp2.ID, api.SessionCreateParams{Harness: "claude", Argv: []string{"claude", "--resume", "n3"}}, r.a.home); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.last(t); !slices.Equal(got, []string{"claude", "--resume", "n3"}) {
+		t.Fatalf("resume of a bypass session at ask: %q", got)
+	}
 }
 
-// TestRecreateStartMode: recreate starts the fresh session with the old one's recorded mode, a
-// recorded ask included, never the current setting; and its argv carries no flag the hab added,
-// so the create adds one flag, not two.
+// TestRecreateStartMode: recreate starts the fresh session with the lower of the old one's
+// recorded mode and the current setting: a recorded ask stays ask at bypass, a recorded bypass
+// drops to auto at auto. Its argv carries no flag the hab added, so the create adds one, not two.
 func TestRecreateStartMode(t *testing.T) {
 	t.Parallel()
 	r := newRecreateRig(t)
@@ -245,12 +305,14 @@ func TestRecreateStartMode(t *testing.T) {
 		return api.SessionCreated{Session: id}, err
 	}
 	for _, c := range []struct {
-		name, recorded string
-		want           []string
+		name, recorded, setting string
+		want                    []string
 	}{
-		{"mate", startAuto, []string{"claude", "--permission-mode", "auto"}},
-		{"other", "", []string{"claude"}},
+		{"mate", startAuto, startBypass, []string{"claude", "--permission-mode", "auto"}},
+		{"other", "", startBypass, []string{"claude"}},
+		{"loose", startBypass, startAuto, []string{"claude", "--permission-mode", "auto"}},
 	} {
+		sr.set(c.setting)
 		ss := r.session(t, c.name)
 		ss.StartMode = c.recorded // as the record holds it
 		r.starts[ss.ID] = resumeEntry{Harness: "claude", Argv: []string{"claude"}}
@@ -259,6 +321,42 @@ func TestRecreateStartMode(t *testing.T) {
 		}
 		if got := sr.last(t); !slices.Equal(got, c.want) {
 			t.Fatalf("recreate of %s (recorded %q) at bypass: %q, want %q", c.name, c.recorded, got, c.want)
+		}
+	}
+}
+
+// TestSwapStartMode: a group member's fresh session (the group swap, also a member's recreate)
+// starts with the lower of the old member's recorded mode and the current setting: a recorded
+// ask and a recorded auto stay so at bypass.
+func TestSwapStartMode(t *testing.T) {
+	t.Parallel()
+	r := newRecreateRig(t)
+	sr := newStartRig(t)
+	sr.set(startBypass)
+	r.w.create = func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+		// The start rig has no project, group or peers: keep only what decides the mode.
+		id, _, err := sr.a.CreateSession(ctx, api.SessionCreateParams{Harness: p.Harness, Model: p.Model, Cwd: sr.a.home})
+		return api.SessionCreated{Session: id}, err
+	}
+	for i, c := range []struct {
+		recorded string
+		want     []string
+	}{
+		{"", []string{"claude"}},
+		{startAuto, []string{"claude", "--permission-mode", "auto"}},
+	} {
+		name := fmt.Sprintf("member%d", i)
+		pane := fmt.Sprintf("00000000-0000-0000-0000-0000000000c%d", i)
+		ss, err := r.st.CreateSession(structure.SessionSpec{Name: name, Pane: pane, Index: -1, NewPane: true,
+			Group: &api.SessionGroup{ID: "g1", Role: "worker", Item: "i1"}, StartMode: c.recorded})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.w.recreate(context.Background(), ss, api.AgentState{Harness: "claude"}, "", ""); err != nil {
+			t.Fatalf("swap of %s: %v", name, err)
+		}
+		if got := sr.last(t); !slices.Equal(got, c.want) {
+			t.Fatalf("swap of a member recorded %q at bypass: %q, want %q", c.recorded, got, c.want)
 		}
 	}
 }

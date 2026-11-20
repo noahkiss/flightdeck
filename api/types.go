@@ -126,7 +126,7 @@ type Session struct {
 	Stale []string `json:"stale,omitempty" doc:"What the running agent loaded that a newer render replaced: instructions. session.restart picks the new one up. Absent when nothing is stale, or the hab cannot tell."`
 	// StartMode comes with the start mode (harness-adapters.md, Start mode). Optional, so a
 	// newer client reads a session from an older revision 1 hab.
-	StartMode string `json:"start_mode,omitempty" doc:"The start mode the hab started the harness in, from agent.start_mode: auto or bypass. Resume, restart and recreate keep it. Absent when the hab added no permission flag: ask, a plain program, a harness with no checked flag, or a start whose arguments named a mode."`
+	StartMode string `json:"start_mode,omitempty" doc:"The start mode the hab started the harness in, from agent.start_mode: auto or bypass. Resume, restart and recreate start again with the lower of it and the current setting. Absent when the hab added no permission flag: ask, a plain program, a harness with no checked flag, or a start whose arguments named a mode."`
 }
 
 // SessionKind says what a session is for, beyond running a program. Open: a client shows an
