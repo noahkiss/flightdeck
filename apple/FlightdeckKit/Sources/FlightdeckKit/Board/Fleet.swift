@@ -14,6 +14,9 @@ public final class Fleet {
     /// Demo or test habs kept alive with the fleet.
     public var keepAlive: [AnyObject] = []
     public private(set) var isActive = false
+    /// Demo habs fill the board: `-FlightdeckDemo YES`, or "Look around with demo data" on
+    /// first run (app.md 3.9). First run and the push prompt stay away.
+    public var isDemo = false
     /// Open terminal views; their data connections follow the lifecycle too.
     public let terminals = TerminalRegistry()
     /// The in-app SSH carrier's keys and hab entries; nil in demo mode.

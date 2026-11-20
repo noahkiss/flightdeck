@@ -149,7 +149,7 @@ final class CapcomPickerTests: XCTestCase {
         await eventually("working") { f.capcom.standingRow(in: f.board.rows)?.state == .working }
         await a.put(Fixture.agent(pane: "%c1", harness: "claude", state: .blocked, kind: .permission, session: "capcom-s1"))
         await eventually("needs you") { f.capcom.standingRow(in: f.board.rows)?.state == .blocked }
-        XCTAssertEqual(f.capcom.standingRow(in: f.board.rows)?.stateText(now: Date()).hasPrefix("Permission"), true)
+        XCTAssertEqual(f.capcom.standingRow(in: f.board.rows)?.stateText(now: Date()).hasPrefix("Needs permission"), true)
         // Another home: the row has no state until that home names its standing conversation.
         let b = FakeHab.deviceID(host: "elsewhere")
         await a.reassignCapcom(assignment: 2, home: b)

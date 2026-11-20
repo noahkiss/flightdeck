@@ -430,6 +430,8 @@ struct PairingView: View {
     @State var offer: PairingCode?
     /// A paired hab whose host key is still to trust (`SSHSetup.unfinishedPairing`).
     var resume: SSHHabEntry? = nil
+    /// Opens with the camera on: "Scan the code" on first run (app.md 3.9).
+    var startScanning = false
     let done: () -> Void
 
     @State private var text = ""
@@ -506,6 +508,7 @@ struct PairingView: View {
         .onAppear {
             setup.loadKey()
             if name.isEmpty { name = PairingDevice.name }
+            if startScanning, offer == nil, resume == nil { scanning = true }
             if let r = resume, step == .ready {
                 if r.hostKeyFingerprint.isEmpty { probeHost(r) } else { finish(r) }
             }
