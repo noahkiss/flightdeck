@@ -87,10 +87,10 @@ decode every golden.
 
 Golden files are frozen once written, because they are what a hab of that revision sends:
 
-- The goldens of a released revision are never regenerated.
-- New messages go into the next revision's set.
-- Revision 1 is still unreleased (`api/released/1.json` is the pre-release baseline). New
-  revision 1 messages get new files beside the existing ones; existing files never change.
+- The goldens of a released revision are never regenerated. Existing files never change.
+- An addition stays in the current revision (spec `hab-logic-api.md` 3.3): a new message or a new
+  field set gets a new file beside the existing ones, in that revision's folder.
+- A breaking change needs the next revision, with its translator and its own goldens.
 - `-update` only adds files. It never rewrites or removes a file.
 
 An old golden is a message an older hab really sent, so it checks only the fields that existed
