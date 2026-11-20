@@ -303,9 +303,9 @@ func (s *roundsService) roundMark(r rounds.Round, run rounds.Run, capcom bool) a
 				m.Actions = append(m.Actions, api.RoundAction(w))
 			}
 		}
-		// A person owns a round with no created_by (capcom-service.md 9.3): its batch neither
+		// A person owns the round (capcom-service.md 9.3: its positive by_person mark): its batch neither
 		// counts toward Capcom's daily turn budget nor waits for it.
-		m.ByPerson = e.Round.CreatedBy == ""
+		m.ByPerson = e.Round.ByPerson
 	}
 	if !capcom {
 		start := time.Now()

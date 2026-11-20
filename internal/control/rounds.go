@@ -130,7 +130,11 @@ func (c *conn) handleRounds(m message) {
 	case "round.create":
 		var p api.RoundCreateParams
 		if e = c.decodeUp(m, &p); e == nil && rs != nil {
+			peer := c.kind == api.ClientKindHab
 			call = func(ctx context.Context, now func() api.Seq) (any, error) {
+				if peer {
+					ctx = WithPeerCall(ctx) // not the owner's: by_person stays off (capcom-service.md 9.3)
+				}
 				r, err := rs.Create(ctx, p, "")
 				r.Seq = now()
 				return r, err

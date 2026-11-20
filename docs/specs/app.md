@@ -3872,6 +3872,11 @@ every key, so a change never makes a new key.
   it, no config set it) takes the picked level's value, written with the revision read there; a
   locked one is skipped. Any other value stands, and the row shows
   "Differs on <hab>" when it does not match, as `logbook.md` 9.1 does.
+  - **So a Bypass hab moves to `capcom.event_actions = all` on its own** (Capcom A10). Earlier
+    apps never wrote `allow` at Bypass, because it already matched, so nearly every hab holds it
+    as `default`. The first connect after the update writes `all`: from then on event turns act
+    with no job, as Bypass means. The owner chose this (least friction). A user who wants
+    `allow` picks Custom and sets it; a written value is never moved again.
 - **What Bypass never touches.**
   - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
   - The harness's own bypass flag, such as `--dangerously-skip-permissions`. A level never sets

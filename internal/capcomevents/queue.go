@@ -328,6 +328,10 @@ func (q *Queue) Taken(id, turn string) (Batch, bool) {
 		b.Turn = turn
 		if turn == "" {
 			b.Turn = "?" // taken outside a known turn: settled at the next ready
+		} else if q.st.ActTurn == turn {
+			// The turn acted before the hab heard it took this batch: those calls count here
+			// too, so one turn never spends the cap twice (capcom-service.md 9.6).
+			b.Acts = max(b.Acts, q.st.ActN)
 		}
 		if err := q.saveLocked(); err != nil {
 			q.cfg.Logf("capcom events: save: %v", err)

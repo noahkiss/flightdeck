@@ -1870,6 +1870,10 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	if err := s.checkWatchRound(r, ""); err != nil {
 		return api.RoundCreated{}, err
 	}
+	// A person owns the round only when the owner's door made it with no creator: a peer
+	// link's create (another hab's agent or confirmation) and every route create are not
+	// (capcom-service.md 9.3).
+	r.ByPerson = createdBy == "" && !control.PeerCall(ctx)
 	e, run, err := s.sched.Create(r, createdBy, p.RunNow)
 	if err != nil && e.Round.ID == "" {
 		return api.RoundCreated{}, roundErr(err)
@@ -2237,7 +2241,9 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if len(p.Round.Actions) > 0 {
 				return nil, nil, errGrant(method)
 			}
-			by := ""
+			// An unfiled pane is an agent too: it gets a creator, so its round is never taken
+			// for a person's (capcom-service.md 9.3).
+			by := "pane:" + pane
 			if filed {
 				by = ss.ID
 			}

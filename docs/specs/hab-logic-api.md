@@ -1713,6 +1713,12 @@ may read. It binds the two doors an agent's call comes through:
   its own value. From any other peer it ignores `as`, and the peer door's rule applies. A hab
   that does not know `as` ignores it too. The mark is as strong as the peer door itself: a paired
   hab is trusted as far as the user is (below).
+- **Limit, must fix before narrower hab keys.** The far hab reads the caller's device id from
+  the peer's own hello, not from the transport's key. Today any caller that can say that hello
+  can also say hello as `app` and be the owner, so the mark gives nothing more. Once the
+  embedded SSH server (4.3) admits paired hab keys with less than the owner's door, the device
+  id must come from the authenticated key, and a hello that names another device must lose the
+  mark. `TestPaneCapcomHelloDevice` documents the current behaviour.
 - **Any other client is the owner.** The app, `gff`, and `gff-hab` run outside a pane read every
   pane at every level: they already see every pane through data streams (5). The rule binds the
   agent doors only. It is not a boundary against a process of the same user. An agent that runs

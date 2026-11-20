@@ -1200,9 +1200,11 @@ Built in A10 (9.9): the hold moved from turns to pushes, and `off`.
   batch, and the thread gets one note.
 - **The owner's jobs run outside it.** A round message from a job a person owns goes in a batch
   of its own, as one with action words does (9.8). That batch does not count, and never waits
-  for the budget. A person owns a `capcom` round when its
-  `created_by` is empty: a person made it, or a person's grant cleared it (9.6). The round
-  message says so (`rounds.md` 5.2, field `by_person`, set by the runner).
+  for the budget. A person owns a `capcom` round only by a positive mark on the round, never
+  because its `created_by` is empty: a person made it on the owner's door, or a person's grant
+  gave it words (9.6). A round made over a peer link (another hab's agent, or its confirmation)
+  or by any agent route has no mark, so its batches count. The round message says so
+  (`rounds.md` 5.2, field `by_person`, set by the runner).
 - **Time-sensitive events count too.** Their turn counts toward the budget like any event turn,
   and past it waits for the next day.
 - The governor (10.1) applies on top, to every event turn, the owner's jobs included. An event
@@ -1543,9 +1545,14 @@ Where 9.2 to 9.6 left a choice open:
 - **The count.** The queue saves the held count in `events.json`. The first check after quiet
   hours end sends one push, "N messages from Capcom wait from quiet hours", and clears the
   count. So a restart, a sleep through 07:00, and a change to `off` each still send it once.
-- **A person's job.** The runner sets `by_person` when the round has no `created_by`. The home
-  hab reads it only from a message whose sender is `round:<name>`, as it reads `actions`. Such
-  a message goes in a batch alone, which does not count; past the budget it still goes at once.
+- **A person's job.** The round store keeps a mark, `by_person`, that the hab sets and no client
+  can: on a create from the owner's door with no creator, and on a person's grant. A create over
+  a peer link never sets it, and an unfiled pane's create gets the creator `pane:<id>`. The
+  runner copies the mark into the round message. The home hab reads it only from a message
+  whose sender is `round:<name>`, as it reads `actions`. Such a message goes in a batch alone,
+  which does not count; past the budget it still goes at once.
+- **The per-turn cap across a late batch.** When the hab hears late that a turn took a batch,
+  the calls the turn made before count on that batch too, so one turn never spends the cap twice.
 - **An agent's report at `all`.** Its turn took no batch, so the per-turn cap counts it apart:
   the queue keeps the count of the newest such turn in `events.json`.
 - **The card of an action no job granted** says what began the turn: "After a notice: <its

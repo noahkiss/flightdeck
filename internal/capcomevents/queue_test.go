@@ -297,6 +297,18 @@ func TestActNoBatch(t *testing.T) {
 	if !r.q.Act("report-2", 3) {
 		t.Fatal("a new turn starts at 0")
 	}
+	// The hab hears late that report-2 took a batch: the call it made before counts there, so
+	// the turn cannot spend the cap a second time.
+	r.add(false, "m1")
+	r.c.advance(day(12, 3))
+	b := r.q.Released()
+	if len(b) != 1 {
+		t.Fatalf("released %v", b)
+	}
+	r.q.Taken(b[0].ID, "report-2")
+	if !r.q.Act("report-2", 3) || !r.q.Act("report-2", 3) || r.q.Act("report-2", 3) {
+		t.Fatal("the turn spent more than its cap of 3")
+	}
 }
 
 func TestSavedTimeZone(t *testing.T) {
