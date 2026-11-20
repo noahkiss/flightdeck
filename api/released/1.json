@@ -34,10 +34,25 @@
     "settings",
     "read-tools",
     "logbook",
+    "logbook-vectors",
     "confirm",
     "capcom",
     "rounds",
-    "heavy"
+    "heavy",
+    "round-lock",
+    "capcom-thread",
+    "groups",
+    "device-context",
+    "flight-rules",
+    "session-restart",
+    "friction",
+    "pane-read",
+    "trust",
+    "round-actions",
+    "teammates",
+    "debug",
+    "pane-drive",
+    "trace"
   ],
   "methods": [
     {
@@ -484,6 +499,20 @@
           }
         },
         {
+          "name": "envelope",
+          "description": "With group: what the group's confirmed plan allows. A later start from this member inside it asks nothing, and is a member too.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupEnvelope"
+          }
+        },
+        {
+          "name": "group",
+          "description": "Only with trust_cover: the session is a member of this group.",
+          "schema": {
+            "$ref": "#/components/schemas/SessionGroup"
+          }
+        },
+        {
           "name": "harness",
           "description": "Detection manifest id of a harness to start, such as claude. Needs that harness's adapter.",
           "schema": {
@@ -526,6 +555,13 @@
           }
         },
         {
+          "name": "report_to",
+          "description": "A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "rows",
           "description": "Initial height. Default 24.",
           "schema": {
@@ -546,6 +582,13 @@
           "schema": {
             "type": "string"
           }
+        },
+        {
+          "name": "trust_cover",
+          "description": "Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before.",
+          "schema": {
+            "$ref": "#/components/schemas/TrustCover"
+          }
         }
       ],
       "result": {
@@ -561,6 +604,29 @@
     {
       "name": "session.resume",
       "summary": "Start an exited session's harness again in a new pane, with its resume id.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionRef"
+      }
+    },
+    {
+      "name": "session.restart",
+      "summary": "Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -818,6 +884,13 @@
           }
         },
         {
+          "name": "send_now",
+          "description": "The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "session",
           "required": true,
           "schema": {
@@ -849,7 +922,7 @@
       "params": [
         {
           "name": "choice",
-          "description": "allow or deny a permission; answer a question with text.",
+          "description": "allow or deny a permission; answer a question with text. allow_site: a Capcom web fetch card only (capcom-service.md 5.3): allow, and keep the URL's site so later fetches on it need no card.",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/ApprovalChoice"
@@ -1767,6 +1840,280 @@
       }
     },
     {
+      "name": "flightrules.list",
+      "summary": "A session's flight rules: every instruction file, memory, hook injection, skill listing and MCP instruction block its harness recorded, with scope, digest and size, never the text (instructions-mcp-flight-rules.md 11). Needs the flight-rules capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FlightRules"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/FlightRulesParams"
+      }
+    },
+    {
+      "name": "flightrules.text",
+      "summary": "The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "description": "An entry id from flightrules.list for this session.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FlightRuleText"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/FlightRuleTextParams"
+      }
+    },
+    {
+      "name": "pane.read",
+      "summary": "A pane's screen and optional scrollback as plain text, under agent.read_panes for an agent's call (spec 3.11). Needs the pane-read capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "description": "A pane id on this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "scrollback",
+          "description": "Scrollback rows to return from just above the screen. Default 0, at most 10000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneText"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneReadParams"
+      }
+    },
+    {
+      "name": "pane.wait",
+      "summary": "Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The pane offset to read new output from. Absent means the pane's offset when the wait starts.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "match",
+          "description": "Text a line of new output contains.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pane",
+          "description": "A pane id on this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pattern",
+          "description": "An RE2 pattern a line of new output matches.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "quiet_ms",
+          "description": "End the wait once the pane printed nothing for this long.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "timeout_ms",
+          "description": "Default 180000 (110000 from a pane), at most 600000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneWaitResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneWaitParams"
+      }
+    },
+    {
+      "name": "pane.list",
+      "summary": "The panes the caller may read under agent.read_panes, on this hab and on online peers: ids, session and project names, host, state and agent, never a title (spec 3.12). Needs the pane-drive capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneListParams"
+      }
+    },
+    {
+      "name": "pane.type",
+      "summary": "Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "enter",
+          "description": "Press Enter after the text, as its own write.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "pane",
+          "description": "A pane id on this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The text to write, as given, at most 64 KiB.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneTyped"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneTypeParams"
+      }
+    },
+    {
+      "name": "pane.new",
+      "summary": "Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "argv",
+          "description": "Program and arguments. Default: the hab's shell.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "cwd",
+          "description": "Absolute working folder. Default: the caller's pane's folder, else the hab's home directory.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "in_project",
+          "description": "File the session in the calling pane's project.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "name",
+          "description": "The session name. Default: the program's base name, with a number when taken.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneStarted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneNewParams"
+      }
+    },
+    {
       "name": "detect.explain",
       "summary": "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.",
       "paramStructure": "by-name",
@@ -2090,7 +2437,7 @@
       "params": [
         {
           "name": "base",
-          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.",
+          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch.",
           "schema": {
             "type": "string"
           }
@@ -2100,6 +2447,13 @@
           "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e.",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "fetch",
+          "description": "When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes.",
+          "schema": {
+            "type": "boolean"
           }
         },
         {
@@ -2411,6 +2765,202 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/CapcomAssignParams"
+      }
+    },
+    {
+      "name": "capcom.thread.page",
+      "summary": "A page of the Capcom thread, newest first, folded: at most 200 items (capcom-service.md 7.4). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "before",
+          "description": "An item id: items older than it. Absent: the newest.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "At most this many, and never more than 200. 0: 200.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomThreadPage"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomThreadPageParams"
+      }
+    },
+    {
+      "name": "capcom.interrupt",
+      "summary": "Stop the Capcom engine's current turn; messages it has not taken wait for the next turn. unavailable when the engine lacks interrupt or none is connected (capcom-service.md 7.4). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.status",
+      "summary": "The Capcom service on this hab: the engine job's state, the engine, and the SDK sessions with the engine's folder (capcom-service.md 3.4, 11). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.pause",
+      "summary": "Finish the turn, then stop the engine's use of its SDK session until capcom.resume, so a plain terminal can resume it; the thread still takes messages (capcom-service.md 11). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.site.remove",
+      "summary": "Take a site off the sites the user allowed with Allow this site; the next web fetch on it raises a card again. not_found when the list does not hold it (capcom-service.md 5.3). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "site",
+          "description": "A host, as capcom.status lists it.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomSiteParams"
+      }
+    },
+    {
+      "name": "capcom.resume",
+      "summary": "Clear a pause, the crash count and a stop after refused credentials, read the credential again, and start the engine (capcom-service.md 3.2, 10.2, 11). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomServiceStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomServiceParams"
+      }
+    },
+    {
+      "name": "capcom.card.answer",
+      "summary": "Answer a card of the Capcom thread with one of its choices; the first answer wins and a later one answers conflict. A memory line's undo deletes the capcom guide it names, or rejects its proposal while it waits for review (capcom-service.md 6.4, 7.4). Needs the capcom-thread capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "choice",
+          "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "description": "The card's item id.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomCardAnswered"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomCardAnswerParams"
+      }
+    },
+    {
+      "name": "device.context.put",
+      "summary": "Send this device's latest context to the Capcom home hab: time zone, location fix, calendar snapshot. The hab keeps the latest value of each in memory only, saves only the time zone, and never passes it to a peer (capcom-service.md 8.1). Refused over a peer link; unavailable on a hab that does not hold the Capcom mark. Needs the device-context capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "calendar",
+          "schema": {
+            "$ref": "#/components/schemas/DeviceCalendar"
+          }
+        },
+        {
+          "name": "calendar_off",
+          "description": "Why the device shares no calendar: off or no_permission. The hab drops the snapshot this device sent.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "location",
+          "schema": {
+            "$ref": "#/components/schemas/DeviceLocation"
+          }
+        },
+        {
+          "name": "location_off",
+          "description": "Why the device shares no location: off (the capcom.share_location preference) or no_permission. The hab drops the fix this device sent.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "tz",
+          "description": "The device's IANA time zone, such as Europe/Berlin.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DeviceContextPutParams"
       }
     },
     {
@@ -2760,6 +3310,13 @@
           }
         },
         {
+          "name": "semantic",
+          "description": "Rank by meaning through vector search, on this hab when it has the logbook-vectors capability, else on an online peer that has it; with none, unavailable: no always-on host with vector search. Needs words.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "session",
           "description": "As in logbook.list.",
           "schema": {
@@ -3004,6 +3561,14 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "folded_after",
+          "description": "Only the ops this replica folded after this local fold number, in fold order. The numbers are this replica's own and never synced; logbook.history's folded gives the highest.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
           "name": "id",
           "required": true,
           "schema": {
@@ -3196,7 +3761,7 @@
     },
     {
       "name": "confirm.request",
-      "summary": "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.",
+      "summary": "Ask for a start, a set-up, or a round on another host: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -3207,10 +3772,24 @@
           }
         },
         {
+          "name": "group",
+          "description": "Kind group: only gff-hab's group.create and group.amend ask for it, never a pane.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmGroup"
+          }
+        },
+        {
           "name": "kind",
           "required": true,
           "schema": {
             "$ref": "#/components/schemas/ConfirmKind"
+          }
+        },
+        {
+          "name": "round",
+          "description": "Kind round.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmRound"
           }
         },
         {
@@ -3260,7 +3839,7 @@
         },
         {
           "name": "edits",
-          "description": "With choice confirm: the user's changes.",
+          "description": "With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made.",
           "schema": {
             "$ref": "#/components/schemas/ConfirmEdits"
           }
@@ -3346,9 +3925,16 @@
     },
     {
       "name": "round.get",
-      "summary": "One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.",
+      "summary": "One round by id or name, with its definition (rounds.md 13); with batch, also an event round's pending batch (rounds.md 9). Needs the rounds capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "batch",
+          "description": "Also return the pending batch's events, as a move carries them (rounds.md 9).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
         {
           "name": "id",
           "schema": {
@@ -3369,7 +3955,7 @@
         }
       },
       "x-params": {
-        "$ref": "#/components/schemas/RoundRef"
+        "$ref": "#/components/schemas/RoundGetParams"
       }
     },
     {
@@ -3377,6 +3963,20 @@
       "summary": "Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "batch",
+          "description": "Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route.",
+          "schema": {
+            "$ref": "#/components/schemas/RoundBatch"
+          }
+        },
+        {
+          "name": "cursor",
+          "description": "Watch triggers: the watcher cursor the new round starts with, as a move carries it. Refused on the pane route.",
+          "schema": {
+            "type": "string"
+          }
+        },
         {
           "name": "round",
           "required": true,
@@ -3598,6 +4198,49 @@
       }
     },
     {
+      "name": "round.watch_event",
+      "summary": "A page of the lines a watch round's watcher printed, from its wrapper (rounds.md 4.4): events join the pending batch, a cursor line is kept. Pane route only: the calling pane must be the round's watcher pane, else denied. Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "dropped",
+          "description": "Lines the wrapper dropped since its last page: over 64 KiB, over the rate, or past its buffer while gff-hab was down.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "lines",
+          "description": "Event lines and cursor lines, each at most 64 KiB, as the watcher printed them.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "round",
+          "description": "The round id. The calling pane must be that round's watcher pane.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundWatchEventResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundWatchEventParams"
+      }
+    },
+    {
       "name": "heavy.take",
       "summary": "Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.",
       "paramStructure": "by-name",
@@ -3699,6 +4342,852 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/HeavyStatusParams"
+      }
+    },
+    {
+      "name": "group.create",
+      "summary": "Propose a group plan (groups.md 3): the hab checks it, files a Logbook plan record and a task per item, and asks one confirmation of kind group while confirm.group_plan is on (also with confirm.start_elsewhere on and a member elsewhere). Nothing starts before the answer. Needs the groups and logbook capabilities.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "coordinator",
+          "description": "The coordinator's session name on this hab. From a pane the pane's session, whatever this says.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "plan",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/GroupPlan"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "description": "Wait up to this long for the confirmation's answer; 0 answers at once. At most 120000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupCreateParams"
+      }
+    },
+    {
+      "name": "group.amend",
+      "summary": "Add items or members to a running group: one confirmation for the change, by the same setting rules (groups.md 3.3). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "change",
+          "description": "The items and members to add. Title, brief and project are not read.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/GroupPlan"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAmendParams"
+      }
+    },
+    {
+      "name": "group.get",
+      "summary": "One group's record (groups.md 5.1). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.list",
+      "summary": "The short form of each group this hab is the home of, newest first. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "state",
+          "description": "Only groups in this state.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupListParams"
+      }
+    },
+    {
+      "name": "group.report",
+      "summary": "A report to the group's coordinator (groups.md 5.5): a channel message from Flightdeck while it runs, else it waits in the record's inbox until its resume. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "Who sends it: a member's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "One line or a short text, at most 4000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupReported"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupReportParams"
+      }
+    },
+    {
+      "name": "group.note",
+      "summary": "A note the hab writes on an item's Logbook task, so it lands under logbook.approval agents too (groups.md 4.3). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "At most 4000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupNoteParams"
+      }
+    },
+    {
+      "name": "group.pause",
+      "summary": "The user's pause: member habs hold messages into the group's members and new starts; working members finish their turn (groups.md 5.6). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.resume",
+      "summary": "Lift the user's pause. A usage pause stays (groups.md 5.6). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.close",
+      "summary": "End the group: no new starts; with group.close_members on, idle members are closed (groups.md 5.2). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRef"
+      }
+    },
+    {
+      "name": "group.retry",
+      "summary": "Start a failed member again, inside the group's envelope (groups.md 4.3). Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "lane",
+          "description": "Start the group's stopped lane again (groups.md 7.4), instead of a member.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "member",
+          "description": "A failed member's name. Empty with lane.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupRetryParams"
+      }
+    },
+    {
+      "name": "member.compact",
+      "summary": "A sibling action (groups.md 9.4): compact a member's context as supervision does at group.compact_at. The member's hab runs it once the member is not in use, waiting up to [groups] sibling_wait, then it is skipped. Answers at once; a second action on the member while one runs gets conflict. From a pane, only a member of the group or its coordinator asks. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name, from group.get.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberActionResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MemberActionParams"
+      }
+    },
+    {
+      "name": "member.handoff",
+      "summary": "A sibling action (groups.md 9.4): a hand-off note, then a fresh session under the member's name in its worktree; held messages move to it. Waits and answers as member.compact. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name, from group.get.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberActionResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MemberActionParams"
+      }
+    },
+    {
+      "name": "member.action",
+      "summary": "One supervision action by its id, as the member's hab keeps it. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "description": "The action id from member.compact or member.handoff.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MemberActionResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MemberActionRef"
+      }
+    },
+    {
+      "name": "lane.submit",
+      "summary": "Submit an item's branch for review (groups.md 6.2): from the item's lead only. The lead's hab reads the branch's head; the home hab starts the reviewer on it, or tells a running reviewer of the new head. With review off the item is ready at once. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The lead's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "head",
+          "description": "Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LaneSubmitted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LaneSubmitParams"
+      }
+    },
+    {
+      "name": "review.verdict",
+      "summary": "A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "checked",
+          "description": "Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "descends",
+          "description": "Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "findings",
+          "description": "High and medium findings only, at most [groups] max_findings. More are refused.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          }
+        },
+        {
+          "name": "fixed",
+          "description": "Fix commits the reviewer pushed to its review branch, if any.",
+          "schema": {
+            "$ref": "#/components/schemas/ReviewFixed"
+          }
+        },
+        {
+          "name": "from",
+          "description": "The reviewer's session name. From a pane the pane's session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "item",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "reviewed",
+          "description": "Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "verdict",
+          "description": "pass or fix_needed.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ReviewVerdictTaken"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ReviewVerdictParams"
+      }
+    },
+    {
+      "name": "group.message",
+      "summary": "The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "member",
+          "description": "The member's session name on the receiving hab.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "At most 8000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupMessageParams"
+      }
+    },
+    {
+      "name": "group.sync",
+      "summary": "A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "envelope",
+          "description": "The envelope as amended. Its home is the sending hab.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupEnvelope"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "pause",
+          "description": "The pause reasons, while paused; absent when the group runs.",
+          "schema": {
+            "$ref": "#/components/schemas/GroupPause"
+          }
+        },
+        {
+          "name": "revision",
+          "description": "The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupSyncParams"
+      }
+    },
+    {
+      "name": "group.move",
+      "summary": "The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "cancel",
+          "description": "Cancel the move queued on this hab for the group.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "device",
+          "description": "The new home by device id, in place of host: a queued move names its own hab this way.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "description": "The new home: a peer label of the hab that takes the call, or its own host id.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/GroupMoveResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupMoveParams"
+      }
+    },
+    {
+      "name": "group.adopt",
+      "summary": "The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "generation",
+          "description": "The generation the new home takes (groups.md 5.7 step 3).",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "record",
+          "description": "The group record as the current home holds it.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Group"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAdoptParams"
+      }
+    },
+    {
+      "name": "group.adopt_commit",
+      "summary": "The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "generation",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "record",
+          "description": "The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start.",
+          "schema": {
+            "$ref": "#/components/schemas/Group"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupAdoptCommitParams"
+      }
+    },
+    {
+      "name": "group.tell",
+      "summary": "A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "group",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The coordinator's session id on the hab that takes the call.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The report, or the waiting reports in one message.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/GroupTellParams"
+      }
+    },
+    {
+      "name": "diag.friction",
+      "summary": "Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "blocker",
+          "description": "The work could not be done in Flightdeck, so the user went back to another tool. Absent or false: a preference.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "pane",
+          "description": "The pane the user was in, when there is one.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The session the user was in, when there is one.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The user's own words, 1 to 2,000 characters.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FrictionNoted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/FrictionParams"
+      }
+    },
+    {
+      "name": "diag.debug",
+      "summary": "Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "until",
+          "description": "RFC 3339 time the debug lines stop, at most 24 hours ahead. Absent, or a time already past: debug off.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DebugState"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DebugParams"
       }
     }
   ],
@@ -3909,6 +5398,20 @@
       }
     },
     {
+      "type": "group.updated",
+      "summary": "A group record changed; the id is the group id (groups.md 15.1). Host scope only. Not ephemeral: the groups are in the host snapshot.",
+      "data": {
+        "$ref": "#/components/schemas/Group"
+      }
+    },
+    {
+      "type": "hab.woke",
+      "summary": "The hab detected a wake from sleep, after the wake settle; never at its own start (rounds.md 4.3). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/HabWoke"
+      }
+    },
+    {
       "type": "logbook.updated",
       "summary": "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.",
       "data": {
@@ -3920,6 +5423,20 @@
       "summary": "A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.",
       "data": {
         "$ref": "#/components/schemas/LogbookConflict"
+      }
+    },
+    {
+      "type": "capcom.item",
+      "summary": "A Capcom thread item was added or changed: a message, a read mark, a card's answer, a tool call on a turn's line; the id is the item id (capcom-service.md 7.4). Host scope only. Ephemeral: clients read the thread with capcom.thread.page.",
+      "data": {
+        "$ref": "#/components/schemas/CapcomItem"
+      }
+    },
+    {
+      "type": "capcom.typing",
+      "summary": "Capcom's typing mark changed; the id is the service session id (capcom-service.md 7.3). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/CapcomTyping"
       }
     },
     {
@@ -4097,7 +5614,7 @@
         "properties": {
           "choice": {
             "$ref": "#/components/schemas/ApprovalChoice",
-            "description": "allow or deny a permission; answer a question with text."
+            "description": "allow or deny a permission; answer a question with text. allow_site: a Capcom web fetch card only (capcom-service.md 5.3): allow, and keep the URL's site so later fetches on it need no card."
           },
           "pane": {
             "type": "string"
@@ -4125,7 +5642,8 @@
         "x-known-values": [
           "allow",
           "deny",
-          "answer"
+          "answer",
+          "allow_site"
         ]
       },
       "AttachmentData": {
@@ -4321,6 +5839,27 @@
           "trust"
         ]
       },
+      "CapcomAnswer": {
+        "type": "object",
+        "properties": {
+          "by": {
+            "type": "string",
+            "description": "The device that answered."
+          },
+          "choice": {
+            "type": "string",
+            "description": "One of the card's choices, or expired."
+          },
+          "time": {
+            "type": "string",
+            "description": "RFC 3339."
+          }
+        },
+        "required": [
+          "choice",
+          "time"
+        ]
+      },
       "CapcomAssignParams": {
         "type": "object",
         "properties": {
@@ -4410,6 +5949,161 @@
           "pending"
         ]
       },
+      "CapcomAttribution": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "weather: Apple Weather."
+          },
+          "text": {
+            "type": "string",
+            "description": "The mark's text, such as Apple Weather."
+          },
+          "url": {
+            "type": "string",
+            "description": "The data sources page the mark links to."
+          }
+        },
+        "required": [
+          "source",
+          "text",
+          "url"
+        ]
+      },
+      "CapcomAuthor": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "agent: the sender's channel address."
+          },
+          "device": {
+            "type": "string",
+            "description": "user: the device id that sent it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CapcomAuthorKind"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "CapcomAuthorKind": {
+        "type": "string",
+        "x-known-values": [
+          "user",
+          "capcom",
+          "agent",
+          "flightdeck"
+        ]
+      },
+      "CapcomCard": {
+        "type": "object",
+        "properties": {
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "event": {
+            "$ref": "#/components/schemas/CapcomCardEvent",
+            "description": "calendar and reminder: what Add writes (capcom-service.md 8.5)."
+          },
+          "ref": {
+            "type": "string",
+            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card."
+          },
+          "type": {
+            "type": "string",
+            "description": "approval, confirmation, handoff, calendar, reminder, proposal, memory or group."
+          }
+        },
+        "required": [
+          "type",
+          "choices"
+        ]
+      },
+      "CapcomCardAnswerParams": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4)."
+          },
+          "item": {
+            "type": "string",
+            "description": "The card's item id."
+          }
+        },
+        "required": [
+          "item",
+          "choice"
+        ]
+      },
+      "CapcomCardAnswered": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/CapcomItem",
+            "description": "The card with its answer."
+          },
+          "note": {
+            "type": "string",
+            "description": "What the answer did, for the user to read: an undo of a record edited since it was noted deleted the edited record."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "item"
+        ]
+      },
+      "CapcomCardEvent": {
+        "type": "object",
+        "properties": {
+          "all_day": {
+            "type": "boolean"
+          },
+          "due": {
+            "type": "string",
+            "description": "reminder: RFC 3339, or a date (YYYY-MM-DD)."
+          },
+          "end": {
+            "type": "string",
+            "description": "calendar: RFC 3339, or a date (YYYY-MM-DD) for an all-day event, the last day included."
+          },
+          "location": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "calendar: RFC 3339, or a date (YYYY-MM-DD) for an all-day event."
+          },
+          "title": {
+            "type": "string"
+          },
+          "tz": {
+            "type": "string",
+            "description": "The time zone the times are meant in, from the device context; absent: the times carry their offset."
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
       "CapcomContextItem": {
         "type": "object",
         "properties": {
@@ -4491,6 +6185,102 @@
           "ref"
         ]
       },
+      "CapcomItem": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/CapcomAnswer"
+          },
+          "attachments": {
+            "type": "array",
+            "description": "The attachment ids of images, in order: attachment.get reads their thumbnails.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attribution": {
+            "type": "array",
+            "description": "Capcom message: the data sources whose mark shows with it, such as Apple Weather (capcom-service.md 8.3).",
+            "items": {
+              "$ref": "#/components/schemas/CapcomAttribution"
+            }
+          },
+          "author": {
+            "$ref": "#/components/schemas/CapcomAuthor"
+          },
+          "card": {
+            "$ref": "#/components/schemas/CapcomCard"
+          },
+          "context": {
+            "type": "array",
+            "description": "The attached context that went with a user message.",
+            "items": {
+              "$ref": "#/components/schemas/CapcomContextItem"
+            }
+          },
+          "event": {
+            "type": "boolean",
+            "description": "Written in an event turn: the app marks it wrote first."
+          },
+          "id": {
+            "type": "string",
+            "description": "Time ordered: a later item has a greater id."
+          },
+          "images": {
+            "type": "array",
+            "description": "Paths on the home hab.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CapcomItemKind"
+          },
+          "read": {
+            "type": "string",
+            "description": "user message: when the engine took it (RFC 3339). Absent: delivered, not read yet."
+          },
+          "summary": {
+            "type": "string",
+            "description": "divider: the summary the fresh SDK session opened with."
+          },
+          "text": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "tools": {
+            "type": "array",
+            "description": "tools: each call of the turn, in order.",
+            "items": {
+              "$ref": "#/components/schemas/CapcomToolCall"
+            }
+          },
+          "turn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "time",
+          "author"
+        ]
+      },
+      "CapcomItemKind": {
+        "type": "string",
+        "x-known-values": [
+          "message",
+          "tools",
+          "agent",
+          "round",
+          "card",
+          "note",
+          "divider"
+        ]
+      },
       "CapcomOpenParams": {
         "type": "object",
         "properties": {
@@ -4524,6 +6314,11 @@
               "$ref": "#/components/schemas/CapcomContextItem"
             }
           },
+          "proposals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The Capcom service's Logbook proposals that wait for review. With new set, the app opens the review list when it is above 0."
+          },
           "seq": {
             "type": "integer",
             "format": "uint64",
@@ -4554,6 +6349,169 @@
         },
         "required": [
           "session"
+        ]
+      },
+      "CapcomSDKSession": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "type": "string",
+            "description": "RFC 3339. Absent: the current session."
+          },
+          "id": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "why": {
+            "type": "string",
+            "description": "first, restart, reseed or new."
+          }
+        },
+        "required": [
+          "id",
+          "start",
+          "why"
+        ]
+      },
+      "CapcomServiceParams": {
+        "type": "object"
+      },
+      "CapcomServiceStatus": {
+        "type": "object",
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "engine": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string",
+            "description": "The engine's folder: a plain terminal resumes its SDK sessions from here."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sdk_sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapcomSDKSession"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The service session's id."
+          },
+          "sites": {
+            "type": "array",
+            "description": "The sites the user allowed with Allow this site (5.3): a web fetch on one needs no card. Hosts, lowercase, sorted.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "off, running, paused or error."
+          },
+          "turn": {
+            "type": "string",
+            "description": "The running turn. Absent: idle."
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "connected",
+          "folder",
+          "sdk_sessions"
+        ]
+      },
+      "CapcomSiteParams": {
+        "type": "object",
+        "properties": {
+          "site": {
+            "type": "string",
+            "description": "A host, as capcom.status lists it."
+          }
+        },
+        "required": [
+          "site"
+        ]
+      },
+      "CapcomThreadPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapcomItem"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "Older items remain."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "items",
+          "more"
+        ]
+      },
+      "CapcomThreadPageParams": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "string",
+            "description": "An item id: items older than it. Absent: the newest."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most this many, and never more than 200. 0: 200."
+          }
+        }
+      },
+      "CapcomToolCall": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "summary"
+        ]
+      },
+      "CapcomTyping": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
         ]
       },
       "Catalog": {
@@ -4601,6 +6559,17 @@
             "format": "uint64",
             "description": "Raised on every change of this catalog; kept across restarts."
           },
+          "governor": {
+            "$ref": "#/components/schemas/CatalogGovernor",
+            "description": "The usage governor's answer for each consumer this hab paces. Absent with none."
+          },
+          "groups": {
+            "type": "array",
+            "description": "The groups this hab is the home of: the short form (groups.md 5.1). Absent with none.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogGroup"
+            }
+          },
           "harnesses": {
             "type": "array",
             "description": "Coding-agent harnesses found on PATH, with their versions.",
@@ -4642,6 +6611,13 @@
             "description": "Services the user declared for this host.",
             "items": {
               "$ref": "#/components/schemas/CatalogService"
+            }
+          },
+          "shell_sessions": {
+            "type": "array",
+            "description": "The names of this host's sessions with no running agent (a shell, or an agent that exited), sorted. Absent with none.",
+            "items": {
+              "type": "string"
             }
           },
           "system": {
@@ -4697,12 +6673,34 @@
       "CatalogAgent": {
         "type": "object",
         "properties": {
+          "compacts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A member's compactions its hab counted."
+          },
+          "context_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How full its context window is, in whole percent; absent when unknown."
+          },
+          "group": {
+            "$ref": "#/components/schemas/SessionGroup",
+            "description": "The session is a member of this group."
+          },
           "harness": {
             "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "The session's id on its host."
           },
           "project": {
             "type": "string",
             "description": "The project's name. Absent for an unfiled session."
+          },
+          "replaced": {
+            "type": "string",
+            "description": "The session this fresh member session replaced."
           },
           "session": {
             "type": "string",
@@ -4752,6 +6750,10 @@
           "home": {
             "type": "string",
             "description": "The device id of the home host at that assignment."
+          },
+          "service": {
+            "type": "string",
+            "description": "On the home host, while it runs the Capcom service: the service's actor id, the session id its notices and Logbook ops carry."
           },
           "sessions": {
             "type": "array",
@@ -4878,6 +6880,89 @@
           "generation"
         ]
       },
+      "CatalogGovernor": {
+        "type": "object",
+        "properties": {
+          "consumers": {
+            "type": "array",
+            "description": "By id.",
+            "items": {
+              "$ref": "#/components/schemas/GovernorConsumer"
+            }
+          }
+        },
+        "required": [
+          "consumers"
+        ]
+      },
+      "CatalogGroup": {
+        "type": "object",
+        "properties": {
+          "coordinator": {
+            "$ref": "#/components/schemas/CatalogMember",
+            "description": "The coordinator, when the group has one."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "home": {
+            "type": "string",
+            "description": "The home hab's device id."
+          },
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Plan items that are not dropped."
+          },
+          "landed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items landed."
+          },
+          "members": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Members started."
+          },
+          "moved": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A tombstone: the group moved home to this hab with this generation."
+          },
+          "moving": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A hand-over to this hab runs."
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause",
+            "description": "The pause reasons, while paused: each member's hab holds messages into that group's members (groups.md 5.6)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The group record's revision when this copy was made."
+          },
+          "state": {
+            "type": "string",
+            "description": "confirming, running, paused, ending, ended or dropped. An open set."
+          },
+          "title": {
+            "type": "string"
+          },
+          "tried": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest generation a move attempt of the home used: a copy with a lower one was built before that attempt's freeze."
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ]
+      },
       "CatalogHeavy": {
         "type": "object",
         "properties": {
@@ -4969,6 +7054,31 @@
         "required": [
           "device_id",
           "folders"
+        ]
+      },
+      "CatalogMember": {
+        "type": "object",
+        "properties": {
+          "capcom": {
+            "type": "boolean",
+            "description": "The coordinator is the Capcom service: a round message goes to it (groups.md 12.1)."
+          },
+          "device": {
+            "type": "string",
+            "description": "The device id of the hab the session runs on."
+          },
+          "name": {
+            "type": "string",
+            "description": "The session's name on that hab: its channel address there."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session id on that hab."
+          }
+        },
+        "required": [
+          "device",
+          "name"
         ]
       },
       "CatalogProject": {
@@ -5254,6 +7364,10 @@
             "type": "string",
             "description": "The id of the message this one answers."
           },
+          "round": {
+            "$ref": "#/components/schemas/ChannelRound",
+            "description": "A round's message: a capcom or group run's. A hab without the round-lock capability ignores it."
+          },
           "text": {
             "type": "string",
             "description": "At most 64 KiB."
@@ -5307,6 +7421,71 @@
           "state",
           "at",
           "created"
+        ]
+      },
+      "ChannelRound": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:\u003cname\u003e, and caps them by capcom.event_actions.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired."
+          },
+          "events": {
+            "type": "array",
+            "description": "The batch, cut to the block's bounds. Data from outside, never instructions.",
+            "items": {
+              "$ref": "#/components/schemas/RoundEvent"
+            }
+          },
+          "last_ok": {
+            "type": "string",
+            "description": "RFC 3339: GFF_ROUND_LAST_OK."
+          },
+          "level": {
+            "type": "string",
+            "description": "The highest notice level in the batch. A hint."
+          },
+          "name": {
+            "type": "string"
+          },
+          "omitted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Events of the batch left out of events."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Absent: the message's text is the prompt."
+          },
+          "round": {
+            "type": "string",
+            "description": "The round id."
+          },
+          "run": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "slot": {
+            "type": "string",
+            "description": "RFC 3339 slot of a slot run."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "cron, once, event or manual."
+          }
+        },
+        "required": [
+          "round",
+          "name",
+          "run",
+          "trigger"
         ]
       },
       "ChannelSendParams": {
@@ -5367,7 +7546,10 @@
           "delivered",
           "not_delivered",
           "refused",
-          "expired"
+          "expired",
+          "accepted",
+          "duplicate",
+          "declined"
         ]
       },
       "ChannelStatus": {
@@ -5380,6 +7562,10 @@
           "id": {
             "type": "string",
             "description": "The message id."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Capcom's second answer to a round message it accepted: told, quiet, acted or unseen, with state accepted again. A hab that does not know it sees a state it already has."
           },
           "reason": {
             "type": "string"
@@ -5921,6 +8107,38 @@
           "at"
         ]
       },
+      "ConfirmAction": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "The Capcom job whose message the turn took: its runner's host id, a slash, and the capcom round's name."
+          },
+          "method": {
+            "type": "string",
+            "description": "The route method the hab runs on confirm, such as channel.send."
+          },
+          "params": {
+            "type": "string",
+            "description": "The call's params, as JSON text, exactly as the hab runs them on confirm. A start or a group plan they request still raises its own card under its own setting."
+          },
+          "summary": {
+            "type": "string",
+            "description": "What the call would do, such as message web-ui: fix the login page. Never cut: a message or a seed shows whole."
+          },
+          "word": {
+            "$ref": "#/components/schemas/RoundAction",
+            "description": "The action word the call uses."
+          }
+        },
+        "required": [
+          "job",
+          "word",
+          "summary",
+          "method",
+          "params"
+        ]
+      },
       "ConfirmAnswerParams": {
         "type": "object",
         "properties": {
@@ -5929,7 +8147,7 @@
           },
           "edits": {
             "$ref": "#/components/schemas/ConfirmEdits",
-            "description": "With choice confirm: the user's changes."
+            "description": "With choice confirm: the user's changes to a start. A round takes none: it is edited once it is made."
           },
           "id": {
             "type": "string"
@@ -5963,6 +8181,10 @@
           "model": {
             "type": "string"
           },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan",
+            "description": "Kind group: the edited plan. The user may change hosts, harnesses, models and names, drop an item or a member, and turn review off; the hab checks it again."
+          },
           "seed": {
             "type": "string",
             "description": "The edited seed, at most 8000 characters."
@@ -5980,11 +8202,46 @@
           "id"
         ]
       },
+      "ConfirmGroup": {
+        "type": "object",
+        "properties": {
+          "amend": {
+            "type": "boolean",
+            "description": "The plan is a change to a running group (group.amend): its new items and members."
+          },
+          "group": {
+            "type": "string",
+            "description": "The group id."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan"
+          },
+          "trust": {
+            "type": "string",
+            "description": "The trust rule the confirmation answers, in one line: which new worktrees, on which hosts, for which harnesses (groups.md 4.2)."
+          },
+          "warnings": {
+            "type": "array",
+            "description": "Lines the card shows above the buttons, such as one item: a single session costs less (groups.md 11).",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "group",
+          "plan",
+          "trust"
+        ]
+      },
       "ConfirmKind": {
         "type": "string",
         "x-known-values": [
           "start",
-          "setup"
+          "setup",
+          "group",
+          "round",
+          "action"
         ]
       },
       "ConfirmList": {
@@ -6030,8 +8287,16 @@
             "type": "string",
             "description": "The requesting session's name on this hab. The hook endpoint fills it from the pane's token."
           },
+          "group": {
+            "$ref": "#/components/schemas/ConfirmGroup",
+            "description": "Kind group: only gff-hab's group.create and group.amend ask for it, never a pane."
+          },
           "kind": {
             "$ref": "#/components/schemas/ConfirmKind"
+          },
+          "round": {
+            "$ref": "#/components/schemas/ConfirmRound",
+            "description": "Kind round."
           },
           "setup": {
             "$ref": "#/components/schemas/ConfirmSetup",
@@ -6071,27 +8336,68 @@
       "ConfirmResult": {
         "type": "object",
         "properties": {
+          "address": {
+            "type": "string",
+            "description": "The new session's channel address as this hab sees it: its name on this hab, label/name on a peer."
+          },
           "host": {
             "type": "string",
             "description": "The target hab, as this hab labels it."
           },
           "name": {
             "type": "string",
-            "description": "The new session's name."
+            "description": "The new session's name, or the round's."
           },
           "pane": {
             "type": "string",
-            "description": "The new session's pane id."
+            "description": "The new session's pane id. Empty for a round."
+          },
+          "round": {
+            "type": "string",
+            "description": "Kind round: the new round's id on the runner."
           },
           "session": {
             "type": "string",
-            "description": "The new session's id on the target hab."
+            "description": "The new session's id on the target hab. Empty for a round."
+          },
+          "text": {
+            "type": "string",
+            "description": "Kind action: what the confirmed call answered, in one line."
           }
         },
         "required": [
           "host",
           "session",
           "pane"
+        ]
+      },
+      "ConfirmRound": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The runner: a peer label from the peer list. This hab is refused: a round here is made with round.create."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name, from the catalog, when the hab knows it. Filled by the hab."
+          },
+          "round": {
+            "$ref": "#/components/schemas/RoundSpec",
+            "description": "The round as the runner's round.create will get it. Not a resume or fork round: its target is a session on this hab."
+          },
+          "run_now": {
+            "type": "boolean",
+            "description": "Also start one run once the round is made."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "The trigger in plain words, such as every 1h or cron 0 9 * * 1-5 in UTC. Filled by the hab."
+          }
+        },
+        "required": [
+          "host",
+          "round"
         ]
       },
       "ConfirmSetup": {
@@ -6122,6 +8428,10 @@
       "ConfirmStart": {
         "type": "object",
         "properties": {
+          "alias": {
+            "type": "string",
+            "description": "The alias the request named, from the [aliases] table of the requesting hab's config file. Filled by the hab; harness and model are what the alias stands for."
+          },
           "branch": {
             "type": "string",
             "description": "The folder's branch, from the catalog. Filled by the hab."
@@ -6130,6 +8440,10 @@
             "type": "string",
             "description": "The absolute project folder on the target host. The session starts there, in its project."
           },
+          "group": {
+            "type": "string",
+            "description": "The agent group the new session is a member of: 1 to 64 lowercase letters, digits and '-'. A group start asks while confirm.group_plan is on, also on the requesting hab's own host, and its target hab answers the harness's folder trust prompt for the group's worktrees (groups.md 4.2)."
+          },
           "harness": {
             "type": "string",
             "description": "The harness to start: claude, codex or opencode."
@@ -6137,6 +8451,10 @@
           "host": {
             "type": "string",
             "description": "The target hab: a peer label from the peer list, or this hab's host id. In confirm.request an empty host means this hab."
+          },
+          "item": {
+            "type": "string",
+            "description": "With group: the plan item the member works on, 1 to 64 lowercase letters, digits and '-'."
           },
           "model": {
             "type": "string",
@@ -6150,9 +8468,17 @@
             "type": "string",
             "description": "The project's name, from the catalog. Filled by the hab."
           },
+          "role": {
+            "type": "string",
+            "description": "With group: the member's role, lead, worker or reviewer (groups.md 2.1)."
+          },
           "seed": {
             "type": "string",
             "description": "The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf."
+          },
+          "teammate": {
+            "type": "boolean",
+            "description": "Report back to the requesting session: the target hab sends it the final agent message of each turn that a message from it began, as a channel message from the new session. Needs a requesting session."
           }
         },
         "required": [
@@ -6196,6 +8522,10 @@
       "Confirmation": {
         "type": "object",
         "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ConfirmAction",
+            "description": "Kind action: the one call a Capcom job's event turn asked for under capcom.event_actions = ask."
+          },
           "answered_by": {
             "type": "string",
             "description": "The client id that answered it."
@@ -6220,6 +8550,10 @@
             "type": "string",
             "description": "The requesting session's name on this hab. Absent for a request from outside a pane."
           },
+          "group": {
+            "$ref": "#/components/schemas/ConfirmGroup",
+            "description": "Kind group: the plan the confirmation starts, or the change an amend adds."
+          },
           "id": {
             "type": "string",
             "description": "128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab."
@@ -6237,7 +8571,11 @@
           },
           "result": {
             "$ref": "#/components/schemas/ConfirmResult",
-            "description": "State done: what the start made."
+            "description": "State done: what the start or round made."
+          },
+          "round": {
+            "$ref": "#/components/schemas/ConfirmRound",
+            "description": "Kind round: the round as it will be made, or was."
           },
           "setup": {
             "$ref": "#/components/schemas/ConfirmSetup",
@@ -6654,6 +8992,36 @@
           "rows"
         ]
       },
+      "DebugParams": {
+        "type": "object",
+        "properties": {
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 time the debug lines stop, at most 24 hours ahead. Absent, or a time already past: debug off."
+          }
+        }
+      },
+      "DebugState": {
+        "type": "object",
+        "properties": {
+          "env": {
+            "type": "boolean",
+            "description": "GFF_HAB_DEBUG is set in gff-hab's environment, so the debug lines stay on with no time limit."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 time the debug lines stop. Absent: no window is open."
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
       "Deleted": {
         "type": "object"
       },
@@ -6854,6 +9222,10 @@
             "items": {
               "$ref": "#/components/schemas/DetectProc"
             }
+          },
+          "timed_out": {
+            "type": "boolean",
+            "description": "The process budget ran out before this part was read: the answer is partial, and Error names the step."
           }
         },
         "required": [
@@ -6975,6 +9347,89 @@
           "paired_at"
         ]
       },
+      "DeviceCalendar": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceEvent"
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "The start of the window the snapshot covers, RFC 3339."
+          },
+          "time": {
+            "type": "string",
+            "description": "When the phone read the calendars, RFC 3339."
+          },
+          "to": {
+            "type": "string",
+            "description": "The end of the window the snapshot covers, RFC 3339."
+          }
+        },
+        "required": [
+          "time",
+          "from",
+          "to",
+          "events"
+        ]
+      },
+      "DeviceContextPutParams": {
+        "type": "object",
+        "properties": {
+          "calendar": {
+            "$ref": "#/components/schemas/DeviceCalendar"
+          },
+          "calendar_off": {
+            "type": "string",
+            "description": "Why the device shares no calendar: off or no_permission. The hab drops the snapshot this device sent."
+          },
+          "location": {
+            "$ref": "#/components/schemas/DeviceLocation"
+          },
+          "location_off": {
+            "type": "string",
+            "description": "Why the device shares no location: off (the capcom.share_location preference) or no_permission. The hab drops the fix this device sent."
+          },
+          "tz": {
+            "type": "string",
+            "description": "The device's IANA time zone, such as Europe/Berlin."
+          }
+        }
+      },
+      "DeviceEvent": {
+        "type": "object",
+        "properties": {
+          "all_day": {
+            "type": "boolean"
+          },
+          "calendar": {
+            "type": "string",
+            "description": "The calendar's title."
+          },
+          "end": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "location": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "start",
+          "end"
+        ]
+      },
       "DeviceKind": {
         "type": "string",
         "x-known-values": [
@@ -7003,6 +9458,42 @@
         "required": [
           "seq",
           "devices"
+        ]
+      },
+      "DeviceLocation": {
+        "type": "object",
+        "properties": {
+          "accuracy": {
+            "type": "number",
+            "format": "double",
+            "description": "Horizontal accuracy in metres."
+          },
+          "country": {
+            "type": "string",
+            "description": "The ISO 3166-1 alpha-2 country code from the reverse geocoder: weather alerts need it."
+          },
+          "lat": {
+            "type": "number",
+            "format": "double"
+          },
+          "lon": {
+            "type": "number",
+            "format": "double"
+          },
+          "place": {
+            "type": "string",
+            "description": "The place name from the phone's reverse geocoder, such as a neighbourhood and city."
+          },
+          "time": {
+            "type": "string",
+            "description": "When the phone took the fix, RFC 3339."
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "accuracy",
+          "time"
         ]
       },
       "DeviceState": {
@@ -7062,6 +9553,10 @@
           "hint": {
             "type": "string"
           },
+          "home": {
+            "type": "string",
+            "description": "On moved: the device id of the group's new home hab (groups.md 5.7)."
+          },
           "id": {
             "type": "string",
             "description": "On every settings.set error: the id of the first refused row (app.md 20.5)."
@@ -7095,7 +9590,8 @@
           "ticket_invalid",
           "locked",
           "denied",
-          "invalid"
+          "invalid",
+          "moved"
         ]
       },
       "Event": {
@@ -7220,8 +9716,1426 @@
           "path"
         ]
       },
+      "FlightRule": {
+        "type": "object",
+        "properties": {
+          "attribution": {
+            "type": "string",
+            "description": "recorded, matched, computed or unknown."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of that text in bytes."
+          },
+          "configured_sources": {
+            "type": "array",
+            "description": "The user's source files from Flightdeck's config, when this is a file Flightdeck rendered and its digest header matches the render record.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many records carried this entry. For a source whose text changes on every load (a hook that prints a clock), one entry stands for every load: digest and bytes are the latest text's. Absent from an older hab."
+          },
+          "digest": {
+            "type": "string",
+            "description": "Hex SHA-256 of the text that reached the agent. Absent for a placeholder."
+          },
+          "event": {
+            "type": "string",
+            "description": "A hook entry: the hook event, such as SessionStart or PostToolUse."
+          },
+          "first_seen": {
+            "type": "string",
+            "description": "RFC 3339 time of the record that first carried this text."
+          },
+          "gone": {
+            "type": "string",
+            "description": "RFC 3339 time the harness recorded that this source left the context. Absent while it is in."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable for the session: made from kind, source and digest. flightrules.text takes it."
+          },
+          "kind": {
+            "type": "string",
+            "description": "instruction, memory, hook, skills, skill, mcp or system."
+          },
+          "last_seen": {
+            "type": "string",
+            "description": "RFC 3339 time of the latest record that carried it again, after a compaction or resume."
+          },
+          "note": {
+            "type": "string",
+            "description": "Why the attribution is unknown, or what else the record says, such as that only the start of a file was sent."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file behind a source that is not itself a path, such as an invoked skill's file."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the harness loaded it, in the harness's words, such as session_start or compaction."
+          },
+          "scope": {
+            "type": "string",
+            "description": "The harness's level: managed, user, project, local, memory, session, skill or mcp. Absent when the record does not say."
+          },
+          "source": {
+            "type": "string",
+            "description": "A file path, a hook name, a skill name, an MCP server name, or what the record is when nothing names a source."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "A file Flightdeck rendered, still in the context, whose loaded copy differs from the last render of the same target: the agent works from an older render. Absent from an older hab."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "bytes",
+          "first_seen",
+          "last_seen",
+          "attribution"
+        ]
+      },
+      "FlightRuleText": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the whole text in bytes."
+          },
+          "id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "text": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The text is cut at 1 MiB, on a character boundary."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "text",
+          "bytes"
+        ]
+      },
+      "FlightRuleTextParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "An entry id from flightrules.list for this session."
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "id"
+        ]
+      },
+      "FlightRules": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlightRule"
+            }
+          },
+          "harness": {
+            "type": "string",
+            "description": "The harness whose records built the ledger. Absent when the session has no agent session yet."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "An entry is stale: the session loaded a rendered file that a later render replaced. Absent from an older hab."
+          },
+          "warnings": {
+            "type": "array",
+            "description": "Records the reader could not read, or read as placeholders.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "session",
+          "entries"
+        ]
+      },
+      "FlightRulesParams": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ]
+      },
+      "FrictionNoted": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "trace": {
+            "type": "string",
+            "description": "The note's trace, 12 Crockford base32 characters; gff friction show takes it."
+          }
+        },
+        "required": [
+          "seq",
+          "trace"
+        ]
+      },
+      "FrictionParams": {
+        "type": "object",
+        "properties": {
+          "blocker": {
+            "type": "boolean",
+            "description": "The work could not be done in Flightdeck, so the user went back to another tool. Absent or false: a preference."
+          },
+          "pane": {
+            "type": "string",
+            "description": "The pane the user was in, when there is one."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session the user was in, when there is one."
+          },
+          "text": {
+            "type": "string",
+            "description": "The user's own words, 1 to 2,000 characters."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "GovernorConsumer": {
+        "type": "object",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "description": "plan: the plan's weekly window; usd: today's result cost against the daily dollar cap; none: unpaced, with no reading, its tokens counted. An open set."
+          },
+          "cap_cents": {
+            "type": "integer",
+            "format": "int64",
+            "description": "usd: the daily dollar cap, in US cents."
+          },
+          "event_pace": {
+            "type": "string",
+            "description": "The next event turn's pace: ok or wait. An open set."
+          },
+          "event_until": {
+            "type": "string",
+            "description": "RFC 3339 UTC time a wait of event turns ends."
+          },
+          "id": {
+            "type": "string",
+            "description": "capcom, or group:\u003cid\u003e."
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Today's input tokens, by the hab's local day."
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Today's output tokens."
+          },
+          "pace": {
+            "type": "string",
+            "description": "The next user turn's pace: ok, small (the small model) or wait. An open set."
+          },
+          "share_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100."
+          },
+          "spent_cents": {
+            "type": "integer",
+            "format": "int64",
+            "description": "usd: today's reported cost, in US cents."
+          },
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 UTC time a wait of user turns ends."
+          },
+          "used_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "plan: the weekly window's used percentage, the whole account's."
+          }
+        },
+        "required": [
+          "id",
+          "basis",
+          "pace",
+          "event_pace"
+        ]
+      },
+      "Group": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/GroupConfirmationRef"
+          },
+          "coordinator": {
+            "$ref": "#/components/schemas/GroupCoordinator"
+          },
+          "created": {
+            "type": "string"
+          },
+          "ended": {
+            "type": "string"
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "What the confirmed plan allows (groups.md 3.3). Absent while confirming."
+          },
+          "from": {
+            "$ref": "#/components/schemas/GroupFrom",
+            "description": "On a pending copy: the old home it came from."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "1 at creation; one more at each move of the home (groups.md 5.7)."
+          },
+          "home": {
+            "type": "string",
+            "description": "The home hab's device id."
+          },
+          "id": {
+            "type": "string",
+            "description": "64 random bits as 16 hex digits."
+          },
+          "inbox": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupReport"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupItem"
+            }
+          },
+          "lane": {
+            "$ref": "#/components/schemas/GroupLaneState"
+          },
+          "leftovers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupMember"
+            }
+          },
+          "move_failed": {
+            "type": "string",
+            "description": "Why the last move did not commit, for the card."
+          },
+          "moved": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A tombstone: the group moved home to this hab. The old home keeps it [groups] tombstone_keep."
+          },
+          "moving": {
+            "$ref": "#/components/schemas/GroupMoveRef",
+            "description": "A hand-over to another hab runs: the lane and the scheduler take no new item."
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause"
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "A copy adopted from the old home, not yet committed: not published, runs nothing."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan",
+            "description": "The plan as confirmed, with each amend merged in."
+          },
+          "plan_record": {
+            "type": "string",
+            "description": "The Logbook plan record id."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name in the home hab's catalog."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "state": {
+            "type": "string",
+            "description": "confirming, running, paused, ending, ended or dropped."
+          },
+          "title": {
+            "type": "string"
+          },
+          "tried": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest generation a move attempt used."
+          },
+          "updated": {
+            "type": "string"
+          },
+          "waits": {
+            "type": "array",
+            "description": "What holds the group now, one line each.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "title",
+          "project",
+          "home",
+          "generation",
+          "coordinator",
+          "inbox",
+          "state",
+          "confirmation",
+          "items",
+          "members",
+          "lane",
+          "pause",
+          "waits",
+          "leftovers",
+          "plan",
+          "created",
+          "updated"
+        ]
+      },
+      "GroupAdoptCommitParams": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "group": {
+            "type": "string"
+          },
+          "record": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The record at the commit, with the reports that came after the adopt. Absent when the old home sends the commit again at its start."
+          }
+        },
+        "required": [
+          "group",
+          "generation"
+        ]
+      },
+      "GroupAdoptParams": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation the new home takes (groups.md 5.7 step 3)."
+          },
+          "record": {
+            "$ref": "#/components/schemas/Group",
+            "description": "The group record as the current home holds it."
+          }
+        },
+        "required": [
+          "record",
+          "generation"
+        ]
+      },
+      "GroupAmendParams": {
+        "type": "object",
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/GroupPlan",
+            "description": "The items and members to add. Title, brief and project are not read."
+          },
+          "group": {
+            "type": "string"
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "group",
+          "change"
+        ]
+      },
+      "GroupConfirmationRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The confirmation id, or none when confirm.group_plan was off."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ConfirmState"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "GroupCoordinator": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Its channel address: label/name as another hab of the mesh sees it, by the home hab's host id."
+          },
+          "device": {
+            "type": "string",
+            "description": "The device id of the hab the coordinator runs on. Absent in a record from before B9: the home hab."
+          },
+          "name": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "Its session id on the home hab."
+          }
+        },
+        "required": [
+          "session",
+          "name",
+          "address"
+        ]
+      },
+      "GroupCreateParams": {
+        "type": "object",
+        "properties": {
+          "coordinator": {
+            "type": "string",
+            "description": "The coordinator's session name on this hab. From a pane the pane's session, whatever this says."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/GroupPlan"
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Wait up to this long for the confirmation's answer; 0 answers at once. At most 120000."
+          }
+        },
+        "required": [
+          "plan"
+        ]
+      },
+      "GroupCreated": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/Confirmation",
+            "description": "The plan's confirmation, open or closed. Absent when none was asked."
+          },
+          "group": {
+            "$ref": "#/components/schemas/Group"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "group"
+        ]
+      },
+      "GroupEnvelope": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "type": "string",
+            "description": "The plan's confirmation id, or none when it started with no confirmation."
+          },
+          "group": {
+            "type": "string"
+          },
+          "harnesses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "home": {
+            "type": "string",
+            "description": "The home hab's device id."
+          },
+          "hosts": {
+            "type": "array",
+            "description": "The device ids of the plan's hosts.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_workers": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Workers per lead (group.max_workers when the plan was confirmed)."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's identity: its normalized remote, else root:\u003ccommit\u003e."
+          }
+        },
+        "required": [
+          "group",
+          "home",
+          "confirmation",
+          "project",
+          "hosts",
+          "harnesses",
+          "max_workers"
+        ]
+      },
+      "GroupFinding": {
+        "type": "object",
+        "properties": {
+          "place": {
+            "type": "string",
+            "description": "File and line, such as api/groups.go:42. At most 200 characters."
+          },
+          "severity": {
+            "type": "string",
+            "description": "high or medium."
+          },
+          "text": {
+            "type": "string",
+            "description": "One paragraph, at most 2000 characters."
+          },
+          "title": {
+            "type": "string",
+            "description": "One line, at most 200 characters."
+          }
+        },
+        "required": [
+          "severity",
+          "title",
+          "text"
+        ]
+      },
+      "GroupFrom": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation of the old home's catalog copy this hab held at the adopt: only a later copy can show the move failed."
+          },
+          "device": {
+            "type": "string",
+            "description": "The old home's device id."
+          },
+          "label": {
+            "type": "string",
+            "description": "This hab's label on the old home: the coordinator's line names the new home by it."
+          }
+        },
+        "required": [
+          "device",
+          "catalog"
+        ]
+      },
+      "GroupItem": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string"
+          },
+          "attempts": {
+            "type": "array",
+            "description": "The lane's tries on this item since its last submit, oldest first: at most [groups] lane_tries per lane run.",
+            "items": {
+              "$ref": "#/components/schemas/GroupLaneAttempt"
+            }
+          },
+          "branch": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/\u003citem\u003e."
+          },
+          "id": {
+            "type": "string"
+          },
+          "idle_since": {
+            "type": "string",
+            "description": "RFC 3339 time the reviewer was first seen idle with no verdict on this head."
+          },
+          "land": {
+            "type": "string",
+            "description": "The commit the lane lands once the item is ready: the submitted head, or the review branch head after a pass with fixes."
+          },
+          "landed": {
+            "type": "string",
+            "description": "The commit on the target once the item landed: the rebased head."
+          },
+          "lead": {
+            "type": "string",
+            "description": "Its lead's session name."
+          },
+          "no_ci": {
+            "type": "boolean",
+            "description": "The target's flightdeck.json names no lane.ci, so the item lands on its checks alone. The card says no CI."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it is stalled or waits."
+          },
+          "review": {
+            "type": "string"
+          },
+          "review_branch": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/\u003citem\u003e-review: the reviewer's own branch (groups.md 6.4)."
+          },
+          "review_since": {
+            "type": "string",
+            "description": "RFC 3339 time the review of the submitted head began."
+          },
+          "reviewer": {
+            "type": "string",
+            "description": "Its reviewer's session name: a member with role reviewer. Absent with review off."
+          },
+          "same_harness": {
+            "type": "boolean",
+            "description": "The reviewer runs in the lead's harness, as no other harness is on a plan host (groups.md 6.2). The card says same harness."
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, stalled, working, review, fix, ready, landing, landed or dropped."
+          },
+          "stuck": {
+            "type": "string",
+            "description": "Why the coordinator was told the review has no verdict: the reviewer exited or stayed idle. Cleared at the next submit."
+          },
+          "submits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many times the lead submitted."
+          },
+          "submitted": {
+            "type": "string",
+            "description": "The full commit id of the lead's last lane_submit."
+          },
+          "task": {
+            "type": "string",
+            "description": "Its Logbook task id."
+          },
+          "title": {
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/GroupVerdict",
+            "description": "The reviewer's verdict on the submitted head. Absent while the reviewer reviews."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "state"
+        ]
+      },
+      "GroupLane": {
+        "type": "object",
+        "properties": {
+          "fix_in_place": {
+            "type": "boolean",
+            "description": "A reviewer may fix its findings in place on its review branch (groups.md 6.4). Absent: true."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target branch. Absent: the project's default branch."
+          }
+        }
+      },
+      "GroupLaneAttempt": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the try ended or saved its push."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "pushed (saved before CI), landed, back (to the lead), stopped (a rule refused a push) or unavailable (tried again later)."
+          },
+          "rebased": {
+            "type": "string",
+            "description": "The rebased head pushed to the item's branch."
+          },
+          "step": {
+            "type": "string",
+            "description": "Where it stopped: fetch, rebase, checks, push, ci, land or moving."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target commit the item was rebased on."
+          }
+        },
+        "required": [
+          "at",
+          "outcome"
+        ]
+      },
+      "GroupLaneState": {
+        "type": "object",
+        "properties": {
+          "landing": {
+            "type": "string"
+          },
+          "no_ci": {
+            "type": "boolean",
+            "description": "The target's flightdeck.json named no lane.ci at the lane's last run. The card says no CI."
+          },
+          "queue": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stopped": {
+            "type": "string",
+            "description": "Why the lane stopped for the repository: the remote refused a push for a rule. group.retry with lane starts it again."
+          },
+          "waits": {
+            "type": "string",
+            "description": "Why the lane waits: no remote, a fetch that failed. It tries again each minute."
+          }
+        },
+        "required": [
+          "queue"
+        ]
+      },
+      "GroupList": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogGroup"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "groups"
+        ]
+      },
+      "GroupListParams": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "Only groups in this state."
+          }
+        }
+      },
+      "GroupMember": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AgentStatus",
+            "description": "Its agent state, from its hab or the catalog copy."
+          },
+          "agent_age": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab last confirmed that state with the member's hab."
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Starts tried again by group.retry; each has its own idempotency key."
+          },
+          "compacts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "context_pct": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device": {
+            "type": "string",
+            "description": "Its hab's device id."
+          },
+          "folder": {
+            "type": "string",
+            "description": "Its worktree on its host."
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "Its host, as the home hab labels it."
+          },
+          "item": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it failed."
+          },
+          "replaced": {
+            "type": "string",
+            "description": "The session it replaced (groups.md 9.3)."
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole"
+          },
+          "session": {
+            "type": "string",
+            "description": "Its session id on its host, once started."
+          },
+          "state": {
+            "type": "string",
+            "description": "planned, starting, running, exited or failed."
+          },
+          "worktree_removed": {
+            "type": "boolean",
+            "description": "The hab removed its worktree: its session ended and the worktree had no uncommitted changes."
+          }
+        },
+        "required": [
+          "name",
+          "host",
+          "harness",
+          "role",
+          "item",
+          "state"
+        ]
+      },
+      "GroupMessageParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name on the receiving hab."
+          },
+          "text": {
+            "type": "string",
+            "description": "At most 8000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "member",
+          "text"
+        ]
+      },
+      "GroupMoveParams": {
+        "type": "object",
+        "properties": {
+          "cancel": {
+            "type": "boolean",
+            "description": "Cancel the move queued on this hab for the group."
+          },
+          "device": {
+            "type": "string",
+            "description": "The new home by device id, in place of host: a queued move names its own hab this way."
+          },
+          "group": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The new home: a peer label of the hab that takes the call, or its own host id."
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "GroupMoveRef": {
+        "type": "object",
+        "properties": {
+          "acked": {
+            "type": "boolean",
+            "description": "On a tombstone: the new home acknowledged group.adopt_commit."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation of the attempt: one above any the old home used for the group."
+          },
+          "label": {
+            "type": "string",
+            "description": "Its label, as the hab that wrote this knows it."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time the move started (moving) or committed (moved)."
+          },
+          "to": {
+            "type": "string",
+            "description": "The new home hab's device id."
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "GroupMoveResult": {
+        "type": "object",
+        "properties": {
+          "home": {
+            "type": "string",
+            "description": "The new home's device id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."
+          },
+          "text": {
+            "type": "string",
+            "description": "One line for the user, such as: \u003clabel\u003e is offline; the group moves when it is back."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "home",
+          "text"
+        ]
+      },
+      "GroupNoteParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "At most 4000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "item",
+          "text"
+        ]
+      },
+      "GroupPause": {
+        "type": "object",
+        "properties": {
+          "until": {
+            "type": "string",
+            "description": "With usage: when the governor expects room."
+          },
+          "usage": {
+            "type": "string",
+            "description": "RFC 3339 time usage pacing paused it; absent when not."
+          },
+          "user": {
+            "type": "string",
+            "description": "RFC 3339 time the user paused the group; absent when not."
+          }
+        }
+      },
+      "GroupPlan": {
+        "type": "object",
+        "properties": {
+          "brief": {
+            "type": "string",
+            "description": "The task in full: every member's seed carries it."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPlanItem"
+            }
+          },
+          "lane": {
+            "$ref": "#/components/schemas/GroupLane"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPlanMember"
+            }
+          },
+          "project": {
+            "type": "string",
+            "description": "The project: its name or remote in the catalog. A group works on one repository."
+          },
+          "title": {
+            "type": "string",
+            "description": "The task, one line."
+          }
+        },
+        "required": [
+          "title",
+          "project",
+          "items",
+          "members"
+        ]
+      },
+      "GroupPlanItem": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "description": "An item whose branch this one stacks on (groups.md 7.2). It starts once that item reaches review."
+          },
+          "brief": {
+            "type": "string",
+            "description": "The item in full: its lead's seed carries it after the group's brief."
+          },
+          "id": {
+            "type": "string",
+            "description": "1 to 64 lowercase letters, digits and '-', unique in the plan."
+          },
+          "review": {
+            "type": "string",
+            "description": "on (the default) or off (groups.md 6.1)."
+          },
+          "title": {
+            "type": "string"
+          },
+          "touches": {
+            "type": "array",
+            "description": "Paths or item ids it overlaps.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ]
+      },
+      "GroupPlanMember": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string",
+            "description": "claude, codex or opencode, or an alias from the home hab's [aliases] table."
+          },
+          "host": {
+            "type": "string",
+            "description": "A peer label from the home hab's peer list, or its host id. Absent: the home hab."
+          },
+          "item": {
+            "type": "string",
+            "description": "The item it works on."
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its session name, free on every host. Absent: harness, six hex digits of the group id, role and item position, such as codex-3fa9c2-review-2."
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole",
+            "description": "lead, worker or reviewer."
+          }
+        },
+        "required": [
+          "role",
+          "item",
+          "harness"
+        ]
+      },
+      "GroupRef": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "GroupReport": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab took it."
+          },
+          "from": {
+            "type": "string",
+            "description": "Who sent it: a member's name, or Flightdeck."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "text"
+        ]
+      },
+      "GroupReportParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Who sends it: a member's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "One line or a short text, at most 4000 characters."
+          }
+        },
+        "required": [
+          "group",
+          "text"
+        ]
+      },
+      "GroupReported": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "sent: a channel message to the running coordinator; waiting: it waits in the record's inbox."
+          }
+        },
+        "required": [
+          "seq",
+          "state"
+        ]
+      },
+      "GroupResult": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/Group"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "group"
+        ]
+      },
+      "GroupRetryParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "boolean",
+            "description": "Start the group's stopped lane again (groups.md 7.4), instead of a member."
+          },
+          "member": {
+            "type": "string",
+            "description": "A failed member's name. Empty with lane."
+          }
+        },
+        "required": [
+          "group",
+          "member"
+        ]
+      },
+      "GroupRole": {
+        "type": "string",
+        "x-known-values": [
+          "lead",
+          "worker",
+          "reviewer"
+        ]
+      },
+      "GroupSyncParams": {
+        "type": "object",
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "The envelope as amended. Its home is the sending hab."
+          },
+          "group": {
+            "type": "string"
+          },
+          "pause": {
+            "$ref": "#/components/schemas/GroupPause",
+            "description": "The pause reasons, while paused; absent when the group runs."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The group record's revision: the member's hab keeps the latest it took, also against the catalog copy's."
+          }
+        },
+        "required": [
+          "group",
+          "revision"
+        ]
+      },
+      "GroupTellParams": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The coordinator's session id on the hab that takes the call."
+          },
+          "text": {
+            "type": "string",
+            "description": "The report, or the waiting reports in one message."
+          }
+        },
+        "required": [
+          "group",
+          "session",
+          "text"
+        ]
+      },
+      "GroupVerdict": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the home hab took it."
+          },
+          "findings": {
+            "type": "array",
+            "description": "At most [groups] max_findings, in the reviewer's order. The card shows the first [groups] brief_findings.",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          },
+          "fixed": {
+            "type": "array",
+            "description": "The fix commits the reviewer named.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fixed_head": {
+            "type": "string",
+            "description": "The review branch head the lane takes: it descends from the submitted head."
+          },
+          "fixes_ignored": {
+            "type": "string",
+            "description": "Why the reviewer's fixes were ignored, in one line. The card shows it."
+          },
+          "head": {
+            "type": "string",
+            "description": "The submitted head the verdict is on."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "pass or fix_needed."
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "head",
+          "at"
+        ]
+      },
       "HabStatsParams": {
         "type": "object"
+      },
+      "HabWoke": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of the event."
+          },
+          "slept_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "About how long the host slept, in seconds."
+          }
+        },
+        "required": [
+          "slept_s",
+          "at"
+        ]
       },
       "Heartbeat": {
         "type": "object",
@@ -7575,6 +11489,58 @@
           "pane"
         ]
       },
+      "LaneSubmitParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The lead's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string",
+            "description": "Set by the lead's hab: the full commit id of the item's branch. A pane's value is replaced."
+          },
+          "item": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "item"
+        ]
+      },
+      "LaneSubmitted": {
+        "type": "object",
+        "properties": {
+          "head": {
+            "type": "string"
+          },
+          "restart": {
+            "type": "boolean",
+            "description": "A review of an earlier head ran: it restarts on this head, and the reviewer is told."
+          },
+          "reviewer": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "review: the reviewer reviews the head. ready: review is off, and the item is in the lane queue."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "head"
+        ]
+      },
       "LinkedPeer": {
         "type": "object",
         "properties": {
@@ -7608,7 +11574,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "agent or person."
+            "description": "agent or person; hab for a forget the hab wrote itself, to repair one it never received (logbook.md 7.6)."
           },
           "pane": {
             "type": "string"
@@ -7853,6 +11819,10 @@
           "project": {
             "type": "string"
           },
+          "semantic": {
+            "type": "boolean",
+            "description": "Rank by meaning through vector search, on this hab when it has the logbook-vectors capability, else on an online peer that has it; with none, unavailable: no always-on host with vector search. Needs words."
+          },
           "session": {
             "type": "string",
             "description": "As in logbook.list."
@@ -7933,6 +11903,11 @@
       "LogbookHistory": {
         "type": "object",
         "properties": {
+          "last_fold": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With folded_after: the highest fold number this replica has given, to pass as folded_after next."
+          },
           "ops": {
             "type": "array",
             "items": {
@@ -7953,6 +11928,11 @@
       "LogbookHistoryParams": {
         "type": "object",
         "properties": {
+          "folded_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Only the ops this replica folded after this local fold number, in fold order. The numbers are this replica's own and never synced; logbook.history's folded gives the highest."
+          },
           "id": {
             "type": "string"
           }
@@ -8076,6 +12056,11 @@
           },
           "field": {
             "type": "string"
+          },
+          "fold": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With folded_after: the local fold number this replica gave the op."
           },
           "folded": {
             "type": "boolean",
@@ -8347,7 +12332,7 @@
           },
           "created": {
             "type": "string",
-            "description": "RFC 3339 time of the create."
+            "description": "RFC 3339 time of the create; an imported record's original date (logbook.md 13.1)."
           },
           "created_by": {
             "$ref": "#/components/schemas/LogbookActor"
@@ -8382,6 +12367,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "imported": {
+            "type": "boolean",
+            "description": "An import wrote the record; created is its original date."
           },
           "joined_into": {
             "type": "string",
@@ -8852,6 +12841,112 @@
           "state"
         ]
       },
+      "MemberAction": {
+        "type": "object",
+        "properties": {
+          "asker": {
+            "type": "string",
+            "description": "Who asked: a session name, Flightdeck for supervision's own, or absent for the user."
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of its last change."
+          },
+          "fresh": {
+            "type": "string",
+            "description": "With a done handoff: the new session's id."
+          },
+          "group": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "The member's host id."
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "compact or handoff."
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it waits, was skipped or failed; with done, a note such as no hand-off note."
+          },
+          "session": {
+            "type": "string",
+            "description": "The member's session id on its hab when the action began."
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, running, done, skipped or failed."
+          }
+        },
+        "required": [
+          "id",
+          "group",
+          "member",
+          "session",
+          "host",
+          "kind",
+          "state",
+          "at"
+        ]
+      },
+      "MemberActionParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Who asks: from a pane the pane's session; a hab that forwards the call sets it. Absent: the user."
+          },
+          "group": {
+            "type": "string"
+          },
+          "member": {
+            "type": "string",
+            "description": "The member's session name, from group.get."
+          }
+        },
+        "required": [
+          "group",
+          "member"
+        ]
+      },
+      "MemberActionRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The action id from member.compact or member.handoff."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "MemberActionResult": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/MemberAction"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "action"
+        ]
+      },
       "MeshChanged": {
         "type": "object",
         "properties": {
@@ -9220,6 +13315,111 @@
           "count"
         ]
       },
+      "PaneList": {
+        "type": "object",
+        "properties": {
+          "panes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaneListEntry"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "unreached": {
+            "type": "array",
+            "description": "Peers that were not reached: offline, without pane-drive, or no answer in time.",
+            "items": {
+              "$ref": "#/components/schemas/PaneUnreached"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "panes"
+        ]
+      },
+      "PaneListEntry": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "description": "The harness that runs in the pane, such as claude; absent for none."
+          },
+          "agent_state": {
+            "$ref": "#/components/schemas/AgentStatus"
+          },
+          "host": {
+            "type": "string",
+            "description": "This hab's host id, or the peer's label: address a peer's pane as host/session."
+          },
+          "own": {
+            "type": "boolean",
+            "description": "The caller's own pane."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "The session's project id; absent when unfiled."
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name; absent when the pane is unfiled."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionState",
+            "description": "The session's state; absent when unfiled."
+          }
+        },
+        "required": [
+          "pane",
+          "host"
+        ]
+      },
+      "PaneListParams": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer."
+          }
+        }
+      },
+      "PaneNewParams": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "description": "Program and arguments. Default: the hab's shell.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute working folder. Default: the caller's pane's folder, else the hab's home directory."
+          },
+          "in_project": {
+            "type": "boolean",
+            "description": "File the session in the calling pane's project."
+          },
+          "name": {
+            "type": "string",
+            "description": "The session name. Default: the program's base name, with a number when taken."
+          }
+        }
+      },
       "PaneOutput": {
         "type": "object",
         "properties": {
@@ -9258,6 +13458,24 @@
           "rows"
         ]
       },
+      "PaneReadParams": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "type": "string",
+            "description": "A pane id on this hab."
+          },
+          "scrollback": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scrollback rows to return from just above the screen. Default 0, at most 10000."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          }
+        }
+      },
       "PaneRef": {
         "type": "object",
         "properties": {
@@ -9266,6 +13484,253 @@
           }
         },
         "required": [
+          "pane"
+        ]
+      },
+      "PaneStarted": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Session name."
+          },
+          "pane": {
+            "type": "string",
+            "description": "Pane id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "Session id."
+          }
+        },
+        "required": [
+          "seq",
+          "session",
+          "pane",
+          "name"
+        ]
+      },
+      "PaneText": {
+        "type": "object",
+        "properties": {
+          "alternate": {
+            "type": "boolean",
+            "description": "The program shows the alternate screen."
+          },
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cursor_col": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cursor_row": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane's output offset the text was read at; pass it to pane.wait as from."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "screen": {
+            "type": "array",
+            "description": "One string per screen row, top first: always rows strings, each without trailing spaces.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scrollback": {
+            "type": "array",
+            "description": "Scrollback rows from just above the screen, oldest first.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scrollback_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many scrollback rows the pane's parser holds."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The pane's session name when it is filed; label/name for a pane on a peer."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The 1 MiB cap left out older scrollback rows."
+          }
+        },
+        "required": [
+          "seq",
+          "pane",
+          "cols",
+          "rows",
+          "screen",
+          "scrollback_total",
+          "cursor_col",
+          "cursor_row",
+          "offset"
+        ]
+      },
+      "PaneTypeParams": {
+        "type": "object",
+        "properties": {
+          "enter": {
+            "type": "boolean",
+            "description": "Press Enter after the text, as its own write."
+          },
+          "pane": {
+            "type": "string",
+            "description": "A pane id on this hab."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          },
+          "text": {
+            "type": "string",
+            "description": "The text to write, as given, at most 64 KiB."
+          }
+        }
+      },
+      "PaneTyped": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bytes written, Enter included."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The pane's session name when it is filed; label/name for a pane on a peer."
+          }
+        },
+        "required": [
+          "seq",
+          "pane",
+          "bytes"
+        ]
+      },
+      "PaneUnreached": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "reason"
+        ]
+      },
+      "PaneWaitParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane offset to read new output from. Absent means the pane's offset when the wait starts."
+          },
+          "match": {
+            "type": "string",
+            "description": "Text a line of new output contains."
+          },
+          "pane": {
+            "type": "string",
+            "description": "A pane id on this hab."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "An RE2 pattern a line of new output matches."
+          },
+          "quiet_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "End the wait once the pane printed nothing for this long."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Default 180000 (110000 from a pane), at most 600000."
+          }
+        }
+      },
+      "PaneWaitReason": {
+        "type": "string",
+        "x-known-values": [
+          "match",
+          "quiet",
+          "exited",
+          "timed_out"
+        ]
+      },
+      "PaneWaitResult": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "string",
+            "description": "The line that matched, for reason match. Untrusted program output."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane offset after the last byte the wait read; pass it as from to wait on."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/PaneWaitReason"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The pane's session name when it is filed; label/name for a pane on a peer."
+          }
+        },
+        "required": [
+          "seq",
+          "reason",
+          "offset",
           "pane"
         ]
       },
@@ -9696,7 +14161,8 @@
           "done",
           "usage",
           "round",
-          "trust"
+          "trust",
+          "capcom"
         ]
       },
       "PushRegisterParams": {
@@ -9843,6 +14309,95 @@
           "reason"
         ]
       },
+      "ReviewFixed": {
+        "type": "object",
+        "properties": {
+          "commits": {
+            "type": "array",
+            "description": "The fix commits on the review branch.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "head": {
+            "type": "string",
+            "description": "The review branch head. A head that is not the review branch's head is refused. The reviewer's hab sets the full commit id of the review branch."
+          }
+        }
+      },
+      "ReviewVerdictParams": {
+        "type": "object",
+        "properties": {
+          "checked": {
+            "type": "string",
+            "description": "Set by the reviewer's hab: the submitted head the review is on, as the home hab's record named it. The home hab refuses a verdict whose checked is not the current submit. A pane's value is replaced."
+          },
+          "descends": {
+            "type": "boolean",
+            "description": "Set by the reviewer's hab: reviewed descends from checked and is not checked itself. A pane's value is replaced."
+          },
+          "findings": {
+            "type": "array",
+            "description": "High and medium findings only, at most [groups] max_findings. More are refused.",
+            "items": {
+              "$ref": "#/components/schemas/GroupFinding"
+            }
+          },
+          "fixed": {
+            "$ref": "#/components/schemas/ReviewFixed",
+            "description": "Fix commits the reviewer pushed to its review branch, if any."
+          },
+          "from": {
+            "type": "string",
+            "description": "The reviewer's session name. From a pane the pane's session."
+          },
+          "group": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "reviewed": {
+            "type": "string",
+            "description": "Set by the reviewer's hab: the head of the reviewer's review branch. It must be checked, or descend from it. A pane's value is replaced."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "pass or fix_needed."
+          }
+        },
+        "required": [
+          "group",
+          "item",
+          "verdict"
+        ]
+      },
+      "ReviewVerdictTaken": {
+        "type": "object",
+        "properties": {
+          "fixes_ignored": {
+            "type": "string",
+            "description": "Why the fixes were ignored, in one line."
+          },
+          "land": {
+            "type": "string",
+            "description": "After a pass: the commit the lane lands."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "type": "string",
+            "description": "ready after a pass, fix after fix_needed."
+          }
+        },
+        "required": [
+          "seq",
+          "state"
+        ]
+      },
       "RevisionRange": {
         "type": "object",
         "properties": {
@@ -9863,6 +14418,13 @@
       "Round": {
         "type": "object",
         "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
           "catch_up": {
             "$ref": "#/components/schemas/RoundCatchUp",
             "description": "once (the default) or skip."
@@ -9881,6 +14443,11 @@
           "completed_reason": {
             "type": "string"
           },
+          "cooldown_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."
+          },
           "created_at": {
             "type": "string",
             "description": "RFC 3339."
@@ -9892,6 +14459,11 @@
           "cwd": {
             "type": "string",
             "description": "Fresh: an absolute folder to start in, instead of the project's most recent one."
+          },
+          "debounce_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s."
           },
           "deleted": {
             "type": "boolean",
@@ -9905,6 +14477,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Failed or timed-out runs in a row."
+          },
+          "group": {
+            "type": "string",
+            "description": "Group only: the group id. Its coordinator gets each run's message."
           },
           "harness": {
             "type": "string",
@@ -9939,7 +14515,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/RoundMode",
-            "description": "fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."
+            "description": "fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2)."
           },
           "model": {
             "type": "string"
@@ -9968,6 +14544,11 @@
             "type": "string",
             "description": "Why the round paused itself. Absent for a pause by the user."
           },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event and watch rounds: the events waiting for the next run."
+          },
           "project": {
             "type": "string",
             "description": "Fresh: the project id. The run starts in the project's most recently used folder."
@@ -9988,6 +14569,10 @@
             "type": "integer",
             "format": "uint64",
             "description": "Raised by one on each change; starts at 1 when gff-hab starts. Compared only within an epoch (spec 3.5)."
+          },
+          "secrets": {
+            "type": "string",
+            "description": "Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."
           },
           "skips": {
             "type": "integer",
@@ -10017,7 +14602,11 @@
           "wait_ms": {
             "type": "integer",
             "format": "int64",
-            "description": "Resume only: how long a run waits for the session to be free. Absent: 10 minutes."
+            "description": "Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes."
+          },
+          "watcher": {
+            "$ref": "#/components/schemas/RoundWatcher",
+            "description": "Watch rounds: the watcher's state."
           }
         },
         "required": [
@@ -10030,6 +14619,32 @@
           "updated_at"
         ]
       },
+      "RoundAction": {
+        "type": "string",
+        "x-known-values": [
+          "hand_off",
+          "start_session",
+          "set_up_project",
+          "group",
+          "card",
+          "fetch"
+        ]
+      },
+      "RoundBatch": {
+        "type": "object",
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoundEvent"
+            }
+          }
+        }
+      },
       "RoundCatchUp": {
         "type": "string",
         "x-known-values": [
@@ -10040,6 +14655,14 @@
       "RoundCreateParams": {
         "type": "object",
         "properties": {
+          "batch": {
+            "$ref": "#/components/schemas/RoundBatch",
+            "description": "Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Watch triggers: the watcher cursor the new round starts with, as a move carries it. Refused on the pane route."
+          },
           "round": {
             "$ref": "#/components/schemas/RoundSpec"
           },
@@ -10073,6 +14696,109 @@
           "round"
         ]
       },
+      "RoundEvent": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "data": {},
+          "kind": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "kind",
+          "title"
+        ]
+      },
+      "RoundEventFilter": {
+        "type": "object",
+        "properties": {
+          "by": {
+            "type": "string",
+            "description": "logbook.updated: who wrote the change: person, agent, hab or any (the default)."
+          },
+          "change": {
+            "type": "string",
+            "description": "logbook.updated: created (the default), status, deleted or any."
+          },
+          "field": {
+            "type": "array",
+            "description": "project.updated: the changed fields that count: head, branch, behind. Absent: any.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "level": {
+            "type": "string",
+            "description": "notice.raised: the lowest level: passive, active or time-sensitive."
+          },
+          "project": {
+            "type": "string",
+            "description": "A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project."
+          },
+          "project_remote": {
+            "type": "string",
+            "description": "In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the remote of project, when it is a project on this hab with one, so a move names it on any host."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id: agent.state, command.updated, notice.raised."
+          },
+          "state": {
+            "type": "array",
+            "description": "agent.state: the new states that count: done, error. Absent: both.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "array",
+            "description": "logbook.updated with change status: the new statuses that count. Absent: any.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "description": "logbook.updated: the record holds any of these tags.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "notice.raised: a case-insensitive part of the title or body."
+          },
+          "type": {
+            "type": "string",
+            "description": "logbook.updated: the record type."
+          }
+        }
+      },
+      "RoundGetParams": {
+        "type": "object",
+        "properties": {
+          "batch": {
+            "type": "boolean",
+            "description": "Also return the pending batch's events, as a move carries them (rounds.md 9)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "RoundList": {
         "type": "object",
         "properties": {
@@ -10101,7 +14827,9 @@
         "x-known-values": [
           "fresh",
           "resume",
-          "fork"
+          "fork",
+          "capcom",
+          "group"
         ]
       },
       "RoundNoticeKind": {
@@ -10144,6 +14872,14 @@
       "RoundResult": {
         "type": "object",
         "properties": {
+          "batch": {
+            "$ref": "#/components/schemas/RoundBatch",
+            "description": "round.get with batch, for an event round: its pending batch."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "round.get with batch, for a watch round: its watcher's cursor, as a move carries it."
+          },
           "round": {
             "$ref": "#/components/schemas/Round"
           },
@@ -10165,12 +14901,25 @@
             "type": "string",
             "description": "RFC 3339 time the run was made."
           },
+          "destination": {
+            "type": "string",
+            "description": "Capcom and group runs: where the message went, the Capcom home host or the coordinator's address."
+          },
           "ended_at": {
             "type": "string",
             "description": "RFC 3339."
           },
+          "events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "An event run's batch size, dropped events included. Its run has them in GFF_ROUND_EVENTS."
+          },
           "id": {
             "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "Capcom and group runs: the channel message id."
           },
           "missed": {
             "type": "integer",
@@ -10181,6 +14930,10 @@
             "type": "integer",
             "format": "int64",
             "description": "The run number within its round, from 1."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RoundRunOutcome",
+            "description": "Capcom runs: Capcom's second answer, set once after the run ended. Word unknown when none came within outcome_wait."
           },
           "reason": {
             "type": "string"
@@ -10220,6 +14973,21 @@
           "trigger",
           "state",
           "created"
+        ]
+      },
+      "RoundRunOutcome": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the turn that took the message ended. Absent for unknown."
+          },
+          "word": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "word"
         ]
       },
       "RoundRunResult": {
@@ -10301,6 +15069,13 @@
       "RoundSpec": {
         "type": "object",
         "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
           "catch_up": {
             "$ref": "#/components/schemas/RoundCatchUp",
             "description": "once (the default) or skip."
@@ -10312,13 +15087,27 @@
               "type": "string"
             }
           },
+          "cooldown_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: the least time from one event run's start to the next, 1 minute to 24 hours. Absent: 5 minutes."
+          },
           "cwd": {
             "type": "string",
             "description": "Fresh: an absolute folder to start in, instead of the project's most recent one."
           },
+          "debounce_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event triggers: how long a batch gathers events after its first, 5 s to 1 hour. Absent: 30 s."
+          },
           "expires_at": {
             "type": "string",
             "description": "RFC 3339 time the round completes. A past time is refused."
+          },
+          "group": {
+            "type": "string",
+            "description": "Group only: the group id. Its coordinator gets each run's message."
           },
           "harness": {
             "type": "string",
@@ -10338,7 +15127,7 @@
           },
           "mode": {
             "$ref": "#/components/schemas/RoundMode",
-            "description": "fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."
+            "description": "fresh, resume, fork, capcom or group. capcom and group start no session: a run hands its prompt and events to the Capcom service or to a group's coordinator (rounds.md 5.2)."
           },
           "model": {
             "type": "string"
@@ -10375,6 +15164,10 @@
             "type": "string",
             "description": "The text the agent gets each run, at most 64 KiB. Required unless command is set."
           },
+          "secrets": {
+            "type": "string",
+            "description": "Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."
+          },
           "target": {
             "type": "string",
             "description": "Resume and fork: the target session id."
@@ -10390,7 +15183,7 @@
           "wait_ms": {
             "type": "integer",
             "format": "int64",
-            "description": "Resume only: how long a run waits for the session to be free. Absent: 10 minutes."
+            "description": "Resume and group: how long a run waits for the session to be free, or for its message's delivery. Absent: 10 minutes."
           }
         },
         "required": [
@@ -10410,13 +15203,25 @@
             "type": "string",
             "description": "Kind cron: a 5-field cron expression."
           },
+          "event": {
+            "type": "string",
+            "description": "Kind event: project.updated, agent.state, command.updated, hab.woke, notice.raised or logbook.updated. Only this hab's own events."
+          },
           "every": {
             "type": "string",
             "description": "Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every."
           },
+          "filter": {
+            "$ref": "#/components/schemas/RoundEventFilter",
+            "description": "Kind event: which events of its kind make a run. Each event takes only its own fields; an absent field matches everything."
+          },
           "kind": {
             "$ref": "#/components/schemas/RoundTriggerKind",
-            "description": "cron, once or manual. event triggers come in a later stage and are refused."
+            "description": "cron, once, event, watch or manual."
+          },
+          "watch": {
+            "$ref": "#/components/schemas/RoundWatch",
+            "description": "Kind watch: the watcher, a long-lived program gff-hab keeps running in a pane; each JSON line it prints is an event."
           },
           "zone": {
             "type": "string",
@@ -10432,6 +15237,8 @@
         "x-known-values": [
           "cron",
           "once",
+          "event",
+          "watch",
           "manual"
         ]
       },
@@ -10454,6 +15261,153 @@
         "required": [
           "id",
           "round"
+        ]
+      },
+      "RoundWatch": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "description": "The program and its arguments. No shell.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "description": "An absolute folder to start in. Absent: a folder of the round's own in the hab's state."
+          },
+          "kinds": {
+            "type": "array",
+            "description": "The event kinds that count; other lines are dropped quietly. Absent: every kind.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "argv"
+        ]
+      },
+      "RoundWatchEventParams": {
+        "type": "object",
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lines the wrapper dropped since its last page: over 64 KiB, over the rate, or past its buffer while gff-hab was down."
+          },
+          "lines": {
+            "type": "array",
+            "description": "Event lines and cursor lines, each at most 64 KiB, as the watcher printed them.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "round": {
+            "type": "string",
+            "description": "The round id. The calling pane must be that round's watcher pane."
+          }
+        },
+        "required": [
+          "round",
+          "lines"
+        ]
+      },
+      "RoundWatchEventResult": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoundWatchLine"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "lines"
+        ]
+      },
+      "RoundWatchLine": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "boolean",
+            "description": "A cursor line: the round keeps it."
+          },
+          "drop": {
+            "type": "string",
+            "description": "Why the line was dropped."
+          },
+          "quiet": {
+            "type": "boolean",
+            "description": "A quiet drop: a kind the round does not count, or a key seen within the key window. Shown nowhere, counted nowhere."
+          },
+          "taken": {
+            "type": "boolean",
+            "description": "The event joined the round's pending batch."
+          },
+          "title": {
+            "type": "string",
+            "description": "The event's title, when the line had one."
+          }
+        }
+      },
+      "RoundWatcher": {
+        "type": "object",
+        "properties": {
+          "drops": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lines dropped since the watcher started: malformed, over a bound or over the rate. Quiet drops (kinds, repeated keys) are not counted."
+          },
+          "last_exit": {
+            "type": "string",
+            "description": "How the watcher last exited, such as exit status 1."
+          },
+          "next_start": {
+            "type": "string",
+            "description": "Backoff: RFC 3339 time of the next start."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Stopped: why, such as paused or over max_watchers."
+          },
+          "restarts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Starts after the first since gff-hab started."
+          },
+          "session": {
+            "type": "string",
+            "description": "The watcher session's id: \u003cround\u003e-watch."
+          },
+          "started_at": {
+            "type": "string",
+            "description": "RFC 3339 time the running watcher started."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RoundWatcherState",
+            "description": "starting, running, backoff or stopped."
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "RoundWatcherState": {
+        "type": "string",
+        "x-known-values": [
+          "starting",
+          "running",
+          "backoff",
+          "stopped"
         ]
       },
       "Scope": {
@@ -10493,6 +15447,11 @@
       "Session": {
         "type": "object",
         "properties": {
+          "compacts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A group member's compactions that its hab counted toward group.fresh_after_compacts. Absent for none."
+          },
           "context_pct": {
             "type": "integer",
             "format": "int64",
@@ -10504,6 +15463,10 @@
           },
           "exit": {
             "$ref": "#/components/schemas/ExitStatus"
+          },
+          "group": {
+            "$ref": "#/components/schemas/SessionGroup",
+            "description": "Set on a session an agent group started: the group, the member's role and its item."
           },
           "id": {
             "type": "string"
@@ -10527,6 +15490,10 @@
             "type": "string",
             "description": "Project id. Absent means unfiled."
           },
+          "replaced": {
+            "type": "string",
+            "description": "The session this fresh member session replaced (groups.md 9.3). Absent for any other session."
+          },
           "revision": {
             "type": "integer",
             "format": "uint64"
@@ -10534,6 +15501,13 @@
           "round": {
             "$ref": "#/components/schemas/SessionRound",
             "description": "Set on a session a round's run started: the round and the run. Every client can badge and filter it."
+          },
+          "stale": {
+            "type": "array",
+            "description": "What the running agent loaded that a newer render replaced: instructions. session.restart picks the new one up. Absent when nothing is stale, or the hab cannot tell.",
+            "items": {
+              "type": "string"
+            }
           },
           "state": {
             "$ref": "#/components/schemas/SessionState"
@@ -10637,6 +15611,14 @@
               "type": "string"
             }
           },
+          "envelope": {
+            "$ref": "#/components/schemas/GroupEnvelope",
+            "description": "With group: what the group's confirmed plan allows. A later start from this member inside it asks nothing, and is a member too."
+          },
+          "group": {
+            "$ref": "#/components/schemas/SessionGroup",
+            "description": "Only with trust_cover: the session is a member of this group."
+          },
           "harness": {
             "type": "string",
             "description": "Detection manifest id of a harness to start, such as claude. Needs that harness's adapter."
@@ -10661,6 +15643,10 @@
             "type": "string",
             "description": "Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new."
           },
+          "report_to": {
+            "type": "string",
+            "description": "A session name on the calling hab: the hab at the other end of the peer link the call came over, else this one. The hab sends that session the final agent message of each turn of the new session that a message from it (or the seed) began, as a channel message from the new session. Needs harness and the confirm capability."
+          },
           "rows": {
             "type": "integer",
             "format": "int64",
@@ -10673,6 +15659,10 @@
           "seed_from": {
             "type": "string",
             "description": "Who wrote the seed, as host/session, shown in its envelope."
+          },
+          "trust_cover": {
+            "$ref": "#/components/schemas/TrustCover",
+            "description": "Only from a hab over a peer link, or from this hab's own confirmations: the group whose confirmation answers the harness's folder trust prompt. The hab answers the prompt of the new pane itself when its folder is a worktree this hab made on a branch under branch_prefix, for the cover's harness; otherwise, or when the answer fails, the trust card shows as before."
           }
         }
       },
@@ -10713,6 +15703,24 @@
         "required": [
           "session",
           "active"
+        ]
+      },
+      "SessionGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole"
+          }
+        },
+        "required": [
+          "id",
+          "role"
         ]
       },
       "SessionKind": {
@@ -10771,7 +15779,11 @@
           },
           "run": {
             "type": "string",
-            "description": "The run id."
+            "description": "The run id. Empty on a watcher's session."
+          },
+          "watcher": {
+            "type": "boolean",
+            "description": "A watch round's watcher session: not a run. gff-hab starts it; session.resume refuses it."
           }
         },
         "required": [
@@ -10795,6 +15807,10 @@
           },
           "origin": {
             "$ref": "#/components/schemas/SendOrigin"
+          },
+          "send_now": {
+            "type": "boolean",
+            "description": "The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it."
           },
           "session": {
             "type": "string"
@@ -11102,6 +16118,13 @@
             "description": "The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability.",
             "items": {
               "$ref": "#/components/schemas/Confirmation"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "description": "The groups this hab is the home of (groups.md 5.1), in a host scope snapshot only. Absent with none, and from a hab without the groups capability.",
+            "items": {
+              "$ref": "#/components/schemas/Group"
             }
           },
           "host": {
@@ -11577,6 +16600,33 @@
           "exit"
         ]
       },
+      "TrustCover": {
+        "type": "object",
+        "properties": {
+          "branch_prefix": {
+            "type": "string",
+            "description": "group/\u003cgroup\u003e/: the cover answers only for a worktree whose branch starts with it."
+          },
+          "confirmation": {
+            "type": "string",
+            "description": "The id of the confirmation the user answered, 32 hex digits, or none when the plan started with no confirmation (confirm.group_plan off)."
+          },
+          "group": {
+            "type": "string",
+            "description": "The group id: 1 to 64 lowercase letters, digits and '-'."
+          },
+          "harness": {
+            "type": "string",
+            "description": "The harness the plan names for this member; the cover answers only its prompt."
+          }
+        },
+        "required": [
+          "group",
+          "confirmation",
+          "harness",
+          "branch_prefix"
+        ]
+      },
       "TrustPrompt": {
         "type": "object",
         "properties": {
@@ -11759,6 +16809,10 @@
           "time": {
             "type": "string",
             "description": "The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab."
+          },
+          "version": {
+            "type": "string",
+            "description": "gff-hab release version from the release tag: x.y.z, or x.y.z-rc.n or x.y.z-dry.n for a candidate or a dry run; dev for any other build. Clients compare release versions to mark an older hab superseded (gff-client.md 9.3). Optional, so a newer client accepts a welcome from an older revision 1 hab."
           }
         },
         "required": [
@@ -11802,6 +16856,10 @@
           "prunable": {
             "type": "boolean",
             "description": "Its folder is gone; worktree.remove prunes the entry."
+          },
+          "setup_pending": {
+            "type": "boolean",
+            "description": "Made by worktree.create on this hab, with a setup script that waits for the user's yes (worktree.setup)."
           }
         },
         "required": [
@@ -11813,11 +16871,15 @@
         "properties": {
           "base": {
             "type": "string",
-            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches."
+            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab fetches only with fetch."
           },
           "branch": {
             "type": "string",
             "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e."
+          },
+          "fetch": {
+            "type": "boolean",
+            "description": "When base names no commit in this repository, fetch the project's remote first, so a commit another host pushed is here (groups.md 12.7). The remote's branches are the project's own: a group/ branch made from them needs no yes."
           },
           "path": {
             "type": "string",
