@@ -1506,13 +1506,17 @@ and several questions all go this way (checked live against Claude Code 2.1.329)
   label. The digit is that label's position among the request's options. The hab sends it only
   when the visible rows prove the dialog is drawn: numbered rows 1 to n carry the options'
   labels in order (description rows may sit between them), row n+1 reads "Type something.",
-  and the question's text shows above row 1, below any rule. The last such block on screen
+  and the question's text shows above row 1, below any rule. Claude starts each row of the
+  question with "│" and wraps it to the width, so the hab compares it with white space and "│"
+  removed. The last such block on screen
   counts, so a numbered list in Claude's prose above the dialog neither picks nor blocks. The
   cursor (❯) must sit on an option row: on the "Type something." row a digit is typed as text.
   Otherwise it sends nothing. Free text, several questions or multiple choice by keys are
   `unavailable`, with a hint to answer in the terminal (the app matches that phrase, `app.md`
-  4.11). Fixture, written by hand: `claude-question-dialog-2.1.329.txt` in
-  `internal/harness/testdata/`.
+  4.11). Fixtures in `internal/harness/testdata/`: `claude-question-dialog-2.1.329.txt`, written
+  by hand, and `claude-question-live-2.1.329-*.txt`, screens captured from 2.1.329 at 120 and
+  80 columns with Claude's prose list of the same labels above the dialog and the cursor on
+  option 1 (`a`), option 2 (`b`) and "Type something." (`c`).
 - An answer lets the tool run, so the read-back and the withdrawn banner treat it as an allow:
   success once the tool runs (`PostToolUse`, or Claude's OSC `working`).
 - **The wait window.** The hook waits only while the gate is on, for its 1 to 120 seconds, and

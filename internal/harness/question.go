@@ -251,11 +251,12 @@ func questionDialog(q Question, rows []string) ([]int, bool) {
 }
 
 // asksAbove reports whether the rows above a dialog's first option, up to the nearest rule,
-// show the question's text. The dialog wraps a long question, so white space is ignored.
+// show the question's text. The dialog wraps a long question and starts each of its rows with
+// "│" (Claude Code 2.1.329), so white space and "│" are ignored.
 func asksAbove(question string, rows []string) bool {
 	squash := func(s string) string {
 		return strings.Map(func(r rune) rune {
-			if unicode.IsSpace(r) {
+			if unicode.IsSpace(r) || r == '│' {
 				return -1
 			}
 			return r

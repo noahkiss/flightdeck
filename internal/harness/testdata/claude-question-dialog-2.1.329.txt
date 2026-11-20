@@ -1,7 +1,7 @@
 ────────────────────────────────────────────────────────────────────────────────
  ☐ Color
 
-Which color should the status badge use?
+│ Which color should the status badge use?
 
 ❯ 1. Red
      Matches the error banner.

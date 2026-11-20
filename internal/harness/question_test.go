@@ -187,3 +187,34 @@ func TestQuestionKey(t *testing.T) {
 		}
 	}
 }
+
+// TestQuestionKeyLive: screens captured from Claude Code 2.1.329 at 120 and 80 columns, with
+// Claude's prose list of the same labels above the dialog. At 80 columns the question wraps,
+// and each of its rows starts with "│". With the cursor on option 1 (a) or option 2 (b) the
+// label's digit goes; with the cursor on "Type something." (c) nothing does.
+func TestQuestionKeyLive(t *testing.T) {
+	t.Parallel()
+	input := `{"questions":[{"question":"Which color should the status badge use for the long-running background job indicator in the dashboard header?","header":"Color","options":[{"label":"Red"},{"label":"Green"},{"label":"Blue"}],"multiSelect":false}]}`
+	for _, width := range []string{"120", "80"} {
+		for _, c := range []struct {
+			screen string
+			ok     bool
+		}{{"a", true}, {"b", true}, {"c", false}} {
+			d, err := os.ReadFile("testdata/claude-question-live-2.1.329-" + width + "-" + c.screen + ".txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows := strings.Split(string(d), "\n")
+			for label, digit := range map[string]string{"Red": "1", "Green": "2", "Blue": "3"} {
+				qa, err := AnswerQuestion(questionState("claude", input), label)
+				if err != nil {
+					t.Fatal(err)
+				}
+				k, ok := QuestionKey(qa, rows)
+				if ok != c.ok || ok && string(k) != digit {
+					t.Errorf("%s columns, screen %s, %s: key %q %v", width, c.screen, label, k, ok)
+				}
+			}
+		}
+	}
+}
