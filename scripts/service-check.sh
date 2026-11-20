@@ -43,8 +43,14 @@
 #   GFF_SVC_TMP              where the temporary directory goes (default /tmp; keep it short,
 #                            macOS caps a socket path at 104 bytes)
 #   GFF_SVC_BUNDLE_PREFIX    macOS: bundle id prefix of the dev bundles (default test.gffsvc)
+#   GFF_SVC_FROM             an unpacked release archive to install as build A, instead of
+#                            building it (the update check: the last release, then this one)
+#   GFF_SVC_TO               the same for build B
 #   GFF_TEST_TIMEOUT_SCALE   whole number that multiplies every wait bound (default 1)
 #   GO                       the go command (default go)
+#
+# A release archive holds gff-hab and gff-hab-holder (Linux), or GFF Hab.app and GFF Holder.app
+# (macOS). Its build id is the one its gff-hab reports, not svc-a-<pid> or svc-b-<pid>.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -57,6 +63,11 @@ svc_tmp=${GFF_SVC_TMP:-/tmp}
 scale=${GFF_TEST_TIMEOUT_SCALE:-1}
 gocmd=${GO:-go}
 uid=$(id -u)
+from=${GFF_SVC_FROM:-}
+to=${GFF_SVC_TO:-}
+for d in "$from" "$to"; do
+	[ -z "$d" ] || [ -d "$d" ] || { echo "service-check: no release folder $d" >&2; exit 2; }
+done
 
 case $(uname -s) in
 Linux)
@@ -97,6 +108,8 @@ state=$work/state
 holders=$work/holders
 sock=$work/hab.sock
 scratch=$work/t # the test's own files; left out of the path lists
+dir_a=${from:-$work/a} # build A and build B: built here, or release archives
+dir_b=${to:-$work/b}
 passed=0
 child=
 child2=
@@ -122,16 +135,26 @@ wait_until() {
 	done
 }
 
-# hab_install <build dir>: on macOS the sources are the build's dev helper bundles.
+# bundles <build dir>: the folder that holds the build's GFF Hab.app and GFF Holder.app (macOS):
+# gff-macos of a build made here, the folder itself for a release archive.
+bundles() { if [ -d "$1/gff-macos" ]; then echo "$1/gff-macos"; else echo "$1"; fi; }
+# hab_exe <build dir>: the build's gff-hab, a plain binary or the one inside its GFF Hab.app.
+hab_exe() {
+	if [ -x "$1/gff-hab" ]; then echo "$1/gff-hab"; else echo "$(bundles "$1")/GFF Hab.app/Contents/MacOS/gff-hab"; fi
+}
+
+# hab_install <build dir>: on macOS the sources are the build's helper bundles.
 hab_install() {
 	local src=()
 	if [ "$init" = launchd ]; then
-		src=(-hab-bin "$1/gff-macos/GFF Hab.app" -holder-bin "$1/gff-macos/GFF Holder.app")
+		src=(-hab-bin "$(bundles "$1")/GFF Hab.app" -holder-bin "$(bundles "$1")/GFF Holder.app")
 	fi
-	"$1/gff-hab" install -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock" ${src[@]+"${src[@]}"}
+	"$(hab_exe "$1")" install -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock" ${src[@]+"${src[@]}"}
 }
-hab_uninstall() { "$1/gff-hab" uninstall -yes -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock"; }
-api() { "$work/a/gff-hab" api call -socket "$sock" -timeout 5s "$@"; }
+hab_uninstall() { "$(hab_exe "$1")" uninstall -yes -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock"; }
+# The client is build B's, the newer one, so an update check talks to the old hab as a new
+# client would.
+api() { "$(hab_exe "$dir_b")" api call -socket "$sock" -timeout 5s "$@"; }
 
 welcome_field() { api hab.hello | sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p"; }
 
@@ -261,8 +284,8 @@ cleanup() {
 		else
 			tail -n 60 "$state"/logs/*.log 2>/dev/null
 		fi
-		for b in "$work/b" "$work/a"; do
-			if [ -x "$b/gff-hab" ]; then
+		for b in "$dir_b" "$dir_a"; do
+			if [ -x "$(hab_exe "$b")" ]; then
 				hab_uninstall "$b" && break
 			fi
 		done
@@ -299,7 +322,11 @@ cleanup() {
 trap cleanup EXIT
 
 say "prefix $prefix, work directory $work, $loops restarts"
+id_a=svc-a-$$ # learned from the welcome when build A is a release
+id_b=svc-b-$$
 for b in a b; do
+	if [ "$b" = a ] && [ -n "$from" ]; then continue; fi
+	if [ "$b" = b ] && [ -n "$to" ]; then continue; fi
 	mkdir -p "$work/$b"
 	(cd "$repo" && CGO_ENABLED=0 "$gocmd" build -ldflags "-X main.build=svc-$b-$$" -o "$work/$b/" \
 		./cmd/gff-hab ./cmd/gff-hab-holder)
@@ -333,12 +360,14 @@ while :; do sleep 1; done
 EOF
 before=$(paths)
 
-hab_install "$work/a"
+hab_install "$dir_a"
 wait_until "gff-hab to answer" 30 api hab.ping
+[ -z "$from" ] || id_a=$(welcome_field build)
+[ -n "$id_a" ] || fail "build A's gff-hab reports no build"
 epoch=$(welcome_field epoch)
 if [ "$init" = launchd ]; then
-	dir_a=$(ls "$state/builds")
-	[ "$(registered_builds)" = "$dir_a" ] || fail "LaunchServices holds builds '$(registered_builds)', want build A's $dir_a"
+	reg_a=$(ls "$state/builds")
+	[ "$(registered_builds)" = "$reg_a" ] || fail "LaunchServices holds builds '$(registered_builds)', want build A's $reg_a"
 	say "install registered build A's bundles with LaunchServices"
 fi
 
@@ -349,11 +378,11 @@ wait_until "the child's pid file" 10 test -s "$scratch/child.pid"
 wait_until "the child's environment file" 10 test -s "$scratch/child.env"
 child=$(cat "$scratch/child.pid")
 build_a=$(pane_field "$pane" holder_build)
-[ "$build_a" = "svc-a-$$" ] || fail "pane on holder build '$build_a', want svc-a-$$"
+[ "$build_a" = "$id_a" ] || fail "pane on holder build '$build_a', want $id_a"
 check_env
 holder_count_is 1 || fail "$(holder_count) holders registered, want 1"
 note_holders
-inst_a=$(basename "$(holder_of_build "svc-a-$$")" .json)
+inst_a=$(basename "$(holder_of_build "$id_a")" .json)
 say "child $child in pane $pane on holder $inst_a, build $build_a; TERM, COLORTERM and locale set"
 
 for i in $(seq 1 "$loops"); do
@@ -366,16 +395,18 @@ for i in $(seq 1 "$loops"); do
 done
 
 epoch=$(welcome_field epoch)
-hab_install "$work/b"
+hab_install "$dir_b"
 check_child "$pane" "$epoch"
-[ "$(welcome_field build)" = "svc-b-$$" ] || fail "gff-hab build after reinstall: $(welcome_field build)"
-[ "$(pane_field "$pane" holder_build)" = "svc-a-$$" ] || fail "the child's pane moved holders"
-wait_until "a holder of build B" 30 holder_of_build "svc-b-$$"
+[ -z "$to" ] || id_b=$(welcome_field build)
+[ -n "$id_b" ] && [ "$id_b" != "$id_a" ] || fail "gff-hab build after reinstall: '$id_b', the same as build A's"
+[ "$(welcome_field build)" = "$id_b" ] || fail "gff-hab build after reinstall: $(welcome_field build)"
+[ "$(pane_field "$pane" holder_build)" = "$id_a" ] || fail "the child's pane moved holders"
+wait_until "a holder of build B" 30 holder_of_build "$id_b"
 note_holders
 created=$(api session.create "{\"argv\":[\"/bin/sh\",\"$scratch/child2.sh\",\"$scratch\"]}")
 pane2=$(printf '%s' "$created" | sed -n 's/.*"pane":"\([^"]*\)".*/\1/p')
 [ -n "$pane2" ] || fail "session.create gave no pane: $created"
-[ "$(pane_field "$pane2" holder_build)" = "svc-b-$$" ] || fail "a new pane after reinstall is not on build B's holder"
+[ "$(pane_field "$pane2" holder_build)" = "$id_b" ] || fail "a new pane after reinstall is not on build B's holder"
 wait_until "the second child's pid file" 10 test -s "$scratch/child2.pid"
 child2=$(cat "$scratch/child2.pid")
 say "reinstall: gff-hab build B runs, child $child still on build A's holder, new panes on build B"
@@ -384,20 +415,20 @@ say "reinstall: gff-hab build B runs, child $child still on build A's holder, ne
 kill "$child"
 wait_until "the child to end" 10 gone "$child"
 wait_until "holder $inst_a to unregister" 30 holder_count_is 1
-holder_of_build "svc-a-$$" >/dev/null 2>&1 && fail "holder $inst_a is still registered"
+holder_of_build "$id_a" >/dev/null 2>&1 && fail "holder $inst_a is still registered"
 wait_until "holder $inst_a's job to go" 90 holder_job_gone "$inst_a"
 if [ "$init" = launchd ]; then
 	# Retire removes the job first and the build directory after it, so the count drops a moment
 	# after the job goes.
 	wait_until "build A's directory to go" 30 build_count_is 1
 	[ -x "$state/current/GFF Hab.app/Contents/MacOS/gff-hab" ] || fail "current does not name build B's bundles"
-	dir_b=$(ls "$state/builds")
-	[ "$(registered_builds)" = "$dir_b" ] ||
-		fail "LaunchServices holds builds '$(registered_builds)' after build A went, want only build B's $dir_b"
+	reg_b=$(ls "$state/builds")
+	[ "$(registered_builds)" = "$reg_b" ] ||
+		fail "LaunchServices holds builds '$(registered_builds)' after build A went, want only build B's $reg_b"
 fi
 say "retire: holder $inst_a exited after its last program, and its job is gone"
 
-hab_uninstall "$work/b"
+hab_uninstall "$dir_b"
 wait_until "the second child to end" 30 gone "$child2"
 wait_until "every process of the test to end" 30 no_test_process
 note_holders

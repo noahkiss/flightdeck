@@ -169,6 +169,13 @@ new. A failure uninstalls and removes everything too. It installs with the syste
 Flightdeck or of the user's own PATH. It runs on Linux (systemd) and macOS
 (launchd); `internal/service` holds the unit-level check of test 13 with a fake init system.
 
+The **update check** is the same script with `GFF_SVC_FROM` and `GFF_SVC_TO` set to unpacked
+release archives: build A is the last published release, build B the archive just built. It
+learns each build id from the welcome, and the client is build B's. `release.yml` runs it in the
+linux and darwin legs after the smoke test (`docs/specs/ci-release.md` 7.4), with 3 restarts, so
+every release and dry run proves the shipped update path: a program started under the old
+release keeps running through the install of the new one.
+
 Core test 4 lives in `cmd/gff-hab/data_test.go`, with the real holder and gff-hab binaries and a
 test client that speaks the data frames. Each resume test compares the client's bytes with the
 pane's ring, read from the holder after gff-hab stops, with the terminal queries left out: same

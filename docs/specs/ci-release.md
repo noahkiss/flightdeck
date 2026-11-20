@@ -560,6 +560,12 @@ extended attribute headers and no `._` files.
 The speech helper (`gff-hab-speech`) is not in a release yet. `gff-hab install` does not copy it,
 and its libopus link is dynamic (`voice.md`). It joins when that is settled.
 
+The Capcom engine (`capcom-engine/`) is not in a release yet either. `capcom-service.md` 3.1 puts
+it in `libexec/capcom/` of the archive and the formula, with Node.js a formula dependency. Until
+it ships, an installed hab finds no engine: `gff-hab install` copies none, and the jobs it writes
+pass no `GFF_HAB_CAPCOM_ENGINE`. With `[capcom] engine` unset, Capcom runs in a pane and needs
+none.
+
 ### 7.3 Build path per OS and arch
 
 `gff-hab` and `gff` parse pane output with libghostty-vt through cgo. The Go bindings link the
@@ -634,15 +640,21 @@ in the libghostty rule. The release values:
    `^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` (or the dry-run form, 7.6). The checkout is the tag's
    commit. The tagged commit is on `main`. No release exists for the tag (not on a dry run). The
    tagged code has passed `ci.yml` (the CI rule below). `make release-schema` leaves `api/released/` unchanged, so the schema of this revision
-   is recorded (not on a dry run). Outputs `version` and `tap_inputs`. Each failure says which check failed and what
-   to do.
+   is recorded (not on a dry run). Outputs `version`, `tap_inputs` and `previous`: the newest
+   published final `v<x.y.z>` release other than the tag, empty before the first. Each failure
+   says which check failed and what to do.
 2. **`linux`** (matrix: amd64, arm64; `needs: verify`). Restore the libghostty cache, build (7.3),
    pack the tarball and its `.sha256`, then smoke-test the unpacked tarball with
    `scripts/release-smoke.sh <dir> <version>`: each binary's `version` prints `<name> <version>`;
    `go version -m` lists `-tags=ghostty` for `gff-hab` and `gff`; `ldd gff-hab` lists no
    libghostty; no glibc symbol version above 2.31 (`objdump -T`); `gff-hab-holder` is static; a
    holder and gff-hab start in a temporary directory and `gff-hab api call hab.hello` answers.
-   Upload as a workflow artifact. Timeout 30 minutes.
+   Then the **update check**, when `previous` is set: download that release's archive for the
+   same arch, check its `.sha256`, unpack it, give the runner user lingering and wait for its
+   systemd user bus, and run `scripts/service-check.sh` with `GFF_SVC_FROM` the old archive and
+   `GFF_SVC_TO` the new one (`testing.md`). A program started under the old release must keep
+   running through the install of the new one. Upload as a workflow artifact. Timeout 30
+   minutes.
 3. **`darwin`** (`needs: verify`, environment `release`). Build (7.3). Throwaway keychain;
    `fastlane match developer_id --readonly --skip_provisioning_profiles` with the store flags of
    10.2 (`--git_url`, `--git_branch main`, `--skip_docs`) installs the Developer ID certificate
@@ -655,7 +667,8 @@ in the libghostty rule. The release values:
    requirement comparison that refuses a release which would drop every grant. Pack, `.sha256`,
    then smoke the unpacked tarball: `codesign --verify --strict`, `stapler validate` and `spctl`
    on each bundle, then `scripts/release-smoke.sh`, which on macOS checks that `gff-hab` and `gff`
-   link only system libraries and name macOS 13.0 as their minimum. Upload as an artifact. Delete
+   link only system libraries and name macOS 13.0 as their minimum. Then the update check, as on
+   Linux, under launchd with the darwin archives and `GFF_SVC_RUN=1`. Upload as an artifact. Delete
    the keychain and keys in an `always()` step. Timeout 45 minutes.
 
    Details the build settled: fastlane comes from `.github/fastlane/Gemfile` (pinned, with its
@@ -674,16 +687,17 @@ in the libghostty rule. The release values:
    the builds and the notary. Before it creates the release, `publish` resolves the tag again
    (`gh api repos/<repo>/commits/<tag>`) and refuses when it no longer names the commit the run
    built: the release attaches to wherever the tag points now. An `-rc.` tag publishes as a prerelease. Release notes come
-   from `--generate-notes`.
+   from `--generate-notes`. When `docs/release-notes/v<x.y.z>.md` exists for the bundle version
+   (7.7), `publish` passes it as `--notes-file`, and GitHub's generated list of pull requests
+   follows it; without the file it warns and publishes generated notes only. `publish` checks
+   out that folder alone.
 5. **`bump-tap`** (`needs: [verify, publish]`, not on an `-rc.` tag or a dry run):
    `dispatch-and-wait.yml` (section 8). A red `bump-tap` is retried with "Re-run failed jobs" on
    the run that published. A new dispatch would stop at `verify`: the release exists.
 
-**Order before the first final tag.** `bump-tap` dispatches the tap's `bump.yml` with
-`formula: gff`. E7 and E8 are merged in the tap (noahkiss/homebrew-tap#10). The `gff` formula is
-in noahkiss/homebrew-tap#11 (8.4), and the secret `HOMEBREW_TAP_TOKEN` (6.2) is not set yet.
-Both must be in place first. Until then, release only `-rc.` tags, which skip `bump-tap`. A final
-tag before that publishes the release, then fails at `bump-tap` with the release already public.
+**The tap is in place.** The `gff` formula (noahkiss/homebrew-tap#11), `bump.yml` with E7, E8
+and the whole-version swap (#10, #12), and the secret `HOMEBREW_TAP_TOKEN` (6.2) are in place.
+A final tag publishes the release, then bumps the tap.
 
 **The CI rule.** Path filters often leave the tagged commit with no run of its own (a docs-only
 commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` accepts either:
@@ -967,7 +981,7 @@ audit --strict` called for:
   --strict` refuses a `version` line that repeats it.
 - **No version in a comment.** `bump.yml` refuses a rewrite that leaves the old version anywhere
   in the file. The local proof (8.4) caught a comment that named it.
-- **Whole-version swap and check** (noahkiss/homebrew-tap#12, not yet merged). `bump.yml`
+- **Whole-version swap and check** (noahkiss/homebrew-tap#12). `bump.yml`
   swapped the old version everywhere after swapping the tag, so `v0.0.0` to `v10.0.0` gave
   `v110.0.0`. Its old-version check also matched substrings (`0.0.0` inside `10.0.0`). #12 fixes
   both. A first tag of `v0.x` bumps correctly without it.
