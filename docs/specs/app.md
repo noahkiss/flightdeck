@@ -1226,10 +1226,11 @@ below. Every composer control is a 44 pt target with a VoiceOver label: "Attach 
 holds text or a file; Stop shows while the agent works. The terminal button leaves the composer:
 the header's Chat and Terminal switch does the same, and the 44 pt targets need the room.
 
-**Demo mode** shows each element: the tide session (workbench) has a group banner, a diff with
-line numbers, an MCP call and a pending migration; the palette session (attic) asks a question
-with two options, which the demo hab accepts; the search session has a message from another
-agent. Debug builds take `-FlightdeckShowChatFilter YES` to open the Show in chat sheet and
+**Demo mode** shows each element: the tide session (workbench) has a diff with line numbers, an
+MCP call and a pending migration; the API docs session (workbench) has a confirmation banner and
+the demo group's banner; the palette session (attic) asks a question with two options, which the
+demo hab accepts; the search session has a message from another agent and a diff with line
+numbers. Debug builds take `-FlightdeckShowChatFilter YES` to open the Show in chat sheet and
 `-FlightdeckShowPinned YES` to open the first banner's sheet at launch.
 
 ---
