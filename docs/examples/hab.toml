@@ -171,12 +171,17 @@ harness = "claude"
 # "heavy.long_hold" = 60
 # Capcom approval cards expire after this many minutes: 1 to 1440 (no 0).
 # "capcom.approval_max_age" = 10
-# What a Capcom job may do on its own (docs/specs/capcom-service.md 9.6): "off", "ask" or "allow";
-# at most this many actions in one event turn, 0 to 20; an ask card expires after this many
-# minutes, 1 to 1440. Set on the Capcom home hab.
+# What a Capcom job may do on its own (docs/specs/capcom-service.md 9.6): "off", "ask", "allow"
+# or "all" ("all": every event turn may act with no job); at most this many actions in one event
+# turn, 0 to 50; an ask card expires after this many minutes, 1 to 1440. Set on the Capcom home
+# hab.
 # "capcom.event_actions" = "allow"
-# "capcom.event_actions_per_turn" = 3
+# "capcom.event_actions_per_turn" = 10
 # "capcom.event_action_max_age" = 60
+# The permission mode a new agent session starts in (docs/specs/harness-adapters.md, Start mode):
+# "ask" adds no flag, "auto" or "bypass" add the harness's own flag. A flag in the start's own
+# arguments wins.
+# "agent.start_mode" = "auto"
 
 # The [logbook.habits_off] table: turn a recording habit off for one project (docs/specs/logbook.md
 # 11.4). Keys are a Logbook project id or an identity, the git remote as the catalog prints it;
