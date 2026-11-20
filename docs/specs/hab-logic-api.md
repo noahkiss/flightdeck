@@ -1939,6 +1939,8 @@ rules. Their descriptions say that screen text is untrusted program output.
 | The gate: open permission request, blocked with no request, an agent with no hooks (agent door), send in flight, a person's input in the last 2 s; nothing written; a paste into an agent with the end marker removed; Enter or a newline holds an agent's pane; no interrupt mark | `TestPaneTypeGate`, `TestCheckType`, `TestPasteWrite`, `TestInputTimes` |
 | The input wrapper in `serve`: a person's `pane.input` makes the next type `conflict` | `TestPaneDrive` |
 | The MCP pane tools outside a pane refused before any call | `TestPaneToolsOutsideAPane` |
+| A forwarded `pane.type` to a peer that never answers ends at its own bound | `TestPaneTypeForwardBound` |
+| `gff-hab new` prints names without control or bidi characters | `TestPrintStartedClean` |
 | Across hosts: list with the peer's label, type by `label/name`, the near rule gates the forward, the far rule refuses its peer door, `project` leaves a peer's rows out and denies `-host` | `TestPaneDrivePeer` |
 | The MCP pane tools, the read ones marked untrusted, the driving ones destructive and open-world | `TestPaneToolsUntrusted` |
 

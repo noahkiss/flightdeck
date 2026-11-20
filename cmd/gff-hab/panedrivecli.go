@@ -184,9 +184,14 @@ func newCmd(args []string, out io.Writer) error {
 	if err := c.Call(ctx, "pane.new", api.PaneNewParams{Argv: fs.Args(), Cwd: *cwd, InProject: *project, Name: *name}, &r); err != nil {
 		return cliErr(err)
 	}
+	return printStarted(out, r, *asJSON)
+}
+
+// printStarted prints a pane.new answer, its names cleaned of control and bidi characters first.
+func printStarted(out io.Writer, r api.PaneStarted, asJSON bool) error {
 	clean := func(s string) string { return panetext.StripBidi(panetext.CleanControls(s)) }
 	r.Name, r.Session, r.Pane = clean(r.Name), clean(r.Session), clean(r.Pane)
-	if *asJSON {
+	if asJSON {
 		b, err := json.Marshal(r)
 		if err != nil {
 			return err

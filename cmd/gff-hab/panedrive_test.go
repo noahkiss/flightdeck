@@ -463,3 +463,45 @@ func TestPaneToolsOutsideAPane(t *testing.T) {
 		t.Errorf("pane_list from a pane: %v", err)
 	}
 }
+
+// hungPeer is a peer link that never answers: each call waits until its context ends.
+type hungPeer struct{}
+
+func (hungPeer) Call(ctx context.Context, _ string, _, _ any) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestPaneTypeForwardBound: a forwarded pane.type gives up at its own bound, not at the
+// caller's (hab-logic-api.md 3.12). The bound is shortened here; the hab's is 15 s.
+func TestPaneTypeForwardBound(t *testing.T) {
+	t.Parallel()
+	r := newDriveRig(t)
+	r.peer.Caller = hungPeer{}
+	r.s.drv.forward = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	start := time.Now()
+	_, err := r.s.Type(ctx, fromMine, api.PaneTypeParams{Session: "bee/far", Text: "ls"})
+	if err == nil || time.Since(start) > 20*time.Second {
+		t.Fatalf("forward to a hung peer: %v after %v", err, time.Since(start))
+	}
+	if (&paneDrive{}).forwardWait() != paneTypeTime+paneTypeMargin {
+		t.Fatal("the default forward bound")
+	}
+}
+
+// TestPrintStartedClean: gff-hab new prints the names with control and bidi characters
+// removed.
+func TestPrintStartedClean(t *testing.T) {
+	t.Parallel()
+	for _, asJSON := range []bool{false, true} {
+		var b strings.Builder
+		if err := printStarted(&b, api.PaneStarted{Name: "na\x1b[31mme‮", Session: "s\x07", Pane: "p\u009b"}, asJSON); err != nil {
+			t.Fatal(err)
+		}
+		if out := b.String(); strings.ContainsAny(out, "\x1b\x07‮\u009b") || !strings.Contains(out, "na") {
+			t.Errorf("json %v: %q", asJSON, out)
+		}
+	}
+}

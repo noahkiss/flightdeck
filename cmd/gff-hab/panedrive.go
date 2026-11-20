@@ -147,6 +147,16 @@ type paneDrive struct {
 	create func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	// typeSlots and listSlots bound the calls that can block.
 	typeSlots, listSlots waitSlots
+	// forward bounds a forwarded pane.type; 0 is paneTypeTime plus paneTypeMargin. A test
+	// shortens it.
+	forward time.Duration
+}
+
+func (d *paneDrive) forwardWait() time.Duration {
+	if d.forward > 0 {
+		return d.forward
+	}
+	return paneTypeTime + paneTypeMargin
 }
 
 // paneTyper writes to a pane under the send gate (harness-adapters.md, Input delivery) and
@@ -381,7 +391,7 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 		fwd := p
 		fwd.Session = bare
 		var r api.PaneTyped
-		fctx, cancel := context.WithTimeout(ctx, paneTypeTime+paneTypeMargin)
+		fctx, cancel := context.WithTimeout(ctx, s.drv.forwardWait())
 		defer cancel()
 		if err := peer.Caller.Call(fctx, "pane.type", fwd, &r); err != nil {
 			return api.PaneTyped{}, peerErr(peer.Label, err)
