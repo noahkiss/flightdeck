@@ -158,7 +158,8 @@ struct ShellLaunchArguments: ViewModifier {
             }
             .task {
                 guard let id = UserDefaults.standard.string(forKey: "FlightdeckOpenSession"), !id.isEmpty else { return }
-                for _ in 0..<100 {
+                // Up to 30 s: a loaded machine starts the demo habs slowly.
+                for _ in 0..<300 {
                     if let row = fleet.board.rows.first(where: { $0.target.session == id }) {
                         opened = row
                         return

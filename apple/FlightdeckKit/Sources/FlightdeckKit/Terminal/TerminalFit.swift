@@ -58,7 +58,9 @@ public enum TerminalFit {
         let aspect = cellAspect > 0 ? cellAspect : defaultCellAspect
         if width > 0 {
             // Keep at least minColumns, unless that would go under the minimum.
-            f = min(f, width / (CGFloat(minColumns) * aspect))
+            // One column more than the minimum covers the grid's half-cell slack
+            // and a measured cell a little wider than the estimate.
+            f = min(f, width / (CGFloat(minColumns + 1) * aspect))
         }
         f = max(f, minPoints)
         return (f * 2).rounded(.down) / 2

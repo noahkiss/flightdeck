@@ -1224,9 +1224,9 @@ columns:
 | Steps | Half a point, so a small layout change does not reflow the pane |
 
 The column cap uses the cell's width as libghostty measures it (about 0.6 of the point size
-before the first measure). When the view is too narrow for 40 columns at 11 pt, 11 pt wins.
-On an iPhone 17 Pro in portrait the default gives about 50 columns; at AX5 the cap gives about
-16 pt and 40 columns. A pinch changes the font for that view until the next rule change (text
+before the first measure), and aims at 41 columns so the grid's half-cell slack never leaves 39. When the view is too narrow for 40 columns at 11 pt, 11 pt wins.
+On an iPhone 17 Pro in portrait the default gives 51 columns; at AX5 the cap gives 16 pt and at
+least 40 columns. A pinch changes the font for that view until the next rule change (text
 size or view width).
 
 **The grid.** Fitted wants the grid that fills the view at that font: columns are the width over

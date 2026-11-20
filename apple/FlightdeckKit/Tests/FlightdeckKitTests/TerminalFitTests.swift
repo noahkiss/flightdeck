@@ -19,14 +19,14 @@ final class TerminalFitTests: XCTestCase {
         XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: TerminalFit.textScale(.xLarge)), 14.5)
         // Smaller text never goes under the readable minimum (13 x 14/17 = 10.7).
         XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: TerminalFit.textScale(.xSmall)), TerminalFit.minPoints)
-        // AX5 would be 40 pt: the 40-column cap holds it at 402 / (40 x 0.6) = 16.75, in half points.
-        XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: TerminalFit.textScale(.accessibility5)), 16.5)
+        // AX5 would be 40 pt: the 40-column cap holds it at 402 / (41 x 0.6) = 16.3, in half points.
+        XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: TerminalFit.textScale(.accessibility5)), 16)
         // A wide iPad column reaches the 24 pt ceiling first.
         XCTAssertEqual(TerminalFit.fontSize(width: 900, textScale: TerminalFit.textScale(.accessibility5)), TerminalFit.maxPoints)
         // Too narrow for 40 columns even at the minimum: the minimum wins.
         XCTAssertEqual(TerminalFit.fontSize(width: 200, textScale: 1), TerminalFit.minPoints)
         // A measured cell aspect replaces the estimate.
-        XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: 3, cellAspect: 0.5), 20)
+        XCTAssertEqual(TerminalFit.fontSize(width: phone, textScale: 3, cellAspect: 0.5), 19.5)
         // libghostty takes its size a third larger than points.
         XCTAssertEqual(TerminalFit.ghosttySize(13), 9.75)
     }
