@@ -75,7 +75,7 @@ func (c *conn) dispatchAdopt(m message, s api.Seq) (any, *Error) {
 	if !ok {
 		return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+	ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 	defer cancel()
 	if m.Method == "session.outside" {
 		var p api.SessionOutsideParams
@@ -114,7 +114,7 @@ const hintNoCapcom = "%s needs the Capcom host, which this hab is running withou
 // dispatchCapcom answers capcom.open, capcom.attach, capcom.detach, capcom.pending and capcom.assign.
 func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 	cc := c.s.cfg.Capcom
-	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+	ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 	defer cancel()
 	if m.Method == "capcom.open" {
 		var p api.CapcomOpenParams
@@ -233,7 +233,7 @@ func (c *conn) dispatchRestart(m message) (any, uint64, *Error) {
 	}
 	// Not the connection's context: a client that leaves must not cut a restart between the
 	// exit and the start.
-	ctx, cancel := context.WithTimeout(context.Background(), max(c.s.cfg.ActionTimeout, RestartTimeout))
+	ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), max(c.s.cfg.ActionTimeout, RestartTimeout))
 	defer cancel()
 	pane, err := r.RestartSession(ctx, p.Session)
 	seq := c.currentSeq()
@@ -259,7 +259,7 @@ func (c *conn) dispatchResume(m message, s api.Seq) (any, *Error) {
 	if !ok {
 		return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+	ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 	defer cancel()
 	pane, err := r.ResumeSession(ctx, p.Session)
 	if err != nil {

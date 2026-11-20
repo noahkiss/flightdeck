@@ -9,6 +9,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/friction"
 	"github.com/noahkiss/flightdeck/internal/logfile"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // frictionCapability says diag.friction works (diagnostics.md 9).
@@ -31,7 +32,7 @@ func (f *frictionNotes) Note(_ context.Context, client api.ClientKind, p api.Fri
 	if f.w != nil {
 		f.w.FlushTimeout(exitFlush)
 	}
-	n := friction.Note{T: now.UTC(), Trace: friction.NewTrace('h'), Client: string(client), Session: p.Session,
+	n := friction.Note{T: now.UTC(), Trace: trace.New(trace.Hab), Client: string(client), Session: p.Session,
 		Pane: p.Pane, Blocker: p.Blocker, Text: p.Text, Build: build, Version: version, Log: logTail(f.state, now)}
 	if err := friction.Write(frictionDir(f.state), n, now); err != nil {
 		return api.FrictionNoted{}, err

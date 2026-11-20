@@ -12,6 +12,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/friction"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // TestFrictionNotes is diagnostics test 6 and the stage 1 acceptance for part (e): a note from
@@ -46,7 +47,7 @@ func TestFrictionNotes(t *testing.T) {
 	if err := c.Call(ctx, "diag.friction", api.FrictionParams{Text: "  " + appText + "\n", Session: res.Session, Pane: res.Pane}, &noted); err != nil {
 		t.Fatal(err)
 	}
-	if !friction.ValidTrace(noted.Trace) || noted.Trace[0] != 'h' {
+	if !trace.Valid(noted.Trace) || noted.Trace[0] != 'h' {
 		t.Fatalf("trace %q", noted.Trace)
 	}
 

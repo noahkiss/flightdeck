@@ -25,8 +25,25 @@ type message struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *wireError      `json:"error,omitempty"`
+	// Trace follows one action across processes (diagnostics.md 5.2): on a request and its
+	// response, never on a notification.
+	Trace wireTrace `json:"trace,omitempty"`
 
-	start time.Time // when the server read the request, for the failed-request line
+	start         time.Time // when the server read the request, for the failed-request line
+	traceReplaced bool      // the request's trace was malformed and the server made a new one
+}
+
+// wireTrace is the trace member. A value that is not a JSON string decodes as a malformed trace
+// ("\x00"), so the server replaces it rather than rejecting the request (diagnostics.md 5.2).
+type wireTrace string
+
+func (w *wireTrace) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) != nil {
+		s = "\x00"
+	}
+	*w = wireTrace(s)
+	return nil
 }
 
 type wireError struct {

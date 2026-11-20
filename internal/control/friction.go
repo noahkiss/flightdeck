@@ -46,7 +46,7 @@ func (c *conn) handleFriction(m message) {
 	kind := c.kind
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		res, err := fr.Note(ctx, kind, p)
 		seq := c.currentSeq()

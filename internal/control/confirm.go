@@ -73,7 +73,7 @@ func (c *conn) handleConfirm(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxConfirmTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxConfirmTime)
 		defer cancel()
 		res, err := call(ctx)
 		seq := c.currentSeq()

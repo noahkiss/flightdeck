@@ -17,6 +17,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 type pubEvent struct {
@@ -222,8 +223,10 @@ func closingMessage(reason api.ClosingReason) []byte {
 	return notification("closing", api.Closing{Reason: reason})
 }
 
-func response(id json.RawMessage, result json.RawMessage, e *Error) []byte {
-	m := message{JSONRPC: "2.0", ID: id, Result: result}
+// response is one response line. trace is the request's (diagnostics.md 5.2), "" when the line
+// did not parse as a request.
+func response(id json.RawMessage, trace wireTrace, result json.RawMessage, e *Error) []byte {
+	m := message{JSONRPC: "2.0", ID: id, Result: result, Trace: trace}
 	if len(m.ID) == 0 {
 		m.ID = json.RawMessage("null")
 	}
@@ -381,7 +384,7 @@ func (c *conn) readLoop() {
 		c.nc.SetReadDeadline(time.Now().Add(c.s.cfg.IdleTimeout))
 		line, err := c.readLine()
 		if errors.Is(err, errTooLong) {
-			c.finish(response(nil, nil, protoErr(codeInvalidRequest, "a message is longer than %d bytes", MaxMessage)))
+			c.finish(response(nil, "", nil, protoErr(codeInvalidRequest, "a message is longer than %d bytes", MaxMessage)))
 			return
 		}
 		if err != nil {
@@ -419,19 +422,21 @@ func (c *conn) handleLine(line []byte) {
 	}
 	var m message
 	if line[0] != '{' {
-		c.send(response(nil, nil, c.withSeq(protoErr(codeInvalidRequest, "each line must be one JSON-RPC object; batches are not supported"))))
+		c.send(response(nil, "", nil, c.withSeq(protoErr(codeInvalidRequest, "each line must be one JSON-RPC object; batches are not supported"))))
 		return
 	}
 	if err := json.Unmarshal(line, &m); err != nil {
-		c.send(response(nil, nil, c.withSeq(protoErr(codeParse, "parse error: %v", err))))
+		c.send(response(nil, "", nil, c.withSeq(protoErr(codeParse, "parse error: %v", err))))
 		return
 	}
 	m.start = time.Now()
+	id, replaced := trace.Check(string(m.Trace))
+	m.Trace, m.traceReplaced = wireTrace(id), replaced
 	if m.JSONRPC != "2.0" || m.Method == "" {
 		if len(m.ID) == 0 {
 			return
 		}
-		c.send(response(m.ID, nil, c.withSeq(protoErr(codeInvalidRequest, "not a JSON-RPC 2.0 request"))))
+		c.send(response(m.ID, m.Trace, nil, c.withSeq(protoErr(codeInvalidRequest, "not a JSON-RPC 2.0 request"))))
 		return
 	}
 	if len(m.ID) == 0 {
@@ -439,7 +444,7 @@ func (c *conn) handleLine(line []byte) {
 	}
 	if !c.hello {
 		if m.Method != "hab.hello" {
-			c.finish(response(m.ID, nil, c.withSeq(appErr(api.ErrorKindInvalid, "the first request must be hab.hello"))))
+			c.finish(response(m.ID, m.Trace, nil, c.withSeq(appErr(api.ErrorKindInvalid, "the first request must be hab.hello"))))
 			return
 		}
 		c.handleHello(m)
@@ -585,7 +590,7 @@ func (c *conn) handleInput(m message) {
 		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "pane.input needs a pane and data or text"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+	ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 	call := inputCall{m: m, seq: seq, data: data, ctx: ctx, cancel: cancel}
 	c.mu.Lock()
 	if c.waiting >= maxWaitingInput {
@@ -648,7 +653,7 @@ func (c *conn) handleChat(m message) {
 	c.chats++
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		page, err := c.s.cfg.Chat.ChatPage(ctx, p)
 		c.mu.Lock()
@@ -696,7 +701,7 @@ func (c *conn) handleCommandOutput(m message) {
 	c.outputs++
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		out, err := c.s.cfg.Commands.CommandOutput(ctx, p)
 		c.mu.Lock()
@@ -729,7 +734,7 @@ func (c *conn) handleStats(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		res, err := c.s.cfg.Stats.Stats(ctx)
 		if err != nil {
@@ -757,7 +762,7 @@ func (c *conn) handlePermissions(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxPermissionsTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxPermissionsTime)
 		defer cancel()
 		res, err := c.s.cfg.Permissions.Permissions(ctx, p)
 		if err != nil {
@@ -798,7 +803,7 @@ func (c *conn) handleExplain(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxExplainTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxExplainTime)
 		defer cancel()
 		type result struct {
 			res api.DetectExplain
@@ -884,7 +889,7 @@ func (c *conn) handleWorktree(m message) {
 	go func() {
 		// A call runs to its end when the connection drops: git cut off halfway leaves a
 		// worktree half made.
-		ctx, cancel := context.WithTimeout(context.Background(), maxWorktreeTime)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), maxWorktreeTime)
 		defer cancel()
 		var res any
 		var pane string
@@ -1013,7 +1018,7 @@ func (c *conn) handleAgent(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		var err error
 		if m.Method == "session.send" {
@@ -1069,7 +1074,7 @@ func (c *conn) handleTrust(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		res, err := c.s.cfg.Trust.Answer(ctx, c.clientID, p)
 		seq := c.currentSeq()
@@ -1080,6 +1085,16 @@ func (c *conn) handleTrust(m message) {
 		res.Seq = api.Seq{Seq: seq}
 		c.reply(m, seq, res, nil)
 	}()
+}
+
+// TraceCapability says the hab honours the request member trace: it checks it, answers it, and
+// passes it to a peer hab (diagnostics.md 5.2).
+const TraceCapability = "trace"
+
+// reqCtx is parent carrying the request's trace (diagnostics.md 5.2), so a call the request makes
+// to a peer hab carries it too (5.4).
+func reqCtx(parent context.Context, m message) context.Context {
+	return trace.With(parent, string(m.Trace))
 }
 
 func (c *conn) withSeq(e *Error) *Error {
@@ -1099,7 +1114,7 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 		e.Data.Seq = seq
 		c.logFailed(m, e)
 		c.tally(m, e)
-		return response(m.ID, nil, e)
+		return response(m.ID, m.Trace, nil, e)
 	}
 	var raw json.RawMessage
 	if r, ok := result.(json.RawMessage); ok {
@@ -1111,7 +1126,7 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be encoded", Seq: seq}}
 			c.logFailed(m, e)
 			c.tally(m, e)
-			return response(m.ID, nil, e)
+			return response(m.ID, m.Trace, nil, e)
 		}
 		raw = b
 	}
@@ -1122,11 +1137,11 @@ func (c *conn) encodeReply(m message, seq uint64, result any, e *Error) []byte {
 				Data: api.ErrorData{Kind: api.ErrorKindUnavailable, Hint: "result could not be translated", Seq: seq}}
 			c.logFailed(m, e)
 			c.tally(m, e)
-			return response(m.ID, nil, e)
+			return response(m.ID, m.Trace, nil, e)
 		}
 	}
 	c.tally(m, nil)
-	return response(m.ID, raw, nil)
+	return response(m.ID, m.Trace, raw, nil)
 }
 
 // tally counts one reply (diagnostics.md 7.1). A JSON-RPC error with no API kind counts as
@@ -1148,7 +1163,9 @@ func (c *conn) tally(m message, e *Error) {
 }
 
 // logFailed writes the failed-request line (diagnostics.md 4.6): the method, the error kind, the
-// client kind and the duration. It never writes the error's message, params or hint, which can
+// client kind, the duration and the trace, with trace_replaced when the server replaced a
+// malformed one (5.2). For a request that came over a peer link (client kind hab) this is the
+// peer's line of 5.4. It never writes the error's message, params or hint, which can
 // hold a user's text; a method name the API does not list is written as "unknown". The caller
 // holds c.mu.
 func (c *conn) logFailed(m message, e *Error) {
@@ -1168,7 +1185,11 @@ func (c *conn) logFailed(m message, e *Error) {
 	if !m.start.IsZero() {
 		d = time.Since(m.start).Round(time.Microsecond)
 	}
-	c.s.cfg.Logf("request failed: method %s, error %s, client %s, %v", method, kind, client, d)
+	replaced := ""
+	if m.traceReplaced {
+		replaced = ", trace_replaced"
+	}
+	c.s.cfg.Logf("request failed: method %s, error %s, client %s, %v, trace %s%s", method, kind, client, d, m.Trace, replaced)
 }
 
 // knownMethods are the method names the API lists, and the hello.
@@ -1195,15 +1216,15 @@ func isWord(set, w string) bool { return slices.Contains(api.Enums[set], w) }
 func (c *conn) handleHello(m message) {
 	var p api.HelloParams
 	if e := decodeParams(m, &p); e != nil {
-		c.finish(response(m.ID, nil, e))
+		c.finish(response(m.ID, m.Trace, nil, e))
 		return
 	}
 	if !isWord("ClientKind", string(p.Client.Kind)) {
-		c.finish(response(m.ID, nil, appErr(api.ErrorKindInvalid, "client.kind %q is not one of %v", p.Client.Kind, api.Enums["ClientKind"])))
+		c.finish(response(m.ID, m.Trace, nil, appErr(api.ErrorKindInvalid, "client.kind %q is not one of %v", p.Client.Kind, api.Enums["ClientKind"])))
 		return
 	}
 	if p.MinRevision < 1 || p.Revision < p.MinRevision {
-		c.finish(response(m.ID, nil, appErr(api.ErrorKindInvalid, "revision %d and min_revision %d do not form a range", p.Revision, p.MinRevision)))
+		c.finish(response(m.ID, m.Trace, nil, appErr(api.ErrorKindInvalid, "revision %d and min_revision %d do not form a range", p.Revision, p.MinRevision)))
 		return
 	}
 	chosen := min(p.Revision, api.Revision)
@@ -1212,7 +1233,7 @@ func (c *conn) handleHello(m message) {
 			"no shared API revision: this hab speaks %d to %d, the client %d to %d", api.MinRevision, api.Revision, p.MinRevision, p.Revision)
 		e.Data.Server = &api.RevisionRange{Min: api.MinRevision, Max: api.Revision}
 		e.Data.Client = &api.RevisionRange{Min: p.MinRevision, Max: p.Revision}
-		c.finish(response(m.ID, nil, e))
+		c.finish(response(m.ID, m.Trace, nil, e))
 		return
 	}
 	c.clientID, c.token = c.s.claimToken(c, p.ReconnectToken)
@@ -1505,7 +1526,7 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		if c.s.cfg.Actions == nil {
 			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		if c.peer != nil {
 			ctx = WithCallerPeer(ctx, *c.peer) // report_to names a session on that hab
@@ -1585,7 +1606,7 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		if c.s.cfg.Actions == nil {
 			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		if err := c.s.cfg.Actions.ClosePane(ctx, p.Pane); err != nil {
 			return nil, actionErr(m.Method, err)

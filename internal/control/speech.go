@@ -58,7 +58,7 @@ func (c *conn) handleSpeech(m message) {
 	c.speeches++
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, speechTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), speechTimeout)
 		defer cancel()
 		var (
 			res any

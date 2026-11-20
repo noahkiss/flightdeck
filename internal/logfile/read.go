@@ -40,6 +40,8 @@ type Filter struct {
 	Since, Until time.Time
 	Kinds        []string
 	Grep         string
+	// Trace selects the lines of one action: those that name "trace <id>" (diagnostics.md 5).
+	Trace string
 }
 
 func (f Filter) kind(k string) bool { return len(f.Kinds) == 0 || slices.Contains(f.Kinds, k) }
@@ -52,6 +54,9 @@ func (f Filter) match(e Entry) bool {
 		return false
 	}
 	if !f.Until.IsZero() && !e.T.IsZero() && e.T.After(f.Until) {
+		return false
+	}
+	if f.Trace != "" && !strings.Contains(e.Text, "trace "+f.Trace) {
 		return false
 	}
 	return f.Grep == "" || strings.Contains(e.Text, f.Grep)

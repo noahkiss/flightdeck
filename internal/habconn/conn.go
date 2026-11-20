@@ -45,6 +45,10 @@ type Config struct {
 	// since the far hab may be updated while this one runs (mesh.md 4.4). Otherwise a refused
 	// hello stops the Conn.
 	RetryRefused bool
+	// TraceOrigin, when set, gives each call whose context carries no trace a new trace of this
+	// origin (control.Client.SetTraceOrigin, diagnostics.md 5.2). gff sets trace.Gff; a peer
+	// link leaves it zero and passes the request's trace in the context (5.4).
+	TraceOrigin byte
 
 	PingInterval time.Duration // hab.ping after this long with nothing sent
 	DeadAfter    time.Duration // a connection that delivers nothing for this long is dead
@@ -322,6 +326,7 @@ func (c *Conn) open(ctx context.Context) (*session, error) {
 	s := &session{lastRead: &atomic.Int64{}, base: time.Now(), endpoint: endpoint}
 	cl := control.NewClient(&stampRW{ReadWriteCloser: rw, last: s.lastRead, base: s.base})
 	s.cl = cl
+	cl.SetTraceOrigin(c.cfg.TraceOrigin)
 	// Close ends the dial too: the hello and subscribe calls fail when cl closes.
 	opened := make(chan struct{})
 	defer close(opened)

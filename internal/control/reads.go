@@ -73,7 +73,7 @@ func (c *conn) handleReads(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxReadTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxReadTime)
 		defer cancel()
 		res, err := call(ctx)
 		seq := c.currentSeq()

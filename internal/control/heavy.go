@@ -64,9 +64,9 @@ func (c *conn) handleHeavy(m message) {
 			return
 		}
 		go func() {
-			res, err := h.Take(c.ctx, p)
+			res, err := h.Take(reqCtx(c.ctx, m), p)
 			if err == nil && res.State != "holding" && p.WaitMS > 0 {
-				ctx, cancel := context.WithTimeout(c.ctx, time.Duration(p.WaitMS)*time.Millisecond)
+				ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), time.Duration(p.WaitMS)*time.Millisecond)
 				res, err = h.Wait(ctx, res.Ticket)
 				cancel()
 			}

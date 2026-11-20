@@ -57,7 +57,7 @@ func (c *conn) handleFlightRules(m message) {
 	c.chats++
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		var result any
 		var err error

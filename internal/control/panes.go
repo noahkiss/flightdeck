@@ -104,7 +104,7 @@ func (c *conn) handlePanes(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, limit)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), limit)
 		defer cancel()
 		res, err := call(ctx)
 		seq := c.currentSeq()

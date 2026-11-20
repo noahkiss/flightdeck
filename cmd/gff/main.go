@@ -100,6 +100,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/heavy"
 	"github.com/noahkiss/flightdeck/internal/hosts"
 	"github.com/noahkiss/flightdeck/internal/lbcli"
+	"github.com/noahkiss/flightdeck/internal/trace"
 	gffversion "github.com/noahkiss/flightdeck/internal/version"
 )
 
@@ -223,7 +224,8 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		set, err := hosts.Open(hosts.Config{Source: hosts.Static(specs), Client: client})
+		set, err := hosts.Open(hosts.Config{Source: hosts.Static(specs), Client: client,
+			Conn: func(hc *habconn.Config) { hc.TraceOrigin = trace.Gff }})
 		if err != nil {
 			return err
 		}
@@ -236,7 +238,7 @@ func run(args []string) error {
 			TitleTemplate: &settings.Workspace.Title, Workspace: settings.Workspace.Name, StatePath: state, StartupTabs: settings.Workspace.Tabs})
 	}
 	octx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	conn, err := habconn.Connect(octx, habconn.Config{Transport: tr, Client: client})
+	conn, err := habconn.Connect(octx, habconn.Config{Transport: tr, Client: client, TraceOrigin: trace.Gff})
 	cancel()
 	if err != nil {
 		return err

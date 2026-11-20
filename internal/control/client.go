@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // ErrClosed is returned by calls on a client whose connection has closed.
@@ -56,7 +57,14 @@ type Client struct {
 	done     chan struct{}
 	stop     chan struct{} // closed by Close
 	stopOnce sync.Once
+
+	traceOrigin atomic.Uint32 // SetTraceOrigin; 0 makes no trace
 }
+
+// SetTraceOrigin makes the client send a new trace of this origin (trace.App, trace.Gff) on each
+// call whose context carries none (diagnostics.md 5.2). Zero, the default, sends a trace only
+// when the context carries one, as a hab's call to a peer does (5.4).
+func (c *Client) SetTraceOrigin(origin byte) { c.traceOrigin.Store(uint32(origin)) }
 
 // Dial connects to the control socket at path.
 func Dial(path string) (*Client, error) {
@@ -219,7 +227,11 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 		c.mu.Unlock()
 	}()
 
-	b, err := json.Marshal(message{JSONRPC: "2.0", ID: json.RawMessage(id), Method: method, Params: p})
+	tr := trace.From(ctx)
+	if o := byte(c.traceOrigin.Load()); tr == "" && o != 0 {
+		tr = trace.New(o)
+	}
+	b, err := json.Marshal(message{JSONRPC: "2.0", ID: json.RawMessage(id), Method: method, Params: p, Trace: wireTrace(tr)})
 	if err != nil {
 		return err
 	}

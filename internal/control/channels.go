@@ -119,7 +119,7 @@ func (c *conn) handleChannels(m message) {
 	}
 	fromPeer := c.peer != nil
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxChannelTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxChannelTime)
 		defer cancel()
 		if fromPeer {
 			ctx = WithPeerCall(ctx)

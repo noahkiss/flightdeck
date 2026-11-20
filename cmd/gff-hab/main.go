@@ -1890,7 +1890,7 @@ func serve(args []string) error {
 	if input != nil {
 		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
-	caps = append(caps, frictionCapability, debugCapability)
+	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	s := control.New(control.Config{
 		Epoch:    epoch,
 		Build:    build,

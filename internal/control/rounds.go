@@ -153,7 +153,7 @@ func (c *conn) handleRounds(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxRoundTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxRoundTime)
 		defer cancel()
 		// The seq is read after the call: the events the call caused come before its answer.
 		var seq uint64

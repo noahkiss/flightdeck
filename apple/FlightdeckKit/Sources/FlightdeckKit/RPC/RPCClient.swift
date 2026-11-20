@@ -107,7 +107,8 @@ public actor RPCClient {
         if let e = ended { throw e }
         let id = nextID
         nextID += 1
-        var data = try encoder.encode(Request(id: id, method: method.name, params: params))
+        // Each call is one user action, so it gets a new trace (diagnostics.md 5.2).
+        var data = try encoder.encode(Request(id: id, trace: Trace.new(), method: method.name, params: params))
         data.append(0x0A)
         let line: Data = try await withCheckedThrowingContinuation { c in
             pending[id] = c
@@ -205,6 +206,7 @@ public actor RPCClient {
     private struct Request<P: Encodable>: Encodable {
         var jsonrpc = "2.0"
         var id: Int
+        var trace: String
         var method: String
         var params: P
     }

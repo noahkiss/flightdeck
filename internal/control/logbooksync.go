@@ -49,7 +49,7 @@ func (c *conn) handleLogbookSync(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxLogbookSyncTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxLogbookSyncTime)
 		defer cancel()
 		res, err := call(ctx)
 		seq := c.currentSeq()
