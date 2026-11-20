@@ -1,4 +1,5 @@
 import Foundation
+import HabAPI
 import XCTest
 @testable import FlightdeckKit
 
@@ -40,6 +41,20 @@ final class AppLogTests: XCTestCase {
         XCTAssertEqual(AppLogMessage.kind(of: ns), "NSURLErrorDomain -1001")
         struct Plain: Error { let detail: String }
         XCTAssertEqual(AppLogMessage.kind(of: Plain(detail: "y")), "Plain")
+    }
+
+    /// The app's struct errors name a useful kind: the API error kind, the timed-out method, or
+    /// Foundation's domain and code; never the hint, the message or the URL.
+    func testStructErrorKinds() {
+        let rpc = RPCError(code: 1, message: "on build-box", data: ErrorData(hint: "/home/x: gone", kind: .unavailable, seq: 0))
+        XCTAssertEqual(AppLogMessage.kind(of: rpc), "RPCError unavailable")
+        XCTAssertEqual(AppLogMessage.kind(of: RPCError(code: -32601, message: "no method", data: nil)), "RPCError code -32601")
+        XCTAssertEqual(AppLogMessage.kind(of: CallTimedOut(method: "push.register")), "timeout push.register")
+        let url = URLError(.timedOut, userInfo: [NSURLErrorFailingURLStringErrorKey: "https://build-box.example/x"])
+        XCTAssertEqual(AppLogMessage.kind(of: url), "NSURLErrorDomain -1001")
+        XCTAssertEqual(AppLogMessage.kind(of: POSIXError(.ECONNREFUSED)), "NSPOSIXErrorDomain 61")
+        let m: AppLogMessage = "push.register failed: \(kind: rpc) \(rpc)"
+        XCTAssertEqual(m.redacted, "push.register failed: RPCError unavailable <private>")
     }
 
     private func tempFile() throws -> URL {

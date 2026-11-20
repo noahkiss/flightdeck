@@ -156,9 +156,12 @@ public struct AppLogMessage: ExpressibleByStringInterpolation, Sendable {
         }
     }
 
-    /// The kind of an error: `Type.case` for an enum, `domain code` for an
-    /// NSError, else the type's name. No associated value and no description.
+    /// The kind of an error, with no associated value and no description:
+    /// its own `logKind` when it has one; `Type.case` for an enum; `domain code`
+    /// when the error bridges to an NSError with a domain of its own (URLError,
+    /// POSIXError, any NSError); else the type's name.
     public static func kind(of error: Error) -> String {
+        if let k = error as? LogKind { return k.logKind }
         let type = String(describing: Swift.type(of: error))
         let m = Mirror(reflecting: error)
         if m.displayStyle == .enum {
@@ -167,12 +170,28 @@ public struct AppLogMessage: ExpressibleByStringInterpolation, Sendable {
             }
             return type + "." + String(describing: error)
         }
-        if m.displayStyle == .class || type == "NSError" || type.hasPrefix("__") {
-            let ns = error as NSError
+        let ns = error as NSError
+        if ns.domain != type, ns.domain != String(reflecting: Swift.type(of: error)) {
             return "\(ns.domain) \(ns.code)"
         }
         return type
     }
+}
+
+/// An error that names its own kind for a log line: a word, a code, an API
+/// method; never text a user or a hab wrote (diagnostics.md 4.10).
+public protocol LogKind {
+    var logKind: String { get }
+}
+
+extension RPCError: LogKind {
+    /// The API error kind the hab sent, else the JSON-RPC code.
+    public var logKind: String { "RPCError " + (kind?.rawValue ?? "code \(code)") }
+}
+
+extension CallTimedOut: LogKind {
+    /// "timeout" and the API method that got no answer.
+    public var logKind: String { "timeout " + method }
 }
 
 /// `diagnostics/app.log` under the app's Application Support folder: JSON

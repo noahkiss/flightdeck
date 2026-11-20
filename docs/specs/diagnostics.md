@@ -276,7 +276,7 @@ All files are in `<state>/logs/`, mode 0600, in a directory of mode 0700.
 | `gff-hab-holder.<instance>.log` | The service manager, from the holder's stderr | gff-hab, copy-truncate at start and in the hourly sweep | 5 MiB, 2 old files |
 | `hook.log` | Failed hook runs, append only (4.4) | gff-hab, rename in the hourly sweep | 1 MiB, 1 old file |
 | `capcom.log` (stage 5) | The Capcom engine | The engine, in-process | 5 MiB, 2 old files |
-| `crash/` | Crash output and stack dumps (6) | gff-hab's sweep, oldest first | 20 files |
+| `crash/` | Crash output and stack dumps (6, 4.7) | gff-hab's sweep, oldest first | 20 crash files, and apart from them 5 stack dumps |
 
 `gff.log` sits in `gff`'s own state directory: 1 MiB, 1 old file, rotated by `gff` itself.
 `<state>/capcom/engine/engine.log` keeps the engine's raw stdout and stderr; gff-hab
@@ -343,7 +343,12 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
   over a peer link.
 - gff-hab writes `debug_until` to `<state>/run/debug.json`. A start honours it until it
   expires. A crash loop then keeps its debug lines across restarts. When the window ends,
-  gff-hab logs "debug off: the window ended" and removes the file.
+  gff-hab logs "debug off: the window ended" and removes the file. A file whose `until` is more
+  than 24 hours and a minute ahead is no window `diag.debug` wrote: the start removes it and
+  logs one line.
+- A window ends by the wall clock. Go's timers stop while the machine sleeps (12), so a debug
+  line is written only while the wall time is before `until`, and an end timer that fires early
+  waits for the rest. `gff-hab status` reads a window whose end has passed as off.
 - `gff-hab debug off` clears it. `GFF_HAB_DEBUG` stays, with no time limit, for development.
 - Each change logs one line, and the run marker holds `debug` and `debug_until` for
   `gff-hab status` (6.1).
@@ -384,10 +389,17 @@ A deadlocked gff-hab never crashes, so a crash record never sees it.
 - A probe unanswered for 10 seconds is a stall. gff-hab logs one line "loop stalled", with the
   loop's name and the wait, and writes one stack dump. A stall that lasts logs nothing more. When
   the probe returns, one line "loop recovered" gives the total wait.
+- **Excluded.** The link attaches a holder's panes in one task on its loop: it restores each
+  pane's checkpoint through the terminal parser, up to the scrollback budget in all. That runs at
+  a holder's handover and a reconnect, and may take seconds. While it runs, the link's probe
+  wait restarts at each check, so it is never a stall. Replay output reaches the loop frame by
+  frame, so a probe passes between frames. The store's longest hold is a state file write with
+  an fsync, a small file; one past 10 seconds blocks every client, and is reported.
 - A loop reports at most one stall per hour. The watchdog writes at most one dump per hour across
   both loops: one dump shows every goroutine, and a stuck store also stalls the link.
 - **Privacy.** A dump holds goroutine stacks, which can show argument values. It lives in
-  `crash/` only, mode 0600, within the crash cap (4.3). A log line names the dump's file, never
+  `crash/` only, mode 0600, and keeps the newest 5 dumps apart from the crash files, so repeated
+  dumps never push out a crash trace (4.3). A log line names the dump's file, never
   its content. A bundle gives it pass 2 (8.2).
 - The holder gets neither until a holder build needs other changes; its loops are few, and a
   hung holder shows as a stalled holder link in gff-hab.
@@ -439,8 +451,11 @@ with the line before it. Until the holder's next build, its lines carry local ti
 - Every line goes through one wrapper, `AppLog` (`FlightdeckKit/Diagnostics/AppLog.swift`). Its
   interpolation makes any value private. Integers, Booleans and Doubles are public, as counts and
   durations. Three labels make a value public: `\(word: e)` for an enum word or an API method,
-  `\(id: pane)` for a minted id, `\(kind: error)` for an error's type and case, or an NSError's
-  domain and code, never its description.
+  `\(id: pane)` for a minted id, `\(kind: error)` for an error's kind, never its description.
+- An error's kind is its own `logKind` when it has one (`RPCError` gives its API error kind,
+  `CallTimedOut` "timeout" and its method); else `Type.case` for an enum; else the domain and
+  code of the NSError it bridges to, when that domain is not just its type's name (`URLError`,
+  `POSIXError`); else the type's name.
 - The unified log gets the line with each private value as `<private>`, as public text, and the
   whole line as one `.private` value.
 - **`app.log` (stage 2).** The app writes `Flightdeck/diagnostics/app.log` under its Application
@@ -863,7 +878,7 @@ Other guards:
 | Canary (test 11) | One random string goes through every content path, then is found in no diagnostics file and no bundle |
 | Bundle sources | Only the files of 8.2; command output only through a no-content mode (8.2) |
 | Capcom | SDK stderr counted only; provider errors and crash causes as classes (4.9, 6.3) |
-| App | A unit test on the app's logging wrapper checks that a string defaults to `.private`. A source check (`AppLogSourceTests`) fails on `privacy:`, `Logger(` or `os_log(` outside the wrapper, and on a `\(id: …)` or `\(word: …)` whose expression is not in its listed set of safe values; it has its own fixture |
+| App | A unit test on the app's logging wrapper checks that a string defaults to `.private`. A source check (`AppLogSourceTests`) fails, outside the wrapper, on `privacy:`, `Logger(` or `Logger.init(`, `os_log(`, `NSLog(`, `debugPrint(`, `print(` (except two listed files' DEBUG lines), and `stringLiteral:`; and on a `\(id: …)` or `\(word: …)`, any spacing or raw string, whose expression is not listed for that file. Its fixture has one case per ban |
 
 ### 10.3 Consent
 
@@ -892,7 +907,7 @@ None of these is an app row: each is an operator limit or has one right answer (
 
 | Resource | Limit |
 |---|---|
-| `<state>/logs/` | About 75 MiB with one holder: hab 40, holder 15, Capcom 15, hook 2, stderr 1, plus 20 crash files. The hourly sweep deletes the oldest old files over 100 MiB |
+| `<state>/logs/` | About 75 MiB with one holder: hab 40, holder 15, Capcom 15, hook 2, stderr 1, plus 20 crash files and 5 stack dumps. The hourly sweep deletes the oldest old files over 100 MiB |
 | `<state>/tallies/` | 90 day files of a few KiB each, under 5 MiB |
 | `<state>/health.jsonl` | 500 lines |
 | `<state>/friction/` | 200 notes, each at most 256 KiB |
