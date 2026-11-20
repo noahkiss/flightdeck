@@ -57,6 +57,9 @@ type Error struct {
 	Code    int
 	Message string
 	Data    api.ErrorData
+	// Trace is the trace of the failed call's response (diagnostics.md 5.2), so a user can find
+	// its lines with gff-hab logs --trace. Empty on an error this process made.
+	Trace string
 
 	partial bool // the call may have taken effect in part; see Partial
 }
@@ -75,10 +78,14 @@ func Partial(e *Error) *Error {
 func (e *Error) IsPartial() bool { return e.partial }
 
 func (e *Error) Error() string {
+	s := fmt.Sprintf("%s (%s)", e.Message, e.Data.Kind)
 	if e.Data.Hint != "" && e.Data.Hint != e.Message {
-		return fmt.Sprintf("%s (%s): %s", e.Message, e.Data.Kind, e.Data.Hint)
+		s += ": " + e.Data.Hint
 	}
-	return fmt.Sprintf("%s (%s)", e.Message, e.Data.Kind)
+	if e.Trace != "" {
+		s += " (trace " + e.Trace + ")"
+	}
+	return s
 }
 
 // Notification is one notification from the server: event, heartbeat or closing.

@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,11 +112,17 @@ func TestClientSendsTrace(t *testing.T) {
 	hello(t, c, "")
 	fail := func(ctx context.Context) string {
 		t.Helper()
-		if err := c.Call(ctx, "session.close", map[string]string{"session": "nope"}, nil); err == nil {
-			t.Fatal("session.close of a session that does not exist succeeded")
+		err := c.Call(ctx, "session.close", map[string]string{"session": "nope"}, nil)
+		var ce *Error
+		if !errors.As(err, &ce) {
+			t.Fatalf("session.close of a session that does not exist: %v", err)
 		}
 		select {
 		case s := <-got:
+			// The failed call's error carries the trace the hab logged, and prints it.
+			if ce.Trace != s || !strings.HasSuffix(ce.Error(), " (trace "+s+")") {
+				t.Errorf("error %q, trace %q; the hab logged %s", ce.Error(), ce.Trace, s)
+			}
 			return s
 		case <-time.After(10 * time.Second):
 			t.Fatal("no failed-request line")
@@ -131,5 +139,41 @@ func TestClientSendsTrace(t *testing.T) {
 	c.SetTraceOrigin(trace.Gff)
 	if s := fail(ctx(t)); !trace.Valid(s) || s[0] != trace.Gff {
 		t.Errorf("origin g: the hab logged %q, want a g trace", s)
+	}
+}
+
+// TestNotificationMintsNoTrace: a client notification is dropped before the trace check, so it
+// costs no new id; each request is checked once (5.2, 11).
+func TestNotificationMintsNoTrace(t *testing.T) {
+	var calls atomic.Int32
+	old := checkTrace
+	checkTrace = func(s string) (string, bool) { calls.Add(1); return old(s) }
+	t.Cleanup(func() { checkTrace = old })
+	h := startHab(t, "", socketPath(t), nil)
+	nc, err := net.Dial("unix", h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	nc.SetDeadline(time.Now().Add(10 * time.Second))
+	br := bufio.NewReader(nc)
+	fmt.Fprintln(nc, `{"jsonrpc":"2.0","id":1,"method":"hab.hello","params":{"revision":1,"min_revision":1,"client":{"name":"t","version":"0","kind":"script"}}}`)
+	for range 3 {
+		fmt.Fprintln(nc, `{"jsonrpc":"2.0","method":"hab.ping","trace":"not a trace"}`)
+		fmt.Fprintln(nc, `{"jsonrpc":"2.0","method":"hab.ping"}`)
+	}
+	fmt.Fprintln(nc, `{"jsonrpc":"2.0","id":2,"method":"hab.ping","params":{}}`)
+	for answered := 0; answered < 2; {
+		b, err := br.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m message
+		if json.Unmarshal(b, &m) == nil && len(m.ID) > 0 {
+			answered++
+		}
+	}
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("the trace check ran %d times for 2 requests and 6 notifications", n)
 	}
 }

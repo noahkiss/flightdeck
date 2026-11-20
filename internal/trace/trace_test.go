@@ -81,3 +81,10 @@ func TestNormalize(t *testing.T) {
 		t.Error("Normalize(\"\") is not empty")
 	}
 }
+
+// TestNewAllocations: minting a trace allocates only its string (diagnostics.md 11).
+func TestNewAllocations(t *testing.T) {
+	if n := testing.AllocsPerRun(100, func() { _ = New(Hab) }); n > 1 {
+		t.Fatalf("New allocates %v times, want at most 1", n)
+	}
+}

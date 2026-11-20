@@ -9,7 +9,13 @@ enum Trace {
     /// A new app trace.
     static func new() -> String {
         var g = SystemRandomNumberGenerator()
-        return "a" + String((0..<11).map { _ in alphabet[Int(g.next() & 31)] })
+        var r: UInt64 = g.next() // 64 bits; 11 characters take 55
+        var s = "a"
+        for _ in 0..<11 {
+            s.append(alphabet[Int(r & 31)])
+            r >>= 5
+        }
+        return s
     }
 
     /// Whether `s` has a trace's form: a, g or h, then 11 upper-case Crockford characters.

@@ -247,7 +247,7 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 			return c.Err()
 		}
 		if m.Error != nil {
-			return &Error{Code: m.Error.Code, Message: m.Error.Message, Data: m.Error.Data}
+			return &Error{Code: m.Error.Code, Message: m.Error.Message, Data: m.Error.Data, Trace: string(m.Trace)}
 		}
 		if result == nil {
 			return nil

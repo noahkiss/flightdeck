@@ -24,14 +24,13 @@ const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // New returns a new trace made by origin, one of App, Gff and Hab.
 func New(origin byte) string {
-	var r [Len - 1]byte
-	rand.Read(r[:])
-	b := make([]byte, Len)
+	var b [Len]byte
+	rand.Read(b[1:])
 	b[0] = origin
-	for i, x := range r {
-		b[i+1] = alphabet[x&31]
+	for i := 1; i < Len; i++ {
+		b[i] = alphabet[b[i]&31]
 	}
-	return string(b)
+	return string(b[:])
 }
 
 // Valid reports whether s is a trace in its written form: a known origin, then 11 upper-case

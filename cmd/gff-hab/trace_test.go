@@ -64,6 +64,10 @@ func TestTracePeer(t *testing.T) {
 		t.Fatalf("want one pane.read line on each hab, got a %q, b %q", la, lb)
 	}
 	id := la[0][4]
+	// The failed call's error names the trace, so the user can look it up.
+	if ce.Trace != id || !strings.Contains(err.Error(), "(trace "+id+")") {
+		t.Errorf("error %q, trace %q; want the logged %s", err, ce.Trace, id)
+	}
 	if id[0] != trace.Gff || lb[0][4] != id {
 		t.Fatalf("traces: a %s, b %s; want one g trace on both", id, lb[0][4])
 	}

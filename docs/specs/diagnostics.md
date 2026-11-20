@@ -491,18 +491,24 @@ with the line before it. Until the holder's next build, its lines carry local ti
   new `h` trace, and the failed-request line notes `trace_replaced`. This covers a wrong case, a
   wrong length and a value that is not a JSON string. The request itself goes on. A peer or a
   module can then never write free text into a `safe` key.
-- A request without one gets a new `h` trace.
+- A request without one gets a new `h` trace. A notification from a client gets none: gff-hab
+  drops it before the check.
 - **Who sends one.** `gff` gives each call a new `g` trace, unless the call's context already
-  carries one. The app gives each call a new `a` trace (`RPCClient`). The `gff lb` and `gff heavy`
-  commands share their code with gff-hab and send none, so gff-hab makes an `h` trace for them.
+  carries one. The app gives each call a new `a` trace (`RPCClient`). Some `gff` commands send
+  none, so gff-hab makes an `h` trace for them: `gff lb` and `gff heavy`, which share their code
+  with gff-hab, and `gff round`, `restart`, `friction` and `group`, which run `gff-hab`.
 - The response carries the trace. Events do not, for now: `structure.Event` carries no trace, and
-  `Publish` (`internal/control/server.go:431`) has no request context.
+  `Server.Publish` has no request context.
+- **A failed call shows its trace.** The Go client puts the response's trace on `control.Error`,
+  and the error's text ends `(trace <id>)`, so `gff` and the gff-hab commands print it with the
+  error. The app puts it on `RPCError` and logs it through `AppLog` with the method and the error
+  kind; a trace holds no content, so it is public. The user then runs `gff-hab logs --trace <id>`.
 - gff-hab keeps the trace in the request's `context.Context`. In stage 4 it appears on the failed
   request line, as `, trace <id>` at its end, then `, trace_replaced` when 5.2 replaced it. From
   stage 5, `diaglog` adds it to every line the request writes.
-- Old peers and clients ignore the member: `internal/control/wire.go:20-27` with the decode at
-  `internal/control/conn.go:424`, Go's `encoding/json` in the Go clients, and the Swift decoder
-  (`RPCClient.swift:201`). The change needs no revision. The `trace` capability says
+- Old peers and clients ignore the member: the type `message` in `internal/control/wire.go` and
+  its decode in `conn.handleLine`, Go's `encoding/json` in the Go clients, and the Swift decoder in
+  `RPCClient`. The change needs no revision. The `trace` capability says
   the hab honours it.
 
 **Decision: a top-level JSON-RPC member, on requests and responses.** Params are typed per method
@@ -811,7 +817,7 @@ user one line of text.
 
 | Field | Meaning |
 |---|---|
-| `t`, `trace` | Time, and a new trace (an `h` trace: gff-hab makes it) |
+| `t`, `trace` | Time, and the trace of the `diag.friction` request (5.2): the client's, else the `h` trace gff-hab made for it |
 | `client` | The client kind from the hello: `app`, `terminal`, `cli`, `script` |
 | `session`, `pane` | When given |
 | `blocker` | `true` for a blocker (9.1); absent for a preference |
@@ -921,7 +927,7 @@ None of these is an app row: each is an operator limit or has one right answer (
 | `<state>/health.jsonl` | 500 lines |
 | `<state>/friction/` | 200 notes, each at most 256 KiB |
 | App container | `app.log` 2 MiB, MetricKit 20 files |
-| CPU per request | One atomic add per tally. A failed request adds one line |
+| CPU per request | One atomic add per tally. A failed request adds one line. A request without a valid trace mints one: 11 random bytes and one string allocation |
 | Hot paths | No logging per PTY read, frame, ring write, keystroke, data stream chunk or terminal query |
 | Disk wake-ups | An idle hab writes nothing: no marker update, no tally flush when nothing changed |
 | Watchdog | Nothing on a loop's own path. One no-op probe per loop every 5 seconds, and one check |

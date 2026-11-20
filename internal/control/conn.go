@@ -430,17 +430,14 @@ func (c *conn) handleLine(line []byte) {
 		return
 	}
 	m.start = time.Now()
-	id, replaced := trace.Check(string(m.Trace))
+	if len(m.ID) == 0 {
+		return // a notification from the client, valid or not; reading it already counted as liveness
+	}
+	id, replaced := checkTrace(string(m.Trace))
 	m.Trace, m.traceReplaced = wireTrace(id), replaced
 	if m.JSONRPC != "2.0" || m.Method == "" {
-		if len(m.ID) == 0 {
-			return
-		}
 		c.send(response(m.ID, m.Trace, nil, c.withSeq(protoErr(codeInvalidRequest, "not a JSON-RPC 2.0 request"))))
 		return
-	}
-	if len(m.ID) == 0 {
-		return // a notification from the client; reading it already counted as liveness
 	}
 	if !c.hello {
 		if m.Method != "hab.hello" {
@@ -1090,6 +1087,9 @@ func (c *conn) handleTrust(m message) {
 // TraceCapability says the hab honours the request member trace: it checks it, answers it, and
 // passes it to a peer hab (diagnostics.md 5.2).
 const TraceCapability = "trace"
+
+// checkTrace is trace.Check; a test counts its calls.
+var checkTrace = trace.Check
 
 // reqCtx is parent carrying the request's trace (diagnostics.md 5.2), so a call the request makes
 // to a peer hab carries it too (5.4).

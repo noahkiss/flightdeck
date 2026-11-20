@@ -23,6 +23,8 @@ final class AppLogSourceTests: XCTestCase {
         "RPC/RPCClient.swift": [
             "word: method", // an API method name read from the line, or "unknown"
             "word: Self.kind(of: error)", // a decoding error's kind
+            "word: method", // failedCall: an API method name
+            "id: tr", // failedCall: a trace in its checked form (diagnostics.md 5.2)
         ],
     ]
 
