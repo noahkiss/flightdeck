@@ -16,6 +16,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
+	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -66,12 +67,16 @@ func newMeshPairEnv(t *testing.T, path string, env ...string) *meshPair {
 	d := shortDir(t)
 	standIn := sshStandIn(t, map[string]string{"hab-a": a.sock, "hab-b": b.sock})
 	filesA, filesB := filepath.Join(d, "a.toml"), filepath.Join(d, "b.toml")
-	writePeers(t, filesA, "bee", "hab-b")
-	writePeers(t, filesB, "ay", "hab-a")
+	// Each entry is pinned from the start. The first pin replaces the link that just came up
+	// (mesh.md 4.4), and a call forwarded in that moment would find no link.
+	idA, idB := habKeyID(t, a.state), habKeyID(t, b.state)
+	writeFile(t, filesA, fmt.Sprintf("[[peers]]\nlabel = \"bee\"\nendpoints = [\"hab-b\"]\ndevice_id = %q\n", idB))
+	writeFile(t, filesB, fmt.Sprintf("[[peers]]\nlabel = \"ay\"\nendpoints = [\"hab-a\"]\ndevice_id = %q\n", idA))
 	for _, x := range []struct {
 		e     *habEnv
 		peers string
-	}{{a, filesA}, {b, filesB}} {
+		id    string
+	}{{a, filesA, idA}, {b, filesB, idB}} {
 		pathList := standIn + string(os.PathListSeparator) + os.Getenv("PATH")
 		if path != "" {
 			pathList = path + string(os.PathListSeparator) + pathList
@@ -82,17 +87,52 @@ func newMeshPairEnv(t *testing.T, path string, env ...string) *meshPair {
 			"XDG_RUNTIME_DIR=" + shortDir(t),
 		}, env...)
 		x.e.serve()
+		if got := welcome(t, x.e.sock).DeviceID; got != x.id {
+			t.Fatalf("hab serves as %s, want the pinned %s", got, x.id)
+		}
 	}
 	if w := welcome(t, a.sock); !strings.Contains(strings.Join(w.Capabilities, " "), channels.Capability) {
 		t.Fatalf("capabilities %v", w.Capabilities)
 	}
 	waitPeer(t, a.sock, "bee", "a sees b online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
 	waitPeer(t, b.sock, "ay", "b sees a online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
+	// A peer row is online while either link is up (mesh.md 4.3), but a call forwards only over
+	// this hab's own link. Wait for both own links, so the first forward finds its link up.
+	waitOwnLink(t, a, "bee")
+	waitOwnLink(t, b, "ay")
 	t.Cleanup(func() {
 		writeFile(t, filepath.Join(a.work, "end"), "")
 		writeFile(t, filepath.Join(b.work, "end"), "")
 	})
 	return &meshPair{a: a, b: b}
+}
+
+// waitOwnLink waits until e's own link to the peer label is up. confirm.list marks a target
+// ready only then, with the same link check that a forward to a peer's panes makes.
+func waitOwnLink(t *testing.T, e *habEnv, label string) {
+	t.Helper()
+	c := e.control()
+	waitUntil(t, "own link to "+label, func() bool {
+		var l api.ConfirmList
+		call(t, c, "confirm.list", api.ConfirmListParams{}, &l)
+		for _, tg := range l.Targets {
+			if tg.Host == label {
+				return tg.Ready
+			}
+		}
+		return false
+	})
+}
+
+// habKeyID makes the host key a gff-hab with this state folder will use, and returns its
+// device id.
+func habKeyID(t *testing.T, state string) string {
+	t.Helper()
+	k, err := habkey.LoadOrCreate(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k.Fingerprint()
 }
 
 // anyID stands for a message id not known yet; it has an id's length.
