@@ -32,7 +32,9 @@ type debugRecord struct {
 }
 
 // debugSwitch holds whether gff-hab writes its debug lines. printf costs one atomic load when
-// debug is off.
+// no window is open. A window ends by the wall clock: Go's timers run on the monotonic clock,
+// which stops while the machine sleeps, so printf checks the wall time against the window's end
+// and the end timer arms itself again while the wall time is short of it.
 type debugSwitch struct {
 	path    string
 	env     bool
@@ -40,7 +42,8 @@ type debugSwitch struct {
 	now     func() time.Time
 	changed func(on bool, until time.Time) // the marker, for gff-hab status; called with mu held
 
-	on atomic.Bool
+	on      atomic.Bool
+	untilNs atomic.Int64 // the open window's end in Unix nanoseconds; 0: none
 
 	mu     sync.Mutex
 	until  time.Time
@@ -62,6 +65,10 @@ func openDebug(state string, env bool, logf func(string, ...any), now func() tim
 		logf("debug: %v", err)
 	case json.Unmarshal(b, &r) != nil || !r.Until.After(now()):
 		os.Remove(d.path)
+	case r.Until.After(now().Add(control.DebugMax + time.Minute)):
+		// No diag.debug writes this: a hand edit, a damaged file or a clock that went back.
+		os.Remove(d.path)
+		logf("debug: the window in %s ends more than %s ahead; removed it", debugFile, control.DebugMax)
 	default:
 		d.open(r.Until)
 		logf("debug on until %s, a window opened before this start", r.Until.UTC().Format(time.RFC3339))
@@ -74,11 +81,17 @@ func openDebug(state string, env bool, logf func(string, ...any), now func() tim
 // open turns debug on until t and arms its end. Called with d.mu held.
 func (d *debugSwitch) open(t time.Time) {
 	d.until = t
+	d.untilNs.Store(t.UnixNano())
 	d.on.Store(true)
+	d.arm(t)
+}
+
+// arm sets the timer that ends the window at t. Called with d.mu held.
+func (d *debugSwitch) arm(t time.Time) {
 	if d.timer != nil {
 		d.timer.Stop()
 	}
-	d.timer = time.AfterFunc(t.Sub(d.now()), func() { d.end(t) })
+	d.timer = time.AfterFunc(t.Sub(d.now().Round(0)), func() { d.end(t) })
 }
 
 // end closes the window that ends at t, unless a later Set replaced it.
@@ -88,7 +101,13 @@ func (d *debugSwitch) end(t time.Time) {
 		d.mu.Unlock()
 		return
 	}
+	if d.now().Round(0).Before(t) { // the wall clock went back: wait for the rest
+		d.arm(t)
+		d.mu.Unlock()
+		return
+	}
 	d.until, d.timer = time.Time{}, nil
+	d.untilNs.Store(0)
 	d.on.Store(d.env)
 	os.Remove(d.path)
 	d.changed(d.env, time.Time{})
@@ -96,9 +115,14 @@ func (d *debugSwitch) end(t time.Time) {
 	d.logf("debug off: the window ended")
 }
 
-// printf writes a debug line when debug is on.
+// printf writes a debug line when debug is on: GFF_HAB_DEBUG, or a window whose end the wall
+// clock has not reached.
 func (d *debugSwitch) printf(format string, args ...any) {
-	if d.on.Load() {
+	if d.env {
+		d.logf(format, args...)
+		return
+	}
+	if u := d.untilNs.Load(); u != 0 && d.now().UnixNano() < u {
 		d.logf(format, args...)
 	}
 }
@@ -112,6 +136,7 @@ func (d *debugSwitch) Set(until time.Time) (api.DebugState, error) {
 			d.timer.Stop()
 		}
 		d.until, d.timer = time.Time{}, nil
+		d.untilNs.Store(0)
 		d.on.Store(d.env)
 		err := os.Remove(d.path)
 		d.changed(d.env, time.Time{})

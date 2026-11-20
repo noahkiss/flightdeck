@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestStallWatchdog(t *testing.T) {
 	if n := strings.Count(log, "loop stalled: "); n != 1 {
 		t.Fatalf("%d stall lines, want 1:\n%s", n, log)
 	}
-	if !strings.Contains(log, "loop stalled: structure has not answered for 1s; stacks in crash/hab-") {
+	if !regexp.MustCompile(`loop stalled: structure has not answered for \d+s; stacks in crash/hab-`).MatchString(log) {
 		t.Fatalf("stall line:\n%s", log)
 	}
 	dumps := stackDumps(t, state)

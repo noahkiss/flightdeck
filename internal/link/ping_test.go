@@ -38,3 +38,30 @@ func TestPing(t *testing.T) {
 		t.Fatal("Ping did not return after Close")
 	}
 }
+
+// Attaching is true while the event loop attaches a holder's panes, the long task the stall
+// watchdog excludes, and false once the attach ends (diagnostics.md 4.7).
+func TestAttachingExcluded(t *testing.T) {
+	hdir := shortDir(t)
+	held, release := make(chan bool, 1), make(chan struct{})
+	attachedSeam = func(string) {
+		select {
+		case held <- true:
+			<-release
+		default:
+		}
+	}
+	t.Cleanup(func() { attachedSeam = nil })
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	startHolder(t, hdir, "one", 0) // after Open, whose first scan would wait on the seam
+	select {
+	case <-held:
+	case <-time.After(waitLong):
+		t.Fatal("the holder was never attached")
+	}
+	if !l.Attaching() {
+		t.Error("Attaching is false during an attach")
+	}
+	close(release)
+	waitFor(t, "the attach to end", func() bool { return !l.Attaching() })
+}

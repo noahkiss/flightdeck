@@ -194,6 +194,10 @@ type Link struct {
 
 	pruned chan struct{} // gets a value after each prune; tests wait on it
 
+	// attaching counts the holder attaches running on the event loop: each restores every
+	// pane's checkpoint in one task, which may take long. The stall watchdog excludes it.
+	attaching atomic.Int32
+
 	// sbCap is the scrollback cap every parser has now: ScrollbackBytes, or its share of
 	// ScrollbackBudget. New and restored parsers get it too. Read without l.mu.
 	sbCap atomic.Int64
@@ -363,6 +367,8 @@ func (l *Link) scanWith(force bool) {
 			continue
 		}
 		l.run(func() {
+			l.attaching.Add(1)
+			defer l.attaching.Add(-1)
 			// On the event loop: a holder whose end event was already handled is not attached;
 			// one that ends later has its end event handled after this.
 			l.mu.Lock()
@@ -559,6 +565,10 @@ func (l *Link) prune() {
 // gff-hab's stall watchdog sends it (diagnostics.md 4.7): a ping that does not return is a
 // stuck loop.
 func (l *Link) Ping() { l.run(func() {}) }
+
+// Attaching reports whether the event loop is attaching a holder's panes: a checkpoint restore
+// per pane, in one task, which the stall watchdog does not count as a stall (diagnostics.md 4.7).
+func (l *Link) Attaching() bool { return l.attaching.Load() > 0 }
 
 // run runs fn on the event loop and waits for it. It returns false when the link closed first.
 func (l *Link) run(fn func()) bool {

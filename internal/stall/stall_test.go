@@ -3,6 +3,7 @@ package stall
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -231,7 +232,7 @@ func TestLoopsIndependent(t *testing.T) {
 	a, b := &gate{}, &gate{}
 	c := &fakeClock{}
 	ev := &events{}
-	w := New(Config{Probes: []Probe{{"structure", a.run}, {"link", b.run}}, Clock: c.read,
+	w := New(Config{Probes: []Probe{{Name: "structure", Run: a.run}, {Name: "link", Run: b.run}}, Clock: c.read,
 		Stalled: func(n string, d time.Duration) { ev.add("stalled %s", n) }})
 	a.block()
 	defer a.free()
@@ -254,7 +255,7 @@ func TestStartClose(t *testing.T) {
 	g.block()
 	defer g.free()
 	stalled := make(chan string, 1)
-	w := New(Config{Probes: []Probe{{"link", g.run}}, Every: 10 * time.Millisecond, After: 50 * time.Millisecond,
+	w := New(Config{Probes: []Probe{{Name: "link", Run: g.run}}, Every: 10 * time.Millisecond, After: 50 * time.Millisecond,
 		Stalled: func(n string, _ time.Duration) {
 			select {
 			case stalled <- n:
@@ -270,5 +271,36 @@ func TestStartClose(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no stall reported")
+	}
+}
+
+// A loop busy with an operation the spec excludes is not reported while Busy says so; its wait
+// restarts when the operation ends (4.7).
+func TestBusyExcluded(t *testing.T) {
+	g := &gate{}
+	c := &fakeClock{}
+	ev := &events{}
+	var busy atomic.Bool
+	busy.Store(true)
+	w := New(Config{Probes: []Probe{{Name: "link", Run: g.run, Busy: busy.Load}}, Clock: c.read,
+		Stalled: func(n string, d time.Duration) { ev.add("stalled %s %s", n, d) }})
+	g.block()
+	defer g.free()
+	for range 10 {
+		w.Check()
+		c.tick(5 * time.Second)
+	}
+	if got := ev.get(); len(got) != 0 {
+		t.Fatalf("an excluded operation was reported: %q", got)
+	}
+	busy.Store(false) // the last busy check was 5 s ago: the wait counts from there
+	w.Check()
+	if got := ev.get(); len(got) != 0 {
+		t.Fatalf("reported 5 s after the operation: %q", got)
+	}
+	c.tick(5 * time.Second)
+	w.Check()
+	if got := ev.get(); len(got) != 1 || got[0] != "stalled link 10s" {
+		t.Fatalf("a stall after the operation: %q", got)
 	}
 }

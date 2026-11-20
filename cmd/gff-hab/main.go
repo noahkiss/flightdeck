@@ -581,7 +581,7 @@ func serve(args []string) error {
 	// The stall watchdog (4.7) probes the store's lock; the link's loop joins it below.
 	probes := []stall.Probe{{Name: "structure", Run: func() { store.Health() }}}
 	if lk != nil {
-		probes = append(probes, stall.Probe{Name: "link", Run: lk.Ping})
+		probes = append(probes, stall.Probe{Name: "link", Run: lk.Ping, Busy: lk.Attaching})
 	}
 	defer hd.startWatchdog(probes).Close()
 	diagStoreSeam(store)

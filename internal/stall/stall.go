@@ -25,6 +25,9 @@ const (
 type Probe struct {
 	Name string
 	Run  func()
+	// Busy, when set, reports a long operation the loop runs on purpose (4.7 excludes it). While
+	// it reports true, the probe's wait restarts at each check, so the operation is never a stall.
+	Busy func() bool
 }
 
 // Clock reads the wall time and the monotonic time. Across a sleep of the machine the wall time
@@ -155,7 +158,7 @@ func (w *Watchdog) Check() {
 			}
 		}
 		if l.inFlight {
-			if slept {
+			if slept || (l.p.Busy != nil && l.p.Busy()) {
 				l.sent = mono
 				continue
 			}

@@ -32,7 +32,7 @@ const stacksTime = "20060102T150405.000Z"
 const dumpEvery = time.Hour
 
 // writeStacks writes every goroutine's stack to a new file in crash/ and returns its name. It
-// then keeps the newest crashKeep files (4.3).
+// then keeps the newest stacksKeep dumps; crash traces have their own keep (4.3).
 func (d *habDiag) writeStacks() (string, error) {
 	dir := filepath.Join(d.state, crashDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
