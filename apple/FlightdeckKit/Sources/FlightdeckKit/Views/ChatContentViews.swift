@@ -230,12 +230,12 @@ struct ToolCardView: View {
             Button {
                 withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
             } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
                     statusIcon
                     Text(sentence)
                         .lineLimit(typeSize.isAccessibilitySize ? nil : 3)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if card.status != .done {
+                    if card.status == .error || card.status == .denied {
                         Text(statusWord)
                             .font(.caption)
                             .foregroundStyle(statusColor)
@@ -499,6 +499,8 @@ struct PinnedBanners: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
                 .padding(.bottom, 4)
+                // The banners keep their height; the transcript gives way at large text sizes.
+                .fixedSize(horizontal: false, vertical: true)
             }
             .sheet(item: $open) { p in
                 PinnedSheet(pinned: p, close: { open = nil })
@@ -522,6 +524,8 @@ struct PinnedBanners: View {
                     .accessibilityHidden(true)
                 Text(bannerText(line))
                     .font(.subheadline)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption.weight(.semibold))

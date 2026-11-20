@@ -69,7 +69,7 @@ enum DemoChat {
             msg(s, 2, .tool, 19, tool: ChatTool(input: input(["command": "npm run bench -- search"]), name: "Bash", output: "search 'tomato': 840 ms\nsearch 'bean': 910 ms", status: .done, target: "npm run bench -- search")),
             msg(s, 3, .agent, 18, text: "Each search scans every row. A full-text index should fix it."),
             msg(s, 4, .user, 12, text: "The nightly import rebuilds the catalog table, so keep the index in the import too.", sender: "import-agent"),
-            msg(s, 5, .tool, 11, tool: ChatTool(input: input(["file_path": "src/search.ts", "old_string": "rows.filter(r => r.name.includes(q))", "new_string": "db.fts('catalog', q)"]), name: "Edit", output: "The file was updated.", status: .done, target: "src/search.ts")),
+            msg(s, 5, .tool, 11, tool: ChatTool(input: input(["file_path": "src/search.ts", "old_string": "  return rows.filter(r => r.name.includes(q))", "new_string": "  return db.fts('catalog', q)"]), name: "Edit", output: "The file src/search.ts has been updated. Here's the result of running `cat -n` on a snippet of the edited file:\n    18\u{2192}export function search(q: string) {\n    19\u{2192}  return db.fts('catalog', q)\n    20\u{2192}}", status: .done, target: "src/search.ts")),
             msg(s, 6, .tool, 1, tool: ChatTool(input: input(["command": "npm test"]), name: "Bash", status: .running, target: "npm test")),
         ]
     }

@@ -674,7 +674,13 @@ struct ComposerView: View {
                 if a.kind == .trust {
                     TrustCardView(model: model, openTerminal: openTerminal)
                 } else {
-                    RequestArea(agent: a, model: model, openTerminal: openTerminal)
+                    ScrollView {
+                        RequestArea(agent: a, model: model, openTerminal: openTerminal)
+                    }
+                    // A tall request (large text, many options) scrolls instead of squeezing the chat and the composer.
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: typeSize.isAccessibilitySize ? 300 : 440)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             } else if let note = model.answerNote {
                 Label(note, systemImage: "checkmark.circle.fill")
