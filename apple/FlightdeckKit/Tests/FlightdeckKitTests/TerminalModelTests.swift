@@ -16,6 +16,9 @@ final class TerminalModelTests: XCTestCase {
     private func model(_ pane: String, _ conn: HabConnection) -> TerminalModel {
         let m = TerminalModel(pane: pane, connection: conn)
         m.sizeDelay = .milliseconds(10)
+        // These tests check the size rule with no take on open, as on the Mac;
+        // TerminalFitTests covers iOS's request on open.
+        m.requestOnOpen = false
         return m
     }
 
