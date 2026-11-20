@@ -738,6 +738,7 @@ shared with them, and a change to it changes both specs.
 | `level` | The highest `level` in the batch, or absent. A hint, never a push of its own |
 | `last_ok` | `GFF_ROUND_LAST_OK` (5.1) |
 | `actions` | `capcom` only, from stage A9: the round's `actions` (3), or absent. The home hab caps them by its level (`capcom-service.md` 9.6) |
+| `by_person` | `capcom` only, from stage A10: true when the round has no `created_by`. Its batch does not count toward Capcom's daily turn budget (`capcom-service.md` 9.3) |
 
 - **Size.** The whole message fits the channel limit of 64 KiB (`mesh.md` 6.3), a fixed ceiling
   (4.7); the event block is cut first, with the count of what it left out.
@@ -767,8 +768,8 @@ shared with them, and a change to it changes both specs.
   (`capcom-service.md` 9.5). The service answers once: `accepted` (stored; Capcom looks at it in
   an event turn of its own), `duplicate` (that message id was already accepted), or `declined`
   with a reason word from an open set (today `off`: the user turned Capcom's round messages off).
-  Quiet hours and the daily turn budget never decline: the message is accepted and waits. The
-  run waits for no turn.
+  Quiet hours and the daily turn budget never decline: the message is accepted, and the budget
+  may hold it. The run waits for no turn.
 - **The second answer** (owner, 2026-11-06; W1 in 12). After the turn that took the message,
   Capcom answers once more with an `outcome`: `told` (it wrote to the user), `quiet` (it did
   not), `acted` (from A9, it ran an action the round allows) or `unseen` (no turn took it)
@@ -844,7 +845,8 @@ shared with them, and a change to it changes both specs.
   above, and no lock (`capcom-service.md` 9.5).
 
 Decision: a `capcom` run ends at Capcom's answer, not at its turn. Reason: quiet hours and the
-budget can hold an item for hours, longer than any run timeout; the run's job is a durable
+budget can hold an item for hours, longer than any run timeout (from A10 quiet hours hold only
+Capcom's pushes, `capcom-service.md` 9.2); the run's job is a durable
 hand-over. What Capcom did shows in its thread.
 
 Decision: both modes travel over channels, with the round lock on the receiving hab for a

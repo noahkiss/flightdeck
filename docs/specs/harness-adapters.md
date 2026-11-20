@@ -1540,11 +1540,11 @@ One setting decides how far a new agent session may go without asking: `agent.st
 | Value | Means | Claude Code | Codex | opencode |
 |---|---|---|---|---|
 | `ask` (default) | The harness's own default: it asks before edits and commands | No flag | No flag | No change |
-| `edits` | File edits without asking; commands still ask | `--permission-mode acceptEdits` | `--full-auto` | Unverified |
-| `bypass` | No permission prompts | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` | Unverified |
+| `edits` | File edits without asking; commands still ask | `--permission-mode acceptEdits` *(gk)* | `--full-auto` *(gk)* | Unverified |
+| `bypass` | No permission prompts | `--permission-mode bypassPermissions` *(gk)* | `--dangerously-bypass-approvals-and-sandbox` *(gk)* | Unverified |
 
-- **Unverified.** The Claude Code and Codex flags come from each harness's documented CLI, not
-  yet from a test against the pinned versions. opencode sets permissions in its config, and a
+- **Unverified.** The Claude Code and Codex flags are general knowledge *(gk)*: no page was read
+  for them and no test runs them against the pinned versions. opencode sets permissions in its config, and a
   per-process override is not checked. Until a row is checked, the hab adds nothing for it and
   logs one line per start. The stage that builds this checks each flag first.
 - **Where it applies.** Every start of a harness through `session.create` with `harness` set:
@@ -1558,9 +1558,12 @@ One setting decides how far a new agent session may go without asking: `agent.st
 - **Read at each start.** A change applies to the next start; a running session keeps its mode.
 - The app shows the mode on a session's details when it is not `ask`.
 
-Decision: one hab-side preference for the start mode, with no level. Reason: the owner wants one
-global setting for the mode every new session starts in. A level never sets a harness's own
-bypass flag (`app.md` 20.2), so the level picker leaves it alone; the user sets it once.
+Recommended, open for the owner (`capcom-service.md` 16, Q15): one hab-side preference for the
+harness permission mode every new session starts in, with no level. Reason: the owner asked for
+one global setting for the level a new pane starts at, and named Claude Code's bypass mode as
+the value wanted. No pane has a level of its own today: levels are the app's picker. The other reading
+is the level the picker starts at for a new device or hab. A level never sets a harness's own
+bypass flag (`app.md` 20.2), so the level picker leaves this preference alone.
 
 Not built yet. Its acceptance: each value adds its flag on a fake harness's argv for Claude Code
 and Codex; an explicit flag in `harness_args` or an alias suppresses it; `session.resume` and

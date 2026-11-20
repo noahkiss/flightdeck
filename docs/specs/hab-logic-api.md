@@ -2013,8 +2013,8 @@ Limits:
 ### 3.13 Session actions
 
 A named action on a session, which the hab translates for the harness in its pane. The Capcom
-service keeps agents fresh with it (`capcom-service.md` 5.4); the owner and other agents may use
-it under the same rule. Capability `session-action` means `session.action` works.
+service keeps agents fresh with it (`capcom-service.md` 5.4); the owner may use it too.
+Capability `session-action` means `session.action` works.
 
 **`session.action {session, action, follow_up}`** answers at once with `{id, state}`, as
 `agent.compact` does (`harness-adapters.md`, Self-compact). `session` is named as in 3.11,
@@ -2035,8 +2035,8 @@ not yet prove it against the pinned harness version; the stage that builds it ch
 | Action | Claude Code | Codex | opencode |
 |---|---|---|---|
 | `compact` | `/compact` through `session.send`'s path. Start: the `PreCompact` hook or a `compact_boundary` record; end: `SessionStart` with source `compact`, or the record. Built for an agent's own pane and for group members (`harness-adapters.md`, Self-compact; `groups.md` 9.2) | `/compact` through the same path. End: the rollout's `compacted` record, which the chat view already reads (`harness-adapters.md`, Codex). Unverified: no Codex hook reports a compaction, so the record is the only end signal | Unverified: the server API's compaction route in opencode 2.x. Until checked, `unavailable` |
-| `clear` | `/clear` through the same path. End: `SessionStart` with source `clear`, which binds the new native session id to the pane, as the hook client already handles (`internal/hook/client.go`). Unverified: the source word against the pinned version | Unverified: `/new` starts a new conversation in the TUI, and its `SessionStart` hook binds the new id. Until checked, `unavailable` | Unverified: a new session through the server API that the TUI then shows. Until checked, `unavailable` |
-| `restart`, `close`, `recreate` | The same for every harness: they use the resume book, `pane.close`, `session.close` and `session.create` (3.9). `recreate` is built for group members (`cmd/gff-hab/supervise.go`); this method makes it general |
+| `clear` | `/clear` through the same path. End: `SessionStart` with source `clear` *(gk)*, which binds the new native session id to the pane, as the hook client already handles (`internal/hook/client.go`). Unverified: the source word against the pinned version | Unverified: `/new` *(gk)* starts a new conversation in the TUI, and its `SessionStart` hook binds the new id. Until checked, `unavailable` | Unverified: a new session through the server API that the TUI then shows. Until checked, `unavailable` |
+| `restart`, `close`, `recreate` | The same for every harness: the resume book, `pane.close`, `session.close` and `session.create` (3.9). `recreate` is built for group members (`cmd/gff-hab/supervise.go`); this method makes it general | As Claude Code | As Claude Code |
 
 - **`unavailable`** names the harness and the action. The caller may `recreate` instead, which
   works for every harness.
@@ -2050,12 +2050,13 @@ not yet prove it against the pinned harness version; the stage that builds it ch
 - **In memory.** A gff-hab restart drops a pending action with no event. A `recreate` cut short
   undoes its rename, as a group swap does.
 
-**Who may run it.** The rule of `pane.type` (3.12) on the session's pane, at the same doors:
-whoever may type into that pane may run an action on its session. Under `agents` the target is
-an agent's pane by rule, so every action is open there. Never the caller's own session: an agent
-compacts itself with `agent.compact`. The owner's door runs any action at every value.
-`compact` and `clear` type, so they pass the send gate of 3.12 at every door, the owner's
-included.
+**Who may run it.** The owner's door, at every value. The Capcom route, wherever the rule of
+`pane.type` (3.12) lets Capcom type into the session's pane, on this hab or through its forward.
+Any other agent door gets `denied`: `close`, `clear` and `recreate` end another agent's work,
+which is more than the enveloped text Balanced allows (8, Q10). An agent compacts itself with
+`agent.compact`. Whether other agents get it under `all` is open for the owner
+(`capcom-service.md` 16, Q13). `compact` and `clear` type, so they pass the send gate of 3.12 at
+every door, the owner's included.
 
 **Logging.** A refused call logs the method, the action, the setting's value, and the caller's
 and target's pane ids. A granted call logs the action, the ids and the outcome. No log line
@@ -2063,8 +2064,8 @@ holds `follow_up` or a session name.
 
 **The CLI and the MCP tool.** `gff-hab action [-socket path | -via command] <session |
 label/name> <compact|clear|restart|close|recreate> [follow-up | -]`, the door picked as in 3.11.
-`gff-hab mcp` lists `session_action`, with `destructiveHint` and `openWorldHint` true, under the
-"only from a pane" rule of 3.12; a Capcom route counts as a pane route.
+`gff-hab mcp` lists `session_action` only on the Capcom route, with `destructiveHint` and
+`openWorldHint` true.
 
 Not built yet. Stage A10 (`capcom-service.md` 18) builds the method, the Claude Code
 translations, `restart`, `close` and a general `recreate`. Each unverified row is checked and
