@@ -21,6 +21,11 @@ public actor FakePanes {
         var exited: ExitedFrame?
         /// Echo input back as output, as a shell in cooked mode does.
         var echo = false
+        /// A full-screen program: it paints the whole screen again at each new
+        /// size, as an agent's interface does on SIGWINCH.
+        var repaint: (@Sendable (Int, Int) -> Data)?
+        /// A snapshot starts here: the last full repaint.
+        var screenStart: UInt64 = 0
     }
 
     /// One data connection. Frames go out through one queue, in the order
@@ -109,6 +114,24 @@ public actor FakePanes {
         p.rows = rows
         p.echo = echo
         panes[id] = p
+    }
+
+    /// Makes the pane a full-screen program that paints `screen(cols, rows)`
+    /// now and again at every new size.
+    public func setRepaint(_ id: String, _ screen: @escaping @Sendable (Int, Int) -> Data) async {
+        guard var p = panes[id] else { return }
+        p.repaint = screen
+        panes[id] = p
+        await paint(id)
+    }
+
+    private func paint(_ id: String) async {
+        guard var p = panes[id], let screen = p.repaint else { return }
+        p.screenStart = p.end
+        panes[id] = p
+        var d = Data("\u{1B}[H\u{1B}[2J".utf8)
+        d.append(screen(p.cols, p.rows))
+        await write(id, d)
     }
 
     public func size(_ id: String) -> (cols: Int, rows: Int)? {
@@ -238,6 +261,23 @@ public actor FakePanes {
         return true
     }
 
+    /// `pane.request`: owner only when the pane has none.
+    func request(pane: String, client: String) async throws -> String? {
+        guard let p = panes[pane] else { throw FakeFailure(kind: .notFound, hint: "no pane \(pane)") }
+        if p.owner == nil { await own(pane: pane, client: client, reason: .request) }
+        return panes[pane]?.owner
+    }
+
+    /// `pane.disown`: the pane keeps its size and has no owner.
+    func disown(pane: String, client: String) throws {
+        guard var p = panes[pane] else { throw FakeFailure(kind: .notFound, hint: "no pane \(pane)") }
+        guard p.owner == client else { throw FakeFailure(kind: .notOwner, hint: "not the owner") }
+        p.owner = nil
+        p.reason = .disown
+        panes[pane] = p
+        send(pane: pane, resizeFrame(p))
+    }
+
     func take(pane: String, client: String) async throws -> String? {
         guard panes[pane] != nil else { throw FakeFailure(kind: .notFound, hint: "no pane \(pane)") }
         await own(pane: pane, client: client, reason: .take)
@@ -291,6 +331,7 @@ public actor FakePanes {
         panes[pane] = p
         resizes.append((pane, cols, rows))
         send(pane: pane, resizeFrame(p))
+        await paint(pane)
     }
 
     // MARK: - Data connections
@@ -361,7 +402,7 @@ public actor FakePanes {
     }
 
     private func snapshotFrame(_ p: PaneState) -> DataFrame {
-        DataFrame.snapshot(offset: p.end, p.chunks.reduce(into: Data()) { $0.append($1.data) })
+        DataFrame.snapshot(offset: p.end, p.chunks.reduce(into: Data()) { if $1.offset >= p.screenStart { $0.append($1.data) } })
     }
 
     private func resizeFrame(_ p: PaneState) -> DataFrame {

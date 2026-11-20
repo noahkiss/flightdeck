@@ -14,6 +14,8 @@ enum DemoTerminal {
             await workbench.terminals.add(p, cols: 100, rows: 30, echo: true)
             await workbench.terminals.write(p, Data(shell(project: p == "%2" ? "seed-catalog" : p == "%4" ? "paper-lantern" : "tide-tables").utf8))
         }
+        // The blocked Claude session paints its permission prompt at any size.
+        await workbench.terminals.setRepaint("%1") { c, r in Data(agentScreen(cols: c, rows: r).utf8) }
         for p in ["%11", "%12", "%13"] {
             await attic.terminals.add(p, cols: 100, rows: 30, echo: true)
             await attic.terminals.write(p, Data(shell(project: "paper-lantern").utf8))
@@ -54,6 +56,75 @@ enum DemoTerminal {
             "\(esc)[32mPASS\(esc)[0m 2 packages\r\n",
             p,
         ].joined()
+    }
+
+    /// An agent's screen as a coding agent paints it, waiting on a permission
+    /// prompt, laid out for `cols` by `rows`. Invented text.
+    static func agentScreen(cols: Int, rows: Int) -> String {
+        let w = max(cols, 20)
+        let dim = "\(esc)[2m", bold = "\(esc)[1m", off = "\(esc)[0m"
+        let dot = "\(esc)[32m●\(off)"
+        let amber = "\(esc)[33m"
+        var lines: [String] = []
+        func say(_ text: String, first: String, rest: String, firstWidth: Int, style: String = "") {
+            let body = wrap(text, width: w - firstWidth)
+            for (i, l) in body.enumerated() {
+                lines.append((i == 0 ? first : rest) + style + l + (style.isEmpty ? "" : off))
+            }
+        }
+        say("Read(src/db/schema.ts)", first: "\(dot) ", rest: "  ", firstWidth: 2, style: bold)
+        say("Read 48 lines", first: "  \(dim)⎿\(off)  ", rest: "     ", firstWidth: 5, style: dim)
+        lines.append("")
+        say("Readings live in one table, keyed by station and time. A query by station needs an index.",
+            first: "\(dot) ", rest: "  ", firstWidth: 2)
+        lines.append("")
+        say("Edit(src/api/stations.ts)", first: "\(dot) ", rest: "  ", firstWidth: 2, style: bold)
+        say("Added 3 lines, removed 1 line", first: "  \(dim)⎿\(off)  ", rest: "     ", firstWidth: 5, style: dim)
+        lines.append("")
+        say("The chart now draws on the station page. One new index makes the query fast.",
+            first: "\(dot) ", rest: "  ", firstWidth: 2)
+        lines.append("")
+        // The permission box, as wide as the screen.
+        let inner = w - 4
+        func boxed(_ text: String, style: String = "") -> [String] {
+            wrap(text, width: inner).map { l in
+                let pad = String(repeating: " ", count: max(0, inner - l.count))
+                return "\(amber)│\(off) " + style + l + (style.isEmpty ? "" : off) + pad + " \(amber)│\(off)"
+            }
+        }
+        lines.append(amber + "╭" + String(repeating: "─", count: w - 2) + "╮" + off)
+        lines += boxed("Bash command", style: bold)
+        lines += boxed("")
+        lines += boxed("  npm run migrate")
+        lines += boxed("  Apply the new index", style: dim)
+        lines += boxed("")
+        lines += boxed("Do you want to proceed?")
+        lines += boxed("❯ 1. Yes", style: "\(esc)[36m")
+        lines += boxed("  2. Yes, and don't ask again for npm run commands in this folder")
+        lines += boxed("  3. No, and tell Claude what to do differently")
+        lines.append(amber + "╰" + String(repeating: "─", count: w - 2) + "╯" + off)
+        lines.append(dim + "  Esc to cancel" + off)
+        let shown = lines.suffix(max(rows - 1, 1))
+        return shown.joined(separator: "\r\n")
+    }
+
+    /// Words of `text` in lines of at most `width` characters.
+    static func wrap(_ text: String, width: Int) -> [String] {
+        guard !text.isEmpty else { return [""] }
+        let lead = String(text.prefix { $0 == " " })
+        var out: [String] = []
+        var line = lead
+        for word in text.split(separator: " ") {
+            let candidate = line.trimmingCharacters(in: .whitespaces).isEmpty ? line + word : line + " " + word
+            if candidate.count > width, !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                out.append(line)
+                line = lead + word
+            } else {
+                line = candidate
+            }
+        }
+        out.append(line)
+        return out.map { String($0.prefix(max(width, 1))) }
     }
 
     static let devServerStart = [

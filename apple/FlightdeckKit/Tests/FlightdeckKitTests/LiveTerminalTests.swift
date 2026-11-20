@@ -37,6 +37,9 @@ final class LiveTerminalTests: XCTestCase {
         await raw.start { await got.apply($0) }
 
         let m = TerminalModel(pane: pane, connection: conn)
+        // These tests check the size rule with no take on open, as on the Mac;
+        // TerminalFitTests covers iOS's request on open.
+        m.requestOnOpen = false
         m.containerChanged(CGSize(width: 1100, height: 760))
         m.start()
         await eventually("live", timeout: 10) { m.status == .live }

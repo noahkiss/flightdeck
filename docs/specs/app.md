@@ -1075,20 +1075,22 @@ Limits, at the bar of herdr, Rex and Paseo:
 - **Flow.** The app returns credit as it applies bytes (5.7). A hidden pane closes its stream.
 - **Resume.** The app keeps the holder offset after the last byte it applied. On reconnect it sends
   that offset and gets the rest, or a fresh snapshot (5.4).
-- **Size.** The PTY has one owner (6.1). The app never takes ownership by opening a pane. It takes
-  ownership when the owner types into the terminal view (6.2), or presses "fit to this screen"
-  (`pane.take`). Typing in the chat composer never changes ownership: that text goes through the
-  adapter, not the terminal keyboard.
-- **Not the owner.** The app draws the pane at the owner's size. On a narrow phone it scales down to
-  fit the width, and pinch zooms with horizontal pan.
-- **Keyboard bar.** Above the system keyboard: Esc, Tab, Ctrl, Alt, arrows, and keys the owner
-  adds. Modifiers are sticky: one tap for one key, a double tap to lock. More rows open as a
-  drawer. The bar is the owner's own, kept per device.
+- **Size.** The PTY has one owner (6.1). On iPhone and iPad the terminal opens **fitted**: at a
+  readable font, with the grid that fills the view (section 5.4). Opening takes only a pane that no client
+  owns (`pane.request`); it never takes a pane another client owns. The app takes ownership from
+  another client when the owner types into the terminal view (6.2), or chooses Fit (`pane.take`).
+  Typing in the chat composer never changes ownership: that text goes through the adapter, not
+  the terminal keyboard.
+- **Not the owner.** The app draws the pane at the owner's size, scaled down to fit the view. The
+  size control says so (section 5.4). Pinch zoom with horizontal pan is planned.
+- **Keyboard bar.** Under the terminal, also while the system keyboard is hidden: Esc, Tab, Ctrl,
+  Opt, arrows, and keys the owner adds. Modifiers are sticky: one tap for one key, a double tap to
+  lock (section 5.5). More rows open as a drawer. The bar is the owner's own, kept per device.
 - **Dictation.** A microphone key on the bar starts on-device dictation (13.4). A strip replaces the
   bar while it listens: a level meter, "Dictating…", and a stop button. The text goes to the pane
   as one bracketed paste when the owner stops. It never presses Enter on its own.
 - **Hardware keyboard.** On iPad and Mac, keys go straight to the pane. App shortcuts use Cmd only,
-  so no terminal key is lost.
+  so no terminal key is lost. With a hardware keyboard attached, the keyboard bar gives way (section 5.5).
 - **Selection and links.** Long press selects. Detected links open in the browser.
 - **Thumbnails.** The status board and the session switcher may show live thumbnails through
   observer streams (`observe: true`), which never take ownership (6.4). Only on iPad and Mac, and
@@ -1099,6 +1101,7 @@ Limits, at the bar of herdr, Rex and Paseo:
 | Case | Behaviour |
 |---|---|
 | The phone types, then the Mac types | Ownership follows the 300 ms debounce. The PTY resizes once per change, not per key |
+| The phone opens a pane a `gff` on a computer owns | The phone shows it at the owner's size and says so. Nothing on the computer changes until the phone types or chooses Fit (section 5.4) |
 | The phone drops while owner | The pane keeps its size and has no owner (6.5). The Mac does not reflow |
 | The pane exits | The view shows the exit status and offers "Close" or "Restart" |
 | The screen is marked suspect after a hab crash | A "redraw" control sends `pane.redraw` in snapshot mode. The app never sends Ctrl+L |
@@ -1148,13 +1151,17 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   reports that grid and it has held still for 100 ms: libghostty reports a new grid before its
   parser has resized. More than 4 MiB of held output is dropped and a `pane.redraw` snapshot asked
   for instead.
-- **Size rule.** The view's space only gives the size this client wants. It goes out with
-  `pane.set_desired_size` only while this client owns the pane, 120 ms after the last change. The
-  view reads its client id again on every welcome and resize frame, since a control reconnect
-  without the token gives it a new one.
-  Typing takes ownership through the hab's 300 ms debounce, so the app sends nothing extra
-  before it. Viewing, rotating and window resizes never send a size. "Fit to this screen" sends
-  `pane.take`. Pinch zoom with horizontal pan is not built yet.
+- **Size rule.** The view's space and the mode (section 5.4) give the size this client wants
+  (`PaneSizing`, `TerminalFit`). It goes out with `pane.set_desired_size` only while this client
+  owns the pane, 120 ms after the last change, and once when Host size is chosen. The view reads
+  its client id again on every welcome and resize frame, since a control reconnect without the
+  token gives it a new one. Typing takes ownership through the hab's 300 ms debounce, so the app
+  sends nothing extra before it. On iOS, the first welcome or resize frame of a stream that shows
+  no owner sends one `pane.request` while the view is Fitted. Otherwise viewing, rotating and
+  window resizes send no size until this client owns the pane. Fit sends `pane.take`; Host size
+  sends the host's size, then `pane.disown`. The fit font goes to libghostty with its
+  `set_font_size` action, converted from points (libghostty on iOS draws its size a third larger).
+  Pinch zoom with horizontal pan is not built yet.
 - **Input.** What libghostty writes goes to `pane.input` through one pump: one call in flight,
   keys typed meanwhile sent together in the next call, in order, at most 64 KiB per call.
   The cap keeps a large paste alive over a slow uplink (10.5, Large writes on a slow uplink).
@@ -1173,11 +1180,13 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   size after the debounce (`hab-logic-api.md` 6.2). So while this client does not own the pane,
   mouse motion, the mouse wheel and focus reports are dropped. Clicks and keys pass: they are meant
   as input. A wheel in a viewed mouse-mode program therefore does nothing until this client types or
-  presses "Fit to this screen".
+  chooses Fit.
 - **Keyboard.** Hardware keys reach libghostty's view directly on iPad and Mac; the app adds no
-  key shortcuts in the terminal. The phone uses libghostty-spm's keyboard bar: Esc, Tab, Ctrl and
-  Alt (one tap for one key, a double tap locks), arrows, a few symbols and Paste. Owner-added keys,
-  the drawer and the dictation key are not built yet.
+  key shortcuts in the terminal. On iOS the app draws its own key bar (section 5.5,
+  `TerminalKeyBar`) and hides libghostty-spm's. Ctrl and Opt live in `StickyModifiers`; the bar
+  writes that state into libghostty's sticky modifiers and reads it back when a key spends it, so
+  a key from the system keyboard gets them too. `GCKeyboard` tells when a hardware keyboard is
+  attached. Owner-added keys, the drawer and the dictation key are not built yet.
 - **Redraw** sends `pane.redraw` with mode `nudge`: a fresh snapshot, then the PTY one column
   narrower and back. Never Ctrl+L.
 - **One dark scheme** for the terminal, so the space around a scaled pane matches it.
@@ -1185,12 +1194,116 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   `EnvironmentValues.habConnections`. `TerminalScreen(pane:connection:)` is self-contained, for
   the session view to host beside the chat. Debug builds open a pane at launch with
   `-FlightdeckOpenPane <pane>`.
-- **Demo mode.** The fake hab serves tickets, data connections, input, ownership and redraw.
-  Every demo pane has an invented shell screen that echoes typing; the dev server pane prints a
-  request log every 2 s.
+- **Demo mode.** The fake hab serves tickets, data connections, input, ownership (take,
+  request, disown) and redraw. Every demo pane has an invented shell screen that echoes typing;
+  the dev server pane prints a request log every 2 s. The blocked Claude session's pane is a
+  full-screen agent waiting on a permission prompt: it paints its screen again at every new size,
+  so a fitted phone shows it at the phone's width. Debug launch arguments for screenshots:
+  `-FlightdeckKeyBar show` (the bar despite a hardware keyboard), `-FlightdeckKeyBarState armed`
+  or `locked` (Ctrl), `-FlightdeckTerminalSize host`.
 - **Not built:** selection and links, exit "Restart", `pane.activity` markers, thumbnails, more
   scrollback on demand, and closing and resuming data streams when the control connection comes
   back.
+
+### 5.4 Fit and host size
+
+What the audit found (2026-11-19, iOS 27.2): the terminal opened at the hab's size with text near
+7 pt, Fit sat in the More menu, Dynamic Type did nothing, and the iPad's terminal column drew at
+6 pt. The rules below replace that on iPhone and iPad. The Mac keeps its fixed 13 pt font and
+never asks for a pane on open; it follows the rest.
+
+**The font.** The terminal's font follows Dynamic Type within bounds, since a terminal needs
+columns:
+
+| Rule | Value |
+|---|---|
+| Size at the default text size (Large) | 13 pt |
+| Dynamic Type | 13 pt times the body style's growth from Large (17 pt): xSmall 14/17, AX5 53/17 |
+| Smallest | 11 pt, the minimum readable size. Fitted never draws smaller |
+| Largest | 24 pt, and never so large that the view holds fewer than 40 columns |
+| Steps | Half a point, so a small layout change does not reflow the pane |
+
+The column cap uses the cell's width as libghostty measures it (about 0.6 of the point size
+before the first measure), and aims at 41 columns so the grid's half-cell slack never leaves 39. When the view is too narrow for 40 columns at 11 pt, 11 pt wins.
+On an iPhone 17 Pro in portrait the default gives 51 columns; at AX5 the cap gives 16 pt and at
+least 40 columns. A pinch changes the font for that view until the next rule change (text
+size or view width).
+
+**The grid.** Fitted wants the grid that fills the view at that font: columns are the width over
+the cell width, rows the height over the cell height, each less half a cell so rounding never
+loses one (5.3, Grid equals the PTY). At least 2 columns and 1 row.
+
+**Two modes.** A control at the top right of the terminal shows the mode and the pane's size in
+cells: "Fitted · 50 × 38" or "Host size · 100 × 30". It opens a menu: Fit to this screen, Host
+size, and Redraw, with a check on the current mode. iPad shows the same control in its terminal
+column. The mode lives as long as the view; a new view opens fitted.
+
+| Mode | What the app wants | What it sends |
+|---|---|---|
+| Fitted (the default) | The fitted grid | On open, `pane.request` when the pane has no owner. While this client owns the pane, `pane.set_desired_size` with the fitted grid, 120 ms after the last change (rotation, a split's divider, text size) |
+| Host size | The pane's size as another client or nobody last set it | On choosing it: `pane.set_desired_size` with that size, then `pane.disown` when this client owns the pane. The stored size keeps a later typed takeover from resizing the pane |
+
+**Other clients** (hab-logic-api.md 6). The size contract does not change; the app only uses
+`pane.request` and `pane.disown`, which exist.
+
+- Another client owns the pane (a `gff` on a computer that typed or took it): opening never
+  resizes it. The app draws the pane at the owner's size, scaled to fit, and the control reads
+  "Host size" with the line "Another device sets this size." Choosing Fit sends `pane.take`; the
+  menu warns first: "Fit also resizes the terminal on the other device."
+- Nobody owns the pane: opening takes it with `pane.request` and fits it. A `gff` that only views
+  the pane then draws it at the phone's size, as it draws any owner's size.
+- Typing in the terminal view still takes ownership after the hab's debounce (6.2), in either
+  mode. In Fitted the pane then takes the fitted grid; in Host size it keeps its size.
+- An observer stream (thumbnails, 5.1) never fits and never sends a size.
+- The app gives the pane back with Host size, never on its own. Closing the view leaves the size;
+  a dropped connection leaves it with no owner (6.5).
+
+**Feedback.** Each action shows a short notice at the top of the terminal for about 2 s, and
+VoiceOver reads it:
+
+| Action | Notice |
+|---|---|
+| Fit, taken | "Fitted · 50 × 38" once the pane has that size |
+| Host size | "Host size · 100 × 30" |
+| Redraw | "Redrawn" when the hab answers |
+| The hab refuses | Plain words, from the error kind: "Another device has this terminal and kept its size." (`applied: false`), "This view only watches the terminal, so it can't change its size." (`invalid` for an observer), "This terminal is gone." (`not_found`), "Not connected. Try again when the hab is back." (the connection is down or the call timed out), "The hab refused the size." otherwise |
+
+**iPad.** The session split's terminal column fits by the same rule to its own width, so a
+divider at 50/50 on a 13-inch iPad in landscape gives about 85 columns at 13 pt. Moving the
+divider refits the pane while this client owns it.
+
+### 5.5 The key bar
+
+Sources: Moshi's keyboard guide (the toolbar stays with the system keyboard hidden; one tap arms
+Ctrl or Alt, a double tap within 400 ms locks it, a bar under the key shows it); Blink (smart keys
+hide with a hardware keyboard).
+
+- **Keys.** One row: Esc, Tab, Ctrl, Opt, Left, Down, Up, Right, then `|` `/` `~` `-` `_` `` ` ``
+  and Paste. Esc, Tab, Ctrl and Opt carry text labels. The row scrolls sideways; a Keyboard key at
+  the right end stays put and shows or hides the system keyboard.
+- **Targets.** Each key is at least 44 by 44 pt.
+- **Modifiers.** Ctrl and Opt each have three states:
+
+| State | How it is reached | How it looks | VoiceOver value |
+|---|---|---|---|
+| Off | Start; a tap on a locked key; a key typed while armed | Plain key | "Off" |
+| Armed | One tap | Tinted key | "On for the next key" |
+| Locked | A second tap within 400 ms of the first | Filled key with a bar under the label | "Locked" |
+
+  A tap on an armed key after 400 ms turns it off. The next key from the bar or the system
+  keyboard takes every armed and locked modifier; armed ones then turn off and locked ones stay.
+  The bar drives libghostty's sticky modifiers, so a key from the system keyboard gets them too.
+- **First-time hint.** The first time a modifier is armed on the device, one line shows above the
+  bar until the next key: "Ctrl is on for the next key. Tap twice to lock it." It never shows
+  again on that device.
+- **Keyboard hidden.** The bar stays under the terminal while the system keyboard is hidden, and
+  sits on top of it while shown.
+- **Hardware keyboard.** When a hardware keyboard is attached, the bar hides and every modifier
+  turns off. It comes back when the keyboard goes.
+- **Accessibility.** Every key and control has a VoiceOver label ("Escape", "Left arrow", "Paste",
+  "Show keyboard"). The bar, the size control and the notices keep working at the largest
+  accessibility text size: labels grow up to the AX1 size inside 44 pt keys and the row
+  scrolls, so no label wraps one letter per line.
 
 ---
 
@@ -2421,8 +2534,9 @@ Rules:
 - **Chat first on the phone.** A session opens in the chat view unless the harness has no chat
   reader. The terminal is one tap away.
 - **The switch stays on screen.** On the phone layout the Chat | Terminal switch holds the middle
-  of the navigation bar in both views. The terminal's Fit and Redraw go in the More menu there, so
-  its controls never push the switch off; its microphone stays in the bar. Beside the switch the
+  of the navigation bar in both views. The terminal's size control (Fit, Host size, Redraw;
+  section 5.4) sits on the terminal itself and Redraw also goes in the More menu, so its controls
+  never push the switch off; its microphone stays in the bar. Beside the switch the
   phone's bar holds one control and the More menu: Voice in the chat, the pane's microphone in
   the terminal. New conversation, Note friction, and Voice in the terminal, go in the More menu
   (owner report 2026-11-02: four controls covered the switch). iPad and Mac keep their header as
