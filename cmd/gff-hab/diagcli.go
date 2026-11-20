@@ -126,8 +126,8 @@ func statusCmd(args []string, out io.Writer) error {
 		}
 		r.Health.Last = &rec
 	}
-	if alive && m.Debug {
-		r.Debug = "on (GFF_HAB_DEBUG)"
+	if alive {
+		r.Debug = debugWord(m, now)
 	}
 	filepath.WalkDir(r.Logs, func(_ string, e os.DirEntry, err error) error {
 		if err == nil && !e.IsDir() {
@@ -150,6 +150,21 @@ func statusCmd(args []string, out io.Writer) error {
 	}
 	printStatus(out, r)
 	return nil
+}
+
+// debugWord is the debug line of gff-hab status (4.5, 4.8): a window from gff-hab debug, or
+// GFF_HAB_DEBUG, or off. A window whose end has passed is off, though its timer, which stops
+// while the machine sleeps, has not cleared the marker yet.
+func debugWord(m health.Marker, now time.Time) string {
+	switch {
+	case !m.Debug:
+		return "off"
+	case m.DebugUntil.IsZero():
+		return "on (GFF_HAB_DEBUG)"
+	case m.DebugUntil.After(now):
+		return "on until " + m.DebugUntil.Local().Format("2006-01-02 15:04:05") + " (gff-hab debug)"
+	}
+	return "off"
 }
 
 // markerAlive reports whether the process of a marker that is not clean still runs: its pid

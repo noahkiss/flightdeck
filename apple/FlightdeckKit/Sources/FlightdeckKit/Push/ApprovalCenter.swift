@@ -2,7 +2,6 @@ import Foundation
 import FlightdeckShared
 import HabAPI
 import Observation
-import os
 #if os(iOS)
 import UIKit
 #endif
@@ -20,7 +19,7 @@ public final class ApprovalCenter {
     @ObservationIgnored private let board: Board
     @ObservationIgnored public let answerer: ApprovalAnswerer
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "approvals")
+    @ObservationIgnored private let log = AppLog(category: "approvals")
     /// Posts a local notification (title, body, meta); the app sets it.
     @ObservationIgnored public var post: (@MainActor (String, String, PushMeta?) async -> Void)?
     /// Removes delivered notifications of requests that closed.
@@ -155,7 +154,7 @@ public final class ApprovalCenter {
         if !isUnlocked() {
             let state = lockedSigning(host)
             if state != .ready {
-                log.notice("background answer \(params.choice.rawValue, privacy: .public): locked \(String(describing: state), privacy: .public)")
+                log.notice("background answer \(word: params.choice): locked \(word: String(describing: state))")
                 let n = Self.lockedNotice(state, hab: habLabel(host: host))
                 await post?(n.title, n.body, meta)
                 if let meta { addPending(meta) }
@@ -164,7 +163,7 @@ public final class ApprovalCenter {
         }
         let o = await answerer.answer(host: host, params)
         // The case is public; the hab's hint or the dial error may name hosts or commands.
-        log.notice("background answer \(params.choice.rawValue, privacy: .public): \(o.caseName, privacy: .public) \(o.detail, privacy: .private)")
+        log.notice("background answer \(word: params.choice): \(word: o.caseName) \(o.detail)")
         let label = habLabel(host: host)
         if let f = o.followUp(hab: label, expiry: meta?.expiry) {
             await post?(f.title, f.body, o.reraise ? meta : nil)

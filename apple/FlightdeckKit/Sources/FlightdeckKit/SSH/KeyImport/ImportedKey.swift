@@ -2,7 +2,6 @@ import CryptoKit
 import Foundation
 import LocalAuthentication
 import NIOSSH
-import os
 
 /// An imported OpenSSH key as kept in the secret store: the raw private
 /// part, never the file or its passphrase.
@@ -95,15 +94,15 @@ extension DeviceKeys {
             do {
                 if let k = try key(account) as? ImportedKey { out.append(k) }
             } catch is DecodingError {
-                Self.log.error("imported key \(account, privacy: .public) does not decode; skipped")
+                Self.log.error("imported key \(account) does not decode; skipped")
             } catch is KeyImportError {
-                Self.log.error("imported key \(account, privacy: .public) is not a valid key; skipped")
+                Self.log.error("imported key \(account) is not a valid key; skipped")
             }
         }
         return out.sorted { $0.created < $1.created }
     }
 
-    static let log = Logger(subsystem: "com.flightdeck.app", category: "ssh")
+    static let log = AppLog(category: "ssh")
 
     func loadImported(id: String, data: Data, faceID: @escaping FaceIDSetting) throws -> ImportedKey {
         try ImportedKey(id: id, stored: JSONDecoder().decode(StoredImportedKey.self, from: data), faceID: faceID)

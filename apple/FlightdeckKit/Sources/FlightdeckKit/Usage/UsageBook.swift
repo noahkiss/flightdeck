@@ -2,7 +2,6 @@ import FlightdeckShared
 import Foundation
 import HabAPI
 import Observation
-import os
 
 /// Every harness account's newest usage reading, merged over all habs by
 /// account key (app.md 14.1). The newest reading wins, by `read_at`, from
@@ -31,7 +30,7 @@ public final class UsageBook {
     /// Called after every change, with the accounts.
     @ObservationIgnored public var onChange: (([UsageAccountReading]) -> Void)?
     @ObservationIgnored private let now: () -> Date
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "usage")
+    @ObservationIgnored private let log = AppLog(category: "usage")
 
     public init(seed: [UsageAccountReading] = [], now: @escaping () -> Date = Date.init) {
         self.now = now

@@ -1,7 +1,6 @@
 import AVFoundation
 import Foundation
 import Speech
-import os
 
 /// The real microphone and speaker for voice mode and dictation: one
 /// `AVAudioEngine` with voice processing (echo cancellation), so the app's
@@ -29,7 +28,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     private let speaks: Bool
     /// The owner's voice from Settings; nil picks the best installed one.
     var voiceID: () -> String? = { nil }
-    private let log = Logger(subsystem: "com.flightdeck.app", category: "voice")
+    private let log = AppLog(category: "voice")
 
     public init(speaks: Bool) {
         self.speaks = speaks
@@ -220,7 +219,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         do {
             try session.overrideOutputAudioPort(.speaker)
         } catch {
-            log.error("speaker override failed: \(error.localizedDescription, privacy: .public)")
+            log.error("speaker override failed: \(kind: error) \(error.localizedDescription)")
         }
         #endif
     }

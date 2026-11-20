@@ -1,7 +1,6 @@
 import FlightdeckShared
 import Foundation
 import HabAPI
-import os
 #if os(iOS)
 import ActivityKit
 #endif
@@ -69,7 +68,7 @@ public final class LiveActivityTracker {
     /// Per running activity: its hab's host id, its push token, its last content.
     private var live: [String: (host: String, token: String?, state: SessionActivityAttributes.ContentState)] = [:]
     private var tokenTasks: [String: Task<Void, Never>] = [:]
-    private let log = Logger(subsystem: "com.flightdeck.app", category: "activity")
+    private let log = AppLog(category: "activity")
 
     public init(board: Board, push: PushRegistrar, caller: ApprovalAnswerer, host: ActivityHost?) {
         self.board = board
@@ -122,7 +121,7 @@ public final class LiveActivityTracker {
                 }
             }
         } catch {
-            log.notice("live activity not started: \(String(describing: error), privacy: .private)")
+            log.notice("live activity not started: \(kind: error) \(error)")
         }
     }
 

@@ -16,3 +16,18 @@ type FrictionNoted struct {
 	Seq
 	Trace string `json:"trace" doc:"The note's trace, 12 Crockford base32 characters; gff friction show takes it."`
 }
+
+// --- Diagnostics: debug lines (diagnostics.md 4.5) ---
+
+// DebugParams turns gff-hab's debug lines on until a time, or off. The window survives a
+// restart and a crash loop, and ends by itself.
+type DebugParams struct {
+	Until string `json:"until,omitempty" doc:"RFC 3339 time the debug lines stop, at most 24 hours ahead. Absent, or a time already past: debug off."`
+}
+
+// DebugState answers diag.debug: the debug window now.
+type DebugState struct {
+	Seq
+	Until string `json:"until,omitempty" doc:"RFC 3339 time the debug lines stop. Absent: no window is open."`
+	Env   bool   `json:"env,omitempty" doc:"GFF_HAB_DEBUG is set in gff-hab's environment, so the debug lines stay on with no time limit."`
+}

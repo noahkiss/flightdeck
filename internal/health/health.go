@@ -52,6 +52,11 @@ type Marker struct {
 	Hook string `json:"hook,omitempty"`
 	// Debug is set while gff-hab writes its debug lines (4.5).
 	Debug bool `json:"debug,omitempty"`
+	// DebugUntil is the end of a debug window diag.debug opened; zero when none is open (4.5).
+	DebugUntil time.Time `json:"debug_until,omitzero"`
+	// Stacks is set once gff-hab catches SIGUSR1 and writes a stack dump for it (4.7). Without
+	// it, a SIGUSR1 would end the process, so gff-hab stacks sends none.
+	Stacks bool `json:"stacks,omitempty"`
 }
 
 // Record is one line of health.jsonl (6.3).
@@ -93,6 +98,9 @@ func WriteMarker(path string, m Marker) error {
 	}
 	return writeAtomic(path, append(b, '\n'))
 }
+
+// WriteFile writes b to path in one rename, with mode 0600, making its folder.
+func WriteFile(path string, b []byte) error { return writeAtomic(path, b) }
 
 // writeAtomic writes b to path in one rename, from a temporary file of its own.
 func writeAtomic(path string, b []byte) error {

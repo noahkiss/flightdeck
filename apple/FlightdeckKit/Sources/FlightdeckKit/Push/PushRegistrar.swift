@@ -1,7 +1,6 @@
 import Foundation
 import HabAPI
 import Observation
-import os
 
 /// Registers this device's APNs token with every connected hab (app.md 8.1,
 /// 17): on each new connection, and on every hab again when the token or a
@@ -70,7 +69,7 @@ public final class PushRegistrar {
     /// registration across connections, so a repeat in flight after a new
     /// connection does not undo it.
     @ObservationIgnored private var accepted: Set<String> = []
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "push")
+    @ObservationIgnored private let log = AppLog(category: "push")
 
     enum Keys {
         static let deviceID = "flightdeck.push.device-id"
@@ -151,7 +150,7 @@ public final class PushRegistrar {
         // No hab holds the new token yet: until each takes it, none counts
         // as able to push (review N7).
         accepted.removeAll()
-        log.notice("push token received (\(self.environment.rawValue, privacy: .public))")
+        log.notice("push token received (\(word: self.environment))")
         registerAll()
     }
 
@@ -252,7 +251,7 @@ public final class PushRegistrar {
                 } else {
                     self.status[id] = .failed(String(describing: error))
                 }
-                self.log.notice("push.register on \(id, privacy: .private) failed: \(String(describing: error), privacy: .private)")
+                self.log.notice("push.register on \(id) failed: \(kind: error) \(error)")
             }
         }
         inFlight[id] = t

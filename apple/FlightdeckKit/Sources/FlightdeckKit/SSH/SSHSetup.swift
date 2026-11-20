@@ -3,7 +3,6 @@ import HabAPI
 import LocalAuthentication
 import NIOSSH
 import Observation
-import os
 
 /// The in-app SSH carrier as the app sees it: the device key, the hab entries
 /// and the flows that change them (app.md 10.1, 10.4, 18.8).
@@ -51,7 +50,7 @@ public final class SSHSetup {
     @ObservationIgnored private let timing: SSHTiming
     @ObservationIgnored private let clientLabel: String
     @ObservationIgnored private let clientVersion: String
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "ssh")
+    @ObservationIgnored private let log = AppLog(category: "ssh")
     /// Asks the device owner to authenticate (Face ID, Touch ID or the
     /// passcode) with this reason. Tests replace it.
     @ObservationIgnored public var authenticate: @Sendable (String) async throws -> Void = { reason in
@@ -69,7 +68,7 @@ public final class SSHSetup {
             entries = try SSHHabList.load(from: listURL).habs
             listLoaded = true
         } catch {
-            log.error("ssh hab list unreadable: \(String(describing: error), privacy: .public)")
+            log.error("ssh hab list unreadable: \(kind: error) \(error)")
         }
         keys.onKeyMove = { [weak self] in
             Task { @MainActor in self?.refreshKeyMove() }
@@ -92,16 +91,16 @@ public final class SSHSetup {
             keyError = nil
             // The public key only, so a host can be set up from the log too.
             let line = k.authorizedKeysLine(comment: DeviceKeys.comment)
-            log.notice("device key \(k.kind.rawValue, privacy: .public) \(k.fingerprint, privacy: .public)")
+            log.notice("device key \(word: k.kind) \(k.fingerprint)")
             #if DEBUG
-            log.debug("device key line: \(line, privacy: .public)")
+            log.debug("device key line: \(line)")
             print("flightdeck: device key: \(line)")
             #endif
             if movesOldKey {
                 do {
                     try keys.startKeyMove()
                 } catch {
-                    log.error("key move: \(String(describing: error), privacy: .public)")
+                    log.error("key move: \(kind: error) \(error)")
                 }
                 refreshKeyMove()
             }
@@ -136,7 +135,7 @@ public final class SSHSetup {
             do {
                 fresh = try SSHHabList.load(from: listURL).habs
             } catch {
-                log.error("key move: hab list unreadable, both keys kept: \(String(describing: error), privacy: .public)")
+                log.error("key move: hab list unreadable, both keys kept: \(kind: error) \(error)")
             }
         }
         let waiting = (fresh ?? entries).filter { $0.keyID == DeviceKeys.defaultID && !moved.contains($0.moveMark) }
@@ -150,7 +149,7 @@ public final class SSHSetup {
             keyMove = nil
             reconnect { $0.keyID == DeviceKeys.defaultID }
         } catch {
-            log.error("key move finish: \(String(describing: error), privacy: .public)")
+            log.error("key move finish: \(kind: error) \(error)")
         }
     }
 
@@ -258,7 +257,7 @@ public final class SSHSetup {
             work.cancel()
         }
         // The fingerprint only: the key never goes to a log.
-        log.notice("imported key \(r.key.type.rawValue, privacy: .public) \(r.key.fingerprint, privacy: .public)")
+        log.notice("imported key \(word: r.key.type) \(r.key.fingerprint)")
         loadImportedKeys()
         return r
     }
@@ -392,7 +391,7 @@ public final class SSHSetup {
         var t = Pairing.Timing()
         t.ssh = timing
         let r = try await Pairing.pair(code, key: key, keyID: keyID, name: name, kind: kind, timing: t, waiting: waiting)
-        log.notice("paired with \(code.deviceID, privacy: .public)")
+        log.notice("paired with \(code.deviceID)")
         return r
     }
 
@@ -443,7 +442,7 @@ public final class SSHSetup {
         }
         let line = PasswordSetup.keyLine(publicKey: pub, command: try PasswordSetup.forcedCommand(command), name: deviceName)
         let r = try await PasswordSetup.install(dest, hostKeyFingerprint: hostKeyFingerprint, password: password, line: line, key: pub, timing: timing)
-        log.notice("password setup on \(dest.endpoint.description, privacy: .public): \(r == .added ? "added" : "present", privacy: .public)")
+        log.notice("password setup on \(dest.endpoint.description): \(word: r == .added ? "added" : "present")")
         return r
     }
 

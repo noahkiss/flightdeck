@@ -1,5 +1,4 @@
 import Foundation
-import os
 
 /// Which hab connection answers for a host id. A push names its hab by host id
 /// (the welcome's `host.id`); a notification action that runs in the
@@ -12,7 +11,7 @@ public final class HabBook: @unchecked Sendable {
     private let url: URL?
     private let lock = NSLock()
     private var map: [String: Entry] = [:]
-    private let log = Logger(subsystem: "com.flightdeck.app", category: "push")
+    private let log = AppLog(category: "push")
 
     public struct Entry: Codable, Equatable, Sendable {
         /// The hab connection's id in the app (`nio:<entry>` or a config id).
@@ -80,7 +79,7 @@ public final class HabBook: @unchecked Sendable {
             try data.write(to: url, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
-            log.error("hab book not written: \(String(describing: error), privacy: .private)")
+            log.error("hab book not written: \(kind: error) \(error)")
         }
     }
 }

@@ -2,7 +2,6 @@ import FlightdeckShared
 import Foundation
 import HabAPI
 import Observation
-import os
 
 // Capcom's calendar and reminder cards (capcom-service.md 8.5): one Add tap, never silent.
 // Add claims the card first with `capcom.card.answer add`; only when the hab takes it does the
@@ -186,7 +185,7 @@ public final class CapcomCardAdder {
     public private(set) var refusals: [String: String] = [:]
     /// The draft each failed write had, for Retry.
     @ObservationIgnored private var drafts: [String: CapcomEventDraft] = [:]
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "capcom-cards")
+    @ObservationIgnored private let log = AppLog(category: "capcom-cards")
 
     public init(writer: CapcomEventWriter?, label: String) {
         self.writer = writer

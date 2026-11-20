@@ -673,6 +673,8 @@ vector index of its replica and answers `logbook.find` with `semantic` itself (`
 the hab knows a `capcom` round's action words, so a client shows its Capcom jobs
 (`capcom-service.md` 9.6). `teammates` means `session.create` takes `report_to`
 (`harness-adapters.md`, Spawn); a spawner's hab checks it on a peer.
+`debug` means `diag.debug` works: it opens a window of debug lines of at most 24 hours that
+survives a restart (`diagnostics.md` 4.5).
 `api.Capabilities` lists every word a hab sends, so the schema's `x-capabilities` and the
 generated clients name them all. A test reads the words `gff-hab serve` and the control server
 put in the welcome. It fails on a word the table lacks, and on a table word no hab sends.
@@ -687,7 +689,7 @@ Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `sn
 (`detect.explain` works), `pane-read` (3.11), `session-restart` (`session.restart` and `Session.stale` work) and
 `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
-holder link), `settings`, `read-tools`, `confirm` and `friction`. With the holder link on it also sends
+holder link), `settings`, `read-tools`, `confirm`, `friction` and `debug`. With the holder link on it also sends
 `rounds`. It sends `logbook` when its Logbook file opens (`logbook.md` 10.5), and `logbook-vectors` when its
 config file has `[logbook.vectors]` (`logbook.md` 13.2). It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the

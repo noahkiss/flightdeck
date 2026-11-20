@@ -41,6 +41,7 @@ const (
 	hookLogMax, hookLogKeep     = 1 << 20, 1
 	engineLogKeep               = 1
 	crashKeep                   = 20
+	stacksKeep                  = 5 // stack dumps, kept apart so dumps never push out a crash trace
 	logsBudget                  = 100 << 20
 
 	// habLogFlags: UTC date and time with microseconds, which gff-hab logs parses (4.1).
@@ -108,7 +109,8 @@ type habDiag struct {
 	lastWrite time.Time
 	// markerFailing is set while marker writes fail, so the failure is logged once.
 	markerFailing bool
-	notice        bool // the previous run crashed and a notice is due
+	notice        bool      // the previous run crashed and a notice is due
+	lastDump      time.Time // the watchdog's last stack dump (4.7)
 	stopped       bool
 
 	stop chan struct{}
@@ -237,6 +239,21 @@ func (d *habDiag) touch() {
 		return
 	}
 	d.marker.LastSeen = d.now().UTC()
+	d.writeMarker()
+}
+
+// setDebug records the debug state in the marker, for gff-hab status (4.5). until is zero when
+// no window is open.
+func (d *habDiag) setDebug(on bool, until time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !until.IsZero() {
+		until = until.UTC()
+	}
+	if d.stopped || (d.marker.Debug == on && d.marker.DebugUntil.Equal(until)) {
+		return
+	}
+	d.marker.Debug, d.marker.DebugUntil = on, until
 	d.writeMarker()
 }
 
@@ -403,7 +420,9 @@ func holderInstance(name string) (string, bool) {
 	return inst, ok && holderreg.ValidInstance(inst)
 }
 
-// pruneCrash keeps the newest crashKeep files in crash/, and this run's.
+// pruneCrash keeps the newest crashKeep crash files in crash/, this run's among them, and apart
+// from them the newest stacksKeep stack dumps (4.3, 4.7). A file being written (a hidden
+// temporary name) is left alone.
 func (d *habDiag) pruneCrash() {
 	dir := filepath.Join(d.state, crashDir)
 	entries, err := os.ReadDir(dir)
@@ -414,16 +433,27 @@ func (d *habDiag) pruneCrash() {
 		name string
 		t    time.Time
 	}
-	var files []f
+	var crashes, dumps []f
 	for _, e := range entries {
-		if info, err := e.Info(); err == nil && e.Name() != d.marker.CrashFile {
-			files = append(files, f{e.Name(), info.ModTime()})
+		name := e.Name()
+		info, err := e.Info()
+		if err != nil || strings.HasPrefix(name, ".") || name == d.marker.CrashFile {
+			continue
+		}
+		if strings.Contains(name, stacksInfix) {
+			dumps = append(dumps, f{name, info.ModTime()})
+		} else {
+			crashes = append(crashes, f{name, info.ModTime()})
 		}
 	}
-	slices.SortFunc(files, func(a, b f) int { return b.t.Compare(a.t) })
-	for i := crashKeep - 1; i < len(files); i++ {
-		os.Remove(filepath.Join(dir, files[i].name))
+	keep := func(files []f, n int) {
+		slices.SortFunc(files, func(a, b f) int { return b.t.Compare(a.t) })
+		for i := n; i < len(files); i++ {
+			os.Remove(filepath.Join(dir, files[i].name))
+		}
 	}
+	keep(crashes, crashKeep-1) // this run's file is the other one
+	keep(dumps, stacksKeep)
 }
 
 // budget removes the oldest old log files while the logs folder is over logsBudget (11).

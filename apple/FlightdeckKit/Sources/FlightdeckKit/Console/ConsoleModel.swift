@@ -1,7 +1,6 @@
 import Foundation
 import HabAPI
 import Observation
-import os
 
 /// One console (app.md 6): the command cards of a shell pane, from the hab's
 /// prompt marks, and the pane's terminal for full-screen programs. The
@@ -85,7 +84,7 @@ public final class ConsoleModel {
     /// A running card's output so far: the last `outputTail` bytes and the
     /// offset to read on from, so each poll reads only what is new.
     @ObservationIgnored private var running: [UInt64: (next: UInt64?, tail: Data, cut: Bool)] = [:]
-    @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "console")
+    @ObservationIgnored private let log = AppLog(category: "console")
 
     public convenience init(pane: String, connection: HabConnection) {
         self.init(pane: pane, calls: Calls(pane: pane, connection: connection),
@@ -237,7 +236,7 @@ public final class ConsoleModel {
             refreshOpen()
         } catch {
             lastError = String(describing: error)
-            log.notice("console \(self.pane, privacy: .public): command.list: \(String(describing: error), privacy: .public)")
+            log.notice("console \(id: self.pane): command.list: \(kind: error) \(error)")
         }
     }
 

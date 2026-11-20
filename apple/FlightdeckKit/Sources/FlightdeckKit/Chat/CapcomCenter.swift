@@ -2,7 +2,6 @@ import FlightdeckShared
 import Foundation
 import HabAPI
 import Observation
-import os
 
 /// Opens Capcom with context from outside its view (capcom.md 8.2, 8.4; app.md 4.9, 8.8): a
 /// console command, "Ask an agent" on a notification, and "New conversation" from the chips.
@@ -124,7 +123,7 @@ public final class CapcomCenter {
     /// An Ask that waits for its hab to be found (a welcome still to come) or to come online.
     @ObservationIgnored private var waiting: (home: String, habID: String?, context: CapcomContextRef, token: Int)?
     @ObservationIgnored private var nextToken = 0
-    @ObservationIgnored let log = Logger(subsystem: "com.flightdeck.app", category: "capcom")
+    @ObservationIgnored let log = AppLog(category: "capcom")
 
     public init(habs: Habs) {
         self.habs = habs
