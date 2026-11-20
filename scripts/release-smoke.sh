@@ -8,6 +8,8 @@
 #
 #   - LICENSE and NOTICE sit in <dir> and, on macOS, in each bundle's Contents/Resources, and
 #     NOTICE has an entry for libghostty, Ghostty and golang.org/x/sys
+#   - capcom/ holds the Capcom engine: gff-hab-capcom.mjs, package.json, package-lock.json and
+#     NOTICE, with the SDKs in the manifest and lockfile and in no NOTICE entry (never bundled)
 #   - each binary's `version` prints "<name> <version>"
 #   - gff-hab and gff carry the ghostty build tag (go version -m), so they parse with libghostty
 #   - Linux: gff-hab links no libghostty and needs no glibc newer than 2.31; gff-hab-holder is
@@ -55,6 +57,21 @@ for d in "${notice_dirs[@]}"; do
 	done
 done
 say "LICENSE and NOTICE are in place"
+
+# 0b. The Capcom engine folder (7.2, capcom-service.md 3.1). The SDKs stay out of it: gff-hab
+# install downloads them with npm ci, so the manifest and the lockfile must name them and the
+# notices must not (a NOTICE entry would mean esbuild bundled one).
+eng=$dir/capcom
+for f in gff-hab-capcom.mjs package.json package-lock.json NOTICE; do
+	[ -s "$eng/$f" ] || fail "no $f in $eng"
+done
+[ ! -e "$eng/node_modules" ] || fail "$eng carries node_modules; the SDKs must not ship"
+for p in @anthropic-ai/claude-agent-sdk @openai/codex-sdk; do
+	grep -q "\"$p\"" "$eng/package.json" || fail "$eng/package.json does not name $p"
+	grep -q "\"node_modules/$p\"" "$eng/package-lock.json" || fail "$eng/package-lock.json does not pin $p"
+	! grep -qx "$p" "$eng/NOTICE" || fail "$eng/NOTICE has an entry for $p: the SDK is bundled"
+done
+say "the Capcom engine folder is in place"
 
 # 1. The version each binary reports.
 for b in "$gff" "$hab" "$holder"; do
