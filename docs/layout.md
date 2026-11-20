@@ -111,15 +111,16 @@ Split a module out only when something outside this repo must import it on its o
 - Edit the Go types in `api/types.go` and the tables in `api/methods.go`. Never edit generated
   files.
 - `make gen` (or `go generate ./...`) regenerates the schema, the Go client and the Swift package.
-- `make test` runs the compat test. It fails when the schema breaks the released schema of the same
-  revision (spec 3.3). A breaking change needs a new revision and its translator.
-- `make release-schema` records the current schema in `api/released/`. Run it when a revision ships.
-  Until the first release, `1.json` is a baseline that may be rewritten on purpose.
+- `make test` runs the compat test. It compares the schema with the highest released schema in
+  `api/released/` and fails on a change an old peer cannot skip (spec 3.3). Additions stay in the
+  same revision. A breaking change needs the next revision and its translator.
+- `make release-schema` writes the current schema to `api/released/<revision>.json`. Run it before
+  each release tag: the release check refuses a tag whose schema differs from the recorded one
+  (`docs/specs/ci-release.md` 7.4). The recorded file is what the compat test holds later builds
+  to, so additions since the last release join it then.
 - Golden messages (`api/testdata/rev<N>/`, `docs/testing.md` core test 5) are frozen:
-  - The goldens of a released revision are never regenerated.
-  - New messages go into the next revision's set.
-  - Revision 1 is still unreleased (`api/released/1.json` is the pre-release baseline). New
-    revision 1 messages get new files beside the existing ones; existing files never change.
+  - The goldens of a released revision are never regenerated. Existing files never change.
+  - An addition gets a new file beside the existing ones, in the current revision's folder.
   - `go test ./api -run TestGoldens -update` only adds files: a new message's first file, or
     the next field set (`<message>@<n>.json`) of a message that gained optional fields. Only
     the newest field set must match the current sample; older ones must still decode and round
