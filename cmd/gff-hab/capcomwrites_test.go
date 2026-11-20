@@ -100,7 +100,7 @@ func TestCapcomWritesFirst(t *testing.T) {
 	}
 
 	// Out of range (19.1).
-	for id, v := range map[string]string{"capcom.events.daily_turns": "0", "capcom.events.batch_window": "9", "capcom.approval_max_age": "0"} {
+	for id, v := range map[string]string{"capcom.events.daily_turns": "-1", "capcom.events.batch_window": "9", "capcom.approval_max_age": "0"} {
 		if err := setSetting(c, id, v); errKind(err) != api.ErrorKindInvalid {
 			t.Fatalf("settings.set %s %s: %v", id, v, err)
 		}

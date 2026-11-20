@@ -46,6 +46,7 @@ type rig struct {
 	notes    []string
 	outcomes []string
 	released int
+	pushed   []int
 	n        int
 }
 
@@ -59,9 +60,10 @@ func newRig(t *testing.T, start time.Time) *rig {
 func (r *rig) open() {
 	r.t.Helper()
 	q, err := Open(Config{Path: r.path, Now: r.c.Now, After: r.c.After, Limits: func() Limits { return r.lim }, Host: r.host,
-		Released: func() { r.released++ },
-		Note:     func(s string) { r.notes = append(r.notes, s) },
-		Outcome:  func(round, word string, at time.Time) { r.outcomes = append(r.outcomes, round+" "+word) },
+		Released:   func() { r.released++ },
+		Note:       func(s string) { r.notes = append(r.notes, s) },
+		Outcome:    func(round, word string, at time.Time) { r.outcomes = append(r.outcomes, round+" "+word) },
+		QuietEnded: func(n int) { r.pushed = append(r.pushed, n) },
 	})
 	if err != nil {
 		r.t.Fatal(err)
@@ -129,33 +131,83 @@ func TestBatchMaxAndSettings(t *testing.T) {
 	}
 }
 
+// TestQuietHours: quiet hours hold pushes, not turns (capcom-service.md 9.2, stage A10). An event
+// at 23:00 runs after its window; its turn's messages push nothing; one count goes at 07:00, a
+// restart between included; an urgent turn, a user turn and quiet hours off push at once.
 func TestQuietHours(t *testing.T) {
 	r := newRig(t, day(23, 0))
-	r.add(false, "")
-	r.c.advance(day(23, 30))
-	r.add(false, "")
-	r.c.advance(day(23, 59))
-	if len(r.batches()) != 0 {
-		t.Fatal("an event ran in quiet hours")
+	r.add(false, "m1")
+	r.c.advance(day(23, 2))
+	b := r.q.Released()
+	if len(b) != 1 {
+		t.Fatalf("an event at 23:00 waits: %v", r.batches())
 	}
-	// Urgent: at once, alone; the others still wait.
-	urgent := r.add(true, "")
-	if b := r.batches(); len(b) != 1 || !slices.Equal(b[0], []string{urgent}) {
-		t.Fatalf("urgent in quiet hours: %v", b)
+	r.q.Taken(b[0].ID, "t1")
+	if !r.q.HoldPush("t1") || !r.q.HoldPush("t1") || r.q.Held() != 2 {
+		t.Fatalf("messages of an event turn at 23:00 pushed: held %d", r.q.Held())
+	}
+	// A turn that took no batch (a user turn or an agent's report) pushes.
+	if r.q.HoldPush("user-turn") || r.q.HoldPush("") {
+		t.Fatal("a turn with no batch was held")
+	}
+	// A time-sensitive event pushes at once, and its batch goes without the window.
+	r.add(true, "")
+	ub := r.q.Released()
+	if len(ub) != 1 || !ub[0].Urgent {
+		t.Fatalf("the urgent batch: %+v", ub)
+	}
+	r.q.Taken(ub[0].ID, "t2")
+	if r.q.HoldPush("t2") {
+		t.Fatal("an urgent turn's message was held")
+	}
+	r.q.TurnEnded("t1", day(23, 5))
+	r.q.TurnEnded("t2", day(23, 5))
+	r.open() // a gff-hab restart keeps the count
+	if r.q.Held() != 2 {
+		t.Fatalf("held after a restart %d", r.q.Held())
 	}
 	r.c.advance(day(23, 59).Add(7*time.Hour + time.Minute)) // 07:00 the next day
-	if b := r.batches(); len(b) != 2 || len(b[1]) != 2 {
-		t.Fatalf("one batch at the end of quiet hours: %v", b)
+	if !slices.Equal(r.pushed, []int{2}) || r.q.Held() != 0 {
+		t.Fatalf("at 07:00: pushed %v held %d", r.pushed, r.q.Held())
 	}
-	// Equal start and end: no quiet hours.
+	r.c.advance(r.c.now.Add(time.Hour))
+	if len(r.pushed) != 1 {
+		t.Fatalf("the count pushed twice: %v", r.pushed)
+	}
+	// Quiet hours off (the same time twice): nothing is held.
+	r.c.advance(time.Date(2026, 11, 8, 23, 30, 0, 0, ny))
 	r.lim.QuietStart, r.lim.QuietEnd = 0, 0
-	if q, _ := Quiet(day(3, 0), ny, r.lim); q {
+	if q, _ := Quiet(r.c.now, ny, r.lim); q {
 		t.Fatal("equal start and end are quiet")
+	}
+	r.add(false, "")
+	r.c.advance(r.c.now.Add(2 * time.Minute))
+	ob := r.q.Released()
+	r.q.Taken(ob[0].ID, "t3")
+	if r.q.HoldPush("t3") {
+		t.Fatal("held with quiet hours off")
+	}
+	// Turned off while a count is held: it goes at the next check.
+	r.lim = DefaultLimits
+	r.add(false, "")
+	r.c.advance(r.c.now.Add(2 * time.Minute))
+	nb := r.q.Released()
+	r.q.Taken(nb[0].ID, "t4")
+	if !r.q.HoldPush("t4") {
+		t.Fatal("not held at 23:34")
+	}
+	r.lim.QuietStart, r.lim.QuietEnd = 0, 0
+	r.q.Check()
+	if !slices.Equal(r.pushed, []int{2, 1}) {
+		t.Fatalf("after off: pushed %v", r.pushed)
 	}
 }
 
 func TestDailyBudget(t *testing.T) {
 	r := newRig(t, day(8, 0))
+	if DefaultLimits.DailyTurns != 200 {
+		t.Fatalf("default budget %d, want 200 (A10)", DefaultLimits.DailyTurns)
+	}
 	r.lim.DailyTurns = 20
 	for i := range 21 {
 		r.c.advance(day(8, 0).Add(time.Duration(i) * 3 * time.Minute))
@@ -173,21 +225,89 @@ func TestDailyBudget(t *testing.T) {
 	if len(r.batches()) != 20 || len(r.notes) != 1 {
 		t.Fatalf("urgent past the budget: %d batches, notes %q", len(r.batches()), r.notes)
 	}
-	// Midnight: the next day's first batch; in quiet hours only the urgent one.
+	// Midnight: the next day's first batch, quiet hours or not: the urgent one takes the other.
 	r.c.advance(time.Date(2026, 11, 8, 0, 0, 30, 0, ny))
-	if b := r.batches(); len(b) != 21 || len(b[20]) != 1 {
+	if b := r.batches(); len(b) != 21 || len(b[20]) != 2 {
 		t.Fatalf("at midnight: %v", b[20:])
 	}
-	r.c.advance(time.Date(2026, 11, 8, 7, 0, 0, 0, ny))
-	if b := r.batches(); len(b) != 22 {
-		t.Fatalf("at 07:00: %d batches", len(b))
-	}
 	// A lower budget moves the limit.
-	r.lim.DailyTurns = 2
+	r.lim.DailyTurns = 1
 	r.add(false, "")
 	r.c.advance(r.c.now.Add(3 * time.Minute))
-	if len(r.batches()) != 22 || len(r.q.Waiting()) != 1 {
-		t.Fatalf("budget 2: %d batches", len(r.batches()))
+	if len(r.batches()) != 21 || len(r.q.Waiting()) != 1 {
+		t.Fatalf("budget 1: %d batches", len(r.batches()))
+	}
+	// 0 is no cap: it goes at once.
+	r.lim.DailyTurns = 0
+	r.q.Check()
+	if len(r.batches()) != 22 || len(r.q.Waiting()) != 0 {
+		t.Fatalf("budget 0: %d batches, %d waiting", len(r.batches()), len(r.q.Waiting()))
+	}
+}
+
+// TestPersonsJob: a round message from a job a person owns (by_person) goes in a batch of its
+// own, which neither counts toward the budget nor waits for it; a job an agent made counts
+// (capcom-service.md 9.3, stage A10).
+func TestPersonsJob(t *testing.T) {
+	r := newRig(t, day(12, 0))
+	r.lim.DailyTurns = 1
+	agent := r.add(false, "m1")
+	r.n++
+	free := fmt.Sprintf("c%016x", r.n)
+	if err := r.q.Add(Event{Item: free, At: r.c.now, Round: "m2", Free: true}); err != nil {
+		t.Fatal(err)
+	}
+	r.c.advance(day(12, 2))
+	got := r.batches()
+	if len(got) != 2 || !slices.Equal(got[0], []string{agent}) || !slices.Equal(got[1], []string{free}) {
+		t.Fatalf("batches %v", got)
+	}
+	if n, _ := r.q.Turns(); n != 1 {
+		t.Fatalf("turns %d: the person's job counted", n)
+	}
+	// Past the budget: the agent's job waits, the person's goes at once.
+	r.add(false, "m3")
+	r.n++
+	free2 := fmt.Sprintf("c%016x", r.n)
+	r.q.Add(Event{Item: free2, At: r.c.now, Round: "m4", Free: true})
+	if b := r.batches(); len(b) != 3 || !slices.Equal(b[2], []string{free2}) {
+		t.Fatalf("past the budget: %v", b)
+	}
+	if len(r.q.Waiting()) != 1 || len(r.notes) != 1 {
+		t.Fatalf("the agent's job: waiting %v notes %q", r.q.Waiting(), r.notes)
+	}
+}
+
+// TestActNoBatch: an agent's report turn took no batch, and its actions still count toward the
+// per-turn cap (capcom-service.md 9.6, stage A10).
+func TestActNoBatch(t *testing.T) {
+	r := newRig(t, day(12, 0))
+	for i := range 3 {
+		if !r.q.Act("report", 3) {
+			t.Fatalf("call %d refused", i+1)
+		}
+	}
+	if r.q.Act("report", 3) {
+		t.Fatal("the fourth call allowed")
+	}
+	r.open()
+	if r.q.Act("report", 3) {
+		t.Fatal("a restart cleared the count")
+	}
+	if !r.q.Act("report-2", 3) {
+		t.Fatal("a new turn starts at 0")
+	}
+	// The hab hears late that report-2 took a batch: the call it made before counts there, so
+	// the turn cannot spend the cap a second time.
+	r.add(false, "m1")
+	r.c.advance(day(12, 3))
+	b := r.q.Released()
+	if len(b) != 1 {
+		t.Fatalf("released %v", b)
+	}
+	r.q.Taken(b[0].ID, "report-2")
+	if !r.q.Act("report-2", 3) || !r.q.Act("report-2", 3) || r.q.Act("report-2", 3) {
+		t.Fatal("the turn spent more than its cap of 3")
 	}
 }
 
@@ -203,9 +323,15 @@ func TestSavedTimeZone(t *testing.T) {
 	}
 	r.add(false, "")
 	r.c.advance(r.c.now.Add(10 * time.Minute))
-	if len(r.batches()) != 0 {
-		t.Fatal("ran in New York's quiet hours")
+	b := r.q.Released()
+	if len(b) != 1 {
+		t.Fatal("quiet hours held a turn")
 	}
+	r.q.Taken(b[0].ID, "t1")
+	if !r.q.HoldPush("t1") {
+		t.Fatal("pushed in New York's quiet hours")
+	}
+
 	r.q.SetTZ("Not/AZone")
 	if r.q.TZ().String() != "America/New_York" {
 		t.Fatal("an unknown zone replaced the saved one")

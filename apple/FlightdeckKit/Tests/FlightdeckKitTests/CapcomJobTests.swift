@@ -56,7 +56,7 @@ final class CapcomJobTests: XCTestCase {
         XCTAssertEqual(CapcomJobs.outcomeText("told"), "Told you")
         XCTAssertEqual(CapcomJobs.outcomeText("quiet"), "Stayed quiet")
         XCTAssertEqual(CapcomJobs.words.map(\.word.rawValue),
-                       ["hand_off", "start_session", "set_up_project", "group", "card", "fetch"])
+                       ["hand_off", "start_session", "set_up_project", "group", "card", "fetch", "drive"])
         let nightly = await h.round(named: "nightly")
         XCTAssertNil(f.rounds.jobs.job(habID: "bench", round: try XCTUnwrap(nightly).id),
                      "a fresh round is no job")
@@ -240,7 +240,7 @@ final class CapcomJobTests: XCTestCase {
     func testJobSettingsRows() throws {
         let R = SettingsRegistry.self
         let perTurn = try XCTUnwrap(R.def(R.capcomEventActionsPerTurn))
-        XCTAssertEqual(perTurn.kind, .integer(0...20, unit: ""))
+        XCTAssertEqual(perTurn.kind, .integer(0...50, unit: ""))
         XCTAssertEqual(perTurn.store, .everyHab)
         XCTAssertFalse(perTurn.isLevelled)
         XCTAssertTrue(perTurn.built)

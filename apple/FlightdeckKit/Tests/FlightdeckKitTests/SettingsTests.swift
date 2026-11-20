@@ -67,14 +67,14 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentDrivePanes })
     }
 
-    /// capcom.event_actions: ask at Safe, allow at Balanced and Bypass, and a level pick writes it
-    /// (capcom-service.md 9.6, app.md 20.3).
+    /// capcom.event_actions: ask at Safe, allow at Balanced, all at Bypass (from A10), and a level
+    /// pick writes it (capcom-service.md 9.4, 9.6, app.md 20.3).
     @MainActor
     func testCapcomEventActionsLevels() async throws {
         let d = try XCTUnwrap(R.def(R.capcomEventActions))
         XCTAssertEqual(d.levels?[.safe], .string("ask"))
         XCTAssertEqual(d.levels?[.balanced], .string("allow"))
-        XCTAssertEqual(d.levels?[.bypass], .string("allow"))
+        XCTAssertEqual(d.levels?[.bypass], .string("all"))
         XCTAssertEqual(d.store, .everyHab)
         var sent: [SettingWrite] = []
         let (c, _) = try center("SettingsTests.eventactions") { _, p in
@@ -85,6 +85,9 @@ final class SettingsTests: XCTestCase {
         c.update(habID: h.habID, label: h.label, state: state(h))
         await c.pick(.safe)
         XCTAssertTrue(sent.contains(SettingWrite(id: R.capcomEventActions, revision: 1, value: .string("ask"))))
+        sent = []
+        await c.pick(.bypass)
+        XCTAssertTrue(sent.contains { $0.id == R.capcomEventActions && $0.value == .string("all") }, "Bypass writes all")
     }
 
     /// A Capcom job's action card names the job, the word and the call (capcom-service.md 9.8).
@@ -416,8 +419,28 @@ final class SettingsTests: XCTestCase {
         let h = balancedHab()
         c2.update(habID: h.habID, label: h.label, state: state(h))
         await c2.connectionOnline(habID: h.habID)
-        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan, R.agentDrivePanes],
-                       "Bypass turns the plan card off too, and lets agents drive every pane")
+        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge, R.groupPlan, R.agentDrivePanes, R.capcomEventActions],
+                       "Bypass turns the plan card off too, lets agents drive every pane, and lets event turns act (A10)")
+    }
+
+    /// A hab whose capcom.event_actions a client already wrote as allow keeps it at Bypass until
+    /// the user picks a level again, and the row shows it differs (capcom-service.md 18 A10).
+    @MainActor
+    func testEventActionsWrittenAllowKept() async throws {
+        var sent: [SettingWrite] = []
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.keepallow"))
+        d.removePersistentDomain(forName: "SettingsTests.keepallow")
+        d.set("bypass", forKey: SettingsCenter.levelKey)
+        let c2 = SettingsCenter(defaults: d) { _, p in sent += p.values; return SettingsResult(seq: 1, settings: []) }
+        var h = balancedHab()
+        h.settings[R.capcomEventActions] = setting(R.capcomEventActions, .string("allow"), rev: 3, source: .client)
+        c2.update(habID: h.habID, label: h.label, state: state(h))
+        await c2.connectionOnline(habID: h.habID)
+        XCTAssertFalse(sent.contains { $0.id == R.capcomEventActions }, "a client's allow stays")
+        var b = balancedHab("h2", label: "beta")
+        b.settings[R.capcomEventActions] = setting(R.capcomEventActions, .string("all"), rev: 2, source: .client)
+        let row = LevelMatcher.row(R.capcomEventActions, habs: [b, h])
+        XCTAssertEqual(row.differsOn, ["alpha"])
     }
 
     /// A refused queued write on connect is dropped and named in the notice.

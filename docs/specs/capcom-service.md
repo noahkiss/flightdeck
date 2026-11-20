@@ -664,6 +664,11 @@ off for the very job the owner named.
   enforces it.
 - A job Capcom creates from a user's message in a user turn is the user's (9.6). Text the turn
   read could shape that job's prompt.
+- Accepted residual: a turn a user opened can still carry outside text (an agent's report that
+  joins it, or an event turn just before it), so a job Capcom makes there runs outside the
+  budget; the record card in the thread shows every such job.
+- Accepted residual: moving a round to another host is the owner's create there, so a moved
+  agent-made job becomes a person's; the owner starts every move.
 
 **The brakes that remain.**
 
@@ -1190,8 +1195,7 @@ calls quiet hours a notification preference, and Capcom removes friction. A job 
 agent fresh must not stop at 22:00. The plain alternative: quiet hours keep holding event turns
 as built, and only gain `off`.
 
-Not built yet: A7 holds event turns during quiet hours (9.7). Stage A10 (18) moves the hold to
-pushes and adds `off`.
+Built in A10 (9.9): the hold moved from turns to pushes, and `off`.
 
 ### 9.3 The daily turn budget
 
@@ -1201,9 +1205,11 @@ pushes and adds `off`.
   batch, and the thread gets one note.
 - **The owner's jobs run outside it.** A round message from a job a person owns goes in a batch
   of its own, as one with action words does (9.8). That batch does not count, and never waits
-  for the budget. A person owns a `capcom` round when its
-  `created_by` is empty: a person made it, or a person's grant cleared it (9.6). The round
-  message says so (`rounds.md` 5.2, field `by_person`, set by the runner).
+  for the budget. A person owns a `capcom` round only by a positive mark on the round, never
+  because its `created_by` is empty: a person made it on the owner's door, or a person's grant
+  gave it words (9.6). A round made over a peer link (another hab's agent, or its confirmation)
+  or by any agent route has no mark, so its batches count. The round message says so
+  (`rounds.md` 5.2, field `by_person`, set by the runner).
 - **Time-sensitive events count too.** Their turn counts toward the budget like any event turn,
   and past it waits for the next day.
 - The governor (10.1) applies on top, to every event turn, the owner's jobs included. An event
@@ -1216,8 +1222,7 @@ event turns by usage, so a low count only adds friction. But the governor paces 
 `none` (an API key with no `daily_usd`, 10.1). A high default keeps one brake there that normal
 use never meets. The user's own jobs are the user's instruction, so no count holds them back.
 
-Not built yet: A7 built the budget with default 20 and no exemption. Stage A10 (18) builds the
-new default, 200, 0 for none, and the owner's jobs.
+Built in A10 (9.9): the default 200, 0 for none, and the owner's jobs.
 
 ### 9.4 What an event turn may do
 
@@ -1242,8 +1247,8 @@ Below Bypass, the user has not asked for anything yet, so nothing acts on their 
 they answer or grant a job. At Bypass the owner chose less hands-on work over that check: Capcom
 acts on what it sees, and every action still shows as a card in the thread.
 
-Built: the refusals below `all` (9.7, 9.8). Not built yet: the value `all`, the word `drive`,
-and pane access and session actions from Capcom. Stage A10 (18) builds them.
+Built: the refusals below `all` (9.7, 9.8); the value `all`, the word `drive` and pane access
+from Capcom (9.9). Not built yet: session actions (`hab-logic-api.md` 3.13).
 
 ### 9.5 Round messages
 
@@ -1430,14 +1435,15 @@ sends batches (`internal/capcomengine/link.go`). Where 9.1 to 9.5 left a choice 
   kind `event`, id `b` and 16 hex digits, each event a context block, data from outside; the
   engine's turn is an event turn. Its `input.taken` marks every item of the batch read. A batch
   goes when its window (from its first event) ends, or at once when it holds `batch_max`
-  events or an urgent one. Outside quiet hours an urgent event takes every waiting event with
-  it; in quiet hours it goes alone. Each released batch counts one event turn. The budget note
-  is one per day.
+  events or an urgent one. An urgent event takes every waiting event with it (A10: at any hour;
+  A7 sent it alone in quiet hours). Each released batch counts one event turn, except a
+  person's job (9.9). The budget note is one per day.
 - **The time zone.** The zone of the newest user message that names one (the device's, 6.5),
   else the host's. It is saved with the count in `<state>/capcom/events.json`, with the waiting
   events and the batches no turn ended yet, so a restart keeps all three.
-- **Settings.** `capcom.quiet_hours` is the text `HH:MM-HH:MM`; `capcom.events.batch_window`
-  is in seconds (19.1). A change applies at the queue's next check, at once.
+- **Settings.** `capcom.quiet_hours` is the text `HH:MM-HH:MM` or `off`;
+  `capcom.events.batch_window` is in seconds (19.1). A change applies at the queue's next check,
+  at once.
 - **What an event turn may do.** gff-hab refuses these calls on the engine's route, kind
   `denied`, while the running turn has no user message (or a note the model gets) in it:
   `channel.send` (`hand_off` sends through it), `confirm.request` (`start_session`,
@@ -1531,6 +1537,36 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
   prompt again. The kind `action` card shows the job, the word, the method, the summary and
   the params whole; the `job` card shows in the thread with its own symbol. The Settings page
   has rows for all three `capcom.event_action*` settings.
+
+### 9.9 Built choices (A10)
+
+The queue is still `internal/capcomevents`; the event-turn guard is `cmd/gff-hab/capcomjobs.go`.
+Where 9.2 to 9.6 left a choice open:
+
+- **Which pushes quiet hours hold.** A Capcom message, or a calendar or reminder card, from a
+  turn that took a batch, when none of its batches is urgent and quiet hours hold at the time
+  it lands. A user turn, a turn a user message joined, and an agent's report took no batch, or
+  run as a user turn, so they push at any hour.
+- **The count.** The queue saves the held count in `events.json`. The first check after quiet
+  hours end sends one push, "N messages from Capcom wait from quiet hours", and clears the
+  count. So a restart, a sleep through 07:00, and a change to `off` each still send it once.
+- **A person's job.** The round store keeps a mark, `by_person`, that the hab sets and no client
+  can: on a create from the owner's door with no creator, and on a person's grant. A create over
+  a peer link never sets it, a grant over a peer link is refused, and an unfiled pane's create gets the creator `pane:<id>`. The
+  runner copies the mark into the round message. The home hab reads it only from a message
+  whose sender is `round:<name>`, as it reads `actions`. Such a message goes in a batch alone,
+  which does not count; past the budget it still goes at once.
+- **The per-turn cap across a late batch.** When the hab hears late that a turn took a batch,
+  the calls the turn made before count on that batch too, so one turn never spends the cap twice.
+- **An agent's report at `all`.** Its turn took no batch, so the per-turn cap counts it apart:
+  the queue keeps the count of the newest such turn in `events.json`.
+- **The card of an action no job granted** says what began the turn: "After a notice: <its
+  first line>", "After job <host>/<name>", or "After an agent's report", then the word and
+  the call. A job that lists the word is named instead, as at `allow`.
+- **`drive`** covers `pane.type`, `pane.new` and `session.action`. Pane reads need no word in
+  any turn.
+- **The batch input** at `all` lists every word but `card` and `fetch`, plus the words of the
+  turn's jobs.
 
 ---
 
@@ -1953,14 +1989,14 @@ All on the home hab, no level unless the row says so.
 
 | Id | Default | Range | Section |
 |---|---|---|---|
-| `capcom.quiet_hours` | 22:00 to 07:00 | A start and an end time of day, or `off` (from A10); the same time twice is `off` | 9.2 |
+| `capcom.quiet_hours` | 22:00 to 07:00 | A start and an end time of day, or `off`; the same time twice is `off` | 9.2 |
 | `capcom.events.notices`, `.rounds`, `.round_messages` | on | bool | 9.1 |
-| `capcom.events.daily_turns` | 200 | 0 to 1,000 event turns a day; 0 is no cap. A7 built 20, with 1 to 1,000; A10 moves both | 9.3 |
+| `capcom.events.daily_turns` | 200 | 0 to 1,000 event turns a day; 0 is no cap | 9.3 |
 | `capcom.events.batch_window` | 2 minutes | 10 s to 1 hour | 9.2 |
 | `capcom.events.batch_max` | 20 events | 1 to 200 | 9.2 |
 | `capcom.approval_max_age` | 10 minutes | 1 minute to 24 hours; no 0 (5.3) | 5.3 |
 | `capcom.event_actions` | Levelled: Safe `ask`, Balanced `allow`, Bypass `all`; `off` by hand only. Settled (E24) | `off`, `ask`, `allow`, `all` | 9.4, 9.6 |
-| `capcom.event_actions_per_turn` | 10 | 0 to 50; 0 allows no action whatever the jobs or the level say. A9 built 3, with 0 to 20; A10 moves both | 9.6 |
+| `capcom.event_actions_per_turn` | 10 | 0 to 50; 0 allows no action whatever the jobs or the level say | 9.6 |
 | `capcom.event_action_max_age` | 60 minutes | 1 minute to 24 hours | 9.6 |
 
 One app preference (`app.md` 20.4), since the app decides what it sends:

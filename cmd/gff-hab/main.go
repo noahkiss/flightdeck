@@ -1189,6 +1189,16 @@ func serve(args []string) error {
 						n.Raise(no)
 					}
 				},
+				quietEnded: func(held int, session string) {
+					// One push at the end of quiet hours counts the messages they held (9.2).
+					if n := pushes.live(); n != nil {
+						text := fmt.Sprintf("%d messages from Capcom wait from quiet hours", held)
+						if held == 1 {
+							text = "1 message from Capcom waits from quiet hours"
+						}
+						n.Raise(push.CapcomMessage("quiet-hours", session, text, false))
+					}
+				},
 				logf:     logger.Printf,
 				governor: gov, usage: usageStore,
 				setting: func(id string) json.RawMessage {
@@ -1398,7 +1408,13 @@ func serve(args []string) error {
 	if lk != nil {
 		paneSvc = &paneService{lk: lk, store: store, rule: ruleValue(setSvc), links: channelPeers{pm}.Links,
 			drive: wordSetting(setSvc, settings.AgentDrivePanes, drivePanesAgents),
-			self:  key.Fingerprint(), host: *hostID, logf: logger.Printf}
+			self:  key.Fingerprint(), host: *hostID, logf: logger.Printf,
+			capcomHome: func() string {
+				if c := capcomRef.Load(); c != nil {
+					return c.Home()
+				}
+				return ""
+			}}
 		paneSvc.drv = paneDrive{agent: agents.Get, typed: typedAt.within, live: linkLive(lk),
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
 				s := srv.Load()

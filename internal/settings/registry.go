@@ -43,8 +43,8 @@ const (
 	// (capcom-service.md 5.3, 19.1). No 0: an open card holds a re-seed.
 	CapcomApprovalMaxAge = "capcom.approval_max_age"
 	// Capcom writes first (capcom-service.md 9, 19.1): quiet hours as "HH:MM-HH:MM" in the time
-	// zone a device last shared (the same time twice: none), the switch per source, the daily
-	// event turn budget, and the batch window (seconds) and size.
+	// zone a device last shared, or "off" (the same time twice: none), the switch per source,
+	// the daily event turn budget (0: no cap), and the batch window (seconds) and size.
 	CapcomQuietHours          = "capcom.quiet_hours"
 	CapcomEventsNotices       = "capcom.events.notices"
 	CapcomEventsRounds        = "capcom.events.rounds"
@@ -52,9 +52,9 @@ const (
 	CapcomDailyTurns          = "capcom.events.daily_turns"
 	CapcomBatchWindow         = "capcom.events.batch_window"
 	CapcomBatchMax            = "capcom.events.batch_max"
-	// Capcom jobs (capcom-service.md 9.6, 19.1): the level cap on what a job's event turn may
-	// do (off, ask, allow; levelled: Safe ask, Balanced and Bypass allow), the most actions in
-	// one event turn, and the age in minutes at which an ask card expires.
+	// Capcom jobs (capcom-service.md 9.4, 9.6, 19.1): the level cap on what an event turn may
+	// do (off, ask, allow, all; levelled: Safe ask, Balanced allow, Bypass all), the most
+	// actions in one event turn, and the age in minutes at which an ask card expires.
 	CapcomEventActions        = "capcom.event_actions"
 	CapcomEventActionsPerTurn = "capcom.event_actions_per_turn"
 	CapcomEventActionMaxAge   = "capcom.event_action_max_age"
@@ -114,11 +114,11 @@ var Defs = []Def{
 	{ID: CapcomEventsNotices, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: CapcomEventsRounds, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: CapcomEventsRoundMessages, Default: json.RawMessage(`true`), check: checkBool},
-	{ID: CapcomDailyTurns, Default: json.RawMessage(`20`), check: checkInt(1, 1000), integer: true},
+	{ID: CapcomDailyTurns, Default: json.RawMessage(`200`), check: checkInt(0, 1000), integer: true},
 	{ID: CapcomBatchWindow, Default: json.RawMessage(`120`), check: checkInt(10, 3600), integer: true},
 	{ID: CapcomBatchMax, Default: json.RawMessage(`20`), check: checkInt(1, 200), integer: true},
-	{ID: CapcomEventActions, Default: json.RawMessage(`"allow"`), check: checkWord("off", "ask", "allow")},
-	{ID: CapcomEventActionsPerTurn, Default: json.RawMessage(`3`), check: checkInt(0, 20), integer: true},
+	{ID: CapcomEventActions, Default: json.RawMessage(`"allow"`), check: checkWord("off", "ask", "allow", "all")},
+	{ID: CapcomEventActionsPerTurn, Default: json.RawMessage(`10`), check: checkInt(0, 50), integer: true},
 	{ID: CapcomEventActionMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: GroupConfirmMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: GroupMaxLeads, Default: json.RawMessage(`3`), check: checkInt(1, 10), integer: true},
@@ -212,17 +212,24 @@ func checkWord(words ...string) func(any) (json.RawMessage, error) {
 	}
 }
 
-// checkQuietHours takes "HH:MM-HH:MM", two times of day on a 24-hour clock.
+// QuietOff is the quiet hours value that turns them off (capcom-service.md 9.2).
+const QuietOff = "off"
+
+// checkQuietHours takes "HH:MM-HH:MM", two times of day on a 24-hour clock, or "off".
 func checkQuietHours(v any) (json.RawMessage, error) {
 	s, ok := v.(string)
 	if _, _, err := ParseQuietHours(s); !ok || err != nil {
-		return nil, fmt.Errorf("want a start and an end time of day, as \"22:00-07:00\"")
+		return nil, fmt.Errorf("want a start and an end time of day, as \"22:00-07:00\", or \"off\"")
 	}
 	return json.Marshal(s)
 }
 
-// ParseQuietHours reads "HH:MM-HH:MM" as minutes after midnight.
+// ParseQuietHours reads "HH:MM-HH:MM" as minutes after midnight. "off" reads as 0 and 0: no
+// quiet hours, as the same time twice.
 func ParseQuietHours(s string) (start, end int, err error) {
+	if s == QuietOff {
+		return 0, 0, nil
+	}
 	clock := func(p string) (int, bool) {
 		if len(p) != 5 || p[2] != ':' {
 			return 0, false

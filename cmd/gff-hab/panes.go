@@ -68,12 +68,18 @@ const (
 )
 
 // paneCaller is who asks: the door; for the pane route the caller's pane id; for a peer link
-// the connection, which the wait bound counts by.
+// the connection, which the wait bound counts by. capcom marks a peer link's call as the Capcom
+// service's forward: set only when the peer holds the Capcom mark in this hab's belief
+// (hab-logic-api.md 3.11).
 type paneCaller struct {
-	door readDoor
-	pane string
-	conn string
+	door   readDoor
+	pane   string
+	conn   string
+	capcom bool
 }
+
+// asCapcom is the forward mark of the Capcom service's calls to a peer (hab-logic-api.md 3.11).
+const asCapcom = "capcom"
 
 // key names the caller for the wait bound; "" for the owner, who counts only toward the hab's.
 func (c paneCaller) key() string {
@@ -98,6 +104,9 @@ type paneService struct {
 	// self and host are this hab's device id and host id: a label/name that names this hab
 	// reads here.
 	self, host string
+	// capcomHome is the device id of the hab that holds the Capcom mark in this hab's belief,
+	// "" for none: a peer's forward marked capcom counts only from it. Nil: none.
+	capcomHome func() string
 	logf       func(string, ...any)
 	slots      waitSlots
 	// The pane-drive part (panedrive.go). Nil fields answer unavailable.
@@ -129,26 +138,55 @@ func wordSetting(s *settings.Service, id, def string) func() string {
 	}
 }
 
-// isCapcom says whether the caller is the Capcom service's route. It reads no pane at any level
-// for now (hab-logic-api.md 3.11): it acts on events, and pane text would be a path for
-// injected instructions.
-func (c paneCaller) isCapcom() bool { return c.door == doorRoute && c.pane == capcomRoute }
+// isCapcom says whether the caller is the Capcom service: its route on this hab, or its forward
+// from the peer that holds the Capcom mark (hab-logic-api.md 3.11, 3.12). Capcom has no pane and
+// no project: every project counts as its own.
+func (c paneCaller) isCapcom() bool {
+	return (c.door == doorRoute && c.pane == capcomRoute) || (c.door == doorPeer && c.capcom)
+}
+
+// forwardAs is the mark a forward to a peer carries: capcom for the Capcom service's call, else
+// none. No other caller's params can set it.
+func (c paneCaller) forwardAs() string {
+	if c.isCapcom() {
+		return asCapcom
+	}
+	return ""
+}
+
+// markCapcom takes a peer link's capcom mark only from the peer that holds the Capcom mark in
+// this hab's belief; from any other peer, or any other door, the mark is ignored and the door's
+// own rule applies (hab-logic-api.md 3.11).
+func (s *paneService) markCapcom(c paneCaller, device, as string) paneCaller {
+	if c.door != doorPeer || as != asCapcom || device == "" || s.capcomHome == nil {
+		return c
+	}
+	if home := s.capcomHome(); home != "" && home == device && device != s.self {
+		c.capcom = true
+	}
+	return c
+}
 
 // limited says whether the rule limits this caller: an agent's door under a value other than
-// all, or the Capcom service's route.
+// all. The Capcom service is limited only under off, which shuts it out of this hab: at every
+// other value it reaches every pane, so unknown targets keep their own kinds.
 func limited(rule string, c paneCaller) bool {
-	return c.door != doorOwner && (rule != readPanesAll || c.isCapcom())
+	if c.isCapcom() {
+		return rule == readPanesOff
+	}
+	return c.door != doorOwner && rule != readPanesAll
 }
 
 // mayRead is the rule (hab-logic-api.md 3.11). The owner reads every pane. A peer link reads
-// every pane under all, else none. The Capcom route reads none. The pane route reads its own
-// pane always, the panes of its own session's project under project, and every pane under all.
+// every pane under all, else none. The Capcom service reads every pane at every value but off.
+// The pane route reads its own pane always, the panes of its own session's project under
+// project, and every pane under all.
 func mayRead(rule string, c paneCaller, callerProject string, t paneTarget) bool {
 	switch {
 	case c.door == doorOwner:
 		return true
 	case c.isCapcom():
-		return false
+		return rule != readPanesOff
 	case c.door == doorPeer:
 		return rule == readPanesAll
 	}
@@ -177,13 +215,11 @@ func (s *paneService) denyBy(g paneGate, method string, c paneCaller, rule, targ
 		target = "none"
 	}
 	s.logf("panes: %s denied: %s %s, caller %s, target pane %s", method, g.setting(), rule, c.name(), target)
+	who := "an agent"
 	if c.isCapcom() {
-		if g == gateDrive {
-			return control.Errorf(api.ErrorKindDenied, "the Capcom service lists, types into and starts no pane for now: pane text could carry instructions into its event turns")
-		}
-		return control.Errorf(api.ErrorKindDenied, "the Capcom service reads no pane for now: pane text could carry instructions into its event turns")
+		who = "Capcom"
 	}
-	return control.Errorf(api.ErrorKindDenied, "%s is %s on this hab: an agent may %s. The owner changes it in Flightdeck's settings", g.setting(), rule, g.allowed(rule, c))
+	return control.Errorf(api.ErrorKindDenied, "%s is %s on this hab: %s may %s. The owner changes it in Flightdeck's settings", g.setting(), rule, who, g.allowed(rule, c))
 }
 
 // prepare resolves the target of a call and applies the rule. A limited caller learns nothing
@@ -197,9 +233,6 @@ func (s *paneService) prepare(method string, c paneCaller, pane, session string)
 // agent.drive_panes for typing (hab-logic-api.md 3.12).
 func (s *paneService) prepareBy(g paneGate, method string, c paneCaller, pane, session string) (paneTarget, *channels.Link, string, error) {
 	rule := s.ruleOf(g)
-	if c.isCapcom() {
-		return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, "")
-	}
 	lim := limited(rule, c)
 	t, peer, bare, err := s.resolve(c, pane, session, g.capability())
 	if err != nil {
@@ -317,7 +350,7 @@ func (s *paneService) Read(ctx context.Context, c paneCaller, p api.PaneReadPara
 	if peer != nil {
 		var r api.PaneText
 		fwd := p
-		fwd.Session = bare
+		fwd.Session, fwd.As = bare, c.forwardAs()
 		if err := peer.Caller.Call(ctx, "pane.read", fwd, &r); err != nil {
 			return api.PaneText{}, peerErr(peer.Label, err)
 		}
@@ -462,6 +495,7 @@ func (s *paneService) Wait(ctx context.Context, c paneCaller, p api.PaneWaitPara
 	}
 	defer release()
 	if peer != nil {
+		p.As = c.forwardAs()
 		return s.forwardWait(ctx, peer, bare, p, wait)
 	}
 	u, _ := parseUUID(t.pane)
@@ -754,19 +788,19 @@ type controlPanes struct{ s *paneService }
 var _ control.Panes = controlPanes{}
 
 func (c controlPanes) Read(ctx context.Context, from control.PaneCaller, p api.PaneReadParams) (api.PaneText, error) {
-	return c.s.Read(ctx, controlCaller(from), p)
+	return c.s.Read(ctx, c.s.markCapcom(controlCaller(from), from.Device, p.As), p)
 }
 
 func (c controlPanes) Wait(ctx context.Context, from control.PaneCaller, p api.PaneWaitParams) (api.PaneWaitResult, error) {
-	return c.s.Wait(ctx, controlCaller(from), p)
+	return c.s.Wait(ctx, c.s.markCapcom(controlCaller(from), from.Device, p.As), p)
 }
 
 func (c controlPanes) List(ctx context.Context, from control.PaneCaller, p api.PaneListParams) (api.PaneList, error) {
-	return c.s.List(ctx, controlCaller(from), p)
+	return c.s.List(ctx, c.s.markCapcom(controlCaller(from), from.Device, p.As), p)
 }
 
 func (c controlPanes) Type(ctx context.Context, from control.PaneCaller, p api.PaneTypeParams) (api.PaneTyped, error) {
-	return c.s.Type(ctx, controlCaller(from), p)
+	return c.s.Type(ctx, c.s.markCapcom(controlCaller(from), from.Device, p.As), p)
 }
 
 func (c controlPanes) New(ctx context.Context, from control.PaneCaller, p api.PaneNewParams) (api.PaneStarted, error) {

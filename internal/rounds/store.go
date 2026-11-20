@@ -383,6 +383,7 @@ func (s *Store) Create(r Round, createdBy string, now time.Time) (Entry, error) 
 	}
 	r.ID = NewID("round")
 	r.CreatedBy = createdBy
+	r.ByPerson = r.ByPerson && createdBy == ""
 	r.CreatedAt = now.UTC()
 	r.UpdatedAt = r.CreatedAt
 	e := &Entry{Round: r}
@@ -412,10 +413,12 @@ func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: %s", ErrNameTaken, r.Name)
 	}
 	r.CreatedBy, r.CreatedAt = prev.CreatedBy, prev.CreatedAt
+	r.ByPerson = prev.ByPerson
 	if len(Granted(prev.Actions, r.Actions)) > 0 {
 		// Only a person grants a word (the API refuses an agent's): the job is the user's now
 		// (capcom-service.md 9.6).
 		r.CreatedBy = ""
+		r.ByPerson = true
 	}
 	r.UpdatedAt = now.UTC()
 	e.Round = r

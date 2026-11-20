@@ -3872,6 +3872,11 @@ every key, so a change never makes a new key.
   it, no config set it) takes the picked level's value, written with the revision read there; a
   locked one is skipped. Any other value stands, and the row shows
   "Differs on <hab>" when it does not match, as `logbook.md` 9.1 does.
+  - **So a Bypass hab moves to `capcom.event_actions = all` on its own** (Capcom A10). Earlier
+    apps never wrote `allow` at Bypass, because it already matched, so nearly every hab holds it
+    as `default`. The first connect after the update writes `all`: from then on event turns act
+    with no job, as Bypass means. The owner chose this (least friction). A user who wants
+    `allow` picks Custom and sets it; a written value is never moved again.
 - **What Bypass never touches.**
   - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
   - The harness's own bypass flag, such as `--dangerously-skip-permissions`. A level never sets
@@ -3891,7 +3896,7 @@ every key, so a change never makes a new key.
 | `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2); B3 reads it on the home hab for each plan and amend; the app row is built (`groups.md` 5.9) | `groups.md` 3.2, 13 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
-| `capcom.event_actions` | Capcom may act on events | Agents | `"off"`, `"ask"`, `"allow"` or `"all"`; `off` by hand only | `"ask"` | `"allow"` | `"all"` | Hab, every hab; the Capcom home hab enforces it (A9; `all` from A10) | `capcom-service.md` 9.4, 9.6, 19.1 |
+| `capcom.event_actions` | Capcom may act on events | Agents | `"off"`, `"ask"`, `"allow"` or `"all"`; `off` by hand only | `"ask"` | `"allow"` | `"all"` | Hab, every hab; the Capcom home hab enforces it (A9; `all` A10) | `capcom-service.md` 9.4, 9.6, 19.1 |
 | `agent.read_panes` | Agents may read panes | Agents | `"off"`, `"project"` or `"all"`; `off` by hand only | `"project"` | `"all"` | `"all"` | Hab, every hab; each hab enforces it for reads of its own panes | `hab-logic-api.md` 3.11 |
 | `agent.drive_panes` | Agents may type into and start panes | Agents | `"off"`, `"agents"`, `"project"` or `"all"`; `project` by hand only | `"off"` | `"agents"` | `"all"` | Hab, every hab; each hab enforces it for its own panes | `hab-logic-api.md` 3.12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
@@ -3965,12 +3970,12 @@ picker never changes them.
 | `capcom.share_location` | Share location with Capcom | Capcom | bool | On; the first Capcom open asks for the system's location permission | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
 | `capcom.share_calendar` | Share calendar with Capcom, from the calendars picked | Capcom | bool, and a calendar list | On, every calendar | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
 | `capcom.calendar_days` | Days of calendar to share | Capcom | integer 1 to 31 | 7 | App | `capcom-service.md` 8.1, 19.1 |
-| `capcom.quiet_hours` | Quiet hours | Capcom | text `HH:MM-HH:MM`, 24-hour clock, in the time zone a device last shared; the same time twice: none. From A10: also `off`, and it holds Capcom's pushes, not its work | `22:00-07:00` | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
+| `capcom.quiet_hours` | Quiet hours | Capcom | text `HH:MM-HH:MM`, 24-hour clock, in the time zone a device last shared; the same time twice: none; or `off`. It holds Capcom's pushes, not its work | `22:00-07:00` | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.notices`, `capcom.events.rounds`, `capcom.events.round_messages` | Capcom looks at notices; at round run ends; at round messages | Capcom | bool | On | Hab, the home hab | `capcom-service.md` 9.1, 19.1 |
-| `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 1 to 1000; from A10, 0 to 1000 with 0 for no cap, and the user's own jobs do not count | 20; 200 from A10 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
+| `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 0 to 1000, 0 for no cap; the user's own jobs do not count | 200 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
 | `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
-| `capcom.event_actions_per_turn` | Capcom actions in one look, at most | Capcom | integer 0 to 20, 0 to 50 from A10; 0 allows none | 3; 10 from A10 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
+| `capcom.event_actions_per_turn` | Capcom actions in one look, at most | Capcom | integer 0 to 50; 0 allows none | 10 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |
@@ -4323,7 +4328,8 @@ The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/Capcom
   the row does not show.
 - **Switches.** One per word, in the hab's order: "Hand off work to an agent" (`hand_off`),
   "Start a session", "Set up a project", "Start or change a group" (`group`), "Add calendar and
-  reminder cards" (`card`), "Open pages it has not seen" (`fetch`).
+  reminder cards" (`card`), "Open pages it has not seen" (`fetch`), "Type into panes and keep
+  agents fresh" (`drive`, from A10).
 - **A grant shows the prompt.** Turning a switch on shows, under the switches, "Allow
   "<switch>"?", "Capcom follows this prompt when the job's events come in:", the prompt whole,
   and Cancel and Allow. Allow sends `round.update` with the round's whole definition, the word

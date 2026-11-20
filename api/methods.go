@@ -329,7 +329,7 @@ var Enums = map[string][]string{
 	"RoundCatchUp":     {"once", "skip"},
 	"RoundOnFinish":    {"close", "keep"},
 	"RoundNotify":      {"failures", "always", "never"},
-	"RoundAction":      {"hand_off", "start_session", "set_up_project", "group", "card", "fetch"},
+	"RoundAction":      {"hand_off", "start_session", "set_up_project", "group", "card", "fetch", "drive"},
 	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
 	"RoundNoticeKind":  {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
 	// Sets added for watchers (rounds.md 4.4).

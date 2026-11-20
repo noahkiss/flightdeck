@@ -123,11 +123,13 @@ public enum SettingsRegistry {
         SettingDef(id: logbookApproval, title: "Require approval for memories", area: .agents,
                    kind: .word([(word: "off", title: "Off"), (word: "agents", title: "Agents")]), store: .everyHab,
                    levels: [.safe: .string("agents"), .balanced: .string("off"), .bypass: .string("off")]),
-        // What a Capcom job may do on its own (capcom-service.md 9.6): ask at Safe, allow at
-        // Balanced and Bypass; off is picked by hand. It acts on the Capcom home hab; every hab keeps it.
+        // What an event turn may do (capcom-service.md 9.4, 9.6): ask at Safe, allow at
+        // Balanced, all at Bypass (every action but cards and fetches, no job needed); off is
+        // picked by hand. It acts on the Capcom home hab; every hab keeps it.
         SettingDef(id: capcomEventActions, title: "Capcom jobs may act", area: .agents,
-                   kind: .word([(word: "off", title: "Off"), (word: "ask", title: "Ask first"), (word: "allow", title: "Allow")]), store: .everyHab,
-                   levels: [.safe: .string("ask"), .balanced: .string("allow"), .bypass: .string("allow")]),
+                   kind: .word([(word: "off", title: "Off"), (word: "ask", title: "Ask first"), (word: "allow", title: "Allow"),
+                                (word: "all", title: "Any event, no job needed")]), store: .everyHab,
+                   levels: [.safe: .string("ask"), .balanced: .string("allow"), .bypass: .string("all")]),
         // Which panes an agent may read (hab-logic-api.md 3.11): its project at Safe, all at
         // Balanced and Bypass; off is picked by hand. Each hab enforces it for its own panes.
         SettingDef(id: agentReadPanes, title: "Agents may read panes", area: .agents,
@@ -164,7 +166,7 @@ public enum SettingsRegistry {
         // Capcom jobs (capcom-service.md 9.6): the Capcom home hab reads them; every hab keeps
         // them, so a move of Capcom keeps the values.
         SettingDef(id: capcomEventActionsPerTurn, title: "Capcom job actions in one look, at most", area: .agents,
-                   kind: .integer(0...20, unit: ""), store: .everyHab),
+                   kind: .integer(0...50, unit: ""), store: .everyHab),
         SettingDef(id: capcomEventActionMaxAge, title: "A Capcom job's ask card expires after", area: .agents,
                    kind: .integer(1...1440, unit: "min"), store: .everyHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),

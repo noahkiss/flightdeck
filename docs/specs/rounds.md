@@ -738,7 +738,7 @@ shared with them, and a change to it changes both specs.
 | `level` | The highest `level` in the batch, or absent. A hint, never a push of its own |
 | `last_ok` | `GFF_ROUND_LAST_OK` (5.1) |
 | `actions` | `capcom` only, from stage A9: the round's `actions` (3), or absent. The home hab caps them by its level (`capcom-service.md` 9.6) |
-| `by_person` | `capcom` only, from stage A10: true when the round has no `created_by`. Its batch does not count toward Capcom's daily turn budget (`capcom-service.md` 9.3) |
+| `by_person` | `capcom` only, from stage A10: true when a person owns the round: a positive mark the hab sets on a create from the owner's door with no creator, or on a person's grant; never on a create or a grant over a peer link, nor on a create from an agent route but the Capcom route in a turn a user's message opened (`capcom-service.md` 9.9). Its batch does not count toward Capcom's daily turn budget (`capcom-service.md` 9.3) |
 
 - **Size.** The whole message fits the channel limit of 64 KiB (`mesh.md` 6.3), a fixed ceiling
   (4.7); the event block is cut first, with the count of what it left out.

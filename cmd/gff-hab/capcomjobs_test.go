@@ -182,8 +182,9 @@ func TestCapcomJobsLimitsAndLevels(t *testing.T) {
 	t.Parallel()
 	h := newJobsHarness(t)
 	h.set[settings.CapcomEventActions] = `"allow"`
+	h.set[settings.CapcomEventActionsPerTurn] = "3"
 
-	// The fourth action in one turn is refused (default 3).
+	// The fourth action in one turn is refused at 3 (the default is 10).
 	h.job(t, "m1", "mail", "t1", "hand_off")
 	for i := 0; i < 3; i++ {
 		if _, err := h.handOff(); err != nil {

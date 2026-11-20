@@ -120,6 +120,8 @@ type capcomEngineSetup struct {
 	publish    func(structure.Event)
 	notify     func(title, body string)
 	message    func(item capcomthread.Item, session string)
+	// quietEnded pushes, once quiet hours end, how many Capcom messages they held (9.2).
+	quietEnded func(held int, session string)
 	logf       func(string, ...any)
 	// The usage governor (10.1): nil runs Capcom unpaced, with no pace message.
 	governor *governor.Governor
@@ -141,6 +143,19 @@ func pushesMessage(it capcomthread.Item) bool {
 		return it.Answer == nil
 	}
 	return it.Kind == capcomthread.KindMessage && it.Author.Kind == capcomthread.AuthorCapcom && strings.TrimSpace(it.Text) != ""
+}
+
+// quietHolds reports whether quiet hours hold a message's push (9.2): one an event turn wrote
+// while they hold, unless its batch is urgent. The queue counts it for the push at their end. A
+// user turn, or an event turn a user message joined, pushes at any hour.
+func (e *capcomEngine) quietHolds(it capcomthread.Item) bool {
+	if it.Turn == "" || e.events == nil {
+		return false
+	}
+	if st := e.turnState(0); st.Turn == it.Turn && st.UserTurn {
+		return false
+	}
+	return e.events.HoldPush(it.Turn)
 }
 
 // newCapcomEngine opens the thread and the engine record. It starts nothing: start does, when
@@ -203,6 +218,11 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 				go (*f)(round, word, at)
 			}
 		},
+		QuietEnded: func(held int) {
+			if session := e.Session(); session != "" && s.quietEnded != nil {
+				s.quietEnded(held, session)
+			}
+		},
 		Logf: s.logf,
 	})
 	if q == nil {
@@ -221,7 +241,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		e.publishChat(it)
 		// A Capcom message is a communication push (7.6). The thread notifies a capcom
 		// message once, when it is added: a repeated reply is dropped before it.
-		if e.message != nil && pushesMessage(it) {
+		if e.message != nil && pushesMessage(it) && !e.quietHolds(it) {
 			if session := e.Session(); session != "" {
 				e.message(it, session)
 			}

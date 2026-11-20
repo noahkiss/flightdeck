@@ -10,9 +10,12 @@ import (
 // PaneCaller says who makes a pane.read or pane.wait call on the control connection. Peer is
 // true for a peer link (client kind hab): an agent on another hab, under agent.read_panes. Any
 // other client is the owner. Conn names the connection, which the wait bound counts by.
+// Device is a peer link's device id from its hello: a forward marked as Capcom's counts only from
+// the peer that holds the Capcom mark (spec 3.11).
 type PaneCaller struct {
-	Peer bool
-	Conn string
+	Peer   bool
+	Conn   string
+	Device string
 }
 
 // Panes serves pane.read and pane.wait (spec 3.11), and pane.list, pane.type and pane.new
@@ -46,7 +49,7 @@ const (
 func (c *conn) handlePanes(m message) {
 	seq := c.currentSeq()
 	c.mu.Lock()
-	from := PaneCaller{Peer: c.kind == api.ClientKindHab, Conn: c.clientID}
+	from := PaneCaller{Peer: c.kind == api.ClientKindHab, Conn: c.clientID, Device: c.linkFrom}
 	c.mu.Unlock()
 	ps := c.s.cfg.Panes
 	var call func(ctx context.Context) (any, error)

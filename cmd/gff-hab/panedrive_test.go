@@ -104,6 +104,8 @@ var (
 	fromPeer  = paneCaller{door: doorPeer, conn: "c1"}
 	fromOwner = paneCaller{door: doorOwner}
 	fromCap   = paneCaller{door: doorRoute, pane: capcomRoute}
+	// fromCapPeer is Capcom's forward from the hab that holds the Capcom mark.
+	fromCapPeer = paneCaller{door: doorPeer, conn: "c2", capcom: true}
 )
 
 // TestMayDrive is the rule's table (hab-logic-api.md 3.12).
@@ -138,7 +140,17 @@ func TestMayDrive(t *testing.T) {
 		{readPanesProject, fromPeer, "", agentIn, false},
 		{drivePanesAgents, fromPeer, "", agentIn, false},
 		{readPanesOff, fromOwner, "", agentOut, true},
-		{readPanesAll, fromCap, "", agentIn, false},
+		// Capcom: every project counts as its own (A10).
+		{readPanesAll, fromCap, "", agentIn, true},
+		{readPanesAll, fromCap, "", shellIn, true},
+		{readPanesProject, fromCap, "", agentOut, true},
+		{readPanesProject, fromCap, "", shellIn, true},
+		{drivePanesAgents, fromCap, "", agentOut, true},
+		{drivePanesAgents, fromCap, "", shellIn, false},
+		{readPanesOff, fromCap, "", agentIn, false},
+		{drivePanesAgents, fromCapPeer, "", agentOut, true},
+		{drivePanesAgents, fromCapPeer, "", shellIn, false},
+		{readPanesOff, fromCapPeer, "", agentIn, false},
 	} {
 		if got := mayDrive(c.rule, c.caller, c.project, c.target); got != c.want {
 			t.Errorf("mayDrive(%s, door %d, project %q, %s) = %v, want %v", c.rule, c.caller.door, c.project, c.target.pane, got, c.want)
@@ -147,9 +159,10 @@ func TestMayDrive(t *testing.T) {
 }
 
 // TestPaneTypeRule: agent.drive_panes refuses pane.type with denied at each value and door,
-// unknown targets alike under agents, project and off, the caller's own pane at every value, a
-// label/name on a peer unless the near rule is all, and every call from the Capcom route. The
-// hint names the setting, never the target.
+// unknown targets alike under agents, project and off, the caller's own pane at every value, and
+// a label/name on a peer unless the near rule is all. The Capcom route types into every pane
+// under all and project, every agent's under agents, none under off (A10). The hint names the
+// setting, never the target.
 func TestPaneTypeRule(t *testing.T) {
 	t.Parallel()
 	r := newDriveRig(t)
@@ -168,16 +181,16 @@ func TestPaneTypeRule(t *testing.T) {
 		cases []want
 	}{
 		{readPanesAll, []want{{fromMine, "other", ""}, {fromMine, "me", api.ErrorKindDenied}, {fromLoose, "mate", ""}, {fromPeer, "mate", ""},
-			{fromMine, "ghost", api.ErrorKindNotFound}, {fromCap, "mate", api.ErrorKindDenied}}},
+			{fromMine, "ghost", api.ErrorKindNotFound}, {fromCap, "mate", ""}, {fromCap, "shell", ""}, {fromCap, "ghost", api.ErrorKindNotFound}}},
 		{readPanesProject, []want{{fromMine, "mate", ""}, {fromMine, "shell", ""}, {fromMine, "me", api.ErrorKindDenied},
 			{fromMine, "other", api.ErrorKindDenied}, {fromMine, "loose", api.ErrorKindDenied}, {fromMine, "ghost", api.ErrorKindDenied},
 			{fromMine, "bee/far", api.ErrorKindDenied}, {fromLoose, "loose", api.ErrorKindDenied}, {fromPeer, "mate", api.ErrorKindDenied},
-			{fromPeer, "ghost", api.ErrorKindDenied}, {fromOwner, "other", ""}, {fromCap, "mate", api.ErrorKindDenied}}},
+			{fromPeer, "ghost", api.ErrorKindDenied}, {fromOwner, "other", ""}, {fromCap, "other", ""}, {fromCap, "shell", ""}, {fromCap, "loose", ""}}},
 		{drivePanesAgents, []want{{fromMine, "mate", ""}, {fromMine, "shell", api.ErrorKindDenied}, {fromMine, "me", api.ErrorKindDenied},
 			{fromMine, "other", api.ErrorKindDenied}, {fromMine, "ghost", api.ErrorKindDenied}, {fromPeer, "mate", api.ErrorKindDenied},
-			{fromOwner, "shell", ""}}},
+			{fromOwner, "shell", ""}, {fromCap, "other", ""}, {fromCap, "shell", api.ErrorKindDenied}}},
 		{readPanesOff, []want{{fromMine, "me", api.ErrorKindDenied}, {fromMine, "mate", api.ErrorKindDenied}, {fromMine, "ghost", api.ErrorKindDenied},
-			{fromPeer, "mate", api.ErrorKindDenied}, {fromOwner, "mate", ""}}},
+			{fromPeer, "mate", api.ErrorKindDenied}, {fromOwner, "mate", ""}, {fromCap, "mate", api.ErrorKindDenied}, {fromCap, "ghost", api.ErrorKindDenied}}},
 	} {
 		r.rule = c.rule
 		for _, w := range c.cases {
@@ -185,7 +198,7 @@ func TestPaneTypeRule(t *testing.T) {
 			if paneErrKind(err) != w.kind {
 				t.Errorf("%s: door %d types into %s: %v, want %q", c.rule, w.caller.door, w.session, err, w.kind)
 			}
-			if w.kind == api.ErrorKindDenied && !w.caller.isCapcom() &&
+			if w.kind == api.ErrorKindDenied &&
 				(strings.Contains(err.Error(), w.session) || !strings.Contains(err.Error(), "agent.drive_panes is "+c.rule)) {
 				t.Errorf("%s: hint %q names the target, or not the setting", c.rule, err)
 			}

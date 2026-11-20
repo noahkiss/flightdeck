@@ -2,9 +2,9 @@ package main
 
 // Capcom writes first (capcom-service.md 9): the events the service looks at on its own. Notices
 // raised on this hab and round messages from any hab become thread items; the event queue
-// (internal/capcomevents) batches them, holds them through quiet hours and past the daily event
-// turn budget, and hands each batch to the engine as one event turn. An event turn may read and
-// message the user, never act (9.4): the route refuses its acting calls.
+// (internal/capcomevents) batches them, holds them past the daily event turn budget, and hands
+// each batch to the engine as one event turn, at any hour: quiet hours hold pushes, not turns
+// (9.2). What an event turn may do follows capcom.event_actions (9.4, capcomjobs.go).
 
 import (
 	"encoding/json"
@@ -54,8 +54,9 @@ func (e *capcomEngine) eventLimits() capcomevents.Limits {
 			l.QuietStart, l.QuietEnd = s, end
 		}
 	}
-	if n := e.settingInt(settings.CapcomDailyTurns); n > 0 {
-		l.DailyTurns = n
+	var turns int
+	if json.Unmarshal(e.settingValue(settings.CapcomDailyTurns), &turns) == nil && turns >= 0 {
+		l.DailyTurns = turns // 0: no cap (9.3)
 	}
 	if n := e.settingInt(settings.CapcomBatchWindow); n > 0 {
 		l.BatchWindow = time.Duration(n) * time.Second
@@ -140,11 +141,14 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	}
 	key := "round:" + m.ID
 	urgent := m.Round.Level == string(api.NoticeLevelTimeSensitive)
+	// A person's own job (9.3) is read, as a job's words are, only from a round runner's
+	// message: no session sends under a round: sender, so no agent skips the budget.
+	free := m.Round.ByPerson && m.From.Session == channels.RoundSender(m.Round.Name)
 	if it, held := e.thread.ByKey(key); held {
 		// A crash between the thread and the queue left it in neither batch nor turn: queue it
 		// now, so the retry is still seen.
 		if it.Read.IsZero() && !e.events.Holds(it.ID) {
-			if err := e.events.Add(capcomevents.Event{Item: it.ID, Urgent: urgent, Round: m.ID, Solo: len(it.Actions) > 0}); err != nil {
+			if err := e.events.Add(capcomevents.Event{Item: it.ID, Urgent: urgent, Round: m.ID, Solo: len(it.Actions) > 0, Free: free}); err != nil {
 				return api.ChannelStateRefused, "the Capcom event queue did not take it"
 			}
 		}
@@ -196,7 +200,7 @@ func (e *capcomEngine) DeliverRound(m api.ChannelMessage) (api.ChannelState, str
 	}
 	// A job with words goes in a batch of its own (9.6): no other job's prompt or event shares
 	// the turn its words allow.
-	if err := e.events.Add(capcomevents.Event{Item: stored.ID, Urgent: urgent, Round: m.ID, Solo: len(stored.Actions) > 0}); err != nil {
+	if err := e.events.Add(capcomevents.Event{Item: stored.ID, Urgent: urgent, Round: m.ID, Solo: len(stored.Actions) > 0, Free: free}); err != nil {
 		// The runner sends it again; the thread holds it, and the duplicate path queues it.
 		e.logf("capcom events: %v", err)
 		return api.ChannelStateRefused, "the Capcom event queue did not take it"

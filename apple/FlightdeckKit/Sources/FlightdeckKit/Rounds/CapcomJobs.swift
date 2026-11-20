@@ -52,6 +52,7 @@ public final class CapcomJobs {
         (.group, "Start or change a group"),
         (.card, "Add calendar and reminder cards"),
         (.fetch, "Open pages it has not seen"),
+        (.drive, "Type into panes and keep agents fresh"),
     ]
 
     /// A grant that waits for the person to read the job's prompt.

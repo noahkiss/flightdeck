@@ -235,7 +235,12 @@ func TestMayRead(t *testing.T) {
 		{readPanesProject, paneCaller{door: doorPeer}, "", inP, false},
 		{readPanesOff, paneCaller{door: doorPeer}, "", inP, false},
 		{readPanesOff, paneCaller{door: doorOwner}, "", outP, true},
-		{readPanesProject, paneCaller{door: doorRoute, pane: capcomRoute}, "", inP, false},
+		// Capcom reads every pane at every value but off (A10), and so does its marked forward.
+		{readPanesProject, paneCaller{door: doorRoute, pane: capcomRoute}, "", outP, true},
+		{readPanesAll, paneCaller{door: doorRoute, pane: capcomRoute}, "", unfiled, true},
+		{readPanesOff, paneCaller{door: doorRoute, pane: capcomRoute}, "", inP, false},
+		{readPanesProject, paneCaller{door: doorPeer, capcom: true}, "", outP, true},
+		{readPanesOff, paneCaller{door: doorPeer, capcom: true}, "", outP, false},
 	} {
 		if got := mayRead(c.rule, c.caller, c.project, c.target); got != c.want {
 			t.Errorf("mayRead(%s, door %d, project %q, %+v) = %v, want %v", c.rule, c.caller.door, c.project, c.target, got, c.want)

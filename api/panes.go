@@ -8,6 +8,7 @@ type PaneReadParams struct {
 	Pane       string `json:"pane,omitempty" doc:"A pane id on this hab."`
 	Session    string `json:"session,omitempty" doc:"A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."`
 	Scrollback int    `json:"scrollback,omitempty" doc:"Scrollback rows to return from just above the screen. Default 0, at most 10000."`
+	As         string `json:"as,omitempty" doc:"capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."`
 }
 
 // PaneText is a pane's screen and scrollback as plain text (spec 3.11). The text is the pane's
@@ -48,6 +49,7 @@ type PaneWaitParams struct {
 	QuietMS   int     `json:"quiet_ms,omitempty" doc:"End the wait once the pane printed nothing for this long."`
 	From      *uint64 `json:"from,omitempty" doc:"The pane offset to read new output from. Absent means the pane's offset when the wait starts."`
 	TimeoutMS int     `json:"timeout_ms,omitempty" doc:"Default 180000 (110000 from a pane), at most 600000."`
+	As        string  `json:"as,omitempty" doc:"capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."`
 }
 
 // PaneWaitResult says why the wait ended, with the matched line and the offset read up to.
@@ -66,6 +68,7 @@ type PaneWaitResult struct {
 // reach; a peer label or this hab's host id, that host only.
 type PaneListParams struct {
 	Host string `json:"host,omitempty" doc:"A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer."`
+	As   string `json:"as,omitempty" doc:"capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."`
 }
 
 // PaneListEntry is one pane the caller may read (spec 3.12). It never carries a title.
@@ -101,6 +104,7 @@ type PaneTypeParams struct {
 	Session string `json:"session,omitempty" doc:"A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."`
 	Text    string `json:"text,omitempty" doc:"The text to write, as given, at most 64 KiB."`
 	Enter   bool   `json:"enter,omitempty" doc:"Press Enter after the text, as its own write."`
+	As      string `json:"as,omitempty" doc:"capcom on a forward from the Capcom home hab (spec 3.12). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."`
 }
 
 // PaneTyped says what pane.type wrote.
