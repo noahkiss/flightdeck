@@ -128,7 +128,7 @@ match it.
 | Paseo | Structured, through the SDK's tool-permission callback. The app also answers AskUserQuestion with real choices and approves a plan at plan-mode exit. CLI: `paseo permit allow/deny` |
 | herdr | Keystrokes only |
 | Rex | None built in. A community board types into the pane |
-| Ours | Structured where the harness offers it; keystrokes as a fallback with a read-back. The blocking Claude hook is a per-host setting, off by default (owner, 2026-11-01). Requests expire after 60 minutes, need an unlocked phone, and are withdrawn everywhere once answered (`app.md` 7; `harness-adapters.md`, Permission answers) |
+| Ours | Structured where the harness offers it; keystrokes as a fallback with a read-back. The blocking Claude hook is a per-host setting, on by default at 60 seconds while a client that can answer is connected (owner, 2026-11-20). Requests expire after 60 minutes, need an unlocked phone, and are withdrawn everywhere once answered (`app.md` 7; `harness-adapters.md`, Permission answers) |
 | Bar | Match Paseo: structured answers for permissions, questions and plan approval |
 | Flag | **Below** on plan approval, which no spec covers yet (idea 4.4). **Above** on expiry, Watch fit and withdrawal |
 

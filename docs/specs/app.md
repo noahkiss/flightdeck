@@ -1659,7 +1659,7 @@ the context bar, the title, then the command on one line in the accent colour, t
   answer path's own deadline, and the hab's limit for remote answers.
 - **The answer path's deadline.** With a blocking permission hook, the hook gives up after its
   timeout and the harness falls back to its own dialog (`harness-adapters.md`, Open decisions:
-  a per-host setting, off by default, about 30 s).
+  `hab.permission_wait`, a per-host setting, on by default at 60 s).
   After that, only a keystroke answer or the terminal can resolve it.
 - **The hab's limit.** A setting on the hab (`approval.max_age`, 20.3), default 60 minutes, none
   at Bypass permissions. A request older than this takes no remote Allow. The owner must open
@@ -3957,7 +3957,7 @@ picker never changes them.
 | `usage.warnings` | Usage warnings, with thresholds | Usage | off, or a list of percentages from 50 to 100 | On, 80 and 95 | App; push kind `usage` with `usage_thresholds` on `push.register` (not built) | 14.3 |
 | `widget.hide_titles` | Hide titles on the Lock Screen | Widgets | bool | Off | App Group | 15.2 |
 | `mac.keep_connected` | Stay connected in the background | Connection | bool | Off | App (Mac) | 12.1 |
-| `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | integer seconds, 0 = off, else 1 to 120 | 0; the switch sets 30 | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
+| `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | integer seconds, 0 = off, else 1 to 120 | 60; the switch sets 60 | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
 | `logbook.habits.brief`, `logbook.habits.reminder`, `logbook.habits.closeout` | Brief at session start; remind to record; ask to record before stopping | Agents | bool | On | Hab, every hab; `[logbook.habits_off]` in the hab's config file turns one off per project | `logbook.md` 11.1, 11.4 |
 | `agent.start_mode` | New sessions start in | Agents | `"ask"`, `"edits"` or `"bypass"` | `"ask"` | Hab, every hab; each hab reads it at each harness start (not built) | `harness-adapters.md` (Start mode) |
 | `agent.context_nudge` | Remind agents about context, from | Agents | integer percent, 0 = off, else 1 to 99 | 0 | Hab, this hab only | `harness-adapters.md` (context nudge) |
@@ -3991,10 +3991,11 @@ picker never changes them.
 - The Capcom host picker (`capcom.md` 7.3) and each hab's push status are controls, not
   settings. They sit in Settings with no id.
 - **`hab.permission_wait`** is per host: the app writes it to one hab. The row is a switch (0 or
-  30) with a stepper for 1 to 120 s once on. A change applies to the next hook; a hook already
+  60) with a stepper for 1 to 120 s once on. A change applies to the next hook; a hook already
   waiting keeps its wait. The hook config always passes `-wait`, so turning it on needs no hook
-  change. A `-permission-wait` flag given on the command line, or a non-empty
-  `$GFF_HAB_PERMISSION_WAIT`, locks the value (20.5).
+  change. It is on by default (owner, 2026-11-20): the hook waits only while a client that can
+  answer is connected (`harness-adapters.md`, blocking hook). A `-permission-wait` flag given on
+  the command line, or a non-empty `$GFF_HAB_PERMISSION_WAIT`, locks the value (20.5).
 - **`capcom.quiet_hours`** sits on the Capcom host page, under "Quiet hours", and writes the
   Capcom home hab only. The switch "Hold Capcom's pushes at night" writes `off`, or turns on with
   the last range the page saw, else `22:00-07:00`. Once on, From and Until pick a time of day.

@@ -89,7 +89,7 @@ func TestDefaults(t *testing.T) {
 	if len(list) != len(Defs) {
 		t.Fatalf("listed %d, want %d", len(list), len(Defs))
 	}
-	want := map[string]string{StartElsewhere: "false", ApprovalMaxAge: "60", LogbookApproval: `"off"`, PermissionWait: "0"}
+	want := map[string]string{StartElsewhere: "false", ApprovalMaxAge: "60", LogbookApproval: `"off"`, PermissionWait: "60"}
 	for id, v := range want {
 		st := find(t, list, id)
 		if string(st.Value) != v || string(st.Default) != v || st.Revision != 1 || st.Source != api.SettingSourceDefault {

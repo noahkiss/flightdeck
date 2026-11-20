@@ -155,7 +155,7 @@ harness = "claude"
 # Require approval for memories: "off" or "agents".
 # "logbook.approval" = "off"
 # Wait this many seconds for the app's answer to a permission hook: 0 for off, else 1 to 120.
-# "hab.permission_wait" = 30
+# "hab.permission_wait" = 60
 # The Logbook recording habits (docs/specs/logbook.md 11): true or false, each on by default.
 # "logbook.habits.brief" = true
 # "logbook.habits.reminder" = true
