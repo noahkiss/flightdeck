@@ -1,0 +1,20 @@
+⏺ 1. Red
+  2. Green
+  3. Blue
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Color
+
+│ Which color should the status badge use for the long-running background job
+│ indicator in the dashboard header?
+
+  1. Red
+     Warm, attention-grabbing badge
+  2. Green
+     Calm, healthy-status badge
+  3. Blue
+     Neutral, informational badge
+❯ 4. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in nano · Esc to cancel

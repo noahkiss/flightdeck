@@ -254,17 +254,33 @@ func (a *agentService) holdForTurn(pane string) {
 // the request resolved, and reports success only then (harness-adapters.md, Permission
 // answers). It never answers on its own: a decision the hook could not take is reported, not
 // retried as keys. One answer per request: a second one gets conflict, never keys.
+//
+// Choice answer answers a Claude Code question (harness-adapters.md, Question answers): the
+// waiting hook takes the question's input with the answers, else a digit picks the option by
+// its label on screen, for one single-choice question only. It lets the tool run, so it counts
+// as an allow.
 func (a *agentService) Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) (err error) {
-	if p.Choice == api.ApprovalChoiceAnswer {
-		return control.Errorf(api.ErrorKindUnavailable, "answering a question is not built yet; answer it in the terminal")
-	}
-	allow := p.Choice == api.ApprovalChoiceAllow
+	question := p.Choice == api.ApprovalChoiceAnswer
+	allow := p.Choice == api.ApprovalChoiceAllow || question
 	if u, ok := parseUUID(p.Pane); ok {
 		p.Pane = u.String() // the store keys panes by the canonical id
 	}
 	st, err := a.agents.BeginAnswer(p.Pane, p.Request)
 	if err != nil {
 		return agentErr(err)
+	}
+	if p.Choice == api.ApprovalChoiceAllow && st.Request != nil && st.Request.Tool == harness.ToolQuestion {
+		// An allow carries no answers: by keys it would pick the first option, through the
+		// hook it would run the tool unanswered.
+		a.agents.EndAnswer(p.Pane, p.Request, false)
+		return control.Errorf(api.ErrorKindInvalid, "the open request is a question: answer it with answer, or deny it")
+	}
+	var qa harness.QuestionAnswer
+	if question {
+		if qa, err = harness.AnswerQuestion(st, p.Text); err != nil {
+			a.agents.EndAnswer(p.Pane, p.Request, false)
+			return agentErr(err)
+		}
 	}
 	if a.answering != nil {
 		done := a.answering(p.Pane, p.Request, client, allow)
@@ -276,10 +292,10 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 	changed := a.agents.Changed(p.Pane)
 	how := "through the permission hook"
 	a.holdMu.Lock() // a hook that opened this request has registered its wait by now
-	written, ok := a.gate.Answer(p.Pane, p.Request, harness.Decision{Allow: allow})
+	written, ok := a.gate.Answer(p.Pane, p.Request, harness.Decision{Allow: allow, Input: qa.Input})
 	a.holdMu.Unlock()
 	oc, server := a.opencode.Client(p.Pane)
-	if !ok && server && st.Harness == detect.KindOpencode {
+	if !ok && server && st.Harness == detect.KindOpencode { // a question is Claude's only
 		how = "through the opencode server"
 		sent = true // a reply that fails may still have reached the server
 		a.agents.Sent(p.Pane, p.Request)
@@ -321,7 +337,12 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 			// nobody answered, whose dialog may still be on screen: keys would answer that one.
 			return control.Errorf(api.ErrorKindConflict, "pane %s may not show request %s on screen (the terminal said otherwise, or it came while another request was open); answer it in the terminal", p.Pane, p.Request)
 		}
-		keys, err := a.permissionKeys(p.Pane, st, allow)
+		var keys []byte
+		if question {
+			keys, err = a.questionKeys(p.Pane, qa)
+		} else {
+			keys, err = a.permissionKeys(p.Pane, st, allow)
+		}
 		if err != nil {
 			return err
 		}
@@ -378,6 +399,24 @@ func (a *agentService) permissionKeys(pane string, st api.AgentState, allow bool
 		return nil, agentErr(err)
 	}
 	return keys, nil
+}
+
+// questionKeys returns the digit that picks a question's answer in Claude Code's dialog, by its
+// label on screen. Free text, several questions or multiple choice need the waiting hook: with
+// none, nothing is sent.
+func (a *agentService) questionKeys(pane string, qa harness.QuestionAnswer) ([]byte, error) {
+	var rows []string
+	if a.screen != nil {
+		r, err := a.screen(pane)
+		if err != nil {
+			return nil, control.Errorf(api.ErrorKindUnavailable, "pane %s: reading the question dialog: %v", pane, err)
+		}
+		rows = r
+	}
+	if k, ok := harness.QuestionKey(qa, rows); ok {
+		return k, nil
+	}
+	return nil, control.Errorf(api.ErrorKindUnavailable, "pane %s: only the permission hook (hab.permission_wait) takes free text, several questions or multiple choice, and picking an option by keys needs the question's dialog on screen with its cursor on an option; answer it in the terminal", pane)
 }
 
 // opencodeClient returns the client of the pane's opencode server when the pane runs opencode
@@ -563,14 +602,23 @@ func (a *agentService) holdPermission(approvers func(pane string) int) hook.Hold
 			if !ok {
 				return nil, nil
 			}
-			out := map[string]string{"behavior": "deny", "message": "The owner denied this request from Flightdeck."}
-			if d.Allow {
-				out = map[string]string{"behavior": "allow"}
-			}
-			b, _ := json.Marshal(out)
+			b, _ := harness.MarshalPlain(hookAnswer(d))
 			return b, written
 		}
 	}
+}
+
+// hookAnswer is the body a waiting hook takes for a decision: allow, with the tool's new input
+// when the decision carries one (a question's answers), or deny with a message.
+func hookAnswer(d harness.Decision) any {
+	if !d.Allow {
+		return map[string]string{"behavior": "deny", "message": "The owner denied this request from Flightdeck."}
+	}
+	out := struct {
+		Behavior     string          `json:"behavior"`
+		UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
+	}{Behavior: "allow", UpdatedInput: d.Input}
+	return out
 }
 
 // releaseUnwatched ends the gate's waits on every pane no client that can answer watches any

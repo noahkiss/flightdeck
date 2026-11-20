@@ -1197,10 +1197,13 @@ one answer, the expiry, answered elsewhere).
 | Permission or plan | the dialog holds the TUI | the dialog holds the TUI | the server takes a reply only | On: the message waits in the app ("Sends after this turn") and goes when the agent is at its prompt again |
 | Question with no id (`elicitation_dialog`), sign-in, folder trust | the dialog holds the TUI | none sent | none sent | Off: answer in the terminal |
 
-- The hab answers choice `answer` with `unavailable` today ("answering a question is not built
-  yet"). The card then says "Flightdeck can't answer this question yet. Answer it in the
-  terminal." with Open terminal. Where unsure, the smaller behaviour holds: nothing types into
-  a pane that shows a dialog.
+- The hab answers choice `answer` through Claude's waiting permission hook, or by the option's
+  digit when no hook waits (`harness-adapters.md`, Question answers). With no hook waiting it
+  takes only an option's label on a one-question, single-choice card. Free text, several
+  questions and multiple choice then answer `unavailable` with "answer it in the terminal". The
+  card then says "Flightdeck can't answer this question yet. Answer it in the terminal." with
+  Open terminal. Where unsure, the smaller behaviour holds: nothing types into a pane that
+  shows a dialog.
 - **After an answer** a short line replaces the request for 5 seconds: "Allowed · npm run
   migrate", "Denied · npm run migrate", "Answered · Harbor at night". A new request replaces it
   at once.
@@ -2135,8 +2138,9 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 - **Plans and questions** (`landscape.md` 4.4). A permission request for Claude's
   `ExitPlanMode` shows the plan, with "Keep planning" (deny) and "Approve plan" (allow). One for
   `AskUserQuestion` shows each question's options; the answer is `answer` with `text` set to the
-  chosen labels joined with ", " (several questions: one "<header>: <labels>" line each). The hab
-  refuses `answer` until the Claude adapter builds it; the sheet then shows the hab's hint.
+  chosen labels joined with ", " (several questions: one "<header>: <labels>" line each). When
+  the hab cannot take the answer (`harness-adapters.md`, Question answers), the sheet shows the
+  hab's hint.
 - **Live Activity.** `LiveActivityTracker` tracks the session the owner last sent a message to,
   or the one that last entered `blocked`, whichever came later. ActivityKit starts an activity
   only while the app is in front, so the tracker starts it when the scene turns inactive on its

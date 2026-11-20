@@ -535,7 +535,7 @@ When sources disagree inside one turn, the stronger one wins:
 | State | Two sources. (1) Native OSC 7501 reports, sent only after the terminal answers the `?` query; hab answers it. (2) Hooks: `UserPromptSubmit` → `working`; `PreToolUse`/`PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Notification` with `permission_prompt` → `blocked:permission`, `elicitation_dialog` → `blocked:question`, `idle_prompt` → `idle`; `Stop` → `done`; `StopFailure` → `error`; `SessionStart`/`SessionEnd` bind and unbind the session. |
 | Conversation | Tail the session JSONL named by `transcript_path` in every hook payload (under the Claude config dir, `projects/<encoded cwd>/<session id>.jsonl`). Read records of type `user` and `assistant` for the chat view, linked by `uuid` and `parentUuid`. Use `attachment` records for the context ledger. Skip the other known record types; an unknown type becomes a placeholder message. |
 | Input | PTY: bracketed paste of the text, then Enter. |
-| Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Opt-in: a blocking `PermissionRequest` hook, a per-host setting, off by default (see [Open decisions](#open-decisions)). |
+| Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Opt-in: a blocking `PermissionRequest` hook, a per-host setting, off by default (see [Open decisions](#open-decisions)). A question (`AskUserQuestion`) takes text: see [Question answers](#question-answers). |
 | Resume id | `session_id` in every hook payload; `claude --resume <id>`. |
 
 Notes:
@@ -1408,7 +1408,8 @@ Built choices (`approval.answer`, Claude Code and Codex):
 - The checks run in the state store: `blocked:permission`, last set by a `hook` or `server`
   source, a request with an id that is still open, and the same id in the answer. Any miss is
   `conflict`; an OSC 7501 `blocked` alone never enables an answer.
-- `allow` and `deny` only; `answer` (a question) is `unavailable` for now.
+- `allow` and `deny` answer a permission. `answer` answers a Claude Code question: see
+  [Question answers](#question-answers).
 - One answer per request. While one is on its way, a second gets `conflict`, never keys. Once
   an answer reached the harness (keys written, or the hook took the decision), the request
   takes no other. An answer that delivered nothing (the hook went away first) frees it.
@@ -1453,6 +1454,82 @@ Built choices (`approval.answer`, Claude Code and Codex):
   returns to `idle` and takes a `session.send` (Source precedence). An OSC `working` only shapes
   the call's result; the request stays open until a hook closes it. An exit or a session change answers `unavailable`, and so does
   a request still open after 3 seconds, with a hint to answer in the terminal.
+
+### Question answers
+
+Claude Code asks the owner a question with its `AskUserQuestion` tool. The tool's
+`PermissionRequest` hook opens a request like any permission (`blocked:permission`, tool
+`AskUserQuestion`, the input with its 1 to 4 questions). The app answers it with
+`approval.answer`: the request id, choice `answer`, and `text`.
+
+**The text.** The app writes it from the card (`app.md` 4.11):
+
+- One question: the whole text is the answer. It is an option's label, several labels joined
+  with ", " (multiple choice), or free text from the composer.
+- Several questions: one line per question, `<header or question>: <answer>`. A line names the
+  question whose header or text, followed by a colon, starts it; the longest name wins, and a
+  name two questions share names neither. Every question needs exactly one line with an answer.
+  Anything else, free text included, is `invalid`, and nothing is sent.
+- The text may hold at most 16 KiB; a longer one is `invalid`. The hab drops control
+  characters from it (C0 except newline and tab, DEL and C1): Claude echoes answers to its
+  terminal, where one could start an escape sequence.
+
+**How Claude Code takes it.** The tool's input has a field `answers`: an object from question
+text to answer text, which the dialog fills in when the owner answers in the terminal. A
+`PermissionRequest` hook can fill it instead. It answers allow with `updatedInput`: the
+request's own input, unchanged, plus `answers`. Claude then runs the tool with those answers and
+draws "Answered Claude's questions" in the terminal. Claude refuses an answer that changes the
+shown input, so the hab adds `answers` and changes nothing else. An option's label, free text
+and several questions all go this way (checked live against Claude Code 2.1.329).
+
+**Built choices** (`internal/harness` `AnswerQuestion` and `QuestionKey`; `approval.answer`):
+
+- The usual checks of [Permission answers](#permission-answers) run first: the open request,
+  its id, one answer per request, the hab's limit for remote answers.
+- Choice `answer` on a request that is not an `AskUserQuestion` is `invalid`. So is an empty
+  text. A request whose input the hab does not hold (over 64 KiB, or not an object), or that
+  already carries `answers`, is `unavailable`, with a hint to answer in the terminal.
+- Choice `allow` on an `AskUserQuestion` request is `invalid` ("answer it with answer"): an
+  allow carries no answers, so by keys it would pick the first option, and through the hook it
+  would run the tool unanswered. Choice `deny` stays valid.
+- **The waiting hook** (the owner's gate on, `hab.permission_wait`) takes
+  `{"behavior":"allow","updatedInput":{...}}`, and `gff-hab hook -wait` prints it as Claude's
+  hook output. This path takes every answer the text rules allow. The hook reads at most
+  256 KiB from the hab, and a longer body is an error, not a cut one. So the hab refuses as
+  `unavailable` an answered input that would not fit; with the 64 KiB input and 16 KiB text
+  limits this does not happen. Both ends write JSON without HTML escaping, so `<`, `>` and `&`
+  do not grow on the way.
+- **Keys, with no hook waiting.** Claude's dialog takes a digit as pick and submit at once for
+  one question with a single choice (checked live against 2.1.329, with the cursor on an
+  option). The dialog lists the options, then "Type something." and "Chat about this". So the
+  hab sends a digit only for one question, single choice, whose answer is exactly one option's
+  label. The digit is that label's position among the request's options. The hab sends it only
+  when the visible rows prove the dialog is drawn: numbered rows 1 to n carry the options'
+  labels in order (description rows may sit between them), row n+1 reads "Type something.",
+  and the question's text shows above row 1, below any rule. Claude starts each row of the
+  question with "│" and wraps it to the width, so the hab compares it with white space and "│"
+  removed. The last such block on screen
+  counts, so a numbered list in Claude's prose above the dialog neither picks nor blocks. The
+  cursor (❯) must sit on an option row: on the "Type something." row a digit is typed as text.
+  Otherwise it sends nothing. Free text, several questions or multiple choice by keys are
+  `unavailable`, with a hint to answer in the terminal (the app matches that phrase, `app.md`
+  4.11). Fixtures in `internal/harness/testdata/`: `claude-question-dialog-2.1.329.txt`, written
+  by hand, and `claude-question-live-2.1.329-*.txt`, screens captured from 2.1.329 at 120 and
+  80 columns with Claude's prose list of the same labels above the dialog and the cursor on
+  option 1 (`a`), option 2 (`b`) and "Type something." (`c`).
+- An answer lets the tool run, so the read-back and the withdrawn banner treat it as an allow:
+  success once the tool runs (`PostToolUse`, or Claude's OSC `working`).
+- **The wait window.** The hook waits only while the gate is on, for its 1 to 120 seconds, and
+  only while a client that can answer is connected. A later answer finds no hook and goes by
+  keys, so free text then answers `unavailable`. With the gate off, the default, only an
+  option's label on a one-question card goes through.
+- **Codex.** Codex sends no question through its `PermissionRequest` hook; its questions stay in
+  its terminal. Choice `answer` on a Codex pane is `unavailable` ("codex sends no questions the
+  hab can answer").
+- **opencode.** The adapter follows no question requests from opencode's server, so none reaches
+  the app. Choice `answer` on an opencode pane is `unavailable` in the same words.
+- Claude's question with no request id (a `Notification` `elicitation_dialog`) opens no
+  request, so the app answers it only in the terminal.
 
 ## Edge cases
 
@@ -1572,7 +1649,9 @@ Built (option B, off until the owner turns it on):
   900 ms budget, so a hung gff-hab still costs a turn no more than that.
 - **Output.** With a decision, the command prints the harness's hook output (Claude Code and
   Codex share one shape),
-  `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{...}}}`. With none it
+  `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{...}}}`. An allow may
+  carry `updatedInput`: a question's input with its answers
+  ([Question answers](#question-answers)). With none it
   prints nothing, and Claude shows its own dialog. The command prints for no other event but the
   Logbook habits' (`logbook.md` 11.4).
 - **Answer.** `approval.answer` hands the decision to the waiting hook when one waits on that

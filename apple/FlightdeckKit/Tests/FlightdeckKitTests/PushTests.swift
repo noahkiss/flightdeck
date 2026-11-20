@@ -600,7 +600,7 @@ final class ApprovalSheetTests: XCTestCase {
     }
 
     /// AskUserQuestion shows its options; the answer is the chosen labels.
-    /// The hab does not take answers yet, which the sheet reports.
+    /// The test hab refuses the answer, which the sheet reports.
     func testQuestionsAsStructuredAnswers() async {
         let q: JSONValue = .object(["questions": .array([
             .object(["question": .string("Which auth library?"), "header": .string("Auth"), "multiSelect": .bool(false),
@@ -619,6 +619,9 @@ final class ApprovalSheetTests: XCTestCase {
         guard case .failed = m.phase else { return XCTFail("phase \(m.phase)") }
         let two = [qs[0], RequestForm.Question(header: nil, question: "Tests?", options: [], multiSelect: true)]
         XCTAssertEqual(RequestForm.answerText(two, [["Clerk"], ["Unit", "UI"]]), "Auth: Clerk\nTests?: Unit, UI")
+        // An empty header names the question by its text, as the hab reads it.
+        let blank = [qs[0], RequestForm.Question(header: " ", question: "Tests?", options: [], multiSelect: true)]
+        XCTAssertEqual(RequestForm.answerText(blank, [["Clerk"], ["Unit"]]), "Auth: Clerk\nTests?: Unit")
         await fleet.setActive(false)
     }
 

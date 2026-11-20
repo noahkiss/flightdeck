@@ -1,0 +1,14 @@
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Color
+
+│ Which color should the status badge use?
+
+❯ 1. Red
+     Matches the error banner.
+  2. Blue
+     Matches the link color.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

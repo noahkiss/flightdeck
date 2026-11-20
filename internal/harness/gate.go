@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,9 @@ const DialogSettle = time.Second
 // Decision is the app's answer to a permission request.
 type Decision struct {
 	Allow bool
+	// Input, with Allow, replaces the tool's input: a Claude Code question's input with the
+	// owner's answers (harness-adapters.md, Question answers). Nil keeps the input.
+	Input json.RawMessage
 }
 
 // Gate holds the blocking permission hooks that wait for the app's answer (harness-adapters.md,

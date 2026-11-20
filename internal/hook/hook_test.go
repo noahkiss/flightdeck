@@ -374,3 +374,77 @@ func TestHookToEventStream(t *testing.T) {
 		t.Fatalf("structure agents %+v", res.Agents)
 	}
 }
+
+// TestPermissionDecisionInput: an allow keeps the hab's updatedInput (a Claude Code question's
+// input with the owner's answers) in the hook output; a deny never carries one; an answer with
+// no decision prints nothing.
+func TestPermissionDecisionInput(t *testing.T) {
+	t.Parallel()
+	in := `{"answers":{"Which color?":"Blue"},"questions":[{"question":"Which color?","options":[{"label":"Red"},{"label":"Blue"}]}]}`
+	for _, tc := range []struct{ name, answer, want string }{
+		{"allow with input", `{"behavior":"allow","updatedInput":` + in + `}`,
+			`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedInput":` + in + `}}}` + "\n"},
+		{"allow", `{"behavior":"allow"}`, `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` + "\n"},
+		{"deny drops input", `{"behavior":"deny","message":"no","updatedInput":` + in + `}`,
+			`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"no"}}}` + "\n"},
+		{"no decision", `{}`, ""},
+	} {
+		out, err := PermissionDecision([]byte(tc.answer))
+		if err != nil || string(out) != tc.want {
+			t.Errorf("%s: %s %v", tc.name, out, err)
+		}
+	}
+}
+
+// TestPermissionDecisionAtLimit: a hab answer of MaxHookAnswer bytes reaches the hook whole and
+// keeps its updatedInput through PermissionDecision, with <, > and & unescaped; one byte more is
+// an error, never a cut body.
+func TestPermissionDecisionAtLimit(t *testing.T) {
+	t.Parallel()
+	reg := newTestPanes()
+	sock := filepath.Join(shortDir(t), "hook.sock")
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(reg, (&recorder{}).sink, t.Logf)
+	var mu sync.Mutex
+	var body []byte
+	s.SetHolder(func(string, harness.Envelope, func() string) Wait {
+		return func(context.Context) ([]byte, func(error)) {
+			mu.Lock()
+			defer mu.Unlock()
+			return body, func(error) {}
+		}
+	})
+	go s.Serve(l)
+	t.Cleanup(func() { s.Close() })
+	addr := Addr(sock, reg.mint("pane-7"))
+	env := harness.Envelope{Harness: "claude", Event: "PermissionRequest", Payload: json.RawMessage(`{"hook_event_name":"PermissionRequest"}`)}
+	setBody := func(n int) []byte {
+		head, tail := `{"behavior":"allow","updatedInput":{"answers":{"Which color?":"<b>&`, `</b>"}}}`
+		mu.Lock()
+		defer mu.Unlock()
+		body = []byte(head + strings.Repeat("x", n-len(head)-len(tail)) + tail)
+		return body
+	}
+
+	sent := setBody(harness.MaxHookAnswer)
+	got, err := PostWait(context.Background(), addr, env)
+	if err != nil || string(got) != string(sent) {
+		t.Fatalf("at the limit: %d bytes, %v", len(got), err)
+	}
+	out, err := PermissionDecision(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := sent[len(`{"behavior":"allow","updatedInput":`) : len(sent)-1]
+	want := `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedInput":` + string(in) + `}}}` + "\n"
+	if string(out) != want {
+		t.Fatalf("the hook output differs from the hab's input (%d bytes, want %d)", len(out), len(want))
+	}
+	setBody(harness.MaxHookAnswer + 1)
+	if got, err := PostWait(context.Background(), addr, env); err == nil {
+		t.Fatalf("over the limit: %d bytes, no error", len(got))
+	}
+}

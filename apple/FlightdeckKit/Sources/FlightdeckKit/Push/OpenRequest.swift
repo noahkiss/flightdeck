@@ -178,9 +178,13 @@ public enum RequestForm: Equatable, Sendable {
 
     /// The `text` of an `answer` for chosen option labels, one list per
     /// question in order. One question: the labels joined with ", ". Several:
-    /// one line per question, "<header or question>: <labels>".
+    /// one line per question, "<header or question>: <labels>". A blank header
+    /// counts as none: the hab names no question by it.
     public static func answerText(_ questions: [Question], _ picks: [[String]]) -> String {
         if questions.count == 1 { return (picks.first ?? []).joined(separator: ", ") }
-        return zip(questions, picks).map { q, p in "\(q.header ?? q.question): \(p.joined(separator: ", "))" }.joined(separator: "\n")
+        return zip(questions, picks).map { q, p in
+            let header = q.header?.trimmingCharacters(in: .whitespaces) ?? ""
+            return "\(header.isEmpty ? q.question : header): \(p.joined(separator: ", "))"
+        }.joined(separator: "\n")
     }
 }

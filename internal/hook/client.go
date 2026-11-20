@@ -99,7 +99,13 @@ func postQuery(ctx context.Context, addr string, env harness.Envelope, query str
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, nil
 	case resp.StatusCode == http.StatusOK && query != "":
-		return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		// The hab keeps an answer within MaxHookAnswer (harness-adapters.md, Question answers);
+		// a longer body is an error, not a cut one.
+		b, err := io.ReadAll(io.LimitReader(resp.Body, harness.MaxHookAnswer+1))
+		if err == nil && len(b) > harness.MaxHookAnswer {
+			err = fmt.Errorf("hab answer longer than %d bytes", harness.MaxHookAnswer)
+		}
+		return b, err
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil, fmt.Errorf("hab answered %s", resp.Status)
@@ -206,12 +212,13 @@ func Waits(harness string) bool {
 }
 
 // PermissionDecision turns the hab's answer body into the PermissionRequest hook output of
-// Claude Code and Codex, which share one shape. It returns nil for an answer with no decision:
+// Claude Code and Codex, which share one shape. An allow keeps its updatedInput. It returns nil for an answer with no decision:
 // the hook then prints nothing, and the harness shows its own dialog.
 func PermissionDecision(answer []byte) ([]byte, error) {
 	var a struct {
-		Behavior string `json:"behavior"`
-		Message  string `json:"message,omitempty"`
+		Behavior     string          `json:"behavior"`
+		Message      string          `json:"message,omitempty"`
+		UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	}
 	if err := json.Unmarshal(answer, &a); err != nil {
 		return nil, fmt.Errorf("hab answer: %w", err)
@@ -220,8 +227,9 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 		return nil, nil
 	}
 	type decision struct {
-		Behavior string `json:"behavior"`
-		Message  string `json:"message,omitempty"`
+		Behavior     string          `json:"behavior"`
+		Message      string          `json:"message,omitempty"`
+		UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	}
 	out := struct {
 		HookSpecificOutput struct {
@@ -233,8 +241,12 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 	out.HookSpecificOutput.Decision = decision{Behavior: a.Behavior}
 	if a.Behavior == "deny" {
 		out.HookSpecificOutput.Decision.Message = a.Message
+	} else if len(a.UpdatedInput) > 0 && string(a.UpdatedInput) != "null" {
+		// A Claude Code question's input with the owner's answers (harness-adapters.md,
+		// Question answers).
+		out.HookSpecificOutput.Decision.UpdatedInput = a.UpdatedInput
 	}
-	b, err := json.Marshal(out)
+	b, err := harness.MarshalPlain(out)
 	if err != nil {
 		return nil, err
 	}

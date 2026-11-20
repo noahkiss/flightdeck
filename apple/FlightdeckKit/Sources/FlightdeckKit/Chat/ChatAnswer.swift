@@ -78,8 +78,8 @@ public enum ChatAnswer {
 
     /// The card's words for an answer that did not land; never the hab's hint.
     public static func failureText(_ r: OpenRequest, hint: String) -> String {
-        // The hab's words for a question answer it does not take yet (harness-adapters.md,
-        // Permission answers); only that phrase is read, never shown.
+        // The hab's words for a question answer only the terminal can take (harness-adapters.md,
+        // Question answers); only that phrase is read, never shown.
         if case .questions = r.form, hint.contains("not built") || hint.contains("answer it in the terminal") {
             return "Flightdeck can't answer this question yet. Answer it in the terminal."
         }
