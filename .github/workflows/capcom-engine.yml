@@ -1,7 +1,8 @@
 # The Capcom engine's own gate (docs/specs/ci-release.md 3.7): the TypeScript engine in
-# capcom-engine/, through the shared node-ci on Linux. npm ci, then typecheck, build and the tests,
-# which run against a fake SDK and a fake hab (no credential, no network). It runs only when the
-# engine or this file changes; the Go tests in ci.yml use a stub engine and never read this folder.
+# capcom-engine/, through the shared node-ci on Linux. npm ci, then typecheck, build, the tests,
+# which run against a fake SDK and a fake hab (no credential, no network), and the release pack.
+# It runs only when the engine or this file changes; the Go tests in ci.yml use a stub engine and
+# never read this folder.
 # The whole job is the fast check, so a push to main runs it as a pull request does.
 name: Capcom engine
 
@@ -34,4 +35,5 @@ jobs:
         typecheck
         build
         test
+        release-pack
       timeout-minutes: 15
