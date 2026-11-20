@@ -52,7 +52,8 @@
     "teammates",
     "debug",
     "pane-drive",
-    "trace"
+    "trace",
+    "session-action"
   ],
   "methods": [
     {
@@ -1899,6 +1900,13 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "pane",
           "description": "A pane id on this hab.",
           "schema": {
@@ -1936,6 +1944,13 @@
       "summary": "Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
         {
           "name": "from",
           "description": "The pane offset to read new output from. Absent means the pane's offset when the wait starts.",
@@ -2005,6 +2020,13 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "host",
           "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer.",
           "schema": {
@@ -2027,6 +2049,13 @@
       "summary": "Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.12). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
         {
           "name": "enter",
           "description": "Press Enter after the text, as its own write.",
@@ -2111,6 +2140,52 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/PaneNewParams"
+      }
+    },
+    {
+      "name": "session.action",
+      "summary": "Run a named action on a session: compact, clear, restart, close or recreate, which the hab translates for the harness in its pane; answers at once with state queued, and each step sends a session.action event. The owner's door and the Capcom route only (spec 3.13). Needs the session-action capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "action",
+          "description": "compact, clear, restart, close or recreate.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionActionKind"
+          }
+        },
+        {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.13). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "follow_up",
+          "description": "compact, clear and recreate only: the first message after the action, at most 8000 characters.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionAction"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionActionParams"
       }
     },
     {
@@ -2889,7 +2964,7 @@
       "params": [
         {
           "name": "choice",
-          "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4).",
+          "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4). A grant card's grant adds its words to the round as a person's grant; a round changed since the card answers conflict, and a new card shows it again (9.9).",
           "required": true,
           "schema": {
             "type": "string"
@@ -5314,6 +5389,13 @@
       }
     },
     {
+      "type": "session.action",
+      "summary": "A session action moved a step; the id is the action id (spec 3.13). Goes where its session goes. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/SessionAction"
+      }
+    },
+    {
       "type": "usage.updated",
       "summary": "An account's usage reading changed; the id is the account key. Ephemeral.",
       "data": {
@@ -6012,13 +6094,17 @@
             "$ref": "#/components/schemas/CapcomCardEvent",
             "description": "calendar and reminder: what Add writes (capcom-service.md 8.5)."
           },
+          "grant": {
+            "$ref": "#/components/schemas/CapcomCardGrant",
+            "description": "grant: the job and the words Grant gives it (capcom-service.md 9.6)."
+          },
           "ref": {
             "type": "string",
-            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card."
+            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card. job: the job as host/name. grant: the round id on the Capcom home hab."
           },
           "type": {
             "type": "string",
-            "description": "approval, confirmation, handoff, calendar, reminder, proposal, memory or group."
+            "description": "approval, confirmation, handoff, calendar, reminder, proposal, memory, group, job or grant."
           }
         },
         "required": [
@@ -6031,7 +6117,7 @@
         "properties": {
           "choice": {
             "type": "string",
-            "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4)."
+            "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4). A grant card's grant adds its words to the round as a person's grant; a round changed since the card answers conflict, and a new card shows it again (9.9)."
           },
           "item": {
             "type": "string",
@@ -6102,6 +6188,47 @@
         },
         "required": [
           "title"
+        ]
+      },
+      "CapcomCardGrant": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "description": "The words Grant adds, in the order of the closed set.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "The round's name."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The job's prompt, whole: Capcom follows it when the job's events come in."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The round's revision when the card was made."
+          },
+          "round": {
+            "type": "string",
+            "description": "The round's id on the Capcom home hab."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "The job's trigger in plain words."
+          }
+        },
+        "required": [
+          "round",
+          "name",
+          "revision",
+          "actions",
+          "prompt",
+          "trigger"
         ]
       },
       "CapcomContextItem": {
@@ -7432,6 +7559,10 @@
             "items": {
               "$ref": "#/components/schemas/RoundAction"
             }
+          },
+          "by_person": {
+            "type": "boolean",
+            "description": "Capcom messages: a person owns the round: it was made on the owner's door, or by the Capcom route in a turn a user's message opened, or a person granted it words. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:\u003cname\u003e."
           },
           "deadline": {
             "type": "string",
@@ -13390,6 +13521,10 @@
       "PaneListParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "host": {
             "type": "string",
             "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer."
@@ -13461,6 +13596,10 @@
       "PaneReadParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "pane": {
             "type": "string",
             "description": "A pane id on this hab."
@@ -13594,6 +13733,10 @@
       "PaneTypeParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.12). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "enter": {
             "type": "boolean",
             "description": "Press Enter after the text, as its own write."
@@ -13657,6 +13800,10 @@
       "PaneWaitParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "from": {
             "type": "integer",
             "format": "uint64",
@@ -14420,7 +14567,7 @@
         "properties": {
           "actions": {
             "type": "array",
-            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
             "items": {
               "$ref": "#/components/schemas/RoundAction"
             }
@@ -14627,7 +14774,8 @@
           "set_up_project",
           "group",
           "card",
-          "fetch"
+          "fetch",
+          "drive"
         ]
       },
       "RoundBatch": {
@@ -15071,7 +15219,7 @@
         "properties": {
           "actions": {
             "type": "array",
-            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
             "items": {
               "$ref": "#/components/schemas/RoundAction"
             }
@@ -15509,6 +15657,10 @@
               "type": "string"
             }
           },
+          "start_mode": {
+            "type": "string",
+            "description": "The start mode the hab started the harness in, from agent.start_mode: auto or bypass. Resume, restart and recreate start again with the lower of it and the current setting. Absent when the hab added no permission flag: ask, a plain program, a harness with no checked flag, or a start whose arguments named a mode."
+          },
           "state": {
             "$ref": "#/components/schemas/SessionState"
           },
@@ -15522,6 +15674,91 @@
           "revision",
           "name",
           "state"
+        ]
+      },
+      "SessionAction": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SessionActionKind"
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of this step."
+          },
+          "harness": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "new_session": {
+            "type": "string",
+            "description": "recreate: the new session's id, once it runs."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it failed."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name; label/name from a peer."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, sent, running, done or failed."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "session",
+          "action",
+          "state",
+          "at"
+        ]
+      },
+      "SessionActionKind": {
+        "type": "string",
+        "x-known-values": [
+          "compact",
+          "clear",
+          "restart",
+          "close",
+          "recreate"
+        ]
+      },
+      "SessionActionParams": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SessionActionKind",
+            "description": "compact, clear, restart, close or recreate."
+          },
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.13). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
+          "follow_up": {
+            "type": "string",
+            "description": "compact, clear and recreate only: the first message after the action, at most 8000 characters."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          }
+        },
+        "required": [
+          "session",
+          "action"
         ]
       },
       "SessionAdoptParams": {
