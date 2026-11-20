@@ -364,7 +364,11 @@ public final class TerminalModel {
 
     private func refused(_ error: Error, what: Refused) {
         lastError = String(describing: error)
-        log.notice("pane \(self.pane, privacy: .public): \(String(describing: error), privacy: .public)")
+        if what == .redraw {
+            log.notice("pane \(id: self.pane): redraw refused: \(kind: error) \(error)")
+        } else {
+            log.notice("pane \(id: self.pane): size refused: \(kind: error) \(error)")
+        }
         show(Self.refusalText(error, redraw: what == .redraw), error: true)
     }
 
