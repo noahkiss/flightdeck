@@ -1814,14 +1814,26 @@ client's write lands between. The target is named as in 3.11, `label/name` inclu
 - **Into an agent's pane**, at every door, the text goes as one bracketed paste with every
   `ESC [201~` in it removed, as `session.send` does, so it cannot end the paste and press keys.
   Into a pane with no agent state (a shell), the text goes as given.
+- **An agent's text is an agent message.** From an agent's door into an agent's pane, the text
+  goes inside the envelope `channel.send` uses (`mesh.md` 6.5), naming the caller (`host/session`,
+  or a peer). The first character the harness sees is the envelope's, never `!` (shell mode) or
+  `/` (a slash command), and the receiving agent knows the text is not the user's. The owner's
+  text goes as given. From an agent's door, Enter with empty text into an agent's pane is
+  `invalid`: Enter alone would submit what is in its prompt.
 - **Never its own pane.** An agent's pane route never types into its own pane, at any value: a
   key there could change its own mode or queue a command that runs as the user's next input.
+- **Not from an exited pane.** A route caller whose own pane's program exited types and starts
+  nothing (`denied`): a process the program left behind keeps the token, but speaks for no live
+  session.
 - **The send gate holds for `type`** (`harness-adapters.md`, Input delivery). The hab refuses the
   call with `conflict`, and writes nothing, when:
   - the pane's agent has an open permission request, or its state is `blocked`: Enter, or the
     right key, would answer the dialog;
-  - from an agent's door, the pane's agent has reported through no hook (and no server, for
-    opencode): the hab sees its dialogs only through OSC 7501, which a program can forge;
+  - from an agent's door, the harness in the pane now has reported through no hook (and no
+    server, for opencode): the hab sees its dialogs only through OSC 7501, which a program can
+    forge. The mark belongs to one harness: it ends when that harness exits or another starts;
+  - under `agents`, the pane runs no agent any more when the write would go in: the hab checks
+    the rule's need again under the claim;
   - a `session.send` or another `pane.type` to the pane is in flight: `session.send` holds the
     pane until its turn starts (up to 3 s); a `type` holds it while its writes go in, and, with
     `enter` or a CR or LF in the text, into an agent's pane, until the turn starts, as a send
@@ -1871,8 +1883,10 @@ agent may type into and start. It binds the same two doors as `agent.read_panes`
   prompt. The gate stops a key on a dialog only while the hab sees it. So Balanced lets an agent
   talk to the other agents of its own project, as `session.send` does with a paste, and nothing
   else; Safe allows nothing; Bypass is the owner's choice to trust agents with every pane.
-  `project` adds the project's shells and `pane.new`, set by hand. These values are the
-  conservative pick until the owner decides (8, Q10).
+  `project` adds the project's shells and `pane.new`, set by hand. `project` is the same as
+  letting an agent run any program as the user: text into a shell runs as typed, and `pane.new`
+  takes any `argv`. "Its own project" files the session; it confines nothing. These values are
+  the conservative pick until the owner decides (8, Q10).
 - **`pane.new` at Balanced is refused.** Routing it through the confirmation flow of
   `start_session` (`capcom.md` 6.1) would need a confirmation kind for a plain program; that is
   not a small reuse, so the hab refuses and the hint names the setting. An agent that wants
@@ -1936,7 +1950,10 @@ rules. Their descriptions say that screen text is untrusted program output.
 | `pane.type` refused at each value and door; the caller's own pane at every value; a shell under `agents`; unknown targets `denied` under `agents`, `project` and `off`; a peer's `label/name` under `project`; the Capcom route; the hint names the setting, never the target | `TestPaneTypeRule`, `TestMayDrive` |
 | An agent's text with ESC, CR, Ctrl-C or a C1 control refused at both agent doors; the owner's keys go | `TestPaneTypeAgentText` |
 | `pane.new` under each value and door; `cwd` refused under `project`; a refused name gives a fixed text under `project` | `TestPaneNewRule` |
-| The gate: open permission request, blocked with no request, an agent with no hooks (agent door), send in flight, a person's input in the last 2 s; nothing written; a paste into an agent with the end marker removed; Enter or a newline holds an agent's pane; no interrupt mark | `TestPaneTypeGate`, `TestCheckType`, `TestPasteWrite`, `TestInputTimes` |
+| The gate: open permission request, blocked with no request, an agent with no hooks (agent door), a hook mark of an earlier harness, send in flight, a person's input in the last 2 s; nothing written; a paste into an agent with the end marker removed; Enter or a newline holds an agent's pane | `TestPaneTypeGate`, `TestCheckType`, `TestPasteWrite`, `TestInputTimes` |
+| No write into an agent's pane is a key; no owner interrupt is recorded | `TestPaneTypeNoKeys` |
+| From an agent's door, `!ls` and `/exit` arrive enveloped; Enter alone refused; under `agents` a pane with no agent at write time refused | `TestPaneTypeEnvelope`, `TestPaneTypeDoors` |
+| Both agent doors mark the write and name the caller; an exited caller types and starts nothing | `TestPaneTypeDoors` |
 | The input wrapper in `serve`: a person's `pane.input` makes the next type `conflict` | `TestPaneDrive` |
 | The MCP pane tools outside a pane refused before any call | `TestPaneToolsOutsideAPane` |
 | A forwarded `pane.type` to a peer that never answers ends at its own bound | `TestPaneTypeForwardBound` |
@@ -1960,6 +1977,9 @@ Limits:
   draw a dialog before its hook fires: in that window the state is not yet `blocked`, and a
   type's Enter could answer it. Claude Code's plan and question dialogs have not been checked
   for this order.
+- The rule binds an agent that uses its pane route. An agent with a shell can reach the owner's
+  socket and act as the owner, as 3.11 says (Who may read); the harness's own approval of that
+  command is the boundary.
 - A type into a shell the owner left at a password prompt types into it. The rule guards that,
   not the gate.
 - `pane.new` with `argv` can start a harness as a plain program, with no seed and no

@@ -45,7 +45,7 @@ var paneTools = []kitTool{
 			{Name: "timeout_seconds", Type: "integer", Doc: "How long to wait, at most 600. Absent: 110."}},
 		run: runPaneWait},
 	{Name: "pane_type", Action: true, Drives: true, Shell: "gff-hab type [-enter] <target> <text>",
-		Doc: "Type text into a pane, and press Enter when asked. Never your own pane. Into an agent's pane the text goes as one paste. Refused while the pane's agent waits for a permission answer, while another message or type to it is in flight, or within 2 s of a person typing there: try again later. Returns the bytes typed.",
+		Doc: "Type text into a pane, and press Enter when asked. Never your own pane. Into an agent's pane your text arrives as an agent message from you, not as the user's input; send text with Enter, never Enter alone. Refused while the pane's agent waits for a permission answer, while another message or type to it is in flight, or within 2 s of a person typing there: try again later. Returns the bytes typed.",
 		Args: []toolArg{argTarget, {Name: "text", Type: "string", Doc: "The text, at most 64 KiB, with no control characters but tab and newline; use enter for Enter."},
 			{Name: "enter", Type: "boolean", Doc: "Press Enter after the text."}},
 		run: runPaneType},
