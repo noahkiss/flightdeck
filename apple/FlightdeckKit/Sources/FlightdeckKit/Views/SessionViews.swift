@@ -89,6 +89,8 @@ public struct SessionView: View {
     @Environment(\.terminalSlot) private var terminal
     /// The Capcom view this session view sits in, if any.
     @Environment(\.capcomView) private var capcomView
+    /// Set when this session is the Capcom tab's root (app.md 4.10): its subtitle.
+    @Environment(\.capcomTab) private var capcomTab
 
     enum Mode: String, CaseIterable, Identifiable {
         case chat = "Chat"
@@ -139,10 +141,12 @@ public struct SessionView: View {
                 }
                 // The Chat | Terminal switch holds the middle of the bar, so the
                 // terminal's own controls never push it off (app.md 11).
-                .navigationTitle(model.context.title)
+                .navigationTitle(capcomTab != nil ? "Capcom" : model.context.title)
+                .modifier(TabSubtitle(text: capcomTab))
                 .toolbar {
                     // The Capcom service has no pane: no Chat and Terminal switch (capcom-service.md 7.6).
-                    if !model.context.isCapcomService {
+                    // The Capcom tab keeps its title there; the switch goes in the More menu.
+                    if !model.context.isCapcomService, capcomTab == nil {
                         ToolbarItem(placement: .principal) {
                             Picker("View", selection: $mode) {
                                 ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
@@ -168,7 +172,14 @@ public struct SessionView: View {
                     // the More menu, and in the terminal, where the pane's dictation takes
                     // the control's place, so does Voice.
                     if model.context.isCapcom {
-                        ToolbarItem(placement: .secondaryAction) { newConversationButton }
+                        if capcomTab != nil {
+                            ToolbarItem(placement: .primaryAction) { newConversationButton }
+                            if !model.context.isCapcomService {
+                                ToolbarItem(placement: .secondaryAction) { capcomModeButton }
+                            }
+                        } else {
+                            ToolbarItem(placement: .secondaryAction) { newConversationButton }
+                        }
                     }
                     if mode == .chat {
                         ToolbarItem(placement: .primaryAction) {
@@ -268,7 +279,7 @@ public struct SessionView: View {
             }
         }
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(capcomTab != nil && compact ? .large : .inline)
         #endif
         .sheet(isPresented: $chatShowShown) {
             if let store = model.show {
@@ -302,6 +313,14 @@ public struct SessionView: View {
         .help("Start a new Capcom conversation")
     }
 
+    /// The Capcom tab's More menu item that swaps the chat and the pane Capcom's terminal.
+    private var capcomModeButton: some View {
+        Button(mode == .chat ? "Show terminal" : "Show chat",
+               systemImage: mode == .chat ? "terminal" : "bubble.left.and.bubble.right") {
+            mode = mode == .chat ? .terminal : .chat
+        }
+    }
+
     /// Voice as a More menu item (a phone in the terminal). An alert on a menu item never
     /// shows, so the session view raises the microphone one.
     private var voiceMenuButton: some View {
@@ -328,5 +347,18 @@ public struct SessionView: View {
     private var consoleButton: some View {
         Button("Console", systemImage: "apple.terminal") { consoleShown = true }
             .help("Open the console")
+    }
+}
+
+/// The navigation subtitle where the system has one (iOS 26), else nothing.
+struct TabSubtitle: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text, #available(iOS 26, macOS 26, *) {
+            content.navigationSubtitle(text)
+        } else {
+            content
+        }
     }
 }

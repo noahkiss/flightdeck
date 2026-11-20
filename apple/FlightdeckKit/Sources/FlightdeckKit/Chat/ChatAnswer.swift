@@ -33,11 +33,11 @@ public enum ChatAnswer {
     }
 
     /// The composer's placeholder.
-    public static func placeholder(_ mode: ComposerMode, gate: SendGate, agent: AgentState?) -> String {
+    public static func placeholder(_ mode: ComposerMode, gate: SendGate, agent: AgentState?, capcom: Bool = false) -> String {
         switch mode {
         case .answer: return "Message, or answer above"
         case .queue: return "Message (sends after this turn)"
-        case .message: return gate == .afterTurn ? "Message (sends after this turn)" : "Message"
+        case .message: return gate == .afterTurn ? "Message (sends after this turn)" : capcom ? "Ask Capcom" : "Message"
         case .off:
             switch gate {
             case .offline: return "Offline"

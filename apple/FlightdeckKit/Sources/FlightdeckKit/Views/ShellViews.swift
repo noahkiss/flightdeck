@@ -99,7 +99,7 @@ struct AppShell: View {
                 CapcomTab(fleet: fleet)
             }
             Tab("Rounds", systemImage: "clock.arrow.circlepath", value: ShellTab.rounds) {
-                RoundsTab(center: fleet.rounds)
+                RoundsTab(fleet: fleet)
             }
             Tab("Settings", systemImage: "slider.horizontal.3", value: ShellTab.settings) {
                 SettingsTab(fleet: fleet)
@@ -121,7 +121,7 @@ struct AppShell: View {
             CapcomTab(fleet: fleet)
                 .tabItem { Label("Capcom", systemImage: "dot.radiowaves.left.and.right") }
                 .tag(ShellTab.capcom)
-            RoundsTab(center: fleet.rounds)
+            RoundsTab(fleet: fleet)
                 .tabItem { Label("Rounds", systemImage: "clock.arrow.circlepath") }
                 .tag(ShellTab.rounds)
             SettingsTab(fleet: fleet)
@@ -840,7 +840,7 @@ struct CapcomTab: View {
     var body: some View {
         if sizeClass == .compact {
             NavigationStack {
-                CapcomScreen(fleet: fleet, compact: true, close: nil)
+                CapcomScreen(fleet: fleet, compact: true, close: nil, tab: true)
             }
         } else {
             CapcomScreen(fleet: fleet, compact: false, close: nil)
@@ -848,32 +848,184 @@ struct CapcomTab: View {
     }
 }
 
-/// The Rounds tab (app.md 3.8, 21.2): the rounds per hab, the run session switch, New round,
-/// and Capcom jobs.
+/// The Rounds tab (app.md 3.8, 21.2): every hab's rounds in one list, split by what starts
+/// them, with New round and the run session switch in the bar.
 struct RoundsTab: View {
-    let center: RoundCenter
+    let fleet: Fleet
+    @State private var creating: RoundDraft?
+
+    private var center: RoundCenter { fleet.rounds }
+
+    /// The Capcom home, whose `capcom.event_actions` the job rows read.
+    private var home: String? {
+        switch fleet.capcom.entry {
+        case .ready(let id), .offline(let id): return id
+        default: return nil
+        }
+    }
 
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                let sections = center.listSections(home: home, now: ctx.date)
+                ScrollViewReader { proxy in
                 List {
-                    if center.any {
-                        BoardRoundsSections(center: center, now: ctx.date)
+                    ForEach(sections) { s in
+                        Section {
+                            ForEach(s.rows) { row in
+                                NavigationLink(value: row.row) {
+                                    RoundsListRowView(row: row, center: center)
+                                }
+                            }
+                        } header: {
+                            // The note beside the title while both fit on one line, else under it.
+                            ViewThatFits(in: .horizontal) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(s.title).lineLimit(1)
+                                    Spacer()
+                                    if let n = s.note { Text(n).textCase(nil).lineLimit(1) }
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(s.title)
+                                    if let n = s.note { Text(n).textCase(nil) }
+                                }
+                            }
+                        }
+                        .id(s.id)
                     }
-                    CapcomJobsSection(center: center)
                 }
                 .overlay {
-                    if !center.any && !center.jobs.available {
-                        ContentUnavailableView("No rounds", systemImage: "clock.arrow.circlepath",
-                                               description: Text("Scheduled jobs on your computers show here."))
-                    }
+                    if sections.isEmpty { empty }
+                }
+                #if DEBUG
+                // Debug builds: `-FlightdeckRoundsSection events` scrolls to that section.
+                .task {
+                    guard let k = UserDefaults.standard.string(forKey: "FlightdeckRoundsSection") else { return }
+                    try? await Task.sleep(for: .seconds(3))
+                    proxy.scrollTo(k, anchor: .top)
+                }
+                #endif
                 }
             }
             .navigationDestination(for: RoundRow.self) { row in
                 RoundPage(center: center, habID: row.habID, roundID: row.round.id)
             }
             .navigationTitle("Rounds")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                if center.any {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("New round", systemImage: "plus") { newRound() }
+                            .disabled(!center.habs.contains { $0.online })
+                    }
+                    ToolbarItem(placement: .secondaryAction) {
+                        Toggle("Show run sessions", isOn: Binding(get: { center.showRunSessions },
+                                                                  set: { center.showRunSessions = $0 }))
+                    }
+                }
+            }
+            .sheet(item: $creating) { d in
+                RoundFormSheet(center: center, draft: d) { creating = nil }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var empty: some View {
+        if center.any {
+            ContentUnavailableView {
+                Label("No rounds yet", systemImage: "clock.arrow.circlepath")
+            } description: {
+                Text("A round runs an agent or a command on a schedule, or when something happens.")
+            } actions: {
+                Button("New round") { newRound() }
+                    .disabled(!center.habs.contains { $0.online })
+            }
+        } else {
+            ContentUnavailableView("No rounds", systemImage: "clock.arrow.circlepath",
+                                   description: Text("Scheduled jobs on your computers show here."))
+        }
+    }
+
+    private func newRound() {
+        let habs = center.habs
+        creating = RoundDraft(habID: habs.first { $0.online }?.id ?? habs.first?.id ?? "")
+    }
+}
+/// One row of the Rounds tab (app.md 21.2): the name, the prompt's first line, and the
+/// trigger, project and hab; on the right the last run, the next run, Unpause, or what a
+/// Capcom job may do.
+struct RoundsListRowView: View {
+    let row: RoundsListRow
+    let center: RoundCenter
+
+    var body: some View {
+        AdaptiveRow {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.headline)
+                    .foregroundStyle(row.paused || row.completed ? .secondary : .primary)
+                if let s = row.summary, !row.paused {
+                    Text(s)
+                        .font(.subheadline)
+                        .lineLimit(2)
+                }
+                Text(row.meta)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                // Unpause's refusal, in the hab's words (21.3).
+                if let e = center.errors[row.id] {
+                    Text(e)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+        } trailing: {
+            trailing
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if row.paused {
+            Button("Unpause") { Task { await center.setPaused(row.row, false) } }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderless)
+                .disabled(!row.online || center.busy.contains(row.id))
+        } else if row.completed {
+            EmptyView()
+        } else if let reach = row.reach {
+            Text(reach.rawValue)
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(reachColor(reach).opacity(0.2)))
+                .foregroundStyle(.primary)
+                .fixedSize()
+        } else if let status = row.status {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(status)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(row.statusState.map(stateColor) ?? .secondary)
+                if let w = row.when {
+                    Text(w)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private func reachColor(_ r: CapcomJobReach) -> Color {
+        switch r {
+        case .actsAlone: return .green
+        case .asksFirst: return .orange
+        case .tellsYou: return .secondary
         }
     }
 }
+
 #endif

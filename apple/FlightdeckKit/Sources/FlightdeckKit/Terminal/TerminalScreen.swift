@@ -37,6 +37,16 @@ public struct TerminalScreen: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            #if os(iOS)
+            // The size control has a strip of its own over the pane, so it never covers the
+            // pane's top lines (app.md 5.4). The fitted grid leaves the strip out.
+            HStack {
+                Spacer()
+                TerminalSizeControl(model: model)
+            }
+            .padding(.horizontal, 4)
+            .background(Self.background)
+            #endif
             terminal
             #if os(iOS)
             if showsKeyBar {
@@ -119,17 +129,14 @@ public struct TerminalScreen: View {
                     model.containerChanged(size)
                 }
         }
-        .background(Color(red: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255))
+        .background(Self.background)
         .overlay(alignment: .center) { statusOverlay }
         .overlay(alignment: .bottom) { inputNotice }
-        #if os(iOS)
-        .overlay(alignment: .topTrailing) {
-            TerminalSizeControl(model: model)
-                .padding(4)
-        }
-        #endif
         .overlay(alignment: .top) { noticeView }
     }
+
+    /// The pane's own background, around a scaled pane and behind the size strip.
+    static let background = Color(red: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255)
 
     #if os(iOS)
     private var showsKeyBar: Bool {
@@ -152,7 +159,7 @@ public struct TerminalScreen: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
                 .environment(\.colorScheme, .dark)
                 .padding(.horizontal, 16)
-                .padding(.top, 60)
+                .padding(.top, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
                 .id(n.id)
                 .accessibilityAddTraits(.isStaticText)

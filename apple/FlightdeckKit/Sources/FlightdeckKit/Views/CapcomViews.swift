@@ -4,6 +4,8 @@ import SwiftUI
 extension EnvironmentValues {
     /// The token of the Capcom view a session view sits in; nil outside one (app.md 4.10).
     @Entry var capcomView: UUID? = nil
+    /// The Capcom tab's subtitle while the session view is that tab's root; nil elsewhere.
+    @Entry var capcomTab: String? = nil
 }
 
 /// The board's Capcom row (app.md 4.10): opens the standing Capcom conversation, and shows
@@ -214,6 +216,9 @@ struct CapcomScreen: View {
     let fleet: Fleet
     let compact: Bool
     let close: (() -> Void)?
+    /// The Capcom tab's root on a phone (app.md 3.8, 4.10): a large "Capcom" title with where
+    /// it runs, and the pacing line over the composer.
+    var tab = false
     /// This view's token: each window's Capcom view counts on its own.
     @State private var token = UUID()
 
@@ -226,8 +231,10 @@ struct CapcomScreen: View {
             if let m = center.standing {
                 VStack(spacing: 0) {
                     if let r = center.deviceContext { CapcomPermissionAsk(reporter: r) }
-                    CapcomPacingLine(center: center, usage: fleet.usage)
+                    if !tab { CapcomPacingLine(center: center, usage: fleet.usage) }
                     SessionView(model: m, compact: compact, close: close)
+                        .environment(\.capcomTab, tab ? center.tabSubtitle(center.entry) : nil)
+                        .environment(\.chatAboveComposer, tab ? AnyView(CapcomPacingLine(center: center, usage: fleet.usage, plain: true)) : nil)
                 }
                     .id(m.target)
                     .environment(\.capcomEarlier, center.earlier)
@@ -254,8 +261,9 @@ struct CapcomScreen: View {
         if compact {
             stateContent
                 .navigationTitle("Capcom")
+                .modifier(TabSubtitle(text: tab ? center.tabSubtitle(center.entry) : nil))
                 #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
+                .navigationBarTitleDisplayMode(tab ? .large : .inline)
                 #endif
         } else {
             VStack(spacing: 0) {
@@ -327,6 +335,8 @@ struct CapcomScreen: View {
 struct CapcomPacingLine: View {
     let center: CapcomCenter
     let usage: UsageCenter?
+    /// Plain text over the composer (the Capcom tab), not a bar over the thread.
+    var plain = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
@@ -342,10 +352,10 @@ struct CapcomPacingLine: View {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, plain ? 16 : 12)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.bar)
+                    .background(plain ? AnyShapeStyle(.clear) : AnyShapeStyle(.bar))
                 }
                 .buttonStyle(.plain)
                 .disabled(usage == nil)

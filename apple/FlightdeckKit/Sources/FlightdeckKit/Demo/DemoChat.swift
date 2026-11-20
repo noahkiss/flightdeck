@@ -81,6 +81,14 @@ enum DemoChat {
             msg(s, 2, .agent, 49, text: "Two do:\n\n- **tide-tables** on workbench asks to run the database migration.\n- **paper-lantern** on attic asks which palette to apply.\n\nThe rest are working or done."),
             msg(s, 3, .user, 30, text: "Is anyone already on seed-catalog?"),
             msg(s, 4, .agent, 29, text: "Yes. A Claude Code session on attic is speeding up search, and a Codex session on workbench is fixing the CSV import."),
+            msg(s, 5, .user, 6, text: "The CSV import on seed-catalog broke again. Can someone look?"),
+            msg(s, 6, .agent, 5.8, text: "The last run failed on a date column. The Codex session on workbench already works on the import, so I handed it the failure."),
+            msg(s, 7, .tool, 5.7, tool: ChatTool(
+                input: input(["project": "seed-catalog", "message": "The CSV import failed again on a date column. Fix it and run the importer tests."]),
+                name: "mcp__flightdeck__hand_off",
+                output: "Delivered: workbench/codex (codex, working, on workbench) has the message now.\nWhy this agent: it works on the CSV import now.\nMessage m-demo1, state delivered. A reply reaches you as an agent message.\n",
+                status: .done)),
+            msg(s, 8, .agent, 5.5, text: "Anything else? I can also start work on a project, check on a session, or set up a round."),
         ]
     }
 

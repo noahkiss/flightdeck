@@ -657,6 +657,21 @@ public actor FakeHab {
         if emit { await roundUpdated(r) }
     }
 
+    /// Gives a round an ended run in `state` that ended at `ended`, as the snapshot shows it.
+    public func loadRoundRun(named n: String, _ state: RoundRunState, ended: Date, result: String? = nil) {
+        guard let r = round(named: n) else { return }
+        let num = (roundBook.runs[r.id]?.last?.number ?? 0) + 1
+        let at = Fixture.stamp(ended)
+        roundBook.put(RoundRun(created: at, endedAt: at, id: "\(r.id)-run\(num)", number: num, result: result,
+                               round: r.id, startedAt: at, state: state, trigger: .cron))
+    }
+
+    /// Pauses a round as a state file read at start would, with no event.
+    public func loadRoundPaused(named n: String) {
+        guard let r = round(named: n) else { return }
+        _ = try? roundBook.setPaused(RoundRef(id: r.id), true)
+    }
+
     /// Gives a round an ended run with Capcom's outcome word, as the snapshot shows it.
     public func loadRoundOutcome(named n: String, _ word: String) {
         guard let r = round(named: n) else { return }
@@ -1841,7 +1856,16 @@ public actor FakeHab {
             projects: projects.values.sorted { $0.id < $1.id },
             rounds: capabilities.contains(RoundCenter.capability) ? roundBook.list() : nil,
             seq: seq,
-            sessions: sessions.values.sorted { $0.id < $1.id })
+            sessions: sessions.values.sorted { $0.id < $1.id },
+            settings: snapshotSettings.isEmpty ? nil : snapshotSettings.values.sorted { $0.id < $1.id })
+    }
+
+    /// Hab-side settings the snapshot carries, by id (app.md 20.5).
+    private var snapshotSettings: [String: Setting] = [:]
+
+    /// Puts a hab-side setting in the snapshot, as set by a client.
+    public func loadSetting(_ id: String, _ value: JSONValue) {
+        snapshotSettings[id] = Setting(default: value, id: id, revision: 1, source: .client, value: value)
     }
 
     private func startHeartbeat(_ c: Conn) {

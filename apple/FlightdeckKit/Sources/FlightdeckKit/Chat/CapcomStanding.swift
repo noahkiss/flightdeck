@@ -83,6 +83,15 @@ extension CapcomCenter {
         }
     }
 
+    /// The Capcom tab's subtitle (app.md 4.10): where Capcom runs and what it does, or the
+    /// entry's state while it cannot open. "Runs on workbench · answers and routes anything".
+    public func tabSubtitle(_ e: CapcomEntry) -> String {
+        switch e {
+        case .ready(let id): return "Runs on \(habs.label(id)) · answers and routes anything"
+        default: return entryText(e)
+        }
+    }
+
     /// A hab came online: read its catalog for the home. A hab without the `capcom`
     /// capability names none. A `quiet` read (after `catalog.updated`) does not count as
     /// on its way, so the entry does not flash back to loading.
