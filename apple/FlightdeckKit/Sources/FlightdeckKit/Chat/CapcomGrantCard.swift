@@ -28,8 +28,34 @@ public struct CapcomGrantCard: Equatable, Sendable {
         guard let card = it.card, card.type == type, let g = card.grant else { return nil }
         let titles = Dictionary(uniqueKeysWithValues: CapcomJobs.words.map { ($0.word, $0.title) })
         let lead = it.text?.components(separatedBy: "\n\n").first.flatMap { $0.hasPrefix("The job changed") ? $0 : nil }
-        return CapcomGrantCard(name: g.name, words: g.actions.map { titles[$0] ?? $0.rawValue }, prompt: g.prompt,
+        return CapcomGrantCard(name: g.name, words: g.actions.map { titles[$0] ?? $0.rawValue }, prompt: shown(g.prompt),
                                trigger: g.trigger, lead: lead, answered: it.answer.map { answeredText($0.choice) })
+    }
+
+    /// A prompt as the card shows it: runs of blank lines cut to one, so padding cannot put the
+    /// instruction below the buttons (capcom-service.md 9.9). The hab cuts them too.
+    static func shown(_ p: String) -> String {
+        var out: [Substring] = []
+        var blank = 0
+        for line in p.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.allSatisfy({ $0 == " " || $0 == "\t" }) {
+                blank += 1
+                if blank > 1 { continue }
+                out.append("")
+            } else {
+                blank = 0
+                out.append(line)
+            }
+        }
+        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Prompts longer than this show their length above them.
+    public static let longPrompt = 500
+
+    /// "1,234 characters" for a long prompt; nil for a short one.
+    public var length: String? {
+        prompt.count > Self.longPrompt ? "\(prompt.count.formatted()) characters" : nil
     }
 
     /// The card's title: "Let job builds act?".

@@ -318,8 +318,7 @@ func (e *capcomEngine) eventGate(turn, tool string) (string, error) {
 // grant card instead (9.9): one tap grants them.
 func (e *capcomEngine) jobMade(host string, r api.Round, person bool, want []string) {
 	if person {
-		level := e.eventActionsLevel()
-		ask := slices.DeleteFunc(slices.Clone(want), func(w string) bool { return freeWord(level, w) })
+		ask := e.grantAsk(want)
 		if len(ask) > 0 {
 			e.grantCard(e.turnState(0).Turn, r, ask, "")
 			return

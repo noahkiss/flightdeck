@@ -202,6 +202,11 @@ final class CapcomThreadTests: XCTestCase {
         XCTAssertNil(g.lead)
         XCTAssertNil(g.answered)
         XCTAssertEqual(CapcomCardChoice.icon("grant"), "key")
+        XCTAssertNil(g.length)
+        XCTAssertEqual(CapcomGrantCard.shown("watch\n\n\n \n\t\nthen act\n\n"), "watch\n\nthen act")
+        var long = g
+        long.prompt = String(repeating: "x", count: 1200)
+        XCTAssertEqual(long.length, 1200.formatted() + " characters")
 
         await t.answerGrant(card, grant: true)
         await eventually("granted") { t.items.first { $0.id == card.id }?.answer?.choice == "grant" }

@@ -4342,8 +4342,9 @@ The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/Capcom
   agents fresh" (`drive`, from A10).
 - **The grant card** of a standing instruction (`capcom-service.md` 9.6, 9.9) shows in the
   Capcom thread with a key: "Let job <name> act?", each word by its switch title, "Capcom
-  follows this prompt when the job's events come in:", the prompt whole, the trigger, then Not
-  now and Grant. Grant is one tap: `capcom.card.answer` with the card and the choice, nothing
+  follows this prompt when the job's events come in:" (with its length in characters past 500),
+  the prompt with runs of blank lines cut to one, the trigger with its filter, then Not now and
+  Grant. Grant is one tap: `capcom.card.answer` with the card and the choice, nothing
   else. A `conflict` shows the hab's reason; the hab's new card leads with "The job changed
   since the last card. Read its prompt again." An answered card says "Granted", "Not now" or
   "Expired: the job changed or is gone". Code: `Chat/CapcomGrantCard.swift`,

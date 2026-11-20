@@ -93,6 +93,8 @@ type capcomEngine struct {
 	jobs jobGranter
 	// grantMu holds one grant card's answer at a time, so the first answer wins across devices.
 	grantMu sync.Mutex
+	// grantTurn is the turn that has its one grant card (9.9), under grantMu.
+	grantTurn string
 	// turnNow stands in for the link's turn state in tests; nil: the link's.
 	turnNow func() capcomengine.Status
 

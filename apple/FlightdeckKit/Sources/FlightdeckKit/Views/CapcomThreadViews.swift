@@ -280,7 +280,7 @@ struct CapcomGrantCardView: View {
                     Label(w, systemImage: "checkmark").font(.callout)
                 }
             }
-            Text("Capcom follows this prompt when the job's events come in:")
+            Text("Capcom follows this prompt when the job's events come in" + (card.length.map { " (\($0))" } ?? "") + ":")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(card.prompt)

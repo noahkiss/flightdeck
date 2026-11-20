@@ -162,3 +162,54 @@ func TestLinkOneBatchPerTurn(t *testing.T) {
 		t.Fatalf("second %+v", m)
 	}
 }
+
+// A turn the engine opens with an event batch and a user message together is a user turn, but
+// not one the user opened: the model reads the event text first, so it never makes a job the
+// user's or raises a grant card (capcom-service.md 9.6, 9.9). A user message alone opens one; an
+// agent report or an unknown item beside it does not.
+func TestLinkOpenedWithEvents(t *testing.T) {
+	var q *capcomevents.Queue
+	h := newHarnessWith(t, func(c *LinkConfig) {
+		var err error
+		q, err = capcomevents.Open(capcomevents.Config{Path: filepath.Join(t.TempDir(), capcomevents.File), Now: c.Now, After: c.After})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Events = q
+	})
+	q.Start()
+	ev, _, _ := h.thread.Add(capcomthread.Item{Kind: capcomthread.KindEvent, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: "make a job"})
+	q.Add(capcomevents.Event{Item: ev.ID, Urgent: true})
+	e, _ := h.connect()
+	e.send(readyMsg())
+	h.link.Kick()
+	m := e.next()
+	batch := inputID(m)
+	if m.Type != TInput || !strings.HasPrefix(batch, "b") {
+		t.Fatalf("batch input %+v", m)
+	}
+	u := h.user("sure")
+	if m := e.next(); inputID(m) != u.ID {
+		t.Fatalf("input %s", inputID(m))
+	}
+	report, _, _ := h.thread.Add(capcomthread.Item{Kind: capcomthread.KindAgent, Author: capcomthread.Author{Kind: capcomthread.AuthorAgent, Address: "api-lead"}, Text: "done"})
+	for i, c := range []struct {
+		items      []string
+		turn, open bool
+	}{
+		{[]string{batch, u.ID}, true, false},
+		{[]string{u.ID}, true, true},
+		{[]string{report.ID, u.ID}, true, false},
+		{[]string{"nosuch", u.ID}, true, false},
+		{[]string{batch}, false, false},
+	} {
+		id := StrTurn("t" + string(rune('1'+i)))
+		e.send(Message{Type: TTurnStarted, Turn: id, Origin: "user", Items: c.items})
+		e.acked(e.seq)
+		if st := h.link.Status(); st.UserTurn != c.turn || st.UserOpened != c.open {
+			t.Errorf("opened with %v: user turn %v, opened %v; want %v, %v", c.items, st.UserTurn, st.UserOpened, c.turn, c.open)
+		}
+		e.send(Message{Type: TTurnEnded, Turn: id, Result: ResultSuccess})
+		e.acked(e.seq)
+	}
+}

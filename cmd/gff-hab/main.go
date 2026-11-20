@@ -2217,6 +2217,7 @@ func serve(args []string) error {
 			eng, host := capcomEng, *hostID
 			roundsSvc.capcomJob = func(r api.Round, person bool, want []string) { eng.jobMade(host, r, person, want) }
 			eng.jobs = roundsSvc
+			roundsSvc.capcomGrantReserve = eng.reserveGrant
 			roundsSvc.capcomUserOpened = func() bool { return eng.turnState(0).UserOpened }
 		}
 	}
