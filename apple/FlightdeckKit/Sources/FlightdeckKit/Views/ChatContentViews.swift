@@ -4,6 +4,18 @@ import SwiftUI
 // The chat view's content (app.md 4.11): tool cards as sentences, diffs, sideways scrolling,
 // folded hidden steps, and the pinned banners.
 
+/// Keeps the chat's tail in view when the list's own height changes (iOS 18, macOS 15): the
+/// request card or the answer line above the composer never hides the newest rows.
+struct BottomOnResize: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18, macOS 15, *) {
+            content.defaultScrollAnchor(.bottom, for: .sizeChanges)
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - Colours
 
 /// Diff and count colours that pass 4.5:1 (WCAG AA) in light and dark (app.md 4.11).

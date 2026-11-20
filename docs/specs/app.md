@@ -1231,7 +1231,9 @@ MCP call and a pending migration; the API docs session (workbench) has a confirm
 the demo group's banner; the palette session (attic) asks a question with two options, which the
 demo hab accepts; the search session has a message from another agent and a diff with line
 numbers. Debug builds take `-FlightdeckShowChatFilter YES` to open the Show in chat sheet and
-`-FlightdeckShowPinned YES` to open the first banner's sheet at launch.
+`-FlightdeckShowPinned YES` to open the first banner's sheet at launch; `-FlightdeckOpenToolCards YES` opens every
+tool card, and `-FlightdeckAutoAnswer allow` or `option` answers the open request from its card
+after 3 s. A list's tail stays in view when the request card changes its height.
 
 ---
 

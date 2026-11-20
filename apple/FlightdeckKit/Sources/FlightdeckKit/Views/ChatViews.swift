@@ -262,6 +262,7 @@ struct ChatTranscript: View {
                 .padding(12)
             }
             .defaultScrollAnchor(.bottom)
+            .modifier(BottomOnResize())
             .overlay { placeholder }
             .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
                 switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
@@ -929,12 +930,16 @@ struct RequestArea: View {
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
         #if DEBUG
         // Debug builds only: `-FlightdeckAutoAnswer allow` allows the open permission after 3 s,
-        // through the card's own path, to show the line that follows an answer.
+        // and `-FlightdeckAutoAnswer option` picks a question's first option, through the card's
+        // own path, to show the line that follows an answer.
         .task(id: agent.request?.id) {
-            guard UserDefaults.standard.string(forKey: "FlightdeckAutoAnswer") == "allow" else { return }
+            let how = UserDefaults.standard.string(forKey: "FlightdeckAutoAnswer")
+            guard how == "allow" || how == "option" else { return }
             try? await Task.sleep(for: .seconds(3))
-            if let r = approvals?.card(for: target)?.request, r.answerable, !r.form.isPlan {
-                if case .questions = r.form { return }
+            guard let r = approvals?.card(for: target)?.request, r.answerable, !r.form.isPlan else { return }
+            if case .questions(let qs) = r.form {
+                if how == "option", let o = qs.first?.options.first { reply(o.label, r) }
+            } else if how == "allow" {
                 answer(allow: true, r)
             }
         }
