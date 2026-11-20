@@ -46,7 +46,7 @@ func TestPaneCapcomMarkReads(t *testing.T) {
 		t.Errorf("list, another peer: %v", err)
 	}
 	// pane.new carries no mark: the Capcom home's peer door starts nothing under project.
-	r.rule = readPanesProject
+	r.setRule(readPanesProject)
 	if _, err := ctl.New(ctx, marked, api.PaneNewParams{Cwd: "/tmp"}); paneErrKind(err) != api.ErrorKindDenied {
 		t.Errorf("new from the Capcom home's peer door: %v", err)
 	}

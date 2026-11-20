@@ -27,18 +27,18 @@ func TestSessionActionReauthorize(t *testing.T) {
 	dr, ar := doorRig(t)
 	ctx := context.Background()
 	ar.agents.set(paneOther, api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
-	dr.rule = drivePanesAgents
+	dr.setRule(drivePanesAgents)
 	if _, err := dr.s.Action(ctx, fromCap, api.SessionActionParams{Session: "other", Action: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	ar.next(t, actionQueued)
-	dr.rule = readPanesOff
+	dr.setRule(readPanesOff)
 	ar.agents.set(paneOther, api.AgentState{Harness: "claude", State: api.AgentStatusIdle})
 	if f := ar.next(t, actionFailed); !strings.Contains(f.Reason, "denied") {
 		t.Fatalf("rule off during the wait: %+v", f)
 	}
 	// The agent left during the wait: the user's shell is in the pane now.
-	dr.rule = readPanesAll
+	dr.setRule(readPanesAll)
 	ar.agents.set(paneMate, api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
 	if _, err := dr.s.Action(ctx, fromOwner, api.SessionActionParams{Session: "mate", Action: "close"}); err != nil {
 		t.Fatal(err)
@@ -53,12 +53,12 @@ func TestSessionActionReauthorize(t *testing.T) {
 	}
 	// compact: the rule is checked again under the send's claim.
 	ar.agents.set(paneOther, api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
-	dr.rule = drivePanesAgents
+	dr.setRule(drivePanesAgents)
 	if _, err := dr.s.Action(ctx, fromCap, api.SessionActionParams{Session: "other", Action: "compact"}); err != nil {
 		t.Fatal(err)
 	}
 	ar.next(t, actionQueued)
-	dr.rule = readPanesOff
+	dr.setRule(readPanesOff)
 	ar.agents.set(paneOther, api.AgentState{Harness: "claude", State: api.AgentStatusIdle})
 	if f := ar.next(t, actionFailed); !strings.Contains(f.Reason, "agent.drive_panes is off") {
 		t.Fatalf("compact after the rule went off: %+v", f)
@@ -100,7 +100,7 @@ func TestSessionActionDoorWiring(t *testing.T) {
 	dr.s.capcomHome = func() string { return "home" }
 	ctx := context.Background()
 	ar.agents.set(paneOther, api.AgentState{Harness: "claude", State: api.AgentStatusIdle})
-	dr.rule = drivePanesAgents
+	dr.setRule(drivePanesAgents)
 	ctl := controlPanes{dr.s}
 	p := api.SessionActionParams{Session: "other", Action: "close", As: asCapcom}
 	if _, err := ctl.Action(ctx, control.PaneCaller{Peer: true, Conn: "c1", Device: "intruder"}, p); paneErrKind(err) != api.ErrorKindDenied {

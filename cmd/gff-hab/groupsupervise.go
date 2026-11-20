@@ -52,6 +52,12 @@ func (w *memberSwap) asideName(name string) string {
 // the old one's group and envelope, moves the held messages to it, and closes the old pane.
 // The old conversation stays resumable. It returns the new session's id.
 func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState, rec *api.Group, seed string) (string, error) {
+	return w.swapFrom(ctx, ss, st, rec, seed, "")
+}
+
+// swapFrom is swap with the seed's author when no group record names one: a session action's
+// recreate from Capcom (hab-logic-api.md 3.13).
+func (w *memberSwap) swapFrom(ctx context.Context, ss api.Session, st api.AgentState, rec *api.Group, seed, seedFrom string) (string, error) {
 	if ss.Group == nil {
 		return "", fmt.Errorf("session %s is no member", ss.Name)
 	}
@@ -121,6 +127,8 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 		TrustCover: &api.TrustCover{Group: group.ID, Confirmation: conf, Harness: st.Harness, BranchPrefix: confirm.GroupBranchPrefix(group.ID)}}
 	if rec != nil && validSeedFrom(rec.Coordinator.Address) {
 		p.SeedFrom = rec.Coordinator.Address
+	} else if seed != "" && validSeedFrom(seedFrom) {
+		p.SeedFrom = seedFrom
 	}
 	made, err := w.create(withOwnCover(ctx), p)
 	if err != nil {

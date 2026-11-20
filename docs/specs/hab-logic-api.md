@@ -2115,7 +2115,9 @@ Built choices (A10; `cmd/gff-hab/sessionaction.go`, `sessionactioncli.go`):
   `failed` with "denied". For every caller, an agent that left the pane during the wait ends it
   the same way.
 - **The follow-up names Capcom.** A `recreate` from Capcom sends its follow-up as a seed from
-  `<host>/capcom`, so the new agent does not take it for the owner's.
+  Capcom at its home: `<host>/capcom` for its own route, `<label>/capcom` with the Capcom home's
+  peer label for its forward. A group member's recreate does the same through the group swap. So
+  the new agent does not take it for the owner's.
 - **A peer's answer** loses control characters in every field, and carries the action asked for.
 - **The door.** `session.action` sits with the pane methods: on the route it is in the pane
   methods' list, and on the control connection it is served beside them. The owner's door runs
@@ -2127,7 +2129,8 @@ Built choices (A10; `cmd/gff-hab/sessionaction.go`, `sessionactioncli.go`):
 Tests: `TestSessionActionClear`, `TestSessionActionCompact`, `TestSessionActionRefusals`,
 `TestSessionActionAfterTurn`, `TestSessionActionDoors`, `TestSessionActionReauthorize`,
 `TestSessionActionPeerAnswer`, `TestSessionActionDoorWiring`, `TestRecreate`,
-`TestRecreateTimedOutCreate`, `TestRecreateRefusals`, and `TestSessionActionHab` against a real hab: `gff-hab action` refused from a pane, `close` and `recreate` of shell sessions from the owner's door (`docs/testing.md`).
+`TestRecreateTimedOutCreate`, `TestRecreateRefusals`, `TestRecreateGroupMember`, `TestRecreateCutShort`,
+`TestSessionActionSeedFrom`, `TestSessionActionRecheckPane`, and `TestSessionActionHab` against a real hab: `gff-hab action` refused from a pane, `close` and `recreate` of shell sessions from the owner's door (`docs/testing.md`).
 
 ---
 

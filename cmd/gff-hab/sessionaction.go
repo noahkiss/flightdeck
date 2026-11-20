@@ -405,7 +405,7 @@ func (w *memberSwap) recreatable(ss api.Session, st api.AgentState) error {
 // name back unless the fresh session runs all the same.
 func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentState, seed, seedFrom string) (string, error) {
 	if ss.Group != nil {
-		return w.swap(ctx, ss, st, nil, seed)
+		return w.swapFrom(ctx, ss, st, nil, seed, seedFrom)
 	}
 	plan, err := w.recreatePlan(ss, st)
 	if err != nil {
@@ -527,18 +527,8 @@ func (s *paneService) Action(ctx context.Context, c paneCaller, p api.SessionAct
 	if c.isCapcom() {
 		// Capcom wrote the follow-up; and its rule is checked again just before the action
 		// runs, on the same pane: the rule, or the pane's program, may change while it waits.
-		o.seedFrom = s.host + "/" + capcomServiceName
-		pane, id := t.pane, t.session.ID
-		o.recheck = func() error {
-			t2, _, _, err := s.prepareBy(gateDrive, "session.action", c, "", id)
-			if err != nil {
-				return err
-			}
-			if !samePane(t2.pane, pane) {
-				return control.Errorf(api.ErrorKindDenied, "the session's pane changed")
-			}
-			return nil
-		}
+		o.seedFrom = s.capcomAddress(c)
+		o.recheck = s.recheck(c, t.session.ID, t.pane)
 	}
 	r, err := s.acts.Request(t.session, p.Action, p.FollowUp, o)
 	if err != nil {
@@ -546,6 +536,43 @@ func (s *paneService) Action(ctx context.Context, c paneCaller, p api.SessionAct
 	}
 	s.logf("panes: session.action: caller %s: %s on pane %s (%s)", c.name(), p.Action, t.pane, r.ID)
 	return r, nil
+}
+
+// recheck runs the caller's rule for session id again, and refuses when the session's pane is
+// no longer pane: the action was authorised for that pane's program.
+func (s *paneService) recheck(c paneCaller, id, pane string) func() error {
+	return func() error {
+		t, _, _, err := s.prepareBy(gateDrive, "session.action", c, "", id)
+		if err != nil {
+			return err
+		}
+		if !samePane(t.pane, pane) {
+			return control.Errorf(api.ErrorKindDenied, "the session's pane changed")
+		}
+		return nil
+	}
+}
+
+// capcomAddress is Capcom's address as this hab names it, for a seed's author: this hab's host
+// for its own route; for a forward, the label of the peer that holds the Capcom mark, so a reply
+// reaches Capcom's home, not this hab. "" when that peer is not in the peer list.
+func (s *paneService) capcomAddress(c paneCaller) string {
+	if !c.isCapcom() {
+		return ""
+	}
+	if c.door == doorRoute {
+		return s.host + "/" + capcomServiceName
+	}
+	if s.capcomHome == nil || s.links == nil {
+		return ""
+	}
+	home := s.capcomHome()
+	for _, l := range s.links() {
+		if home != "" && l.DeviceID == home && l.Label != "" {
+			return l.Label + "/" + capcomServiceName
+		}
+	}
+	return ""
 }
 
 func (c controlPanes) Action(ctx context.Context, from control.PaneCaller, p api.SessionActionParams) (api.SessionAction, error) {

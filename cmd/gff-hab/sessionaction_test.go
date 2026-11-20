@@ -261,7 +261,7 @@ func TestSessionActionDoors(t *testing.T) {
 		{readPanesAll, fromMine, "mate", api.ErrorKindDenied}, {readPanesAll, fromMine, "me", api.ErrorKindDenied},
 		{readPanesAll, fromPeer, "mate", api.ErrorKindDenied},
 	} {
-		dr.rule = w.rule
+		dr.setRule(w.rule)
 		if err := act(w.caller, w.session); paneErrKind(err) != w.kind {
 			t.Errorf("%s: door %d capcom %v on %s: %v, want %q", w.rule, w.caller.door, w.caller.isCapcom(), w.session, err, w.kind)
 		}
@@ -269,7 +269,7 @@ func TestSessionActionDoors(t *testing.T) {
 	// The Capcom forward carries the mark; the peer must have session-action.
 	rec := &recordPeer{}
 	dr.peer.Caller = rec
-	dr.rule = readPanesAll
+	dr.setRule(readPanesAll)
 	if err := act(fromCap, "bee/far"); paneErrKind(err) != api.ErrorKindUnavailable {
 		t.Fatalf("a peer without session-action: %v", err)
 	}
