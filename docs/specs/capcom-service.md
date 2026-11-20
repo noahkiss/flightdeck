@@ -664,6 +664,11 @@ off for the very job the owner named.
   enforces it.
 - A job Capcom creates from a user's message in a user turn is the user's (9.6). Text the turn
   read could shape that job's prompt.
+- Accepted residual: a turn a user opened can still carry outside text (an agent's report that
+  joins it, or an event turn just before it), so a job Capcom makes there runs outside the
+  budget; the record card in the thread shows every such job.
+- Accepted residual: moving a round to another host is the owner's create there, so a moved
+  agent-made job becomes a person's; the owner starts every move.
 
 **The brakes that remain.**
 
@@ -1547,7 +1552,7 @@ Where 9.2 to 9.6 left a choice open:
   count. So a restart, a sleep through 07:00, and a change to `off` each still send it once.
 - **A person's job.** The round store keeps a mark, `by_person`, that the hab sets and no client
   can: on a create from the owner's door with no creator, and on a person's grant. A create over
-  a peer link never sets it, and an unfiled pane's create gets the creator `pane:<id>`. The
+  a peer link never sets it, a grant over a peer link is refused, and an unfiled pane's create gets the creator `pane:<id>`. The
   runner copies the mark into the round message. The home hab reads it only from a message
   whose sender is `round:<name>`, as it reads `actions`. Such a message goes in a batch alone,
   which does not count; past the budget it still goes at once.

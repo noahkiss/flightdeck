@@ -50,6 +50,11 @@ func isRoundMethod(m string) bool {
 // change is saved to disk before it answers.
 func (c *conn) handleRounds(m message) {
 	seq := c.currentSeq()
+	// A peer link (client kind hab) is not the owner: its creates and grants never count as a
+	// person's (capcom-service.md 9.3).
+	c.mu.Lock()
+	peer := c.kind == api.ClientKindHab
+	c.mu.Unlock()
 	rs := c.s.cfg.Rounds
 	var call func(ctx context.Context, now func() api.Seq) (any, error)
 	var e *Error
@@ -130,7 +135,6 @@ func (c *conn) handleRounds(m message) {
 	case "round.create":
 		var p api.RoundCreateParams
 		if e = c.decodeUp(m, &p); e == nil && rs != nil {
-			peer := c.kind == api.ClientKindHab
 			call = func(ctx context.Context, now func() api.Seq) (any, error) {
 				if peer {
 					ctx = WithPeerCall(ctx) // not the owner's: by_person stays off (capcom-service.md 9.3)
@@ -144,6 +148,9 @@ func (c *conn) handleRounds(m message) {
 		var p api.RoundUpdateParams
 		if e = c.decodeUp(m, &p); e == nil && rs != nil {
 			call = func(ctx context.Context, now func() api.Seq) (any, error) {
+				if peer {
+					ctx = WithPeerCall(ctx) // a grant over a peer link is refused
+				}
 				r, err := rs.Update(ctx, p)
 				return api.RoundResult{Seq: now(), Round: r}, err
 			}

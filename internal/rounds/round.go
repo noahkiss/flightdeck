@@ -171,9 +171,10 @@ type Round struct {
 	// CreatedBy is the session that created the round, when an agent did. The hab sets it;
 	// it never changes.
 	CreatedBy string `json:"created_by,omitempty"`
-	// ByPerson marks a round a person owns (capcom-service.md 9.3): made on the owner's door with
-	// no creator, or granted words by a person. The hab sets it; a client cannot. A round made over
-	// a peer link, or by any agent route, has none, so its Capcom batches count toward the budget.
+	// ByPerson marks a round a person owns (capcom-service.md 9.3, 9.9): made on the owner's door
+	// with no creator, made by the Capcom route in a turn a user's message opened, or granted words
+	// by a person. The hab sets it; a client cannot. A round made over a peer link, or by any other
+	// agent route, has none, so its Capcom batches count toward the budget.
 	ByPerson  bool      `json:"by_person,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

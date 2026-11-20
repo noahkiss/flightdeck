@@ -62,10 +62,17 @@ func TestRoundByPerson(t *testing.T) {
 	if _, r := mark("unfiled"); r.CreatedBy != "pane:pane-unfiled" {
 		t.Errorf("unfiled pane's creator %q", r.CreatedBy)
 	}
-	// A person's grant makes an agent's job the person's.
+	// A grant over a peer link is no person's: refused, and the job stays the agent's.
 	r, _ := svc.Get(api.RoundRef{Name: "peer"})
 	spec := r.RoundSpec
 	spec.Actions = []api.RoundAction{"hand_off"}
+	if _, err := svc.Update(control.WithPeerCall(ctx), api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: spec}); errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("a grant over a peer link: %v", err)
+	}
+	if m, _ := mark("peer"); m.ByPerson || len(m.Actions) != 0 {
+		t.Fatalf("after a refused peer grant: %+v", m)
+	}
+	// A person's grant makes an agent's job the person's.
 	if _, err := svc.Update(ctx, api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: spec}); err != nil {
 		t.Fatal(err)
 	}

@@ -7463,7 +7463,7 @@
           },
           "by_person": {
             "type": "boolean",
-            "description": "Capcom messages: the round has no created_by, so a person owns it. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:\u003cname\u003e."
+            "description": "Capcom messages: a person owns the round: it was made on the owner's door, or by the Capcom route in a turn a user's message opened, or a person granted it words. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:\u003cname\u003e."
           },
           "deadline": {
             "type": "string",

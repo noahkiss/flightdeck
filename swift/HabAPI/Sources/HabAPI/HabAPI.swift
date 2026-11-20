@@ -1761,7 +1761,7 @@ public struct ChannelRecord: Codable, Sendable, Hashable {
 public struct ChannelRound: Codable, Sendable, Hashable {
     /// Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:<name>, and caps them by capcom.event_actions.
     public var actions: [RoundAction]?
-    /// Capcom messages: the round has no created_by, so a person owns it. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:<name>.
+    /// Capcom messages: a person owns the round: it was made on the owner's door, or by the Capcom route in a turn a user's message opened, or a person granted it words. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:<name>.
     public var byPerson: Bool?
     /// Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired.
     public var deadline: String?

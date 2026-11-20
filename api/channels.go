@@ -45,7 +45,7 @@ type ChannelRound struct {
 	// Actions was added by Part 14 stage A9 (capcom-service.md 9.6).
 	Actions []RoundAction `json:"actions,omitempty" doc:"Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:<name>, and caps them by capcom.event_actions."`
 	// ByPerson was added by Part 14 stage A10 (capcom-service.md 9.3).
-	ByPerson bool `json:"by_person,omitempty" doc:"Capcom messages: the round has no created_by, so a person owns it. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:<name>."`
+	ByPerson bool `json:"by_person,omitempty" doc:"Capcom messages: a person owns the round: it was made on the owner's door, or by the Capcom route in a turn a user's message opened, or a person granted it words. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:<name>."`
 }
 
 // RoundEvent is one event of a round's batch (rounds.md 4.5).

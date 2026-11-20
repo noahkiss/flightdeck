@@ -1966,6 +1966,11 @@ func (s *roundsService) updateRound(ctx context.Context, p api.RoundUpdateParams
 	s.mu.Lock()
 	rev := max(s.revs[p.ID], 1)
 	s.mu.Unlock()
+	if control.PeerCall(ctx) && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
+		// Only a person grants a word, on this hab's own door: a peer link is another hab, not
+		// the owner (capcom-service.md 9.3, 9.6).
+		return api.Round{}, errGrant("round.update over a peer link")
+	}
 	if p.Revision == 0 && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
 		// A grant names the revision the person read, so the prompt they let act is the one
 		// they saw, not one an agent wrote since (capcom-service.md 9.6).
