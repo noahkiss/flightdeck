@@ -111,7 +111,7 @@ type RoundSpec struct {
 	// Secrets was added by stage 11 (rounds.md 4.4).
 	Secrets string `json:"secrets,omitempty" doc:"Watch only: the name of a secret set in the hab's config file, whose values reach the watcher's environment. Never a value. A name the config lacks is refused with invalid; refused on the pane route."`
 	// Actions was added by Part 14 stage A9 (capcom-service.md 9.6, rounds.md 3).
-	Actions []RoundAction `json:"actions,omitempty" doc:"Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by."`
+	Actions []RoundAction `json:"actions,omitempty" doc:"Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by."`
 }
 
 // Round is one round as the hab holds it: its definition and where its schedule stands.

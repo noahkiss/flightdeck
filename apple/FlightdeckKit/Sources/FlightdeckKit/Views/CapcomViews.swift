@@ -95,6 +95,8 @@ struct CapcomHostList: View {
 /// The Capcom host page in Settings.
 struct CapcomHostSettingsView: View {
     let center: CapcomCenter
+    /// The settings center, for the home hab's quiet hours; nil leaves the row out.
+    var settings: SettingsCenter? = nil
     @Environment(\.rounds) private var rounds
 
     var body: some View {
@@ -119,6 +121,9 @@ struct CapcomHostSettingsView: View {
             }
             if let rounds {
                 CapcomJobsSection(center: rounds)
+            }
+            if let settings, case .ready(let home) = center.entry {
+                CapcomQuietHoursSection(settings: settings, habID: home)
             }
             if let sites = center.sites {
                 Section {

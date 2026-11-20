@@ -180,6 +180,8 @@ struct CapcomRowView: View {
         case .card(let it):
             if CapcomEventDraft.of(it) != nil {
                 CapcomEventCardView(item: it, thread: thread)
+            } else if let g = CapcomGrantCard.of(it) {
+                CapcomGrantCardView(item: it, card: g, thread: thread)
             } else {
                 CapcomCardRow(item: it, thread: thread)
             }
@@ -249,6 +251,56 @@ struct CapcomCardRow: View {
                         .disabled(thread.answering.contains(item.id))
                     }
                 }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+/// A grant card (capcom-service.md 9.9, app.md 21.5): the job, each word it would get, the
+/// prompt whole and the trigger, then Not now and Grant. One tap grants; an answered card says
+/// how. The thread around it scrolls a long prompt.
+struct CapcomGrantCardView: View {
+    let item: CapcomItem
+    let card: CapcomGrantCard
+    let thread: CapcomThread
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let lead = card.lead {
+                Text(lead).font(.caption.weight(.medium)).foregroundStyle(.orange)
+            }
+            Label(card.title, systemImage: "key")
+                .font(.callout.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(card.words, id: \.self) { w in
+                    Label(w, systemImage: "checkmark").font(.callout)
+                }
+            }
+            Text("Capcom follows this prompt when the job's events come in:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(card.prompt)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+            Text("Trigger: \(card.trigger)").font(.caption).foregroundStyle(.secondary)
+            if let a = card.answered {
+                Text(a).font(.caption).foregroundStyle(.secondary)
+            } else if thread.session != nil {
+                HStack {
+                    Button("Not now") { Task { await thread.answerGrant(item, grant: false) } }
+                        .buttonStyle(.bordered)
+                    Button("Grant") { Task { await thread.answerGrant(item, grant: true) } }
+                        .buttonStyle(.borderedProminent)
+                }
+                .disabled(thread.answering.contains(item.id))
             }
         }
         .padding(10)

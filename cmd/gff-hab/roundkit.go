@@ -320,6 +320,9 @@ func roundSpecArgs(spec *api.RoundSpec, a toolArgs, elsewhere bool) (bool, error
 	if _, ok := a["harness_args"]; ok {
 		d.harnessArgs, set["harness-arg"] = a.list("harness_args"), true
 	}
+	if _, ok := a["actions"]; ok {
+		d.actions, set["actions"] = strings.Join(a.list("actions"), ","), true
+	}
 	for name, p := range map[string]*bool{"manual": &d.manual, "paused": &d.paused} {
 		if _, ok := a[name]; ok {
 			*p = a.boolean(name)
@@ -433,6 +436,11 @@ func runRoundAdd(ctx context.Context, c caller, a toolArgs) (any, string, error)
 		return nil, "", err
 	}
 	text := fmt.Sprintf("Made round %s (%s) on this host, with no confirmation asked. Next run: %s.\n", made.Round.Name, made.Round.ID, orDash(made.Round.NextSlot))
+	if len(spec.Actions) > 0 && len(made.Round.Actions) == 0 {
+		// Capcom's standing instruction (capcom-service.md 9.6, 9.9): the hab made the job with
+		// no words and asks the user for them on a grant card.
+		text += "The job was made with no action words. Where its words need the user's grant, a grant card in the thread asks for them: tell the user, and do not say the job may use those words until they grant.\n"
+	}
 	if made.Run != nil {
 		text += fmt.Sprintf("Run %d started: %s.\n", made.Run.Number, made.Run.State)
 	}

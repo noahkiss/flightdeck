@@ -108,7 +108,7 @@ struct SettingsPage: View {
             Button(l.title) { openUsage?() }
         case .capcom:
             if let capcom {
-                NavigationLink(l.title) { CapcomHostSettingsView(center: capcom).navigationTitle(l.title) }
+                NavigationLink(l.title) { CapcomHostSettingsView(center: capcom, settings: center).navigationTitle(l.title) }
             }
         case .ssh:
             if let ssh {
@@ -181,6 +181,16 @@ struct SettingRow: View {
 
     @ViewBuilder
     private var control: some View {
+        if def.kind == .page {
+            // Kept on the page its area links to: here only its title, for search.
+            Text(def.title)
+        } else {
+            storeControl
+        }
+    }
+
+    @ViewBuilder
+    private var storeControl: some View {
         switch def.store {
         case .app:
             if case .bool = def.kind, case .bool(let on)? = center.ports[def.id]?.get() {
@@ -208,6 +218,11 @@ struct SettingRow: View {
 
     @ViewBuilder
     private var caption: some View {
+        if def.kind != .page { storeCaption }
+    }
+
+    @ViewBuilder
+    private var storeCaption: some View {
         switch def.store {
         case .app:
             EmptyView()

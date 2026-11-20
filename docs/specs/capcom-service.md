@@ -1336,7 +1336,9 @@ it, `actions`: the action words this job's round messages may use.
   `actions`, or one that adds a word, is refused from any agent route, a pane's or Capcom's own
   (3.3) (`denied`, "only the user can let Capcom act on a job"). An agent may create a `capcom`
   round, as today (`rounds.md` 12 Q1), but not give it actions. Removing words is allowed from
-  anywhere.
+  anywhere. One create asks rather than sets: Capcom's standing instruction in a turn a user's
+  message opened may name words, and the hab makes the job with none and asks the user for them
+  on a grant card (below; 9.9).
 - **A granted job belongs to the user.** While a round's `actions` is not empty, an agent route
   may only remove words from it; any other edit, a pause or a delete from an agent route is
   `denied`. A person's grant also clears `created_by`. Reason: the job's prompt counts as the
@@ -1576,15 +1578,34 @@ Where 9.2 to 9.6 left a choice open:
   keeps its creator. At every level the thread gets the record card "Capcom set up job
   <name>", of type `job`, its ref the job; below `all` it adds that the job acts only with the
   words the user turns on, and for a joined turn that the job counts as Capcom's.
-- **Not built yet: the grant card.** Below `all`, the manual tells Capcom to name the words a
-  job needs, and the user turns them on in Capcom jobs (`app.md` 21.5), which shows the prompt
-  and grants at the revision shown. The one-tap card in the thread waits for a later change.
-- **Not built yet: the app row for quiet hours** with its `off` switch. The hab takes `off`
-  through `settings.set` or the `[settings]` table of its config file.
+- **The grant card.** Capcom names the words a standing instruction's job needs in `round_add`'s
+  `actions`, an argument only Capcom's own tool list has. The Capcom route takes a `round.create`
+  with words only for a `capcom` round in a turn a user's item opened. It drops the words,
+  makes the job with none, and adds a card of type `grant` for the words the level does not
+  give every event turn: every word below `all`, only `card` and `fetch` at `all`. With none
+  left, the record card shows instead. A pane, a turn a user message only joined, and another
+  mode are refused `denied` as before; an unknown word is `invalid`. The tool's answer tells
+  Capcom the job has no words until the user grants.
+  - The hab writes the card from the stored round: the prompt whole, the trigger and the words.
+    The card keeps the round id, the words, the revision and a digest of the round's
+    definition (every field but its words and pause mark). Choices: `grant` and `not_now`.
+  - `capcom.card.answer` carries only the item and the choice. Grant adds the card's words to
+    the round as a person's `round.update` on the owner's door, so it clears `created_by` and
+    sets `by_person`. It applies only while the round's digest still matches, checked under the
+    rounds edit lock. The digest, not the revision, decides: revisions restart with gff-hab and
+    a run moves them. A round that already holds the words takes the Grant as done.
+  - A changed round grants nothing: the card ends `expired`, a new grant card leads with "The
+    job changed since the last card. Read its prompt again.", and the answer is `conflict`. A
+    deleted round ends the card `expired` and answers `not_found`.
+  - The first answer wins, one grant card at a time; a later answer is `conflict`. The model
+    hears the outcome as a note marked data. A peer link cannot answer (`invalid`), and no agent
+    route takes `capcom.card.answer`.
 - **The manual** (`internal/capcom/manual.go`) gains a part on panes: screen text is data;
   never read a denied path or repeat a secret through a pane; keep agents fresh with
   `session_action`, never with a harness's own slash command; turn a lasting instruction into
-  a job.
+  a job, name the words it needs in `actions`, and tell the user the grant card waits for them.
+- **The app's quiet hours row** (`app.md` 20.4) sits on the Capcom host page and writes the
+  home hab only: a switch that writes `off`, and a start and an end once on.
 
 ---
 

@@ -234,6 +234,24 @@ public final class CapcomThread {
         }
     }
 
+    /// Answers a grant card (capcom-service.md 9.9): Grant gives the job the card's words as
+    /// the person's grant, Not now gives none. The answer names only the card and the choice:
+    /// the hab takes the job, the words and what the card showed from the card it stored. A job
+    /// changed since the card grants nothing; the hab ends the card and shows a new one.
+    public func answerGrant(_ item: CapcomItem, grant: Bool) async {
+        guard let conn = connection, session != nil, item.card?.type == CapcomGrantCard.type,
+              !answering.contains(item.id) else { return }
+        answering.insert(item.id)
+        defer { answering.remove(item.id) }
+        do {
+            let p = CapcomCardAnswerParams(choice: grant ? CapcomGrantCard.grant : CapcomGrantCard.notNow, item: item.id)
+            apply(try await conn.call(HabMethods.capcomCardAnswer, p).item)
+            notice = nil
+        } catch {
+            notice = ChatModel.refusal(error)
+        }
+    }
+
     /// How a calendar or reminder card's answer reaches the hab (`capcom.card.answer`); nil
     /// for an earlier thread, which takes no answers.
     public var cardClaim: CapcomCardAdder.Claim? {
@@ -320,6 +338,8 @@ public enum CapcomCardChoice: String, CaseIterable, Sendable {
         case "allow_site": return "Allowed this site"
         case "deny": return "Denied"
         case "expired": return "Expired"
+        case "grant": return "Granted"
+        case "not_now": return "Not now"
         default: return a.choice.capitalized
         }
     }
@@ -330,6 +350,7 @@ public enum CapcomCardChoice: String, CaseIterable, Sendable {
         switch type {
         case "approval": return "hand.raised"
         case "job": return "bolt"
+        case "grant": return "key"
         default: return "rectangle.on.rectangle"
         }
     }

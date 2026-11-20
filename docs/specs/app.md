@@ -3995,6 +3995,16 @@ picker never changes them.
   waiting keeps its wait. The hook config always passes `-wait`, so turning it on needs no hook
   change. A `-permission-wait` flag given on the command line, or a non-empty
   `$GFF_HAB_PERMISSION_WAIT`, locks the value (20.5).
+- **`capcom.quiet_hours`** sits on the Capcom host page, under "Quiet hours", and writes the
+  Capcom home hab only. The switch "Hold Capcom's pushes at night" writes `off`, or turns on with
+  the last range the page saw, else `22:00-07:00`. Once on, From and Until pick a time of day.
+  The app builds the value from whole hours and minutes, never with a locale's formatter, so a
+  12-hour locale writes what the hab takes. The section hides when the home hab does not list
+  the setting. A value the app cannot read shows as it is, with no control, and is never
+  overwritten. A locked value shows with its controls off. An offline home hab shows the
+  value queued for it (20.8). The registry lists the row as a page
+  row, so search finds it. Code: `Settings/QuietHours.swift`, `Views/CapcomQuietHoursViews.swift`.
+  Test: `SettingsTests.testQuietHours`.
 - **Pushed preferences reach the hab.** A preference that changes what a hab pushes while the
   app is closed goes to each hab on `push.register`: the kinds (`done`, `command`, `usage`),
   `hide_commands`, and the usage thresholds. The hab pushes a usage warning only at a threshold
@@ -4330,8 +4340,14 @@ The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/Capcom
   "Start a session", "Set up a project", "Start or change a group" (`group`), "Add calendar and
   reminder cards" (`card`), "Open pages it has not seen" (`fetch`), "Type into panes and keep
   agents fresh" (`drive`, from A10).
-- **Not built yet: the grant card** of a standing instruction (`capcom-service.md` 9.6, 9.9).
-  Until it is, Capcom names the words a job needs and the user turns them on here.
+- **The grant card** of a standing instruction (`capcom-service.md` 9.6, 9.9) shows in the
+  Capcom thread with a key: "Let job <name> act?", each word by its switch title, "Capcom
+  follows this prompt when the job's events come in:", the prompt whole, the trigger, then Not
+  now and Grant. Grant is one tap: `capcom.card.answer` with the card and the choice, nothing
+  else. A `conflict` shows the hab's reason; the hab's new card leads with "The job changed
+  since the last card. Read its prompt again." An answered card says "Granted", "Not now" or
+  "Expired: the job changed or is gone". Code: `Chat/CapcomGrantCard.swift`,
+  `CapcomGrantCardView` in `Views/CapcomThreadViews.swift`. Tests: `CapcomThreadTests`.
 - **A grant shows the prompt.** Turning a switch on shows, under the switches, "Allow
   "<switch>"?", "Capcom follows this prompt when the job's events come in:", the prompt whole,
   and Cancel and Allow. Allow sends `round.update` with the round's whole definition, the word

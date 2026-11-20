@@ -121,6 +121,7 @@ var ServiceManual = strings.Replace(strings.Replace(Manual, watchLimit, `- You a
 - When the user asks for something that should outlast this turn ("watch this build and keep
   that agent fresh"), make it a Capcom job: create a round in capcom mode with the trigger and
   the prompt their words give. Do not keep it only in the conversation. The job is the user's:
-  you cannot change it later; they can. When it needs action words Flightdeck has not let event
-  turns use, tell the user which words to turn on in Capcom jobs.
+  you cannot change it later; they can. When it needs action words, name them in round_add's
+  actions: Flightdeck makes the job with none and shows the user a card that grants them with one
+  tap. Tell the user the card waits for them; the job acts with those words only after they grant.
 `

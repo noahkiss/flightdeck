@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -300,10 +301,22 @@ func mcpTools() []map[string]any { return mcpToolsOf(allTools()) }
 // tools is the server's tool list: every kit tool, and the personal tools with -capcom.
 func (m *mcpServer) tools() []kitTool {
 	if m.capcom {
-		return append(append(allTools(), personalTools...), capcomTools...)
+		tools := allTools()
+		for i, t := range tools {
+			if t.Name == "round_add" {
+				tools[i].Args = append(slices.Clip(t.Args), capcomActionsArg)
+			}
+		}
+		return append(append(tools, personalTools...), capcomTools...)
 	}
 	return allTools()
 }
+
+// capcomActionsArg is round_add's argument on Capcom's own tool list (capcom-service.md 9.6,
+// 9.9): the words a standing instruction's job needs. The hab makes the job with none and asks the
+// user for them on a grant card.
+var capcomActionsArg = toolArg{Name: "actions", Type: "array",
+	Doc: "Mode capcom, in a turn the user's message opened: the action words the job needs (hand_off, start_session, set_up_project, group, card, fetch, drive). The job is made with none; the user grants them with one tap on a card in the thread. Refused in any other turn."}
 
 func (m *mcpServer) instructions() string {
 	if m.capcom {

@@ -21,7 +21,7 @@ func TestStandingInstruction(t *testing.T) {
 		c.catalog = capcomCatalog
 	})
 	var heard []string
-	svc.capcomJob = func(r api.Round, person bool) { heard = append(heard, r.Name) }
+	svc.capcomJob = func(r api.Round, person bool, want []string) { heard = append(heard, r.Name) }
 	opened := true
 	svc.capcomUserOpened = func() bool { return opened }
 	h := roundHook(st, svc)
@@ -97,7 +97,7 @@ func TestJobMadeCard(t *testing.T) {
 		want   string
 	}{{`"all"`, true, "Capcom set up job keeper"}, {`"allow"`, true, "only with the words you turn on"}, {`"ask"`, false, "counts as Capcom's"}} {
 		h.set[settings.CapcomEventActions] = c.level
-		h.e.jobMade("host-a", api.Round{RoundSpec: api.RoundSpec{Name: "keeper"}}, c.person)
+		h.e.jobMade("host-a", api.Round{RoundSpec: api.RoundSpec{Name: "keeper"}}, c.person, nil)
 		cards := h.jobCards()
 		if len(cards) == 0 || !strings.Contains(cards[len(cards)-1].Text, c.want) || cards[len(cards)-1].Card.Ref != "host-a/keeper" {
 			t.Fatalf("%s: cards %+v", c.level, cards)

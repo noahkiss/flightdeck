@@ -173,6 +173,8 @@ public enum SettingsRegistry {
         SettingDef(id: CapcomPrefs.shareLocationID, title: "Share location with Capcom", area: .agents, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareCalendarID, title: "Share calendar with Capcom", area: .agents, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.calendarDaysID, title: "Days of calendar events Capcom reads", area: .agents, kind: .page, store: .app),
+        // On the Capcom host page, for the home hab only (capcom-service.md 9.2).
+        SettingDef(id: QuietHours.id, title: "Quiet hours", area: .agents, kind: .page, store: .oneHab),
         SettingDef(id: "voice.language", title: "Dictation language", area: .voice, kind: .page, store: .app, built: false),
     ]
 
