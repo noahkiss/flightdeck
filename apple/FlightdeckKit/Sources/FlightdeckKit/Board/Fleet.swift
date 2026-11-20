@@ -365,6 +365,7 @@ public final class Fleet {
         let m = ChatModel(target: target, connection: conn)
         m.onSent = { [weak self] t in self?.activities?.noteSent(t) }
         m.capcom = capcom
+        m.show = chatShow
         if let h = board.habs.first(where: { $0.id == target.habID }) {
             m.update(ChatContext.of(target, hab: h))
         }
@@ -372,8 +373,15 @@ public final class Fleet {
         return m
     }
 
+    /// What the chat views show (app.md 4.11), kept on the device.
+    public private(set) lazy var chatShow = ChatShowStore()
+
     private func refreshChats(habID: String) {
         guard let h = board.habs.first(where: { $0.id == habID }) else { return }
+        // An online hab lists every session it has: overrides of the rest go (app.md 4.11).
+        if h.state.status == .online {
+            chatShow.prune(habID: habID, sessions: Set(h.state.store.sessions.keys), panes: Set(h.state.store.panes.keys))
+        }
         for w in chats {
             guard let m = w.model, m.target.habID == habID else { continue }
             m.update(ChatContext.of(m.target, hab: h))

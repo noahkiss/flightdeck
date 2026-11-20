@@ -102,7 +102,8 @@ public enum BoardRows {
                 model: s.model,
                 harness: agent?.harness,
                 state: agent?.state,
-                blockedKind: agent?.kind,
+                // Claude's question tool arrives as a permission request; the owner sees a question (app.md 4.11).
+                blockedKind: agent?.request?.tool == "AskUserQuestion" ? .question : agent?.kind,
                 contextPct: s.contextPct,
                 rank: rank(session: s, agent: agent, seen: key.map { seen.contains($0) } ?? false),
                 since: agent.flatMap { parseStamp($0.at) },

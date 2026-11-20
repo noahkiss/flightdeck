@@ -160,6 +160,8 @@ public final class ChatModel {
     /// The Capcom service's thread (capcom-service.md 7.6), for a service session; nil for any
     /// other. Made when the context first names the service.
     public private(set) var thread: CapcomThread?
+    /// What the owner chose to show (app.md 4.11); the fleet sets it. Nil shows everything.
+    @ObservationIgnored public weak var show: ChatShowStore?
     /// Opens Capcom sessions for "New conversation"; the fleet sets it.
     @ObservationIgnored public weak var capcom: CapcomCenter?
 
@@ -467,6 +469,33 @@ public final class ChatModel {
 
     public var gate: SendGate { SendGate.of(context) }
 
+    /// A permission or plan is open: the harness's dialog holds the pane, so a message waits in
+    /// the app and goes when the agent is at its prompt again (app.md 4.11).
+    public var queuesWhileBlocked: Bool {
+        gate == .blocked && context.agent?.kind == .permission
+    }
+
+    /// The composer takes a message now or after the turn.
+    public var takesMessage: Bool { gate.allowsSend || queuesWhileBlocked }
+
+    /// The short line after an answer from the chat ("Allowed · npm run migrate"), for 5 s.
+    public private(set) var answerNote: String?
+    @ObservationIgnored private var answerNoteGen = 0
+    /// How long the line stays.
+    @ObservationIgnored public var answerNoteLife: Duration = .seconds(5)
+
+    /// Shows the line after an answer; a later one replaces it.
+    public func noteAnswer(_ text: String) {
+        answerNoteGen += 1
+        let gen = answerNoteGen
+        answerNote = text
+        Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: self.answerNoteLife)
+            if self.answerNoteGen == gen { self.answerNote = nil }
+        }
+    }
+
     /// Whether Send works with no text: a Capcom session with chips waiting sends them alone
     /// (capcom.md 8.4).
     public var sendsContextAlone: Bool { context.isCapcom && !pending.isEmpty }
@@ -477,7 +506,7 @@ public final class ChatModel {
     /// `sendNow` ("Send now", capcom-service.md 10.1) counts only on the Capcom service session.
     public func send(_ text: String, attachments: [DraftAttachment] = [], origin: SendOrigin = .typed, sendNow: Bool = false) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty || !attachments.isEmpty || sendsContextAlone, gate.allowsSend else { return }
+        guard !t.isEmpty || !attachments.isEmpty || sendsContextAlone, takesMessage else { return }
         if let r = attachments.lazy.compactMap(AttachmentLimits.refusal).first {
             notice = r
             return
@@ -500,7 +529,7 @@ public final class ChatModel {
 
     /// Sends a "not delivered" or failed message again. Never automatic.
     public func retry(_ id: Int) {
-        guard let i = outgoing.firstIndex(where: { $0.id == id }), gate.allowsSend else { return }
+        guard let i = outgoing.firstIndex(where: { $0.id == id }), takesMessage else { return }
         outgoing[i].status = gate == .now ? .sending : .queued
         if gate == .now { Task { await self.deliver(id) } }
     }
@@ -589,7 +618,7 @@ public final class ChatModel {
             outgoing[j].status = .queued
         } catch {
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
-            outgoing[j].status = .failed(Self.refusal(error))
+            outgoing[j].status = .failed(Self.sendRefusal(error))
         }
     }
 
@@ -628,6 +657,20 @@ public final class ChatModel {
         if let e = error as? AttachmentRefused { return e.hint }
         if let e = error as? RPCError, let d = e.data { return "\(d.kind.rawValue): \(d.hint)" }
         return describe(error)
+    }
+
+    /// A refused send in plain words (app.md 4.11); the hab's hint stays out of the chat.
+    static func sendRefusal(_ error: Error) -> String {
+        if let e = error as? AttachmentRefused { return e.hint }
+        if let e = error as? RPCError {
+            switch e.kind {
+            case .conflict: return "the agent is busy or waiting for an answer"
+            case .unavailable: return "the session can't take a message now"
+            case .notFound: return "the session is gone"
+            default: return "the hab refused it"
+            }
+        }
+        return "the hab didn't answer"
     }
 
     /// The writes that type a message into a harness prompt: the text in

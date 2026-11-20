@@ -114,21 +114,14 @@ public enum MarkdownBlock: Hashable, Sendable {
     }
 }
 
-/// A line of an edit's diff.
-public struct DiffLine: Hashable, Sendable {
-    public enum Kind: Hashable, Sendable { case removed, added }
-    public var kind: Kind
-    public var text: String
-}
-
-/// A tool call card (app.md 4.1): a header, and a body that is folded by default.
+/// A tool call card (app.md 4.1, 4.11): a one-sentence header, and a body that is folded by default.
 public struct ToolCard: Hashable, Sendable {
     public enum Detail: Hashable, Sendable {
         /// A shell command, shown exactly.
         case command(String)
-        /// An edit, as removed and added lines.
-        case diff([DiffLine])
-        /// Any other input, as formatted JSON.
+        /// An edit, as a diff per file with line numbers where known.
+        case diff(ParsedDiff)
+        /// An input that is not an object, as text.
         case input(String)
         case none
     }
@@ -136,9 +129,15 @@ public struct ToolCard: Hashable, Sendable {
     public var name: String
     public var target: String?
     public var status: ToolStatus
+    /// The header sentence: "Edited src/api/stations.ts +3 -1".
+    public var sentence: ToolSentence
+    /// The Show in chat kind (app.md 4.11).
+    public var kind: ChatContentKind
     /// Reads and searches fold to one line.
     public var oneLine: Bool
     public var detail: Detail
+    /// The input's other fields, labelled: what the detail does not already show.
+    public var fields: [ToolField]
     public var output: String?
     public var outputTruncated: Bool
     /// A subagent's own messages, folded inside its card.
@@ -252,51 +251,130 @@ public enum ChatRender {
 
     static func card(_ t: ChatTool?, children: [ChatItem]) -> ToolCard {
         guard let t else {
-            return ToolCard(name: "tool", target: nil, status: .running, oneLine: true, detail: .none, output: nil, outputTruncated: false, children: children)
+            return ToolCard(name: "tool", target: nil, status: .running, sentence: ToolSentence(verb: "Using a tool"), kind: .commands,
+                            oneLine: true, detail: .none, fields: [], output: nil, outputTruncated: false, children: children)
+        }
+        let (d, skip) = detail(t)
+        var diff: ParsedDiff?
+        if case .diff(let p) = d { diff = p }
+        let sentence = ToolSentence.of(t, diff: diff)
+        var fields: [ToolField] = []
+        if let obj = t.input?.objectValue, !isPatchInput(obj) {
+            // A value the sentence already says (the path, the pattern) is not repeated.
+            let said = [sentence.subject, sentence.rest].compactMap { $0 }
+            fields = ToolField.fields(obj, skip: skip).filter { f in !said.contains { $0 == f.value || $0.contains("\"\(f.value)\"") || $0.hasSuffix(" \(f.value)") } }
         }
         return ToolCard(
             name: t.name,
             target: t.target,
             status: t.status,
+            sentence: sentence,
+            kind: ChatKindMap.kind(tool: t.name),
             oneLine: oneLineTools.contains(t.name) && children.isEmpty,
-            detail: detail(t),
+            detail: d,
+            fields: fields,
             output: t.output,
             outputTruncated: t.outputTruncated ?? false,
             children: children)
     }
 
-    static func detail(_ t: ChatTool) -> ToolCard.Detail {
-        guard let input = t.input else { return .none }
-        let obj = input.objectValue
-        if let cmd = obj?["command"]?.stringValue, ["Bash", "bash", "shell", "exec_command", "local_shell"].contains(t.name) || obj?.count ?? 0 <= 2 {
-            return .command(cmd)
+    /// Codex `apply_patch` input: one entry per file, each a unified diff or a new file's content.
+    static func isPatchInput(_ obj: [String: JSONValue]) -> Bool {
+        !obj.isEmpty && obj.values.allSatisfy { $0.objectValue?["unified_diff"] != nil || $0.objectValue?["content"] != nil }
+    }
+
+    static func lines(_ s: String) -> [String] {
+        var l = s.components(separatedBy: "\n")
+        if l.count > 1, l.last == "" { l.removeLast() }
+        return l
+    }
+
+    /// The card's detail, and the input keys it already shows.
+    static func detail(_ t: ChatTool) -> (ToolCard.Detail, Set<String>) {
+        guard let input = t.input else { return (.none, []) }
+        guard let obj = input.objectValue else {
+            if case .null = input { return (.none, []) }
+            return (.input(input.prettyJSON), [])
         }
-        if let old = obj?["old_string"]?.stringValue ?? obj?["oldString"]?.stringValue,
-           let new = obj?["new_string"]?.stringValue ?? obj?["newString"]?.stringValue {
-            return .diff(old.components(separatedBy: "\n").map { DiffLine(kind: .removed, text: $0) }
-                + new.components(separatedBy: "\n").map { DiffLine(kind: .added, text: $0) })
+        if let cmd = obj["command"]?.stringValue, ChatKindMap.family(t.name) == .shell || obj.count <= 2 {
+            return (.command(cmd), ["command"])
         }
-        if let content = obj?["content"]?.stringValue, t.name == "Write" || t.name == "write" {
-            return .diff(content.components(separatedBy: "\n").map { DiffLine(kind: .added, text: $0) })
+        let path = ToolSentence.pathField(obj)
+        if let old = obj["old_string"]?.stringValue ?? obj["oldString"]?.stringValue,
+           let new = obj["new_string"]?.stringValue ?? obj["newString"]?.stringValue {
+            let start = editStart(new: new, output: t.output)
+            var hunk = ParsedDiff.Hunk(header: "")
+            for (i, l) in lines(old).enumerated() {
+                hunk.lines.append(.init(kind: .removed, text: l, old: start.map { $0 + i }, new: nil))
+            }
+            for (i, l) in lines(new).enumerated() {
+                hunk.lines.append(.init(kind: .added, text: l, old: nil, new: start.map { $0 + i }))
+            }
+            let f = ParsedDiff.File(oldPath: path, newPath: path, hunks: [hunk])
+            return (.diff(ParsedDiff(files: [f])), ["old_string", "oldString", "new_string", "newString", "file_path", "filePath", "path"])
+        }
+        // Claude MultiEdit: several edits of one file, without line numbers.
+        if case .array(let edits)? = obj["edits"], !edits.isEmpty {
+            var hunks: [ParsedDiff.Hunk] = []
+            for e in edits {
+                guard let o = e.objectValue, let old = o["old_string"]?.stringValue, let new = o["new_string"]?.stringValue else { continue }
+                var h = ParsedDiff.Hunk(header: "")
+                h.lines = lines(old).map { .init(kind: .removed, text: $0, old: nil, new: nil) }
+                    + lines(new).map { .init(kind: .added, text: $0, old: nil, new: nil) }
+                hunks.append(h)
+            }
+            if !hunks.isEmpty {
+                return (.diff(ParsedDiff(files: [ParsedDiff.File(oldPath: path, newPath: path, hunks: hunks)])), ["edits", "file_path", "filePath"])
+            }
+        }
+        if let content = obj["content"]?.stringValue, ChatKindMap.family(t.name) == .write {
+            var h = ParsedDiff.Hunk(header: "")
+            h.lines = lines(content).enumerated().map { .init(kind: .added, text: $1, old: nil, new: $0 + 1) }
+            return (.diff(ParsedDiff(files: [ParsedDiff.File(oldPath: nil, newPath: path, hunks: [h])])), ["content", "file_path", "filePath", "path"])
         }
         // Codex apply_patch: each file holds a unified diff, or the content of a new file.
-        if let files = obj, !files.isEmpty,
-           files.values.allSatisfy({ $0.objectValue?["unified_diff"] != nil || $0.objectValue?["content"] != nil }) {
-            var lines: [DiffLine] = []
-            for (_, f) in files.sorted(by: { $0.key < $1.key }) {
+        if isPatchInput(obj) {
+            var files: [ParsedDiff.File] = []
+            for (name, f) in obj.sorted(by: { $0.key < $1.key }) {
                 let o = f.objectValue
                 if let d = o?["unified_diff"]?.stringValue {
-                    for l in d.components(separatedBy: "\n") where !l.hasPrefix("---") && !l.hasPrefix("+++") {
-                        if l.hasPrefix("-") { lines.append(DiffLine(kind: .removed, text: String(l.dropFirst()))) }
-                        if l.hasPrefix("+") { lines.append(DiffLine(kind: .added, text: String(l.dropFirst()))) }
+                    let move = o?["move_path"]?.stringValue
+                    var parsed = DiffParser.parse("--- a/x\n+++ b/x\n" + d).files
+                    for i in parsed.indices {
+                        parsed[i].oldPath = name
+                        parsed[i].newPath = move ?? name
                     }
+                    files += parsed
                 } else if let c = o?["content"]?.stringValue {
-                    lines += c.components(separatedBy: "\n").map { DiffLine(kind: .added, text: $0) }
+                    let deleted = o?["type"]?.stringValue == "delete"
+                    var h = ParsedDiff.Hunk(header: "")
+                    h.lines = lines(c).enumerated().map { i, l in
+                        deleted ? .init(kind: .removed, text: l, old: i + 1, new: nil) : .init(kind: .added, text: l, old: nil, new: i + 1)
+                    }
+                    files.append(ParsedDiff.File(oldPath: deleted ? name : nil, newPath: deleted ? nil : name, hunks: [h]))
                 }
             }
-            if !lines.isEmpty { return .diff(lines) }
+            if !files.isEmpty { return (.diff(ParsedDiff(files: files)), Set(obj.keys)) }
         }
-        return .input(input.prettyJSON)
+        return (.none, [])
+    }
+
+    /// The new text's first line number, from a Claude `Edit` result's `cat -n` snippet: the
+    /// snippet line that holds the first non-empty new line, less its place in the new text.
+    static func editStart(new: String, output: String?) -> Int? {
+        guard let output, !output.isEmpty else { return nil }
+        let newLines = lines(new)
+        guard let firstIdx = newLines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+        let want = newLines[firstIdx]
+        for raw in output.components(separatedBy: "\n") {
+            let t = raw.drop { $0 == " " }
+            let digits = t.prefix { $0.isNumber }
+            guard !digits.isEmpty, let n = Int(digits) else { continue }
+            var rest = t.dropFirst(digits.count)
+            if rest.hasPrefix("→") || rest.hasPrefix("\t") { rest = rest.dropFirst() } else { continue }
+            if String(rest) == want { return max(1, n - firstIdx) }
+        }
+        return nil
     }
 
     static func eventText(_ e: ChatEvent, _ text: String?) -> String {
@@ -361,12 +439,25 @@ public enum ChatRender {
             }
         case .tool(_, let c):
             add("TOOL \(c.name) [\(statusWord(c.status))]" + (c.target.map { " \($0)" } ?? "") + (c.oneLine ? " (one line)" : "") + " (folded)")
+            body("says: " + c.sentence.text + " [\(c.kind.rawValue)]")
             switch c.detail {
             case .command(let cmd): body("$ " + cmd.replacingOccurrences(of: "\n", with: "\n  "))
-            case .diff(let lines): for l in lines { body((l.kind == .removed ? "- " : "+ ") + l.text) }
+            case .diff(let d):
+                for f in d.files {
+                    body("file \(f.newPath ?? f.oldPath ?? "?") +\(f.added) -\(f.removed)")
+                    for h in f.hunks {
+                        if !h.header.isEmpty { body(h.header) }
+                        for l in h.lines {
+                            let n = (l.new ?? l.old).map { String($0) } ?? ""
+                            let mark = l.kind == .removed ? "- " : l.kind == .added ? "+ " : "  "
+                            body(String(repeating: " ", count: max(0, 4 - n.count)) + n + " " + mark + l.text)
+                        }
+                    }
+                }
             case .input(let j): body("input: " + j)
             case .none: break
             }
+            for f in c.fields { body("\(f.label): \(f.value)") }
             if let o = c.output, !o.isEmpty {
                 body("output:" + (c.outputTruncated ? " (first part)" : ""))
                 body(o.hasSuffix("\n") ? String(o.dropLast()) : o)

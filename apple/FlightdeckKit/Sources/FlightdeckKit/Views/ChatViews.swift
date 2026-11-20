@@ -36,13 +36,12 @@ public struct ChatView: View {
     public var body: some View {
         VStack(spacing: 0) {
             ChatBanners(context: model.context, load: model.load, openTerminal: openTerminal)
-            SessionConfirmCards(target: model.target)
-            SessionGroupCards(target: model.target)
+            PinnedBanners(target: model.target)
             if let thread = model.thread {
                 // The Capcom service (capcom-service.md 7.6): the thread replaces the transcript.
                 CapcomThreadView(thread: thread, model: model)
             } else {
-                ChatTranscript(model: model)
+                ChatTranscript(model: model, openTerminal: openTerminal)
             }
             Divider()
             ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
@@ -206,13 +205,17 @@ public enum ScrollFollow: Equatable {
 }
 
 /// The scrolling list of messages. It opens at the tail; older pages load
-/// when the top row appears.
+/// when the top row appears. Hidden kinds fold into one line (app.md 4.11).
 struct ChatTranscript: View {
     let model: ChatModel
+    var openTerminal: (() -> Void)?
     @State private var atBottom = true
+    /// Folded lines the owner opened, by row id.
+    @State private var openFolds: Set<String> = []
 
     var body: some View {
         let items = model.items
+        let rows = ChatFold.rows(items, hidden: model.show?.hidden(for: model.target) ?? [])
         let placed = ContentPlacement.of(items: model.content.items, messages: model.messages, rowIDs: Set(items.map(\.id)))
         ScrollViewReader { proxy in
             ScrollView {
@@ -225,11 +228,23 @@ struct ChatTranscript: View {
                         }
                         .onAppear { Task { await model.loadOlder() } }
                     }
-                    ForEach(items) { item in
-                        ChatItemView(item: item, images: model.images)
-                            .id(item.id)
-                        ForEach(placed.byRow[item.id] ?? [], id: \.id) { c in
-                            InlineContentView(model: model.content, item: c)
+                    ForEach(rows) { row in
+                        switch row {
+                        case .item(let item):
+                            ChatItemView(item: item, images: model.images)
+                                .id(item.id)
+                            ForEach(placed.byRow[item.id] ?? [], id: \.id) { c in
+                                InlineContentView(model: model.content, item: c)
+                            }
+                        case .folded(let id, let hidden, let summary):
+                            let open = Binding(get: { openFolds.contains(id) }, set: { if $0 { openFolds.insert(id) } else { openFolds.remove(id) } })
+                            FoldedStepsView(summary: summary, items: hidden, open: open, images: model.images)
+                                .id(id)
+                            if openFolds.contains(id) {
+                                ForEach(hidden.flatMap { placed.byRow[$0.id] ?? [] }, id: \.id) { c in
+                                    InlineContentView(model: model.content, item: c)
+                                }
+                            }
                         }
                     }
                     ForEach(placed.trailing, id: \.id) { c in
@@ -247,8 +262,9 @@ struct ChatTranscript: View {
                 .padding(12)
             }
             .defaultScrollAnchor(.bottom)
+            .modifier(BottomOnResize())
             .overlay { placeholder }
-            .onChange(of: ScrollFollow.Ends(first: items.first?.id, last: items.last?.id)) { old, new in
+            .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
                 switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
                 case .none: break
                 case .toBottom: proxy.scrollTo(Self.bottom, anchor: .bottom)
@@ -270,14 +286,23 @@ struct ChatTranscript: View {
             switch model.load {
             case .loading:
                 ProgressView()
-            case .waiting:
-                ContentUnavailableView("Waiting for the first message", systemImage: "text.bubble")
-            case .unavailable(let hint):
-                ContentUnavailableView("No chat", systemImage: "text.bubble", description: Text(hint))
-            case .failed(let e):
-                ContentUnavailableView("Chat did not load", systemImage: "exclamationmark.bubble", description: Text(e))
-            case .ready:
-                ContentUnavailableView("No messages", systemImage: "text.bubble")
+            case .waiting, .unavailable, .failed, .ready:
+                if let s = ChatEmptyState.of(model.load, context: model.context) {
+                    ContentUnavailableView {
+                        Label(s.title, systemImage: s.symbol)
+                    } description: {
+                        Text(s.line)
+                    } actions: {
+                        if s.retry {
+                            Button("Try again") { Task { await model.loadTail() } }
+                                .buttonStyle(.bordered)
+                        }
+                        if let openTerminal {
+                            Button("Open terminal", action: openTerminal)
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                }
             }
         }
     }
@@ -391,13 +416,15 @@ struct MarkdownView: View {
         case .heading(let level, let t):
             Text(inline(t)).font(level <= 1 ? .title3.bold() : level == 2 ? .headline : .subheadline.bold())
         case .code(_, let t):
-            ScrollView(.horizontal, showsIndicators: false) {
+            // No soft wrap: the block scrolls sideways, with a cue while more lies to the right (app.md 4.11).
+            SideScroll { width in
                 Text(t)
                     .font(.callout.monospaced())
                     .fixedSize(horizontal: true, vertical: false)
-                    .padding(8)
+                    .padding(10)
+                    .frame(minWidth: width, alignment: .leading)
             }
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         case .item(let marker, let level, let t):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(marker).foregroundStyle(.secondary)
@@ -442,131 +469,6 @@ struct SpokenSummaryCaption: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-}
-
-/// A tool call card, folded by default (app.md 4.1).
-struct ToolCardView: View {
-    let card: ToolCard
-    @State private var open = false
-    @State private var showAll = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: open ? "chevron.down" : "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 10)
-                    statusIcon
-                    Text(card.name).font(.callout.weight(.medium))
-                    if let t = card.target {
-                        Text(t)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer(minLength: 0)
-                    if card.status != .done {
-                        Text(ChatRender.statusWord(card.status))
-                            .font(.caption)
-                            .foregroundStyle(statusColor)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(card.name) \(card.target ?? ""), \(ChatRender.statusWord(card.status))")
-            .accessibilityHint(open ? "Folds the tool call" : "Shows the tool call")
-            if open {
-                VStack(alignment: .leading, spacing: 8) {
-                    detail
-                    if let o = card.output, !o.isEmpty {
-                        output(o)
-                    }
-                    if !card.children.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(card.children) { ChatItemView(item: $0) }
-                        }
-                        .padding(.leading, 8)
-                        .overlay(alignment: .leading) { Rectangle().fill(.quaternary).frame(width: 2) }
-                    }
-                }
-                .padding(.top, 8)
-                .padding(.leading, 16)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(.quaternary.opacity(card.oneLine && !open ? 0.25 : 0.45), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder private var detail: some View {
-        switch card.detail {
-        case .command(let c):
-            Text("$ " + c)
-                .font(.callout.monospaced())
-                .textSelection(.enabled)
-        case .diff(let lines):
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, l in
-                    Text((l.kind == .removed ? "- " : "+ ") + l.text)
-                        .font(.caption.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(l.kind == .removed ? Color.red.opacity(0.12) : Color.green.opacity(0.12))
-                }
-            }
-            .textSelection(.enabled)
-        case .input(let j):
-            Text(j)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-        case .none:
-            EmptyView()
-        }
-    }
-
-    private func output(_ o: String) -> some View {
-        let lines = o.components(separatedBy: "\n")
-        let limit = 12
-        let shown = showAll || lines.count <= limit ? o : lines.prefix(limit).joined(separator: "\n")
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(shown)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            if lines.count > limit && !showAll {
-                Button("Show all \(lines.count) lines") { showAll = true }
-                    .font(.caption)
-            }
-            if card.outputTruncated {
-                Text("The hab sent the first part of the output.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-    }
-
-    private var statusColor: Color {
-        switch card.status {
-        case .error: return .red
-        case .denied: return .orange
-        case .running: return .blue
-        default: return .secondary
-        }
-    }
-
-    @ViewBuilder private var statusIcon: some View {
-        switch card.status {
-        case .running: ProgressView().controlSize(.mini)
-        case .error: Image(systemName: "xmark.circle.fill").foregroundStyle(.red).font(.caption)
-        case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).font(.caption)
-        default: Image(systemName: "checkmark.circle").foregroundStyle(.secondary).font(.caption)
         }
     }
 }
@@ -751,6 +653,8 @@ struct ComposerView: View {
     @FocusState private var focused: Bool
     @Environment(\.voiceKit) private var voiceKit
     @Environment(\.habConnections) private var habs
+    @Environment(\.approvals) private var approvals
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var dictation: DictationModel?
     /// Where heard words go: after the draft as it was when dictation started.
     @State private var dictationDraft = DictationDraft()
@@ -764,13 +668,27 @@ struct ComposerView: View {
 
     var body: some View {
         let gate = model.gate
+        let card = approvals?.card(for: model.target)
+        let mode = ChatAnswer.composerMode(gate: gate, agent: model.context.agent, card: card)
         VStack(alignment: .leading, spacing: 6) {
             if gate == .blocked, let a = model.context.agent {
                 if a.kind == .trust {
                     TrustCardView(model: model, openTerminal: openTerminal)
                 } else {
-                    PendingRequestView(agent: a, target: model.target, openTerminal: openTerminal)
+                    ScrollView {
+                        RequestArea(agent: a, model: model, openTerminal: openTerminal)
+                    }
+                    // A tall request (large text, many options) scrolls instead of squeezing the chat and the composer.
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: typeSize.isAccessibilitySize ? 300 : 440)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
+            } else if let note = model.answerNote {
+                Label(note, systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .accessibilityAddTraits(.updatesFrequently)
             }
             if gate == .noAgent {
                 HStack {
@@ -799,61 +717,19 @@ struct ComposerView: View {
             if !attachments.isEmpty {
                 DraftStrip(attachments: $attachments)
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                AttachButton(attachments: $attachments) { attachNotice = $0 }
-                    .disabled(!gate.allowsSend)
-                if let openTerminal {
-                    Button(action: openTerminal) {
-                        Image(systemName: "terminal")
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Open the terminal")
+            if typeSize.isAccessibilitySize {
+                // At accessibility sizes the field takes its own row; the buttons go below it (app.md 4.11).
+                field(mode, gate: gate)
+                HStack(spacing: 4) {
+                    leadingButtons(mode)
+                    Spacer(minLength: 0)
+                    trailingButtons(mode)
                 }
-                if voiceKit != nil {
-                    DictationButton(dictation: dictation, start: startDictation, stop: stopDictation)
-                        .disabled(!gate.allowsSend && dictation == nil)
-                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                            if dictation == nil, VoiceButton.allowed(model) { openVoice?() }
-                        })
-                        .alert("Microphone access is off", isPresented: $micDenied) {
-                            Button("Open Settings") { openPrivacySettings() }
-                            Button("Cancel", role: .cancel) {}
-                        }
-                }
-                TextField(placeholder(gate), text: $draft, axis: .vertical)
-                    .lineLimit(1...8)
-                    .textFieldStyle(.plain)
-                    .focused($focused)
-                    .disabled(!gate.allowsSend)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
-                    #if os(macOS)
-                    .onSubmit { send() }
-                    #endif
-                if (model.context.agentStatus == .working || model.thread?.typing == true) && model.context.online {
-                    Button {
-                        Task { await model.interrupt() }
-                    } label: {
-                        Image(systemName: "stop.circle.fill").font(.title2)
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.red)
-                    .accessibilityLabel("Stop")
-                }
-                Button { send() } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.title2)
-                }
-                .buttonStyle(.borderless)
-                .disabled(!gate.allowsSend || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && !model.sendsContextAlone))
-                .keyboardShortcut(.return, modifiers: .command)
-                .accessibilityLabel("Send")
-                .contextMenu {
-                    // The Capcom thread only (capcom-service.md 10.1): run it on the small model
-                    // even while the usage governor makes user turns wait.
-                    if model.context.isCapcomService {
-                        Button("Send now", systemImage: "bolt") { send(now: true) }
-                    }
+            } else {
+                HStack(alignment: .bottom, spacing: 4) {
+                    leadingButtons(mode)
+                    field(mode, gate: gate)
+                    trailingButtons(mode)
                 }
             }
         }
@@ -869,8 +745,93 @@ struct ComposerView: View {
         }
     }
 
+    private var hasDraft: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || model.sendsContextAlone
+    }
+
+    @ViewBuilder private func leadingButtons(_ mode: ChatAnswer.ComposerMode) -> some View {
+        AttachButton(attachments: $attachments) { attachNotice = $0 }
+            .disabled(mode == .off || mode == .answer)
+    }
+
+    private func field(_ mode: ChatAnswer.ComposerMode, gate: SendGate) -> some View {
+        TextField(ChatAnswer.placeholder(mode, gate: gate, agent: model.context.agent), text: $draft, axis: .vertical)
+            .lineLimit(1...8)
+            .textFieldStyle(.plain)
+            .focused($focused)
+            .disabled(mode == .off)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(minHeight: 44)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 22))
+            .accessibilityLabel("Message")
+            #if os(macOS)
+            .onSubmit { send() }
+            #endif
+    }
+
+    /// Stop while the agent works; then Send once the draft holds something, else Dictate.
+    @ViewBuilder private func trailingButtons(_ mode: ChatAnswer.ComposerMode) -> some View {
+        if (model.context.agentStatus == .working || model.thread?.typing == true) && model.context.online {
+            Button {
+                Task { await model.interrupt() }
+            } label: {
+                Image(systemName: "stop.circle.fill")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
+            .accessibilityLabel("Stop")
+        }
+        if hasDraft || voiceKit == nil {
+            Button { send() } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(mode == .off || !hasDraft)
+            .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityLabel(mode == .answer ? "Send answer" : "Send")
+            .contextMenu {
+                // The Capcom thread only (capcom-service.md 10.1): run it on the small model
+                // even while the usage governor makes user turns wait.
+                if model.context.isCapcomService {
+                    Button("Send now", systemImage: "bolt") { send(now: true) }
+                }
+            }
+        }
+        if voiceKit != nil && (!hasDraft || dictation != nil) {
+            DictationButton(dictation: dictation, start: startDictation, stop: stopDictation)
+                .disabled(mode == .off && dictation == nil)
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                    if dictation == nil, VoiceButton.allowed(model) { openVoice?() }
+                })
+                .alert("Microphone access is off", isPresented: $micDenied) {
+                    Button("Open Settings") { openPrivacySettings() }
+                    Button("Cancel", role: .cancel) {}
+                }
+        }
+    }
+
     private func send(now: Bool = false) {
-        guard model.gate.allowsSend else { return }
+        let card = approvals?.card(for: model.target)
+        if ChatAnswer.composerMode(gate: model.gate, agent: model.context.agent, card: card) == .answer {
+            // A question with options is open: the text answers it (app.md 4.11).
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, let approvals, let r = card?.request else { return }
+            Task {
+                if await approvals.reply(model.target, text: text) {
+                    model.noteAnswer(ChatAnswer.note(allow: nil, reply: text, request: r))
+                    draft = ""
+                }
+            }
+            return
+        }
+        guard model.takesMessage else { return }
         model.send(draft, attachments: attachments, sendNow: now)
         // A refusal (a file over the limit) keeps the draft as it was.
         guard model.notice == nil else { return }
@@ -931,70 +892,104 @@ struct ComposerView: View {
         return base.hasSuffix(" ") || base.hasSuffix("\n") ? base + heard : base + " " + heard
     }
 
-    private func placeholder(_ g: SendGate) -> String {
-        switch g {
-        case .now: return "Message"
-        case .afterTurn: return "Message (sends after this turn)"
-        case .blocked: return "Answer the request first"
-        case .noAgent: return "No agent"
-        case .offline: return "Offline"
-        }
-    }
 }
 
-/// The pending request, shown above the composer while the agent is blocked
-/// (app.md 4.2). It answers in place: Allow and Deny (Approve plan and Keep
-/// planning for a plan) on the card, and a tap opens the approval sheet with
-/// the full request and every choice it offers.
-struct PendingRequestView: View {
+/// The pending request, shown above the composer while the agent is blocked (app.md 4.2,
+/// 4.11). It answers in place: Deny and Allow (Keep planning and Approve plan for a plan), a
+/// question's options as buttons, free text from the composer. A tap on the title opens the
+/// approval sheet with the full request.
+struct RequestArea: View {
     let agent: AgentState
-    var target: SessionTarget?
+    let model: ChatModel
     var openTerminal: (() -> Void)?
     @Environment(\.approvals) private var approvals
+    /// Multiple-choice picks, per question.
+    @State private var picks: [Int: Set<String>] = [:]
+
+    private var target: SessionTarget { model.target }
 
     var body: some View {
-        let state = target.flatMap { approvals?.card(for: $0) }
-        VStack(alignment: .leading, spacing: 6) {
-            if let state, let target {
+        let state = approvals?.card(for: target)
+        VStack(alignment: .leading, spacing: 10) {
+            if let state {
                 Button {
                     approvals?.open(target)
                 } label: {
-                    facts(state)
+                    facts(state.request)
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Opens the request")
+                .accessibilityHint("Opens the full request")
                 actions(state)
             } else {
                 facts(nil)
+                terminalLine(agent.kind == .question ? "Answer it in the terminal." : agent.kind == .auth ? "Sign in in the terminal." : "Answer it in the terminal.")
             }
         }
-        .padding(8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+        #if DEBUG
+        // Debug builds only: `-FlightdeckAutoAnswer allow` allows the open permission after 3 s,
+        // and `-FlightdeckAutoAnswer option` picks a question's first option, through the card's
+        // own path, to show the line that follows an answer.
+        .task(id: agent.request?.id) {
+            let how = UserDefaults.standard.string(forKey: "FlightdeckAutoAnswer")
+            guard how == "allow" || how == "option" else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard let r = approvals?.card(for: target)?.request, r.answerable, !r.form.isPlan else { return }
+            if case .questions(let qs) = r.form {
+                if how == "option", let o = qs.first?.options.first { reply(o.label, r) }
+            } else if how == "allow" {
+                answer(allow: true, r)
+            }
+        }
+        #endif
     }
 
-    private func facts(_ state: ApprovalCenter.CardState?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Label(state?.request.title ?? title, systemImage: agent.kind == .question ? "questionmark.bubble" : agent.kind == .auth ? "person.badge.key" : "hand.raised")
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.orange)
-                Spacer()
-                if state != nil {
-                    Image(systemName: "chevron.up")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
+    private var title: String {
+        if let t = agent.request?.title, !t.isEmpty { return t }
+        if let tool = agent.request?.tool { return "Allow \(tool)?" }
+        switch agent.kind {
+        case .question?: return "\(OpenRequest.harnessName(agent.harness ?? "")) asks a question"
+        case .auth?: return "The agent needs a sign-in"
+        default: return "The agent waits for permission"
+        }
+    }
+
+    private func facts(_ r: OpenRequest?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(r?.title ?? title)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
-            if let c = agent.request?.command {
+            if case .questions(let qs)? = r?.form, qs.count == 1, let h = qs[0].header, !h.isEmpty {
+                Text(h).font(.subheadline).foregroundStyle(.secondary)
+            }
+            if let c = agent.request?.command, !c.isEmpty {
                 Text(c)
-                    .font(.caption.monospaced())
-                    .lineLimit(4)
+                    .font(.callout.monospaced())
+                    .lineLimit(6)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
+            } else if let f = agent.request?.files, !f.isEmpty {
+                Text(f.joined(separator: "\n"))
+                    .font(.callout.monospaced())
+                    .lineLimit(6)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
             }
-            if let cwd = agent.request?.cwd {
-                Text(cwd)
-                    .font(.caption2.monospaced())
+            if let cwd = agent.request?.cwd, !cwd.isEmpty {
+                Text("Runs in \(cwd) on \(r?.habLabel ?? model.context.hostLabel)")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
@@ -1006,65 +1001,147 @@ struct PendingRequestView: View {
     private func actions(_ state: ApprovalCenter.CardState) -> some View {
         let r = state.request
         if let f = state.failure {
-            Text(f).font(.caption).foregroundStyle(.red)
+            Text(ChatAnswer.failureText(r, hint: f))
+                .font(.footnote)
+                .foregroundStyle(.red)
         }
         if state.expired {
-            HStack {
-                Text("Expired: answer in the terminal.").font(.caption).foregroundStyle(.orange)
-                Spacer()
-                if let openTerminal { Button("Open terminal", action: openTerminal) }
-            }
+            terminalLine("Expired: answer it in the terminal.")
         } else if state.sending {
-            ProgressView().frame(maxWidth: .infinity)
-        } else if case .questions = r.form {
+            ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+        } else if case .questions(let qs) = r.form {
+            questions(qs, state)
+            if state.failure != nil, let openTerminal {
+                Button("Open terminal", action: openTerminal).buttonStyle(.bordered)
+            }
+        } else if r.answerable {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { answerButtons(r, state) }
+                VStack(spacing: 8) { answerButtons(r, state) }
+            }
+        } else if r.offline {
+            Text("\(r.habLabel) is offline.").font(.footnote).foregroundStyle(.secondary)
+        } else {
+            terminalLine(r.kind == .auth ? "Sign in in the terminal." : "Answer it in the terminal.")
+        }
+    }
+
+    /// Deny, Allow (Always allow joins only when the request offers it; none does yet).
+    @ViewBuilder
+    private func answerButtons(_ r: OpenRequest, _ state: ApprovalCenter.CardState) -> some View {
+        Button(role: .destructive) {
+            answer(allow: false, r)
+        } label: {
+            Text(r.form.isPlan ? "Keep planning" : "Deny").frame(maxWidth: .infinity, minHeight: 32)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .disabled(!state.canAnswer)
+        Button {
+            answer(allow: true, r)
+        } label: {
+            Text(r.form.isPlan ? "Approve plan" : "Allow").frame(maxWidth: .infinity, minHeight: 32)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(!state.canAnswer)
+    }
+
+    /// A question's options as buttons: one question with single choice answers on the tap;
+    /// otherwise taps pick, then Send answer.
+    @ViewBuilder
+    private func questions(_ qs: [RequestForm.Question], _ state: ApprovalCenter.CardState) -> some View {
+        let direct = qs.count == 1 && !qs[0].multiSelect
+        ForEach(Array(qs.enumerated()), id: \.offset) { i, q in
+            VStack(alignment: .leading, spacing: 6) {
+                if qs.count > 1 {
+                    Text(q.question).font(.subheadline.weight(.semibold))
+                }
+                ForEach(q.options, id: \.label) { o in
+                    let picked = picks[i]?.contains(o.label) == true
+                    Button {
+                        if direct {
+                            reply(o.label, state.request)
+                        } else {
+                            var p = picks[i] ?? []
+                            if q.multiSelect {
+                                if picked { p.remove(o.label) } else { p.insert(o.label) }
+                            } else {
+                                p = [o.label]
+                            }
+                            picks[i] = p
+                        }
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            if !direct {
+                                Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                    .accessibilityHidden(true)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(o.label).font(.body.weight(.semibold))
+                                if let d = o.description, !d.isEmpty {
+                                    Text(d).font(.footnote).foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(picked ? Color.accentColor : Color.clear, lineWidth: 2))
+                    .disabled(!state.canAnswer)
+                    .accessibilityAddTraits(picked ? .isSelected : [])
+                    .accessibilityHint(direct ? "Answers with this option" : "Picks this option")
+                }
+            }
+        }
+        if !direct {
             Button {
-                if let target { approvals?.open(target) }
+                let chosen = qs.indices.map { i in qs[i].options.map(\.label).filter { (picks[i] ?? []).contains($0) } }
+                reply(RequestForm.answerText(qs, chosen), state.request)
             } label: {
-                Text("Answer").frame(maxWidth: .infinity)
+                Text("Send answer").frame(maxWidth: .infinity, minHeight: 32)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!state.canAnswer)
-        } else if r.answerable {
-            HStack(spacing: 10) {
-                Button(role: .destructive) {
-                    answer(allow: false)
-                } label: {
-                    Text(r.form.isPlan ? "Keep planning" : "Deny").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    answer(allow: true)
-                } label: {
-                    Text(r.form.isPlan ? "Approve plan" : "Allow").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .disabled(!state.canAnswer)
-        } else if r.offline {
-            Text("The hab is offline.").font(.caption).foregroundStyle(.secondary)
-        } else {
+            .controlSize(.large)
+            .disabled(!state.canAnswer || qs.indices.contains { (picks[$0] ?? []).isEmpty })
+        }
+    }
+
+    private func terminalLine(_ text: String) -> some View {
+        ViewThatFits(in: .horizontal) {
             HStack {
-                Text(r.kind == .question ? "Answer in the terminal." : r.kind == .auth ? "Sign in in the terminal." : "Needs you in the terminal.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(text).font(.footnote).foregroundStyle(.secondary)
                 Spacer()
-                if let openTerminal { Button("Open terminal", action: openTerminal) }
+                if let openTerminal { Button("Open terminal", action: openTerminal).buttonStyle(.bordered) }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(text).font(.footnote).foregroundStyle(.secondary)
+                if let openTerminal { Button("Open terminal", action: openTerminal).buttonStyle(.bordered) }
             }
         }
     }
 
-    private func answer(allow: Bool) {
-        guard let target, let approvals else { return }
-        Task { await approvals.answer(target, allow: allow) }
+    private func answer(allow: Bool, _ r: OpenRequest) {
+        guard let approvals else { return }
+        Task {
+            if await approvals.answer(target, allow: allow) {
+                model.noteAnswer(ChatAnswer.note(allow: allow, request: r))
+            }
+        }
     }
 
-    private var title: String {
-        if let t = agent.request?.title, !t.isEmpty { return t }
-        if let tool = agent.request?.tool { return "Allow \(tool)?" }
-        switch agent.kind {
-        case .question?: return "The agent asks a question"
-        case .auth?: return "The agent needs a sign-in"
-        default: return "The agent waits for permission"
+    private func reply(_ text: String, _ r: OpenRequest) {
+        guard let approvals else { return }
+        Task {
+            if await approvals.reply(target, text: text) {
+                picks = [:]
+                model.noteAnswer(ChatAnswer.note(allow: nil, reply: text, request: r))
+            }
         }
     }
 }

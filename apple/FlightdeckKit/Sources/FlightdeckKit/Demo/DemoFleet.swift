@@ -69,7 +69,9 @@ public enum DemoFleet {
                 + [Fixture.pane("%6", session: nil)],
             agents: [
                 Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission,
-                              request: Fixture.request(title: "Run the database migration?", tool: "Bash", command: "npm run migrate", id: "req-demo-migrate"), at: ago(2)),
+                              request: Fixture.request(title: "Run the database migration?", tool: "Bash", command: "npm run migrate",
+                                                       id: "req-demo-migrate", cwd: "/srv/work/tide-tables",
+                                                       expires: Date().addingTimeInterval(56 * 60)), at: ago(2)),
                 Fixture.agent(pane: "%2", harness: "codex", state: .error, at: ago(6)),
                 Fixture.agent(pane: "%3", harness: "claude", state: .done, at: ago(1)),
                 Fixture.agent(pane: "%4", harness: "opencode", state: .working, at: ago(4)),
@@ -183,15 +185,32 @@ public enum DemoFleet {
                 Fixture.pane("%13", session: "s13"),
             ],
             agents: [
-                Fixture.agent(pane: "%11", harness: "claude", state: .blocked, kind: .question, at: ago(3)),
+                Fixture.agent(pane: "%11", harness: "claude", state: .blocked, kind: .permission,
+                              request: Fixture.request(title: "Which palette should the lantern page use?", tool: "AskUserQuestion",
+                                                       id: "req-lantern-palette", input: paletteQuestion), at: ago(3)),
                 Fixture.agent(pane: "%12", harness: "claude", state: .working, at: ago(10)),
                 Fixture.agent(pane: "%13", harness: "codex", state: .idle, at: ago(25)),
             ]
         )
+        // The demo hab takes question answers, as the real hab will (app.md 4.11).
+        await hab.setAnswersQuestions(true)
         // attic knows Capcom runs on workbench.
         await hab.setCapability("capcom", true)
         await hab.setCapcomHome(assignment: 1, home: FakeHab.deviceID(host: "workbench"))
         return hab
+    }
+
+    /// Claude's question tool input: one question, two options.
+    static var paletteQuestion: JSONValue {
+        .object(["questions": .array([.object([
+            "question": .string("Which palette should the lantern page use?"),
+            "header": .string("Palette"),
+            "multiSelect": .bool(false),
+            "options": .array([
+                .object(["label": .string("Harbor at night"), "description": .string("Navy, lamp yellow, paper")]),
+                .object(["label": .string("Garden shed"), "description": .string("Moss, terracotta, linen")]),
+            ]),
+        ])])])
     }
 
     /// Invented usage: a Claude account near its 5-hour limit and a Codex

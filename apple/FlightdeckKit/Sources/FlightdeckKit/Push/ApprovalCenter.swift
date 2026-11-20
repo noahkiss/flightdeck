@@ -128,10 +128,20 @@ public final class ApprovalCenter {
 
     /// Allow or Deny from the card. It answers through the sheet's path,
     /// so the rules are the same: one answer, the expiry, answered elsewhere.
-    public func answer(_ target: SessionTarget, allow: Bool) async {
+    /// Returns true once the answer landed.
+    @discardableResult
+    public func answer(_ target: SessionTarget, allow: Bool) async -> Bool {
         // Never another session's request under this card's Allow.
-        guard let r = card(for: target)?.request, sheet.show(id: r.id), sheet.current?.id == r.id else { return }
-        if allow { await sheet.allow() } else { await sheet.deny() }
+        guard let r = card(for: target)?.request, sheet.show(id: r.id), sheet.current?.id == r.id else { return false }
+        return allow ? await sheet.allow() : await sheet.deny()
+    }
+
+    /// Answers the session's question from the card (an option) or the composer (free text)
+    /// (app.md 4.11), through the sheet's path. Returns true once the answer landed.
+    @discardableResult
+    public func reply(_ target: SessionTarget, text: String) async -> Bool {
+        guard let r = card(for: target)?.request, sheet.show(id: r.id), sheet.current?.id == r.id else { return false }
+        return await sheet.reply(text)
     }
 
     // MARK: - Answers from outside the app's windows

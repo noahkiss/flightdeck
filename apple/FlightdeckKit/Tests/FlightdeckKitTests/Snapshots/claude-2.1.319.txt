@@ -1,7 +1,9 @@
 USER
     List the files in the demo folder.
 TOOL Bash [done] ls (folded)
+    says: Ran ls [commands]
     $ ls
+    Description: List files
     output:
     main.go
     README.md

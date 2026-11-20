@@ -23,25 +23,6 @@ public struct ConfirmCardList: View {
     }
 }
 
-/// The cards of one session, above its chat: open ones in full, the last few
-/// closed ones as one line each.
-struct SessionConfirmCards: View {
-    let target: SessionTarget
-    @Environment(\.confirmations) private var center
-
-    var body: some View {
-        if let center, case let cards = center.cards(for: target), !cards.isEmpty {
-            ScrollView {
-                ConfirmCardList(center: center, cards: cards)
-                    .padding(8)
-            }
-            .frame(maxHeight: 360)
-            .fixedSize(horizontal: false, vertical: true)
-            Divider()
-        }
-    }
-}
-
 /// One confirmation card (capcom.md 6.3): what will run, the owner's edits,
 /// Confirm and Cancel, and the time left. A record shows no buttons; a closed
 /// card shows one line with its outcome.

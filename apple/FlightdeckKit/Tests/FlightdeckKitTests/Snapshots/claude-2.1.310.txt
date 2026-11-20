@@ -3,28 +3,28 @@ USER
 AGENT
     I will read the script, then edit it.
 TOOL Read [done] /work/demo/hello.sh (one line) (folded)
-    input: {
-      "file_path" : "/work/demo/hello.sh"
-    }
+    says: Read /work/demo/hello.sh [reads]
     output:
     1	#!/bin/sh
     2	echo start
 TOOL Edit [done] /work/demo/hello.sh (folded)
-    - echo start
-    + echo hello
+    says: Edited /work/demo/hello.sh +1 -1 [edits]
+    file /work/demo/hello.sh +1 -1
+         - echo start
+         + echo hello
     output:
     The file was updated.
 EVENT permission: Allowed Edit (once)
 TOOL Bash [denied] rm -rf build (folded)
+    says: Ran rm -rf build [commands]
     $ rm -rf build
       ls
+    Description: Clean the build folder
     output:
     The user doesn't want to proceed with this tool use.
 EVENT permission: Denied Bash
 TOOL Grep [error] greeting (one line) (folded)
-    input: {
-      "pattern" : "greeting"
-    }
+    says: Searched for "greeting" [reads]
     output:
     grep: bad pattern
 USER

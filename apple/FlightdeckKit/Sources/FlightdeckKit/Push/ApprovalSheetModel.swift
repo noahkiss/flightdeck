@@ -136,14 +136,15 @@ public final class ApprovalSheetModel {
         }
     }
 
-    public func allow() async { await answer(.allow, text: nil) }
-    public func deny() async { await answer(.deny, text: nil) }
+    /// Each answer returns true once it landed (the hab took it).
+    @discardableResult public func allow() async -> Bool { await answer(.allow, text: nil) }
+    @discardableResult public func deny() async -> Bool { await answer(.deny, text: nil) }
 
     /// Answers a question with free text or the chosen options.
-    public func reply(_ text: String) async { await answer(.answer, text: text) }
+    @discardableResult public func reply(_ text: String) async -> Bool { await answer(.answer, text: text) }
 
-    private func answer(_ choice: ApprovalChoice, text: String?) async {
-        guard let c = live, let rid = c.requestID, canAnswer else { return }
+    private func answer(_ choice: ApprovalChoice, text: String?) async -> Bool {
+        guard let c = live, let rid = c.requestID, canAnswer else { return false }
         sending = true
         failure = nil
         answeredHere.insert(c.id)
@@ -152,6 +153,7 @@ public final class ApprovalSheetModel {
         switch o {
         case .answered, .probablyAnswered:
             next()
+            return true
         case .refused(let hint):
             // Closed or expired on the hab: show it as answered elsewhere.
             answeredHere.remove(c.id)
@@ -161,5 +163,6 @@ public final class ApprovalSheetModel {
             answeredHere.remove(c.id)
             failure = hint
         }
+        return false
     }
 }

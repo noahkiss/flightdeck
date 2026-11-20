@@ -7,33 +7,35 @@ USER
 AGENT
     I will run the tests first.
 TOOL shell [done] go test ./... (folded)
+    says: Ran go test ./... [commands]
     $ go test ./...
       go vet ./...
     output:
     FAIL example/app 0.01s
 TOOL read [done] /work/app/main.go (one line) (folded)
-    input: {
-      "filePath" : "/work/app/main.go"
-    }
+    says: Read /work/app/main.go [reads]
     output:
     package main
 TOOL edit [denied] /work/app/main.go (folded)
-    - a
-    + b
+    says: Edited /work/app/main.go +1 -1 [edits]
+    file /work/app/main.go +1 -1
+         - a
+         + b
     output:
     The user rejected permission to use this tool
 TOOL webfetch [error] https://example.com/docs (one line) (folded)
-    input: {
-      "url" : "https://example.com/docs"
-    }
+    says: Fetched example.com/docs [reads]
+    URL: https://example.com/docs
     output:
     fetch failed: timeout
 EVENT unknown: Unsupported opencode content: future-block
 TOOL shell [done] ls (folded)
+    says: Ran ls [commands]
     $ ls
     output:
     main.go
 TOOL shell [running] sleep 100 (folded)
+    says: Running sleep 100 [commands]
     $ sleep 100
 USER
     Try again.

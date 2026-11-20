@@ -195,7 +195,7 @@ final class ChatTests: XCTestCase {
         model.start()
         await hab.failNextSend(kind: .conflict, hint: "another message is starting its turn")
         model.send("hello")
-        await eventually("refused") { model.outgoing.first?.status == .failed("conflict: another message is starting its turn") }
+        await eventually("refused") { model.outgoing.first?.status == .failed("the agent is busy or waiting for an answer") }
         let inputs = await hab.inputs
         XCTAssertTrue(inputs.isEmpty)
         model.retry(model.outgoing[0].id)
@@ -209,7 +209,7 @@ final class ChatTests: XCTestCase {
         let model = fleet.chat(for: SessionTarget(habID: "h", session: "s2", pane: "%2"))
         XCTAssertEqual(model.gate, .now)
         model.send("are you there")
-        await eventually("refused") { model.outgoing.first?.status == .failed("unavailable: session s2 has no agent state") }
+        await eventually("refused") { model.outgoing.first?.status == .failed("the session can't take a message now") }
         let inputs = await hab.inputs
         XCTAssertTrue(inputs.isEmpty, "no typing into a pane with no agent")
         await fleet.setActive(false)
