@@ -131,6 +131,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.paneList)
         result(HabMethods.paneType)
         result(HabMethods.paneNew)
+        result(HabMethods.sessionAction)
         result(HabMethods.channelSend)
         result(HabMethods.channelStatus)
         result(HabMethods.channelWait)

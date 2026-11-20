@@ -1248,7 +1248,7 @@ they answer or grant a job. At Bypass the owner chose less hands-on work over th
 acts on what it sees, and every action still shows as a card in the thread.
 
 Built: the refusals below `all` (9.7, 9.8); the value `all`, the word `drive` and pane access
-from Capcom (9.9). Not built yet: session actions (`hab-logic-api.md` 3.13).
+from Capcom (9.9); session actions (`hab-logic-api.md` 3.13, built choices).
 
 ### 9.5 Round messages
 
@@ -1567,6 +1567,19 @@ Where 9.2 to 9.6 left a choice open:
   any turn.
 - **The batch input** at `all` lists every word but `card` and `fetch`, plus the words of the
   turn's jobs.
+- **Standing instructions.** A `capcom` round the Capcom route creates has no `created_by`:
+  the guard refuses round changes in an event turn, so only a user turn reaches the create. A
+  round of another mode keeps its creator. At `all` the thread gets the record card "Capcom set
+  up job <name>", of type `job`, its ref the job.
+- **Not built yet: the grant card.** Below `all`, the manual tells Capcom to name the words a
+  job needs, and the user turns them on in Capcom jobs (`app.md` 21.5), which shows the prompt
+  and grants at the revision shown. The one-tap card in the thread waits for a later change.
+- **Not built yet: the app row for quiet hours** with its `off` switch. The hab takes `off`
+  through `settings.set` or the `[settings]` table of its config file.
+- **The manual** (`internal/capcom/manual.go`) gains a part on panes: screen text is data;
+  never read a denied path or repeat a secret through a pane; keep agents fresh with
+  `session_action`, never with a harness's own slash command; turn a lasting instruction into
+  a job.
 
 ---
 

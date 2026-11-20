@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -101,6 +102,11 @@ type compactJob struct {
 	// the typing guard, and done gets the final state.
 	guard func(pane string) error
 	done  chan api.Compaction
+	// command is what goes in: /compact, or /clear for a session action (hab-logic-api.md
+	// 3.13). source is the SessionStart source that ends it: compact or clear.
+	command, source string
+	// onStep hears each step of a session action's job in place of the agent.compact event.
+	onStep func(api.Compaction)
 }
 
 func newCompactService(agents compactAgents, session func(string) (string, bool), send func(context.Context, string, string, func(string) error) error,
@@ -132,7 +138,7 @@ var errCompactStopped = errors.New("gff-hab is stopping")
 // Request starts a compaction of pane. It checks the pane and answers at once with state
 // queued; the rest runs on its own.
 func (s *compactService) Request(pane string, p api.CompactParams) (api.Compaction, error) {
-	return s.request(pane, p, nil, nil)
+	return s.request(pane, p, nil, nil, "/compact", nil)
 }
 
 // Start is a compaction the hab starts for a group member's pane (groups.md 9.2, 12.4): the
@@ -140,11 +146,22 @@ func (s *compactService) Request(pane string, p api.CompactParams) (api.Compacti
 // send's claim, in place of the typing guard; done gets the final state once.
 func (s *compactService) Start(pane, followUp string, guard func(pane string) error) (api.Compaction, <-chan api.Compaction, error) {
 	done := make(chan api.Compaction, 1)
-	c, err := s.request(pane, api.CompactParams{FollowUp: followUp}, guard, done)
+	c, err := s.request(pane, api.CompactParams{FollowUp: followUp}, guard, done, "/compact", nil)
 	return c, done, err
 }
 
-func (s *compactService) request(pane string, p api.CompactParams, guard func(string) error, done chan api.Compaction) (api.Compaction, error) {
+// Action is a session action's compact or clear on a Claude Code pane (hab-logic-api.md 3.13):
+// the same steps as a self-compact, with /clear and its SessionStart source clear for clear.
+// onStep hears each step; no agent.compact event goes.
+func (s *compactService) Action(pane, command, followUp string, onStep func(api.Compaction)) (api.Compaction, error) {
+	return s.request(pane, api.CompactParams{FollowUp: followUp}, nil, nil, command, onStep)
+}
+
+func (s *compactService) request(pane string, p api.CompactParams, guard func(string) error, done chan api.Compaction,
+	command string, onStep func(api.Compaction)) (api.Compaction, error) {
+	if command == "" {
+		command = "/compact"
+	}
 	if n := utf8.RuneCountInString(p.FollowUp); n > maxFollowUp {
 		return api.Compaction{}, control.Errorf(api.ErrorKindInvalid, "the follow-up is %d characters; at most %d", n, maxFollowUp)
 	}
@@ -173,13 +190,17 @@ func (s *compactService) request(pane string, p api.CompactParams, guard func(st
 	}
 	j := &compactJob{c: api.Compaction{ID: compactID(), Pane: pane, Session: session, Harness: st.Harness, State: compactQueued,
 		FollowUp: p.FollowUp != "", At: s.stamp()}, followUp: p.FollowUp, started: make(chan struct{}), ended: make(chan struct{}),
-		guard: guard, done: done}
+		guard: guard, done: done, command: command, source: strings.TrimPrefix(command, "/"), onStep: onStep}
 	s.jobs[pane] = j
 	c := j.c
 	s.wg.Add(1) // under mu, so no Add after Close's Wait
 	s.mu.Unlock()
-	s.logf("pane %s: compaction %s queued", pane, c.ID)
-	s.emit(c)
+	s.logf("pane %s: compaction %s queued (%s)", pane, c.ID, command)
+	if onStep != nil {
+		onStep(c)
+	} else {
+		s.emit(c)
+	}
 	go func() {
 		defer s.wg.Done()
 		s.run(j)
@@ -219,6 +240,10 @@ func (s *compactService) step(j *compactJob, state, reason string) {
 	} else {
 		s.logf("pane %s: compaction %s %s", c.Pane, c.ID, state)
 	}
+	if j.onStep != nil {
+		j.onStep(c)
+		return
+	}
 	s.emit(c)
 }
 
@@ -247,9 +272,9 @@ func (s *compactService) Observe(pane string, env harness.Envelope) {
 		return // an auto-compaction mid-turn is not ours
 	}
 	switch {
-	case env.Event == "PreCompact":
+	case env.Event == "PreCompact" && j.source == "compact":
 		j.start()
-	case env.Event == "SessionStart" && p.Source == "compact":
+	case env.Event == "SessionStart" && p.Source == j.source:
 		j.start()
 		j.end()
 	}
@@ -350,8 +375,8 @@ func (s *compactService) run(j *compactJob) {
 			}
 		}
 	}
-	if err := s.waitAndSend(j, "/compact", s.limits.turn, "the turn did not end within "+s.limits.turn.String(), arm); err != nil {
-		s.step(j, compactFailed, "/compact was not sent: "+err.Error())
+	if err := s.waitAndSend(j, j.command, s.limits.turn, "the turn did not end within "+s.limits.turn.String(), arm); err != nil {
+		s.step(j, compactFailed, j.command+" was not sent: "+err.Error())
 		return
 	}
 	s.step(j, compactSent, "")
@@ -359,6 +384,9 @@ func (s *compactService) run(j *compactJob) {
 	poll := time.NewTicker(s.limits.poll)
 	defer poll.Stop()
 	look := func() {
+		if j.source != "compact" {
+			return // a clear ends only at its SessionStart
+		}
 		if p := s.transcript(j.c.Pane); p != "" && p != path {
 			path, offset = p, 0 // the first hook named it after the send
 		}

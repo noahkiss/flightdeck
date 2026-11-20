@@ -463,9 +463,12 @@ type roundsConfig struct {
 
 // roundsService runs the rounds of one gff-hab.
 type roundsService struct {
-	cfg   roundsConfig
-	store *rounds.Store
-	sched *rounds.Scheduler
+	cfg roundsConfig
+	// capcomJob hears a capcom round the Capcom route made in a user turn: the service's
+	// record card (capcom-service.md 9.6). Nil: none.
+	capcomJob func(r api.Round)
+	store     *rounds.Store
+	sched     *rounds.Scheduler
 
 	editMu sync.Mutex // one edit at a time: a revision check and its update
 	liveMu sync.Mutex // one live-state report of a harness run at a time (liveLater)
@@ -2252,7 +2255,19 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if filed {
 				by = ss.ID
 			}
+			capcomJob := pane == capcomRoute && p.Round.Mode == api.RoundModeCapcom
+			if capcomJob {
+				// A standing instruction (capcom-service.md 9.6): a capcom round the Capcom
+				// route makes is the user's, as a person's round is. The guard refuses round
+				// changes in an event turn, so only a user turn reaches here. With no
+				// created_by, no agent route may edit, pause or delete it; one may only remove
+				// its words. Its round messages run outside the daily turn budget (by_person).
+				by = ""
+			}
 			r, err := svc.Create(ctx, p, by)
+			if err == nil && capcomJob && svc.capcomJob != nil {
+				svc.capcomJob(r.Round)
+			}
 			return r, nil, err
 		case "round.update":
 			var p api.RoundUpdateParams

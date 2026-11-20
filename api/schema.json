@@ -52,7 +52,8 @@
     "teammates",
     "debug",
     "pane-drive",
-    "trace"
+    "trace",
+    "session-action"
   ],
   "methods": [
     {
@@ -2139,6 +2140,52 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/PaneNewParams"
+      }
+    },
+    {
+      "name": "session.action",
+      "summary": "Run a named action on a session: compact, clear, restart, close or recreate, which the hab translates for the harness in its pane; answers at once with state queued, and each step sends a session.action event. The owner's door and the Capcom route only (spec 3.13). Needs the session-action capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "action",
+          "description": "compact, clear, restart, close or recreate.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SessionActionKind"
+          }
+        },
+        {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.13). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "follow_up",
+          "description": "compact, clear and recreate only: the first message after the action, at most 8000 characters.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionAction"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionActionParams"
       }
     },
     {
@@ -5339,6 +5386,13 @@
       "summary": "A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/Compaction"
+      }
+    },
+    {
+      "type": "session.action",
+      "summary": "A session action moved a step; the id is the action id (spec 3.13). Goes where its session goes. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/SessionAction"
       }
     },
     {
@@ -15571,6 +15625,91 @@
           "revision",
           "name",
           "state"
+        ]
+      },
+      "SessionAction": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SessionActionKind"
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of this step."
+          },
+          "harness": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "new_session": {
+            "type": "string",
+            "description": "recreate: the new session's id, once it runs."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it failed."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name; label/name from a peer."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, sent, running, done or failed."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "session",
+          "action",
+          "state",
+          "at"
+        ]
+      },
+      "SessionActionKind": {
+        "type": "string",
+        "x-known-values": [
+          "compact",
+          "clear",
+          "restart",
+          "close",
+          "recreate"
+        ]
+      },
+      "SessionActionParams": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SessionActionKind",
+            "description": "compact, clear, restart, close or recreate."
+          },
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.13). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
+          "follow_up": {
+            "type": "string",
+            "description": "compact, clear and recreate only: the first message after the action, at most 8000 characters."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          }
+        },
+        "required": [
+          "session",
+          "action"
         ]
       },
       "SessionAdoptParams": {

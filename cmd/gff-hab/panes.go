@@ -111,6 +111,8 @@ type paneService struct {
 	slots      waitSlots
 	// The pane-drive part (panedrive.go). Nil fields answer unavailable.
 	drv paneDrive
+	// acts runs session actions (sessionaction.go); nil answers unavailable.
+	acts *sessionActionService
 }
 
 // paneTarget is a resolved local target: the pane, and its session when it is filed.
@@ -831,6 +833,8 @@ func paneHook(s *paneService) hook.ChannelHandler {
 			r, err = routeCall(params, method, func(p api.PaneTypeParams) (any, error) { return s.Type(ctx, c, p) })
 		case "pane.new":
 			r, err = routeCall(params, method, func(p api.PaneNewParams) (any, error) { return s.New(ctx, c, p) })
+		case "session.action":
+			r, err = routeCall(params, method, func(p api.SessionActionParams) (any, error) { return s.Action(ctx, c, p) })
 		default:
 			err = control.Errorf(api.ErrorKindInvalid, "%q is not a pane method", method)
 		}

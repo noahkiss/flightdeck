@@ -4330,6 +4330,8 @@ The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/Capcom
   "Start a session", "Set up a project", "Start or change a group" (`group`), "Add calendar and
   reminder cards" (`card`), "Open pages it has not seen" (`fetch`), "Type into panes and keep
   agents fresh" (`drive`, from A10).
+- **Not built yet: the grant card** of a standing instruction (`capcom-service.md` 9.6, 9.9).
+  Until it is, Capcom names the words a job needs and the user turns them on here.
 - **A grant shows the prompt.** Turning a switch on shows, under the switches, "Allow
   "<switch>"?", "Capcom follows this prompt when the job's events come in:", the prompt whole,
   and Cancel and Allow. Allow sends `round.update` with the round's whole definition, the word

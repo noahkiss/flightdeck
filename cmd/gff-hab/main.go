@@ -24,6 +24,7 @@
 //	gff-hab panes    [-socket path | -via command] [-host label] [-json]
 //	gff-hab type     [-socket path | -via command] [-enter] [-json] <pane|session|label/name> <text... | ->
 //	gff-hab new      [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [-- argv...]
+//	gff-hab action   [-socket path | -via command] [-json] <session | label/name> <compact|clear|restart|close|recreate> [follow-up | -]
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab capcom assign [-socket path | -via command] <peer label|self>
 //	gff-hab capcom open   [-socket path | -via command] [-new]
@@ -181,6 +182,7 @@ const usage = `usage:
   gff-hab panes    [-socket path | -via command] [-host label] [-json]
   gff-hab type     [-socket path | -via command] [-enter] [-json] <pane|session|label/name> <text... | ->
   gff-hab new      [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [-- argv...]
+  gff-hab action   [-socket path | -via command] [-json] <session | label/name> <compact|clear|restart|close|recreate> [follow-up | -]
   gff-hab worktree list   [-socket path | -via command] [-project id | -dir path]
   gff-hab worktree create [-socket path | -via command] [-project id | -dir path] [-branch b] [-base ref] [-path dir] [-setup auto|run|skip]
   gff-hab worktree setup  [-socket path | -via command] [-project id | -dir path] <worktree>
@@ -300,6 +302,8 @@ func main() {
 		err = typeCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "new":
 		err = newCmd(os.Args[2:], os.Stdout)
+	case "action":
+		err = actionCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "worktree":
 		err = worktreeCmd(os.Args[2:])
 	case "capcom":
@@ -987,6 +991,9 @@ func serve(args []string) error {
 		caps = append(caps, "detect-explain")
 		caps = append(caps, paneReadCapability)  // pane.read and pane.wait (hab-logic-api.md 3.11)
 		caps = append(caps, paneDriveCapability) // pane.list, pane.type and pane.new (3.12)
+		if agentSvc != nil && sessionActs != nil {
+			caps = append(caps, sessionActionCapability) // session.action (3.13)
+		}
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.
 		activity := newActivityEvents(lk, func(e structure.Event) {
@@ -1995,6 +2002,30 @@ func serve(args []string) error {
 			compacts.typing = func(pane string) bool { return roundsSvc.typedWithin(pane, compactTypingWindow) }
 		}
 	}
+	// Session actions (hab-logic-api.md 3.13): compact and clear through the compactions, the
+	// rest through the session actions and a recreate that generalises the group swap.
+	if paneSvc != nil && agentSvc != nil && sessionActs != nil {
+		acts := newSessionActions(store, agents, func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		}, logger.Printf)
+		acts.compacts = compacts
+		acts.restart = sessionActs.RestartSession
+		acts.closePane = sessionActs.ClosePane
+		acts.closeSession = sessionActs.CloseSession
+		rec := &memberSwap{store: store, hold: chSvc.Hold, move: chSvc.Move, rename: sessionActs.RenameSession,
+			closePane: sessionActs.ClosePane, folder: sessionActs.folderOf, logf: logger.Printf,
+			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				if s := srv.Load(); s != nil {
+					return s.CreateSession(ctx, p)
+				}
+				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
+			}}
+		acts.recreate = rec.recreate
+		paneSvc.acts = acts
+		defer acts.Close()
+	}
 	// Context supervision of this hab's group members (groups.md 9): the context nudge stays
 	// quiet for them.
 	nudges.member = func(pane string) bool {
@@ -2180,6 +2211,10 @@ func serve(args []string) error {
 	hooks.SetContext(joinContext(habitSvc.Context, nudges.Context))
 	if roundsSvc != nil {
 		hooks.SetRounds(roundHook(store, roundsSvc))
+		if capcomEng != nil {
+			eng, host := capcomEng, *hostID
+			roundsSvc.capcomJob = func(r api.Round) { eng.jobMade(host, r) }
+		}
 	}
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))

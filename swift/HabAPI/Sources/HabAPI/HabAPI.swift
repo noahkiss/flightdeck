@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive", "trace"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive", "trace", "session-action"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -9368,6 +9368,87 @@ public struct Session: Codable, Sendable, Hashable {
     }
 }
 
+public struct SessionAction: Codable, Sendable, Hashable {
+    public var action: SessionActionKind
+    /// RFC 3339 time of this step.
+    public var at: String
+    public var harness: String?
+    public var id: String
+    /// recreate: the new session's id, once it runs.
+    public var newSession: String?
+    /// Why it failed.
+    public var reason: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The session's name; label/name from a peer.
+    public var session: String
+    public var sessionId: String?
+    /// queued, sent, running, done or failed.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case action = "action"
+        case at = "at"
+        case harness = "harness"
+        case id = "id"
+        case newSession = "new_session"
+        case reason = "reason"
+        case seq = "seq"
+        case session = "session"
+        case sessionId = "session_id"
+        case state = "state"
+    }
+
+    public init(action: SessionActionKind, at: String, harness: String? = nil, id: String, newSession: String? = nil, reason: String? = nil, seq: UInt64, session: String, sessionId: String? = nil, state: String) {
+        self.action = action
+        self.at = at
+        self.harness = harness
+        self.id = id
+        self.newSession = newSession
+        self.reason = reason
+        self.seq = seq
+        self.session = session
+        self.sessionId = sessionId
+        self.state = state
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SessionActionKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let compact = SessionActionKind(rawValue: "compact")
+    public static let clear = SessionActionKind(rawValue: "clear")
+    public static let restart = SessionActionKind(rawValue: "restart")
+    public static let close = SessionActionKind(rawValue: "close")
+    public static let recreate = SessionActionKind(rawValue: "recreate")
+}
+
+public struct SessionActionParams: Codable, Sendable, Hashable {
+    /// compact, clear, restart, close or recreate.
+    public var action: SessionActionKind
+    /// capcom on a forward from the Capcom home hab (spec 3.13). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.
+    public var `as`: String?
+    /// compact, clear and recreate only: the first message after the action, at most 8000 characters.
+    public var followUp: String?
+    /// A session id or name on this hab, or label/name for a session on a peer (spec 3.11).
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case action = "action"
+        case `as` = "as"
+        case followUp = "follow_up"
+        case session = "session"
+    }
+
+    public init(action: SessionActionKind, `as`: String? = nil, followUp: String? = nil, session: String) {
+        self.action = action
+        self.`as` = `as`
+        self.followUp = followUp
+        self.session = session
+    }
+}
+
 public struct SessionAdoptParams: Codable, Sendable, Hashable {
     /// Absolute folder to resume in. Default: the folder the transcript records.
     public var cwd: String?
@@ -10966,6 +11047,8 @@ public enum HabMethods {
     public static let paneType = HabMethod<PaneTypeParams, PaneTyped>(name: "pane.type")
     /// Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.
     public static let paneNew = HabMethod<PaneNewParams, PaneStarted>(name: "pane.new")
+    /// Run a named action on a session: compact, clear, restart, close or recreate, which the hab translates for the harness in its pane; answers at once with state queued, and each step sends a session.action event. The owner's door and the Capcom route only (spec 3.13). Needs the session-action capability.
+    public static let sessionAction = HabMethod<SessionActionParams, SessionAction>(name: "session.action")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
     public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
     /// Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.
@@ -11170,6 +11253,8 @@ public enum HabEvent: Sendable, Hashable {
     case sessionTurnEnd(TurnEnd)
     /// A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.
     case agentCompact(Compaction)
+    /// A session action moved a step; the id is the action id (spec 3.13). Goes where its session goes. Ephemeral.
+    case sessionAction(SessionAction)
     /// An account's usage reading changed; the id is the account key. Ephemeral.
     case usageUpdated(UsageAccount)
     /// A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.
@@ -11226,6 +11311,7 @@ public enum HabEvent: Sendable, Hashable {
         case "chat.message": self = .chatMessage(try event.data.decode(ChatMessage.self))
         case "session.turn_end": self = .sessionTurnEnd(try event.data.decode(TurnEnd.self))
         case "agent.compact": self = .agentCompact(try event.data.decode(Compaction.self))
+        case "session.action": self = .sessionAction(try event.data.decode(SessionAction.self))
         case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
         case "command.updated": self = .commandUpdated(try event.data.decode(Command.self))
         case "peer.updated": self = .peerUpdated(try event.data.decode(Peer.self))

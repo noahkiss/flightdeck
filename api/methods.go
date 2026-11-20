@@ -122,6 +122,7 @@ var Methods = []Method{
 	{"pane.list", "The panes the caller may read under agent.read_panes, on this hab and on online peers: ids, session and project names, host, state and agent, never a title (spec 3.12). Needs the pane-drive capability.", PaneListParams{}, PaneList{}},
 	{"pane.type", "Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.", PaneTypeParams{}, PaneTyped{}},
 	{"pane.new", "Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.", PaneNewParams{}, PaneStarted{}},
+	{"session.action", "Run a named action on a session: compact, clear, restart, close or recreate, which the hab translates for the harness in its pane; answers at once with state queued, and each step sends a session.action event. The owner's door and the Capcom route only (spec 3.13). Needs the session-action capability.", SessionActionParams{}, SessionAction{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 	{"channel.send", "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.", ChannelSendParams{}, ChannelSent{}},
 	{"channel.status", "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.", ChannelStatusParams{}, ChannelStatusResult{}},
@@ -230,6 +231,7 @@ var Events = []EventDef{
 	{"chat.message", "A chat message was appended or changed; the id is the message id. Ephemeral.", ChatMessage{}},
 	{"session.turn_end", "The agent's turn ended; the id is the session id. Ephemeral.", TurnEnd{}},
 	{"agent.compact", "A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.", Compaction{}},
+	{"session.action", "A session action moved a step; the id is the action id (spec 3.13). Goes where its session goes. Ephemeral.", SessionAction{}},
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
 	{"command.updated", "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.", Command{}},
 	{"peer.updated", "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.", Peer{}},
@@ -324,14 +326,15 @@ var Enums = map[string][]string{
 	// Sets added for Capcom (capcom.md 2.1).
 	"SessionKind": {"capcom"},
 	// Sets added for rounds (rounds.md 3, 7.1).
-	"RoundMode":        {"fresh", "resume", "fork", "capcom", "group"},
-	"RoundTriggerKind": {"cron", "once", "event", "watch", "manual"},
-	"RoundCatchUp":     {"once", "skip"},
-	"RoundOnFinish":    {"close", "keep"},
-	"RoundNotify":      {"failures", "always", "never"},
-	"RoundAction":      {"hand_off", "start_session", "set_up_project", "group", "card", "fetch", "drive"},
-	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
-	"RoundNoticeKind":  {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
+	"RoundMode":         {"fresh", "resume", "fork", "capcom", "group"},
+	"RoundTriggerKind":  {"cron", "once", "event", "watch", "manual"},
+	"RoundCatchUp":      {"once", "skip"},
+	"RoundOnFinish":     {"close", "keep"},
+	"RoundNotify":       {"failures", "always", "never"},
+	"RoundAction":       {"hand_off", "start_session", "set_up_project", "group", "card", "fetch", "drive"},
+	"SessionActionKind": {"compact", "clear", "restart", "close", "recreate"},
+	"RoundRunState":     {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
+	"RoundNoticeKind":   {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
 	// Sets added for watchers (rounds.md 4.4).
 	"RoundWatcherState": {"starting", "running", "backoff", "stopped"},
 	// Sets added for the Capcom entry API (capcom.md 8.1).
@@ -417,5 +420,5 @@ var Translators = map[int]Translator{}
 // (diagnostics.md 4.5). "trace" means the hab honours the request member trace: it checks it,
 // answers it and passes it to a peer hab (diagnostics.md 5.2).
 // "pane-read" means pane.read and pane.wait work (spec 3.11). "pane-drive" means pane.list,
-// pane.type and pane.new work (spec 3.12).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive", "trace"}
+// pane.type and pane.new work (spec 3.12). "session-action" means session.action works (spec 3.13).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive", "trace", "session-action"}
