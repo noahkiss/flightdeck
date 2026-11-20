@@ -439,7 +439,7 @@ func serve(args []string) error {
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
 	habConfig := fs.String("config", "", "the hab's config file, with its [catalog], [speech] and [summaries] sections (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
-	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
+	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off; given, it locks hab.permission_wait (default: $GFF_HAB_PERMISSION_WAIT, else the setting, 60s unless changed)")
 	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
 	fs.Parse(args)
 	// The log goes to <state>/logs/hab.log once gff-hab holds the state lock (diagnostics.md

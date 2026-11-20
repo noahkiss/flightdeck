@@ -185,6 +185,6 @@ public enum SettingsRegistry {
 
     public static func def(_ id: String) -> SettingDef? { all.first { $0.id == id } }
 
-    /// The value `hab.permission_wait`'s switch sets when turned on (app.md 20.4).
-    public static let permissionWaitOn: Int64 = 30
+    /// The value `hab.permission_wait`'s switch sets when turned on: the hab's default (app.md 20.4).
+    public static let permissionWaitOn: Int64 = 60
 }

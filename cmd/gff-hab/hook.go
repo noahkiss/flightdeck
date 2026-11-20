@@ -30,8 +30,8 @@ import (
 // every other event it prints nothing.
 //
 // `-wait` is the blocking permission hook, for the PermissionRequest of Claude Code and Codex. gff-hab
-// answers at once unless the owner turned it on (`serve -permission-wait`); then the command
-// waits for the app's answer and prints it as the harness's hook output. The answer's header must
+// answers at once when hab.permission_wait is 0 or no client that can answer is connected;
+// otherwise the command waits for the app's answer and prints it as the harness's hook output. The answer's header must
 // still come within hook.Budget, so a hung gff-hab costs no more than that; the whole run is
 // capped at hook.WaitBudget.
 func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {

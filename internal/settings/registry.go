@@ -99,7 +99,7 @@ var Defs = []Def{
 	{ID: GroupPlan, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440), integer: true},
 	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents")},
-	{ID: PermissionWait, Default: json.RawMessage(`0`), check: checkInt(0, 120), integer: true},
+	{ID: PermissionWait, Default: json.RawMessage(`60`), check: checkInt(0, 120), integer: true},
 	{ID: HabitBrief, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: HabitReminder, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: HabitCloseout, Default: json.RawMessage(`true`), check: checkBool},

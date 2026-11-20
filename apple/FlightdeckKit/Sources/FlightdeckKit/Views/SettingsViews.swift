@@ -292,7 +292,7 @@ struct ValueControl: View {
     }
 }
 
-/// `hab.permission_wait` on one hab: a switch (0 or 30 s) with a stepper once on (app.md 20.4).
+/// `hab.permission_wait` on one hab: a switch (0 or 60 s) with a stepper once on (app.md 20.4).
 struct PermissionWaitRow: View {
     let label: String
     let setting: Setting

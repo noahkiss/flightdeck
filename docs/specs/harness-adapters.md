@@ -62,7 +62,7 @@ Every claim about a harness names its source in [Sources](#sources).
    rewrite or copy them. `claude --resume <id>`, `codex resume <id>` and
    `opencode --session <id>` must keep working from a plain terminal.
 5. **Hooks never slow a turn.** A hook command exits fast and prints nothing on stdout, except
-   the one opt-in blocking permission hook and the Logbook habits (`logbook.md` 11.3, 11.4). On
+   the one blocking permission hook and the Logbook habits (`logbook.md` 11.3, 11.4). On
    Claude's `UserPromptSubmit`, hook stdout lands in the prompt.
 6. **Fail visibly.** An unknown record type, a parse error or a missing hook shows as a degraded
    adapter in the status board. It never shows as a wrong state.
@@ -536,7 +536,7 @@ When sources disagree inside one turn, the stronger one wins:
 | State | Two sources. (1) Native OSC 7501 reports, sent only after the terminal answers the `?` query; hab answers it. (2) Hooks: `UserPromptSubmit` → `working`; `PreToolUse`/`PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Notification` with `permission_prompt` → `blocked:permission`, `elicitation_dialog` → `blocked:question`, `idle_prompt` → `idle`; `Stop` → `done`; `StopFailure` → `error`; `SessionStart`/`SessionEnd` bind and unbind the session. |
 | Conversation | Tail the session JSONL named by `transcript_path` in every hook payload (under the Claude config dir, `projects/<encoded cwd>/<session id>.jsonl`). Read records of type `user` and `assistant` for the chat view, linked by `uuid` and `parentUuid`. Use `attachment` records for the context ledger. Skip the other known record types; an unknown type becomes a placeholder message. |
 | Input | PTY: bracketed paste of the text, then Enter. |
-| Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Opt-in: a blocking `PermissionRequest` hook, a per-host setting, off by default (see [Open decisions](#open-decisions)). A question (`AskUserQuestion`) takes text: see [Question answers](#question-answers). |
+| Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Also: a blocking `PermissionRequest` hook, a per-host setting, on by default at 60 seconds while a client that can answer is connected (see [Open decisions](#open-decisions)). A question (`AskUserQuestion`) takes text: see [Question answers](#question-answers). |
 | Resume id | `session_id` in every hook payload; `claude --resume <id>`. |
 
 Notes:
@@ -720,7 +720,7 @@ Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
 - **Blocking hook.** The printed Codex config runs `gff-hab hook -wait codex PermissionRequest`
   with a 130 second timeout. Codex's hook output has Claude's shape, so the wait, the switch
   and the output are the ones in [Open decisions](#open-decisions), Claude: blocking
-  `PermissionRequest` hook. One switch covers both harnesses; it is off by default.
+  `PermissionRequest` hook. One switch covers both harnesses; it is on by default (60 seconds).
   Known limit: the output shape comes from the Codex hooks documentation. Nobody has run it
   live with the switch on, nor checked that Codex accepts a 130 second hook timeout. If Codex
   reads the output differently, the hook takes the app's answer, Codex shows its own dialog
@@ -1396,7 +1396,7 @@ Limits, at the bar of the tools we studied:
 - **Preconditions.** All must hold: the pane is `blocked:permission` from a `server` or `hook`
   source; the app's answer names the same request id; the request is still open.
 - **Prefer structured replies.** opencode's permission endpoint, Codex app-server responses, or
-  the opt-in blocking Claude hook. Keystrokes are a fallback.
+  the blocking Claude hook. Keystrokes are a fallback.
 - **Keystroke fallback.** Send only the keys for the chosen option. Then check, within a short
   window, that a resolution signal arrives (`PostToolUse`, `serverRequest/resolved`, a state
   leave). If it does not, show the pane as needing the owner in the terminal.
@@ -1523,7 +1523,8 @@ and several questions all go this way (checked live against Claude Code 2.1.329)
   success once the tool runs (`PostToolUse`, or Claude's OSC `working`).
 - **The wait window.** The hook waits only while the gate is on, for its 1 to 120 seconds, and
   only while a client that can answer is connected. A later answer finds no hook and goes by
-  keys, so free text then answers `unavailable`. With the gate off, the default, only an
+  keys, so free text then answers `unavailable`. The gate is on by default (60 seconds). With
+  it off, or with no client that can answer connected, only an
   option's label on a one-question card goes through.
 - **Codex.** Codex sends no question through its `PermissionRequest` hook; its questions stay in
   its terminal. Choice `answer` on a Codex pane is `unavailable` ("codex sends no questions the
@@ -1655,11 +1656,13 @@ spike with two clients on one private app-server would settle it.
 
 ### Claude: blocking `PermissionRequest` hook
 
-Decision: B, keep the blocking hook as a per-host setting, off by default, with about a 30-second
-wait (owner, 2026-11-01).
-Built: option B, off by default. The setting is `hab.permission_wait`, a preference with no level
-that the app writes to one hab (`app.md` 20.4); today only `-permission-wait` and
-`$GFF_HAB_PERMISSION_WAIT` set it.
+Decision: B, keep the blocking hook as a per-host setting (owner, 2026-11-01). On by default,
+with a 60-second wait (owner, 2026-11-20), so the app can answer free text, several questions and
+multiple choice. The hook waits only while a client that can answer is connected, so a hab with
+no app costs a prompt no wait.
+Built: option B, on by default. The setting is `hab.permission_wait`, a preference with no level
+that the app writes to one hab (`app.md` 20.4); `-permission-wait` and
+`$GFF_HAB_PERMISSION_WAIT` lock it.
 
 | | A. Fire-and-forget (today) | B. Blocking hook with timeout |
 |---|---|---|
@@ -1672,10 +1675,11 @@ default), a per-host switch that is off by default, and an immediate no-decision
 client is connected. Codex's `PermissionRequest` hook supports the same allow and deny shape
 and can share the code.
 
-Built (option B, off until the owner turns it on):
+Built (option B, on by default):
 
 - **Switch.** `gff-hab serve -permission-wait <duration>`, else `$GFF_HAB_PERMISSION_WAIT` (a Go
-  duration or whole seconds). 0, the default, is off. 1 second to 120 seconds when on.
+  duration or whole seconds) locks the setting. With neither, the setting decides: 60 seconds
+  by default. 0 is off; 1 second to 120 seconds when on.
 - **Hook.** The printed Claude config runs `gff-hab hook -wait claude PermissionRequest` with a
   130 second timeout. The command posts to `/hooks/<token>?wait=1`. gff-hab applies the event as
   usual, then answers 204 at once unless the switch is on, a client that can answer is
