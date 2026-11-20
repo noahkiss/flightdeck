@@ -15,10 +15,23 @@ type PaneCaller struct {
 	Conn string
 }
 
-// Panes serves pane.read and pane.wait (spec 3.11).
+// Panes serves pane.read and pane.wait (spec 3.11), and pane.list, pane.type and pane.new
+// (spec 3.12).
 type Panes interface {
 	Read(ctx context.Context, from PaneCaller, p api.PaneReadParams) (api.PaneText, error)
 	Wait(ctx context.Context, from PaneCaller, p api.PaneWaitParams) (api.PaneWaitResult, error)
+	List(ctx context.Context, from PaneCaller, p api.PaneListParams) (api.PaneList, error)
+	Type(ctx context.Context, from PaneCaller, p api.PaneTypeParams) (api.PaneTyped, error)
+	New(ctx context.Context, from PaneCaller, p api.PaneNewParams) (api.PaneStarted, error)
+}
+
+// IsPaneMethod says whether method is served by Panes.
+func IsPaneMethod(method string) bool {
+	switch method {
+	case "pane.read", "pane.wait", "pane.list", "pane.type", "pane.new":
+		return true
+	}
+	return false
 }
 
 // maxPaneReadTime bounds one pane.read: a peer's answer at most. A pane.wait has its own time
@@ -57,9 +70,34 @@ func (c *conn) handlePanes(m message) {
 				return r, err
 			}
 		}
+	case "pane.list":
+		var p api.PaneListParams
+		if e = c.decodeUp(m, &p); e == nil && ps != nil {
+			call = func(ctx context.Context) (any, error) {
+				r, err := ps.List(ctx, from, p)
+				return r, err
+			}
+		}
+	case "pane.type":
+		var p api.PaneTypeParams
+		if e = c.decodeUp(m, &p); e == nil && ps != nil {
+			call = func(ctx context.Context) (any, error) {
+				r, err := ps.Type(ctx, from, p)
+				return r, err
+			}
+		}
+	case "pane.new":
+		limit = c.s.cfg.ActionTimeout
+		var p api.PaneNewParams
+		if e = c.decodeUp(m, &p); e == nil && ps != nil {
+			call = func(ctx context.Context) (any, error) {
+				r, err := ps.New(ctx, from, p)
+				return r, err
+			}
+		}
 	}
 	if e == nil && call == nil {
-		e = appErr(api.ErrorKindUnavailable, "%s needs gff-hab serve with its holder link; the pane-read capability is absent", m.Method)
+		e = appErr(api.ErrorKindUnavailable, "%s needs gff-hab serve with its holder link; the pane-read and pane-drive capabilities are absent", m.Method)
 	}
 	if e != nil {
 		c.reply(m, seq, nil, e)
@@ -80,6 +118,15 @@ func (c *conn) handlePanes(m message) {
 			r.Seq = s
 			res = api.NonNil(r)
 		case api.PaneWaitResult:
+			r.Seq = s
+			res = api.NonNil(r)
+		case api.PaneList:
+			r.Seq = s
+			res = api.NonNil(r)
+		case api.PaneTyped:
+			r.Seq = s
+			res = api.NonNil(r)
+		case api.PaneStarted:
 			r.Seq = s
 			res = api.NonNil(r)
 		}

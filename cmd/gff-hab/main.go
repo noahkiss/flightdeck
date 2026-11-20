@@ -21,6 +21,9 @@
 //	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
 //	gff-hab wait     [-socket path | -via command] -pane <pane|session|label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]
 //	gff-hab screen   [-socket path | -via command] [-scrollback n] [-json] <pane|session|label/name>
+//	gff-hab panes    [-socket path | -via command] [-host label] [-json]
+//	gff-hab type     [-socket path | -via command] [-enter] [-json] <pane|session|label/name> <text... | ->
+//	gff-hab new      [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [-- argv...]
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab capcom assign [-socket path | -via command] <peer label|self>
 //	gff-hab capcom open   [-socket path | -via command] [-new]
@@ -175,6 +178,9 @@ const usage = `usage:
   gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for state,...] [-timeout d] [-json]
   gff-hab wait     [-socket path | -via command] -pane <pane|session|label/name> [-match text] [-pattern re] [-quiet d] [-from offset] [-timeout d] [-json]
   gff-hab screen   [-socket path | -via command] [-scrollback n] [-json] <pane|session|label/name>
+  gff-hab panes    [-socket path | -via command] [-host label] [-json]
+  gff-hab type     [-socket path | -via command] [-enter] [-json] <pane|session|label/name> <text... | ->
+  gff-hab new      [-socket path | -via command] [-cwd dir] [-project] [-name n] [-json] [-- argv...]
   gff-hab worktree list   [-socket path | -via command] [-project id | -dir path]
   gff-hab worktree create [-socket path | -via command] [-project id | -dir path] [-branch b] [-base ref] [-path dir] [-setup auto|run|skip]
   gff-hab worktree setup  [-socket path | -via command] [-project id | -dir path] <worktree>
@@ -288,6 +294,12 @@ func main() {
 		err = waitCmd(os.Args[2:], os.Stdout)
 	case "screen":
 		err = screenCmd(os.Args[2:], os.Stdout)
+	case "panes":
+		err = panesCmd(os.Args[2:], os.Stdout)
+	case "type":
+		err = typeCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "new":
+		err = newCmd(os.Args[2:], os.Stdout)
 	case "worktree":
 		err = worktreeCmd(os.Args[2:])
 	case "capcom":
@@ -973,7 +985,8 @@ func serve(args []string) error {
 		explain = &detectService{lk: linkPanes{lk}, store: store, agents: agents,
 			manifests: mcache.Set, group: detect.GroupProcesses}
 		caps = append(caps, "detect-explain")
-		caps = append(caps, paneReadCapability) // pane.read and pane.wait (hab-logic-api.md 3.11)
+		caps = append(caps, paneReadCapability)  // pane.read and pane.wait (hab-logic-api.md 3.11)
+		caps = append(caps, paneDriveCapability) // pane.list, pane.type and pane.new (3.12)
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.
 		activity := newActivityEvents(lk, func(e structure.Event) {
@@ -1378,12 +1391,25 @@ func serve(args []string) error {
 	for old := range swapsToFinish {
 		heldAtStart = append(heldAtStart, old)
 	}
-	// Reading panes (hab-logic-api.md 3.11): with the holder link only.
+	// Reading and driving panes (hab-logic-api.md 3.11, 3.12): with the holder link only.
 	var paneSvc *paneService
 	var panesCtl control.Panes
+	typedAt := &inputTimes{} // client input times: pane.type's "a person comes first"
 	if lk != nil {
 		paneSvc = &paneService{lk: lk, store: store, rule: ruleValue(setSvc), links: channelPeers{pm}.Links,
-			self: key.Fingerprint(), host: *hostID, logf: logger.Printf}
+			drive: wordSetting(setSvc, settings.AgentDrivePanes, drivePanesAgents),
+			self:  key.Fingerprint(), host: *hostID, logf: logger.Printf}
+		paneSvc.drv = paneDrive{agent: agents.Get, typed: typedAt.within, live: linkLive(lk),
+			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				s := srv.Load()
+				if s == nil {
+					return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "gff-hab is starting; try again")
+				}
+				return s.CreateSession(ctx, p)
+			}}
+		if agentSvc != nil {
+			paneSvc.drv.typer = agentSvc
+		}
 		panesCtl = controlPanes{paneSvc}
 	}
 	chSvc, err := channels.New(channels.Config{
@@ -1860,6 +1886,9 @@ func serve(args []string) error {
 		input = roundInput{Input: input, rounds: roundsSvc}
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
 		caps = append(caps, "rounds", capRoundLock, capRoundActions)
+	}
+	if input != nil {
+		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
 	caps = append(caps, frictionCapability, debugCapability)
 	s := control.New(control.Config{

@@ -119,6 +119,9 @@ var Methods = []Method{
 	{"flightrules.text", "The text of one flight rules entry, read again from the harness's record; at most 1 MiB (instructions-mcp-flight-rules.md 11.1). Needs the flight-rules capability.", FlightRuleTextParams{}, FlightRuleText{}},
 	{"pane.read", "A pane's screen and optional scrollback as plain text, under agent.read_panes for an agent's call (spec 3.11). Needs the pane-read capability.", PaneReadParams{}, PaneText{}},
 	{"pane.wait", "Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.", PaneWaitParams{}, PaneWaitResult{}},
+	{"pane.list", "The panes the caller may read under agent.read_panes, on this hab and on online peers: ids, session and project names, host, state and agent, never a title (spec 3.12). Needs the pane-drive capability.", PaneListParams{}, PaneList{}},
+	{"pane.type", "Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.", PaneTypeParams{}, PaneTyped{}},
+	{"pane.new", "Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.", PaneNewParams{}, PaneStarted{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 	{"channel.send", "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.", ChannelSendParams{}, ChannelSent{}},
 	{"channel.status", "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.", ChannelStatusParams{}, ChannelStatusResult{}},
@@ -412,5 +415,6 @@ var Translators = map[int]Translator{}
 // shows its Capcom jobs (capcom-service.md 9.6). "teammates" means session.create takes
 // report_to (harness-adapters.md, Spawn); a spawner's hab checks it on a peer. "debug" means diag.debug works
 // (diagnostics.md 4.5).
-// "pane-read" means pane.read and pane.wait work (spec 3.11).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug"}
+// "pane-read" means pane.read and pane.wait work (spec 3.11). "pane-drive" means pane.list,
+// pane.type and pane.new work (spec 3.12).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive"}

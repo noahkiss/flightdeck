@@ -59,3 +59,70 @@ type PaneWaitResult struct {
 	Pane    string         `json:"pane"`
 	Session string         `json:"session,omitempty" doc:"The pane's session name when it is filed; label/name for a pane on a peer."`
 }
+
+// --- Driving panes (spec 3.12) ---
+
+// PaneListParams picks the hosts to list: absent, this hab and every online peer the caller may
+// reach; a peer label or this hab's host id, that host only.
+type PaneListParams struct {
+	Host string `json:"host,omitempty" doc:"A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer."`
+}
+
+// PaneListEntry is one pane the caller may read (spec 3.12). It never carries a title.
+type PaneListEntry struct {
+	Pane        string       `json:"pane"`
+	Session     string       `json:"session,omitempty" doc:"The session's name; absent when the pane is unfiled."`
+	SessionID   string       `json:"session_id,omitempty"`
+	Project     string       `json:"project,omitempty" doc:"The session's project id; absent when unfiled."`
+	ProjectName string       `json:"project_name,omitempty"`
+	Host        string       `json:"host" doc:"This hab's host id, or the peer's label: address a peer's pane as host/session."`
+	Own         bool         `json:"own,omitempty" doc:"The caller's own pane."`
+	State       SessionState `json:"state,omitempty" doc:"The session's state; absent when unfiled."`
+	Agent       string       `json:"agent,omitempty" doc:"The harness that runs in the pane, such as claude; absent for none."`
+	AgentState  AgentStatus  `json:"agent_state,omitempty"`
+}
+
+// PaneUnreached is a peer pane.list did not get rows from, and why.
+type PaneUnreached struct {
+	Label  string `json:"label"`
+	Reason string `json:"reason"`
+}
+
+// PaneList is the answer of pane.list.
+type PaneList struct {
+	Seq
+	Panes     []PaneListEntry `json:"panes"`
+	Unreached []PaneUnreached `json:"unreached,omitempty" doc:"Peers that were not reached: offline, without pane-drive, or no answer in time."`
+}
+
+// PaneTypeParams names the pane and the text to type into it (spec 3.12).
+type PaneTypeParams struct {
+	Pane    string `json:"pane,omitempty" doc:"A pane id on this hab."`
+	Session string `json:"session,omitempty" doc:"A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."`
+	Text    string `json:"text,omitempty" doc:"The text to write, as given, at most 64 KiB."`
+	Enter   bool   `json:"enter,omitempty" doc:"Press Enter after the text, as its own write."`
+}
+
+// PaneTyped says what pane.type wrote.
+type PaneTyped struct {
+	Seq
+	Pane    string `json:"pane"`
+	Session string `json:"session,omitempty" doc:"The pane's session name when it is filed; label/name for a pane on a peer."`
+	Bytes   int    `json:"bytes" doc:"The bytes written, Enter included."`
+}
+
+// PaneNewParams starts a shell or a program in a new pane on this hab (spec 3.12).
+type PaneNewParams struct {
+	Argv      []string `json:"argv,omitempty" doc:"Program and arguments. Default: the hab's shell."`
+	Cwd       string   `json:"cwd,omitempty" doc:"Absolute working folder. Default: the caller's pane's folder, else the hab's home directory."`
+	InProject bool     `json:"in_project,omitempty" doc:"File the session in the calling pane's project."`
+	Name      string   `json:"name,omitempty" doc:"The session name. Default: the program's base name, with a number when taken."`
+}
+
+// PaneStarted is the answer of pane.new.
+type PaneStarted struct {
+	Seq
+	Session string `json:"session" doc:"Session id."`
+	Pane    string `json:"pane" doc:"Pane id."`
+	Name    string `json:"name" doc:"Session name."`
+}

@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -7251,6 +7251,109 @@ public struct PaneBell: Codable, Sendable, Hashable {
     }
 }
 
+public struct PaneList: Codable, Sendable, Hashable {
+    public var panes: [PaneListEntry]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Peers that were not reached: offline, without pane-drive, or no answer in time.
+    public var unreached: [PaneUnreached]?
+
+    enum CodingKeys: String, CodingKey {
+        case panes = "panes"
+        case seq = "seq"
+        case unreached = "unreached"
+    }
+
+    public init(panes: [PaneListEntry], seq: UInt64, unreached: [PaneUnreached]? = nil) {
+        self.panes = panes
+        self.seq = seq
+        self.unreached = unreached
+    }
+}
+
+public struct PaneListEntry: Codable, Sendable, Hashable {
+    /// The harness that runs in the pane, such as claude; absent for none.
+    public var agent: String?
+    public var agentState: AgentStatus?
+    /// This hab's host id, or the peer's label: address a peer's pane as host/session.
+    public var host: String
+    /// The caller's own pane.
+    public var own: Bool?
+    public var pane: String
+    /// The session's project id; absent when unfiled.
+    public var project: String?
+    public var projectName: String?
+    /// The session's name; absent when the pane is unfiled.
+    public var session: String?
+    public var sessionId: String?
+    /// The session's state; absent when unfiled.
+    public var state: SessionState?
+
+    enum CodingKeys: String, CodingKey {
+        case agent = "agent"
+        case agentState = "agent_state"
+        case host = "host"
+        case own = "own"
+        case pane = "pane"
+        case project = "project"
+        case projectName = "project_name"
+        case session = "session"
+        case sessionId = "session_id"
+        case state = "state"
+    }
+
+    public init(agent: String? = nil, agentState: AgentStatus? = nil, host: String, own: Bool? = nil, pane: String, project: String? = nil, projectName: String? = nil, session: String? = nil, sessionId: String? = nil, state: SessionState? = nil) {
+        self.agent = agent
+        self.agentState = agentState
+        self.host = host
+        self.own = own
+        self.pane = pane
+        self.project = project
+        self.projectName = projectName
+        self.session = session
+        self.sessionId = sessionId
+        self.state = state
+    }
+}
+
+public struct PaneListParams: Codable, Sendable, Hashable {
+    /// A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer.
+    public var host: String?
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+    }
+
+    public init(host: String? = nil) {
+        self.host = host
+    }
+}
+
+public struct PaneNewParams: Codable, Sendable, Hashable {
+    /// Program and arguments. Default: the hab's shell.
+    public var argv: [String]?
+    /// Absolute working folder. Default: the caller's pane's folder, else the hab's home directory.
+    public var cwd: String?
+    /// File the session in the calling pane's project.
+    public var inProject: Bool?
+    /// The session name. Default: the program's base name, with a number when taken.
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case argv = "argv"
+        case cwd = "cwd"
+        case inProject = "in_project"
+        case name = "name"
+    }
+
+    public init(argv: [String]? = nil, cwd: String? = nil, inProject: Bool? = nil, name: String? = nil) {
+        self.argv = argv
+        self.cwd = cwd
+        self.inProject = inProject
+        self.name = name
+    }
+}
+
 public struct PaneOutput: Codable, Sendable, Hashable {
     /// The pane's holder offset after the output.
     public var offset: UInt64
@@ -7319,6 +7422,31 @@ public struct PaneRef: Codable, Sendable, Hashable {
     }
 }
 
+public struct PaneStarted: Codable, Sendable, Hashable {
+    /// Session name.
+    public var name: String
+    /// Pane id.
+    public var pane: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Session id.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case pane = "pane"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(name: String, pane: String, seq: UInt64, session: String) {
+        self.name = name
+        self.pane = pane
+        self.seq = seq
+        self.session = session
+    }
+}
+
 public struct PaneText: Codable, Sendable, Hashable {
     /// The program shows the alternate screen.
     public var alternate: Bool?
@@ -7372,6 +7500,70 @@ public struct PaneText: Codable, Sendable, Hashable {
         self.seq = seq
         self.session = session
         self.truncated = truncated
+    }
+}
+
+public struct PaneTypeParams: Codable, Sendable, Hashable {
+    /// Press Enter after the text, as its own write.
+    public var enter: Bool?
+    /// A pane id on this hab.
+    public var pane: String?
+    /// A session id or name on this hab, or label/name for a session on a peer (spec 3.11).
+    public var session: String?
+    /// The text to write, as given, at most 64 KiB.
+    public var text: String?
+
+    enum CodingKeys: String, CodingKey {
+        case enter = "enter"
+        case pane = "pane"
+        case session = "session"
+        case text = "text"
+    }
+
+    public init(enter: Bool? = nil, pane: String? = nil, session: String? = nil, text: String? = nil) {
+        self.enter = enter
+        self.pane = pane
+        self.session = session
+        self.text = text
+    }
+}
+
+public struct PaneTyped: Codable, Sendable, Hashable {
+    /// The bytes written, Enter included.
+    public var bytes: Int
+    public var pane: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The pane's session name when it is filed; label/name for a pane on a peer.
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case bytes = "bytes"
+        case pane = "pane"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(bytes: Int, pane: String, seq: UInt64, session: String? = nil) {
+        self.bytes = bytes
+        self.pane = pane
+        self.seq = seq
+        self.session = session
+    }
+}
+
+public struct PaneUnreached: Codable, Sendable, Hashable {
+    public var label: String
+    public var reason: String
+
+    enum CodingKeys: String, CodingKey {
+        case label = "label"
+        case reason = "reason"
+    }
+
+    public init(label: String, reason: String) {
+        self.label = label
+        self.reason = reason
     }
 }
 
@@ -10747,6 +10939,12 @@ public enum HabMethods {
     public static let paneRead = HabMethod<PaneReadParams, PaneText>(name: "pane.read")
     /// Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.
     public static let paneWait = HabMethod<PaneWaitParams, PaneWaitResult>(name: "pane.wait")
+    /// The panes the caller may read under agent.read_panes, on this hab and on online peers: ids, session and project names, host, state and agent, never a title (spec 3.12). Needs the pane-drive capability.
+    public static let paneList = HabMethod<PaneListParams, PaneList>(name: "pane.list")
+    /// Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.
+    public static let paneType = HabMethod<PaneTypeParams, PaneTyped>(name: "pane.type")
+    /// Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.
+    public static let paneNew = HabMethod<PaneNewParams, PaneStarted>(name: "pane.new")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
     public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
     /// Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.

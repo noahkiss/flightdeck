@@ -66,6 +66,44 @@ func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 	return st, fmt.Errorf("%w: the pane's agent state is %s; start or resume the harness", ErrNoAgent, st.State)
 }
 
+// CheckType says whether pane.type may write to the pane now (hab-logic-api.md 3.12): not while
+// its agent has an open permission request or is blocked, since a key could answer the dialog.
+// From an agent's door (agentDoor), also not into an agent that reported through no hook or
+// server: there the hab sees a dialog only through OSC 7501, which a program can forge. A pane
+// with no agent state, or whose agent exited, takes the text: a shell has no dialog the hab
+// knows of. A working agent takes it too: its prompt queues it. It wraps ErrBusy.
+func (s *Store) CheckType(paneID string, agentDoor bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.st.Revision == 0 || p.st.State == api.AgentStatusExited || p.st.State == api.AgentStatusNone {
+		return nil
+	}
+	if p.open != "" {
+		return fmt.Errorf("%w: %s waits for permission request %s; a typed key could answer it", ErrBusy, p.st.Harness, p.open)
+	}
+	if p.st.State == api.AgentStatusBlocked {
+		return fmt.Errorf("%w: %s is blocked and waits for an answer; a typed key could give it", ErrBusy, p.st.Harness)
+	}
+	if agentDoor {
+		// The harness in the pane now must be the one that reported: a hook of an earlier
+		// harness in the pane says nothing of the next one's dialogs.
+		if (p.hooked == "" || p.hooked != p.st.Harness) && (p.served == "" || p.served != p.st.Harness) {
+			return fmt.Errorf("%w: %s in the pane reports through no hook, so the hab cannot see its dialogs; an agent may not type into it", ErrBusy, p.st.Harness)
+		}
+	}
+	return nil
+}
+
+// PasteWrite wraps text in bracketed paste markers, with every end marker in it removed, so the
+// text cannot end the paste early and press keys after it (hab-logic-api.md 3.12).
+func PasteWrite(text string) []byte {
+	for strings.Contains(text, pasteEnd) {
+		text = strings.ReplaceAll(text, pasteEnd, "")
+	}
+	return []byte(pasteStart + text + pasteEnd)
+}
+
 // CheckAnswer returns the pane's state when request is its open permission request. Only a hook
 // or server opens a request, so OSC 7501 or the screen alone never enables an answer
 // (harness-adapters.md, rule 2), and neither can close one: a request stays answerable through

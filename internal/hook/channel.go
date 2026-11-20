@@ -58,9 +58,9 @@ var GroupMethods = []string{"group.create", "group.amend", "group.get", "group.l
 // and Agent kit). The pane's token names the agent: it can act only on its own pane.
 var AgentMethods = []string{"agent.compact", "agent.name"}
 
-// PaneMethods read other panes (hab-logic-api.md 3.11): the pane's token names the caller,
-// and agent.read_panes decides which panes it may read.
-var PaneMethods = []string{"pane.read", "pane.wait"}
+// PaneMethods read, list, type into and start other panes (hab-logic-api.md 3.11, 3.12): the
+// pane's token names the caller; agent.read_panes and agent.drive_panes decide what it may do.
+var PaneMethods = []string{"pane.read", "pane.wait", "pane.list", "pane.type", "pane.new"}
 
 // PersonalMethods are Capcom's personal tools (capcom-service.md 8, E12). The route takes them
 // from the Capcom engine's token only; a pane's call is refused.

@@ -50,7 +50,8 @@
     "trust",
     "round-actions",
     "teammates",
-    "debug"
+    "debug",
+    "pane-drive"
   ],
   "methods": [
     {
@@ -1995,6 +1996,120 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/PaneWaitParams"
+      }
+    },
+    {
+      "name": "pane.list",
+      "summary": "The panes the caller may read under agent.read_panes, on this hab and on online peers: ids, session and project names, host, state and agent, never a title (spec 3.12). Needs the pane-drive capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneListParams"
+      }
+    },
+    {
+      "name": "pane.type",
+      "summary": "Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "enter",
+          "description": "Press Enter after the text, as its own write.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "pane",
+          "description": "A pane id on this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "The text to write, as given, at most 64 KiB.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneTyped"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneTypeParams"
+      }
+    },
+    {
+      "name": "pane.new",
+      "summary": "Start a shell or a program in a new pane on this hab, under agent.drive_panes for an agent's call (spec 3.12). Needs the pane-drive capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "argv",
+          "description": "Program and arguments. Default: the hab's shell.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "cwd",
+          "description": "Absolute working folder. Default: the caller's pane's folder, else the hab's home directory.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "in_project",
+          "description": "File the session in the calling pane's project.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "name",
+          "description": "The session name. Default: the program's base name, with a number when taken.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PaneStarted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneNewParams"
       }
     },
     {
@@ -13199,6 +13314,111 @@
           "count"
         ]
       },
+      "PaneList": {
+        "type": "object",
+        "properties": {
+          "panes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaneListEntry"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "unreached": {
+            "type": "array",
+            "description": "Peers that were not reached: offline, without pane-drive, or no answer in time.",
+            "items": {
+              "$ref": "#/components/schemas/PaneUnreached"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "panes"
+        ]
+      },
+      "PaneListEntry": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "description": "The harness that runs in the pane, such as claude; absent for none."
+          },
+          "agent_state": {
+            "$ref": "#/components/schemas/AgentStatus"
+          },
+          "host": {
+            "type": "string",
+            "description": "This hab's host id, or the peer's label: address a peer's pane as host/session."
+          },
+          "own": {
+            "type": "boolean",
+            "description": "The caller's own pane."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "The session's project id; absent when unfiled."
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name; absent when the pane is unfiled."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionState",
+            "description": "The session's state; absent when unfiled."
+          }
+        },
+        "required": [
+          "pane",
+          "host"
+        ]
+      },
+      "PaneListParams": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer."
+          }
+        }
+      },
+      "PaneNewParams": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "description": "Program and arguments. Default: the hab's shell.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute working folder. Default: the caller's pane's folder, else the hab's home directory."
+          },
+          "in_project": {
+            "type": "boolean",
+            "description": "File the session in the calling pane's project."
+          },
+          "name": {
+            "type": "string",
+            "description": "The session name. Default: the program's base name, with a number when taken."
+          }
+        }
+      },
       "PaneOutput": {
         "type": "object",
         "properties": {
@@ -13264,6 +13484,34 @@
         },
         "required": [
           "pane"
+        ]
+      },
+      "PaneStarted": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Session name."
+          },
+          "pane": {
+            "type": "string",
+            "description": "Pane id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "Session id."
+          }
+        },
+        "required": [
+          "seq",
+          "session",
+          "pane",
+          "name"
         ]
       },
       "PaneText": {
@@ -13340,6 +13588,69 @@
           "cursor_col",
           "cursor_row",
           "offset"
+        ]
+      },
+      "PaneTypeParams": {
+        "type": "object",
+        "properties": {
+          "enter": {
+            "type": "boolean",
+            "description": "Press Enter after the text, as its own write."
+          },
+          "pane": {
+            "type": "string",
+            "description": "A pane id on this hab."
+          },
+          "session": {
+            "type": "string",
+            "description": "A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."
+          },
+          "text": {
+            "type": "string",
+            "description": "The text to write, as given, at most 64 KiB."
+          }
+        }
+      },
+      "PaneTyped": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bytes written, Enter included."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The pane's session name when it is filed; label/name for a pane on a peer."
+          }
+        },
+        "required": [
+          "seq",
+          "pane",
+          "bytes"
+        ]
+      },
+      "PaneUnreached": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "reason"
         ]
       },
       "PaneWaitParams": {

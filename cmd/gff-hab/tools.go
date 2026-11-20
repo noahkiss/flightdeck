@@ -37,6 +37,9 @@ type kitTool struct {
 	Doc    string
 	Args   []toolArg
 	Action bool // an action tool: it asks the hab to change something
+	// Drives marks a tool that types into or starts a program: destructive and open-world, so a
+	// harness asks before each call.
+	Drives bool
 	// Shell is the manual's shell line when the tool has a command of its own; "" is
 	// `gff-hab read <tool>` or `gff-hab act <tool>`.
 	Shell string
@@ -286,7 +289,7 @@ var actionTools = []kitTool{
 
 // allTools is every tool, read tools first.
 func allTools() []kitTool {
-	return append(append(append(slices.Clip(readTools), actionTools...), channelTools...), roundTools...)
+	return append(append(append(append(slices.Clip(readTools), actionTools...), channelTools...), roundTools...), paneTools...)
 }
 
 func findIn(tools []kitTool, name string) (kitTool, bool) {

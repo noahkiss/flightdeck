@@ -307,9 +307,9 @@ func (m *mcpServer) tools() []kitTool {
 
 func (m *mcpServer) instructions() string {
 	if m.capcom {
-		return mcpRules + "\n" + channelRules + "\n" + personalRules
+		return mcpRules + "\n" + channelRules + "\n" + paneRules + "\n" + personalRules
 	}
-	return mcpRules + "\n" + channelRules
+	return mcpRules + "\n" + channelRules + "\n" + paneRules
 }
 
 func mcpToolsOf(tools []kitTool) []map[string]any {
@@ -331,7 +331,7 @@ func mcpToolsOf(tools []kitTool) []map[string]any {
 			"name":        t.Name,
 			"description": t.Doc,
 			"inputSchema": map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false},
-			"annotations": map[string]any{"readOnlyHint": !t.Action, "destructiveHint": false, "idempotentHint": !t.Action, "openWorldHint": false},
+			"annotations": map[string]any{"readOnlyHint": !t.Action, "destructiveHint": t.Drives, "idempotentHint": !t.Action, "openWorldHint": t.Drives},
 		})
 	}
 	return out
@@ -348,6 +348,7 @@ func skillText() string {
 		b.WriteString(l + "\n")
 	}
 	b.WriteString(channelRules + "\n")
+	b.WriteString(paneRules + "\n")
 	section := func(title, verb string, tools []kitTool) {
 		fmt.Fprintf(&b, "\n## %s\n", title)
 		for _, t := range tools {
@@ -358,6 +359,7 @@ func skillText() string {
 	section("Action tools", "act", actionTools)
 	section("Channel tools", "", channelTools)
 	section("Round tools", "", roundTools)
+	section("Pane tools", "", paneTools)
 	return b.String()
 }
 
