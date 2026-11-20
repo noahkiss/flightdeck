@@ -1899,6 +1899,13 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "pane",
           "description": "A pane id on this hab.",
           "schema": {
@@ -1936,6 +1943,13 @@
       "summary": "Wait until a pane's new output matches a text or a pattern, or goes quiet, or its program exits, or the end of the time (spec 3.11). Needs the pane-read capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
         {
           "name": "from",
           "description": "The pane offset to read new output from. Absent means the pane's offset when the wait starts.",
@@ -2005,6 +2019,13 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "host",
           "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer.",
           "schema": {
@@ -2027,6 +2048,13 @@
       "summary": "Type text, and optionally Enter, into a pane, under agent.drive_panes for an agent's call and under the send gate for every caller (spec 3.12). Needs the pane-drive capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "as",
+          "description": "capcom on a forward from the Capcom home hab (spec 3.12). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.",
+          "schema": {
+            "type": "string"
+          }
+        },
         {
           "name": "enter",
           "description": "Press Enter after the text, as its own write.",
@@ -7432,6 +7460,10 @@
             "items": {
               "$ref": "#/components/schemas/RoundAction"
             }
+          },
+          "by_person": {
+            "type": "boolean",
+            "description": "Capcom messages: the round has no created_by, so a person owns it. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:\u003cname\u003e."
           },
           "deadline": {
             "type": "string",
@@ -13390,6 +13422,10 @@
       "PaneListParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "host": {
             "type": "string",
             "description": "A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer."
@@ -13461,6 +13497,10 @@
       "PaneReadParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "pane": {
             "type": "string",
             "description": "A pane id on this hab."
@@ -13594,6 +13634,10 @@
       "PaneTypeParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.12). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "enter": {
             "type": "boolean",
             "description": "Press Enter after the text, as its own write."
@@ -13657,6 +13701,10 @@
       "PaneWaitParams": {
         "type": "object",
         "properties": {
+          "as": {
+            "type": "string",
+            "description": "capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."
+          },
           "from": {
             "type": "integer",
             "format": "uint64",
@@ -14627,7 +14675,8 @@
           "set_up_project",
           "group",
           "card",
-          "fetch"
+          "fetch",
+          "drive"
         ]
       },
       "RoundBatch": {

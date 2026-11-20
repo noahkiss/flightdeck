@@ -126,7 +126,7 @@ func TestCapcomJobsE2E(t *testing.T) {
 	}
 
 	// The settings' ranges (19.1).
-	for id, v := range map[string]string{"capcom.event_actions": `"sometimes"`, "capcom.event_actions_per_turn": "21", "capcom.event_action_max_age": "0"} {
+	for id, v := range map[string]string{"capcom.event_actions": `"sometimes"`, "capcom.event_actions_per_turn": "51", "capcom.event_action_max_age": "0"} {
 		if err := setSetting(c, id, v); errKind(err) != api.ErrorKindInvalid {
 			t.Fatalf("settings.set %s %s: %v", id, v, err)
 		}

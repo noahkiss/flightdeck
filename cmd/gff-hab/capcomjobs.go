@@ -1,13 +1,16 @@
 package main
 
-// Capcom jobs act on events (capcom-service.md 9.6, stage A9). A Capcom job is a capcom round
-// with action words a person granted. The round message carries them; gff-hab copies them onto
-// the round item, and only from a message whose sender is round:<name> (DeliverRound). Here the
-// hab decides each acting call an event turn makes on the engine's route:
+// Capcom jobs act on events (capcom-service.md 9.4, 9.6, stages A9 and A10). A Capcom job is a
+// capcom round with action words a person granted. The round message carries them; gff-hab
+// copies them onto the round item, and only from a message whose sender is round:<name>
+// (DeliverRound). Here the hab decides each acting call an event turn makes on the engine's
+// route:
 //
 //   - The words a turn may use are the union of the words on the round items its batches hold,
 //     capped by capcom.event_actions: off allows none, ask turns each call into one confirmation
-//     that names the job, allow lets it run under its own gates.
+//     that names the job, allow lets it run under its own gates. all (Bypass) lets every event
+//     turn use every word but card and fetch with no job, each call under its own gates; card
+//     and fetch still need a job's word, as at allow.
 //   - At most capcom.event_actions_per_turn calls per turn, counted in the event queue so a
 //     restart keeps the count. A call over the limit is refused.
 //   - Each allowed call adds a card to the thread that names the job, and makes the outcome of
@@ -29,6 +32,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/capcomevents"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/settings"
 )
 
@@ -37,19 +41,26 @@ const (
 	eventActionsOff   = "off"
 	eventActionsAsk   = "ask"
 	eventActionsAllow = "allow"
+	eventActionsAll   = "all"
 )
+
+// jobOnly are the words an event turn may use only under a job's word, even at all (9.4): a
+// card asks the user to add something, and a fetch of an unseen URL is the engine's own path out.
+var jobOnly = []string{"card", "fetch"}
 
 // cardJob is the card type of a Capcom job's action in the thread (9.6): a record with no
 // choices; its ref is the job.
 const cardJob = "job"
 
 // eventActing are the route methods an event turn may not call (9.4, E21) unless a Capcom job
-// allows them (9.6): a hand-off and any message to an agent (hand_off sends through
-// channel.send), a session or project start (confirm.request), a group's acting calls, a
-// calendar or reminder card, and round changes, which no job allows.
+// allows them (9.6), or capcom.event_actions is all: a hand-off and any message to an agent
+// (hand_off sends through channel.send), a session or project start (confirm.request), a
+// group's acting calls, a calendar or reminder card, typing into and starting panes and session
+// actions (drive), and round changes, which nothing allows.
 var eventActing = []string{"channel.send", "confirm.request",
 	"group.create", "group.amend", "group.close", "group.retry", "member.compact", "member.handoff", "member.action",
 	"personal.calendar_add", "personal.reminder_add",
+	"pane.type", "pane.new", "session.action",
 	"round.create", "round.update", "round.delete", "round.run", "round.pause", "round.unpause"}
 
 // actionWord is the job word that allows an acting call, or "" when no word does.
@@ -73,6 +84,8 @@ func actionWord(method string, params json.RawMessage) string {
 		return "group"
 	case "personal.calendar_add", "personal.reminder_add":
 		return "card"
+	case "pane.type", "pane.new", "session.action":
+		return "drive"
 	}
 	return ""
 }
@@ -108,10 +121,16 @@ func (e *capcomEngine) eventActionsLevel() string {
 	var v string
 	json.Unmarshal(e.settingValue(settings.CapcomEventActions), &v)
 	switch v {
-	case eventActionsAsk, eventActionsAllow:
+	case eventActionsAsk, eventActionsAllow, eventActionsAll:
 		return v
 	}
 	return eventActionsOff
+}
+
+// freeWord reports whether word may run in an event turn with no job's grant: every word but
+// card and fetch, at all (9.4).
+func freeWord(level, word string) bool {
+	return level == eventActionsAll && word != "" && !slices.Contains(jobOnly, word)
 }
 
 // turnJobs returns the jobs among the round items turn took whose words include word, waiting
@@ -184,9 +203,10 @@ func (e *capcomEngine) batchActions(b capcomevents.Batch) []string {
 	if e.eventActionsLevel() == eventActionsOff || e.settingInt(settings.CapcomEventActionsPerTurn) <= 0 {
 		return nil
 	}
+	level := e.eventActionsLevel()
 	var out []string
-	for _, w := range []string{"hand_off", "start_session", "set_up_project", "group", "card", "fetch"} {
-		if len(e.batchJobs(b, w)) > 0 {
+	for _, w := range rounds.Actions {
+		if freeWord(level, w) || len(e.batchJobs(b, w)) > 0 {
 			out = append(out, w)
 		}
 	}
@@ -194,16 +214,17 @@ func (e *capcomEngine) batchActions(b capcomevents.Batch) []string {
 }
 
 // allowCall decides one call of an event turn under the Capcom jobs it took: the jobs that
-// allow word, or the refusal. It counts the call when it allows it.
+// allow word, or the refusal. At all, a word other than card and fetch needs no job, and jobs
+// is empty when none lists it. It counts the call when it allows it, at every value.
 func (e *capcomEngine) allowCall(turn, word, method string) (jobs []string, level string, err error) {
 	if word == "" {
 		return nil, "", errAskFirst(method, "")
 	}
+	level = e.eventActionsLevel()
 	jobs = e.turnJobs(turn, word)
-	if len(jobs) == 0 {
+	if len(jobs) == 0 && !freeWord(level, word) {
 		return nil, "", errAskFirst(method, ", and no Capcom job in this turn allows "+word)
 	}
-	level = e.eventActionsLevel()
 	if level == eventActionsOff {
 		return nil, "", errAskFirst(method, ": Capcom jobs may not act (capcom.event_actions is off)")
 	}
@@ -236,7 +257,13 @@ func (e *capcomEngine) routeGuard(ctx context.Context, pane, method string, para
 	}
 	job := strings.Join(jobs, ", ")
 	summary := actionSummary(method, params)
-	if level == eventActionsAllow || word == "card" {
+	if job == "" {
+		// all, with no job that lists the word: it runs under its own gates, and the card names
+		// the event the turn took (9.6).
+		e.jobCard(st.Turn, fmt.Sprintf("%s, Capcom used %s: %s", e.turnCause(st.Turn), word, summary), "")
+		return nil, nil
+	}
+	if level == eventActionsAllow || level == eventActionsAll || word == "card" {
 		// allow: it runs under its own gates. A card's own Add tap is its one confirmation.
 		e.jobCard(st.Turn, fmt.Sprintf("For job %s, Capcom used %s: %s", job, word, summary), job)
 		return nil, nil
@@ -285,13 +312,42 @@ func (e *capcomEngine) eventGate(turn, tool string) (string, error) {
 	return "for job " + job, nil
 }
 
+// turnCause names what began an event turn, for the card of an action no job granted (9.6):
+// "After a notice: disk full", "After job host/mail", or "After an agent's report".
+func (e *capcomEngine) turnCause(turn string) string {
+	if e.events != nil {
+		for _, b := range e.events.TurnBatches(turn) {
+			for _, id := range b.Items {
+				it, ok := e.thread.Get(id)
+				if !ok {
+					continue
+				}
+				if it.Kind == capcomthread.KindRound {
+					name := it.Job
+					if name == "" {
+						name = it.Author.Address
+					}
+					return "After job " + name
+				}
+				line, _, _ := strings.Cut(strings.TrimSpace(it.Text), "\n")
+				return "After a notice: " + clipLine(line, 80)
+			}
+		}
+	}
+	return "After an agent's report"
+}
+
 // turnAllows reports whether the running event turn has a Capcom job that allows word while
 // the level lets jobs act. The group service's own event-turn check reads it; routeGuard did the
 // counting.
 func (e *capcomEngine) turnAllows(word string) bool {
 	st := e.turnState(0)
-	if st.Turn == "" || e.eventActionsLevel() == eventActionsOff || e.events == nil {
+	level := e.eventActionsLevel()
+	if st.Turn == "" || level == eventActionsOff || e.events == nil {
 		return false
+	}
+	if freeWord(level, word) {
+		return true
 	}
 	bs := e.events.TurnBatches(st.Turn)
 	return len(bs) == 1 && len(e.batchJobs(bs[0], word)) > 0
@@ -336,6 +392,8 @@ func actionSummary(method string, params json.RawMessage) string {
 		s = "set up " + p.Setup.Repository + " on " + p.Setup.Host
 	case strings.HasPrefix(method, "personal."):
 		s = strings.TrimPrefix(method, "personal.") + " " + p.Title
+	case method == "pane.type" || method == "pane.new" || method == "session.action":
+		s = driveSummary(method, params)
 	default:
 		s = method
 		if p.Group != "" {
@@ -371,6 +429,50 @@ func clipLine(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > n {
 		s = strings.ToValidUTF8(s[:n], "") + "…"
+	}
+	return s
+}
+
+// driveSummary says what a drive call would do (9.6): the target, and the whole text it types
+// or the whole follow-up it sends, so the card cuts nothing.
+func driveSummary(method string, params json.RawMessage) string {
+	var p struct {
+		Pane     string   `json:"pane"`
+		Session  string   `json:"session"`
+		Text     string   `json:"text"`
+		Enter    bool     `json:"enter"`
+		Argv     []string `json:"argv"`
+		Cwd      string   `json:"cwd"`
+		Action   string   `json:"action"`
+		FollowUp string   `json:"follow_up"`
+	}
+	json.Unmarshal(params, &p)
+	target := p.Session
+	if target == "" {
+		target = p.Pane
+	}
+	switch method {
+	case "pane.type":
+		s := "type into " + target + ": " + p.Text
+		if p.Enter {
+			s += " (then Enter)"
+		}
+		return s
+	case "pane.new":
+		s := "start a pane"
+		if len(p.Argv) > 0 {
+			s += " running " + strings.Join(p.Argv, " ")
+		} else {
+			s += " with a shell"
+		}
+		if p.Cwd != "" {
+			s += " in " + p.Cwd
+		}
+		return s
+	}
+	s := p.Action + " " + target
+	if p.FollowUp != "" {
+		s += ", then: " + p.FollowUp
 	}
 	return s
 }

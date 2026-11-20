@@ -1,10 +1,12 @@
 // Package capcomevents is the hab's queue of the events Capcom looks at first
 // (docs/specs/capcom-service.md 9.2, 9.3, 9.5): notices, round run ends and round messages wait
-// here, as thread items, until a batch may go to the engine. A batch goes when its window ends
-// or it is full, never in quiet hours unless an event in it is urgent, and never past the day's
-// event turn budget. The queue also keeps what the second answer to a round message needs: the
-// turn that took its batch and whether that turn wrote to the user. Its state is one file,
-// <state>/capcom/events.json, with the time zone the day is counted in. Pure Go.
+// here, as thread items, until a batch may go to the engine. A batch goes when its window ends,
+// it is full, or an event in it is urgent, at any hour, and never past the day's event turn
+// budget, except a person's own job, which goes alone and does not count. Quiet hours hold
+// pushes, not turns: the queue counts the messages an event turn writes in them and says how
+// many wait when they end. The queue also keeps what the second answer to a round message
+// needs: the turn that took its batch and whether that turn wrote to the user. Its state is one
+// file, <state>/capcom/events.json, with the time zone the day is counted in. Pure Go.
 package capcomevents
 
 import (
@@ -46,6 +48,10 @@ type Event struct {
 	// Solo: a Capcom job with action words (capcom-service.md 9.6). It goes in a batch of its
 	// own, so the words its turn may use never meet another job's prompt or event.
 	Solo bool `json:"solo,omitempty"`
+	// Free: a round message from a job a person owns (rounds.md 5.2 by_person;
+	// capcom-service.md 9.3). It goes in a batch of its own, which neither counts toward the
+	// daily turn budget nor waits for it.
+	Free bool `json:"free,omitempty"`
 }
 
 // Batch is a set of events released as one input (one event turn).
@@ -61,19 +67,22 @@ type Batch struct {
 	// Acts counts the action calls the turn made under a Capcom job (9.6), the same on every
 	// batch the turn took, so a restart keeps the per-turn cap.
 	Acts int `json:"acts,omitempty"`
+	// Free: the batch holds a person's own job; it did not count toward the budget.
+	Free bool `json:"free,omitempty"`
 }
 
 // Limits are the hab-side settings of 9.2 and 9.3, read at each check.
 type Limits struct {
 	// QuietStart and QuietEnd are minutes after local midnight; equal: no quiet hours.
 	QuietStart, QuietEnd int
-	DailyTurns           int
-	BatchWindow          time.Duration
-	BatchMax             int
+	// DailyTurns caps the event turns of a day; 0 is no cap.
+	DailyTurns  int
+	BatchWindow time.Duration
+	BatchMax    int
 }
 
-// DefaultLimits are 19.1's defaults: 22:00 to 07:00, 20 turns a day, 2 minutes, 20 events.
-var DefaultLimits = Limits{QuietStart: 22 * 60, QuietEnd: 7 * 60, DailyTurns: 20, BatchWindow: 2 * time.Minute, BatchMax: 20}
+// DefaultLimits are 19.1's defaults: 22:00 to 07:00, 200 turns a day, 2 minutes, 20 events.
+var DefaultLimits = Limits{QuietStart: 22 * 60, QuietEnd: 7 * 60, DailyTurns: 200, BatchWindow: 2 * time.Minute, BatchMax: 20}
 
 // Config wires a queue.
 type Config struct {
@@ -90,20 +99,30 @@ type Config struct {
 	Note func(text string)
 	// Outcome hears the second answer of a round message, with no lock held.
 	Outcome func(round, word string, at time.Time)
-	Logf    func(string, ...any)
+	// QuietEnded hears, once quiet hours end, how many messages they held from pushing
+	// (capcom-service.md 9.2), with no lock held.
+	QuietEnded func(held int)
+	Logf       func(string, ...any)
 }
 
 type state struct {
 	// TZ is the time zone the day and quiet hours are counted in: the one a device last shared,
 	// "" for the host's (9.2, 9.3).
-	TZ       string    `json:"tz,omitempty"`
-	Day      string    `json:"day,omitempty"` // the local date Turns counts
-	Turns    int       `json:"turns"`
-	Noted    string    `json:"noted,omitempty"` // the day the budget note went to the thread
-	Waiting  []Event   `json:"waiting,omitempty"`
-	Released []Batch   `json:"released,omitempty"`
-	Last     uint64    `json:"last,omitempty"` // the newest batch id's number
-	Saved    time.Time `json:"saved,omitzero"`
+	TZ       string  `json:"tz,omitempty"`
+	Day      string  `json:"day,omitempty"` // the local date Turns counts
+	Turns    int     `json:"turns"`
+	Noted    string  `json:"noted,omitempty"` // the day the budget note went to the thread
+	Waiting  []Event `json:"waiting,omitempty"`
+	Released []Batch `json:"released,omitempty"`
+	Last     uint64  `json:"last,omitempty"` // the newest batch id's number
+	// Held counts the messages event turns wrote in quiet hours with no push; the first check
+	// after quiet hours end pushes one count and clears it, a restart or a sleep included.
+	Held int `json:"held,omitempty"`
+	// ActTurn and ActN count the action calls of the newest turn that took no batch (an
+	// agent's report), for the per-turn cap (capcom-service.md 9.6).
+	ActTurn string    `json:"act_turn,omitempty"`
+	ActN    int       `json:"act_n,omitempty"`
+	Saved   time.Time `json:"saved,omitzero"`
 }
 
 // Queue is the event queue of one home host.
@@ -117,6 +136,7 @@ type Queue struct {
 	notes []string
 	outs  []outcome
 	rel   bool
+	held  int // a count of held messages to push, from the last change
 }
 
 type outcome struct {
@@ -369,9 +389,10 @@ func (q *Queue) TurnBatches(turn string) []Batch {
 	return out
 }
 
-// Act counts one action call of turn under a Capcom job (9.6). It refuses, and counts
-// nothing, when the turn took no batch or made limit calls already; else every batch the turn
-// took records the new count, so each of its round messages gets the outcome acted.
+// Act counts one action call of turn (9.6). It refuses, and counts nothing, when the turn made
+// limit calls already; else every batch the turn took records the new count, so each of its
+// round messages gets the outcome acted. A turn that took no batch (an agent's report) counts
+// apart, for the newest such turn only.
 func (q *Queue) Act(turn string, limit int) bool {
 	if turn == "" {
 		return false
@@ -385,7 +406,20 @@ func (q *Queue) Act(turn string, limit int) bool {
 			n = max(n, b.Acts)
 		}
 	}
-	if !any || n >= limit {
+	if !any {
+		if q.st.ActTurn == turn {
+			n = q.st.ActN
+		}
+		if n >= limit {
+			return false
+		}
+		q.st.ActTurn, q.st.ActN = turn, n+1
+		if err := q.saveLocked(); err != nil {
+			q.cfg.Logf("capcom events: save: %v", err)
+		}
+		return true
+	}
+	if n >= limit {
 		return false
 	}
 	for i := range q.st.Released {
@@ -397,6 +431,47 @@ func (q *Queue) Act(turn string, limit int) bool {
 		q.cfg.Logf("capcom events: save: %v", err)
 	}
 	return true
+}
+
+// HoldPush decides the push of one message turn wrote (9.2): it holds it, and counts it for
+// the push at the end of quiet hours, when the turn took a batch, none of its batches is
+// urgent, and quiet hours hold now. A user turn or an agent's report took no batch, so its
+// messages push at any hour.
+func (q *Queue) HoldPush(turn string) bool {
+	if turn == "" {
+		return false
+	}
+	q.mu.Lock()
+	took := false
+	for _, b := range q.st.Released {
+		if b.Turn == turn {
+			if b.Urgent {
+				q.mu.Unlock()
+				return false
+			}
+			took = true
+		}
+	}
+	quiet, _ := Quiet(q.cfg.Now(), q.locLocked(), sane(q.cfg.Limits()))
+	if !took || !quiet {
+		q.mu.Unlock()
+		return false
+	}
+	q.st.Held++
+	if err := q.saveLocked(); err != nil {
+		q.cfg.Logf("capcom events: save: %v", err)
+	}
+	q.checkLocked() // sets the timer for the end of quiet hours
+	q.mu.Unlock()
+	q.flush()
+	return true
+}
+
+// Held is the count of messages quiet hours hold from pushing now.
+func (q *Queue) Held() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.st.Held
 }
 
 // TurnEnded settles the batches turn took: each round message in them gets the turn's outcome,
@@ -481,9 +556,12 @@ func (q *Queue) Check() {
 // flush hands out what the last change left, with no lock held.
 func (q *Queue) flush() {
 	q.mu.Lock()
-	notes, outs, rel := q.notes, q.outs, q.rel
-	q.notes, q.outs, q.rel = nil, nil, false
+	notes, outs, rel, held := q.notes, q.outs, q.rel, q.held
+	q.notes, q.outs, q.rel, q.held = nil, nil, false, 0
 	q.mu.Unlock()
+	if held > 0 && q.cfg.QuietEnded != nil {
+		q.cfg.QuietEnded(held)
+	}
 	for _, n := range notes {
 		if q.cfg.Note != nil {
 			q.cfg.Note(n)
@@ -522,38 +600,47 @@ func (q *Queue) checkLocked() {
 	q.dayLocked(now)
 	changed := day != q.st.Day
 	var next time.Time
+	soon := func(t time.Time) {
+		if next.IsZero() || t.Before(next) {
+			next = t
+		}
+	}
+	// Quiet hours hold pushes, not turns (9.2): the first check after they end pushes the
+	// count they held, once.
 	quiet, quietEnd := Quiet(now, loc, lim)
+	if q.st.Held > 0 {
+		if quiet {
+			soon(quietEnd)
+		} else {
+			q.held, q.st.Held = q.st.Held, 0
+			changed = true
+		}
+	}
 	for len(q.st.Waiting) > 0 {
-		if q.st.Turns >= lim.DailyTurns {
+		if lim.DailyTurns > 0 && q.st.Turns >= lim.DailyTurns {
+			// A person's own job neither counts nor waits (9.3): it goes alone.
+			if i := slices.IndexFunc(q.st.Waiting, func(e Event) bool { return e.Free }); i >= 0 {
+				q.releaseLocked([]int{i}, now)
+				changed = true
+				continue
+			}
 			if q.st.Noted != q.st.Day {
 				q.st.Noted = q.st.Day
 				changed = true
 				q.notes = append(q.notes, fmt.Sprintf("Capcom looked at today's %d event batches; the rest wait for tomorrow", lim.DailyTurns))
 			}
-			next = NextMidnight(now, loc)
+			soon(NextMidnight(now, loc))
+			break
+		}
+		due := q.st.Waiting[0].At.Add(lim.BatchWindow)
+		urgent := slices.ContainsFunc(q.st.Waiting, func(e Event) bool { return e.Urgent })
+		if len(q.st.Waiting) < lim.BatchMax && now.Before(due) && !urgent {
+			soon(due)
 			break
 		}
 		var take []int
-		if quiet {
-			for i, w := range q.st.Waiting {
-				if w.Urgent && len(take) < lim.BatchMax {
-					take = append(take, i)
-				}
-			}
-			if len(take) == 0 {
-				next = quietEnd
-				break
-			}
-		} else {
-			due := q.st.Waiting[0].At.Add(lim.BatchWindow)
-			urgent := slices.ContainsFunc(q.st.Waiting, func(e Event) bool { return e.Urgent })
-			if len(q.st.Waiting) < lim.BatchMax && now.Before(due) && !urgent {
-				next = due
-				break
-			}
-			for i := range min(len(q.st.Waiting), lim.BatchMax) {
-				take = append(take, i)
-			}
+		for i := range min(len(q.st.Waiting), lim.BatchMax) {
+			take = append(take, i)
 		}
 		q.releaseLocked(soloSplit(q.st.Waiting, take), now)
 		changed = true
@@ -569,15 +656,16 @@ func (q *Queue) checkLocked() {
 	}
 }
 
-// soloSplit keeps a solo event alone: when the first event taken is solo it goes by itself;
-// else every solo event waits for a batch of its own.
+// soloSplit keeps a solo or free event alone: when the first event taken is one it goes by
+// itself; else every such event waits for a batch of its own.
 func soloSplit(w []Event, take []int) []int {
-	if len(take) == 0 || w[take[0]].Solo {
+	alone := func(e Event) bool { return e.Solo || e.Free }
+	if len(take) == 0 || alone(w[take[0]]) {
 		return take[:min(len(take), 1)]
 	}
 	var out []int
 	for _, i := range take {
-		if !w[i].Solo {
+		if !alone(w[i]) {
 			out = append(out, i)
 		}
 	}
@@ -599,13 +687,16 @@ func (q *Queue) releaseLocked(idx []int, now time.Time) {
 				b.Rounds = append(b.Rounds, w.Round)
 			}
 			b.Urgent = b.Urgent || w.Urgent
+			b.Free = len(idx) == 1 && w.Free
 			continue
 		}
 		kept = append(kept, w)
 	}
 	q.st.Waiting = kept
 	q.st.Released = append(q.st.Released, b)
-	q.st.Turns++
+	if !b.Free {
+		q.st.Turns++
+	}
 	q.rel = true
 }
 
@@ -640,7 +731,7 @@ func (q *Queue) saveLocked() error {
 // sane puts each limit back in its range, as settings.set keeps them.
 func sane(l Limits) Limits {
 	d := DefaultLimits
-	if l.DailyTurns < 1 {
+	if l.DailyTurns < 0 {
 		l.DailyTurns = d.DailyTurns
 	}
 	if l.BatchMax < 1 {

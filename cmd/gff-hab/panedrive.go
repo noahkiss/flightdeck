@@ -74,6 +74,17 @@ func (g paneGate) may(rule string, c paneCaller, callerProject string, t paneTar
 
 // allowed says what the rule lets this caller do, for a refusal's hint. It names no target.
 func (g paneGate) allowed(rule string, c paneCaller) string {
+	if c.isCapcom() {
+		switch {
+		case g == gateRead:
+			return "read no pane here"
+		case rule == readPanesProject:
+			return "type into any pane here, and start no pane"
+		case rule == drivePanesAgents:
+			return "type only into agents' panes here, and start no pane"
+		}
+		return "type into or start no pane here"
+	}
 	if g == gateDrive {
 		switch {
 		case c.door == doorPeer:
@@ -111,15 +122,23 @@ func (s *paneService) ruleOf(g paneGate) string {
 const drivePanesAgents = "agents"
 
 // mayDrive is agent.drive_panes for pane.type (hab-logic-api.md 3.12). The owner drives every
-// pane. The Capcom route drives none. The pane route never types into its own pane: a key there
-// could change its own mode. Beyond that it drives every pane under all; the panes of its own
-// session's project under project; only those of them that run an agent under agents; none
-// under off. A peer link drives every pane under all, else none.
+// pane. The Capcom service has no pane and no project, so every project counts as its own: it
+// drives every pane under all and project, every agent's pane under agents, none under off. The
+// pane route never types into its own pane: a key there could change its own mode. Beyond that
+// it drives every pane under all; the panes of its own session's project under project; only
+// those of them that run an agent under agents; none under off. A peer link drives every pane
+// under all, else none.
 func mayDrive(rule string, c paneCaller, callerProject string, t paneTarget) bool {
 	switch {
 	case c.door == doorOwner:
 		return true
 	case c.isCapcom():
+		switch rule {
+		case readPanesAll, readPanesProject:
+			return true
+		case drivePanesAgents:
+			return t.agent
+		}
 		return false
 	case c.door == doorRoute && samePane(c.pane, t.pane):
 		return false
@@ -181,6 +200,9 @@ type typeWrite struct {
 	// requireAgent: the rule allowed the call only because the pane runs an agent (agents); the
 	// write is refused when, under the claim, it no longer does.
 	requireAgent bool
+	// raw: the Capcom service's text under all goes into an agent's pane with no envelope, as
+	// the owner's does (hab-logic-api.md 3.12). Every other agent-door rule still holds.
+	raw bool
 }
 
 // agentText says whether text may come through an agent's door: no ESC, and no C0 control but
@@ -202,6 +224,9 @@ func (c paneCaller) name() string {
 	case doorOwner:
 		return "owner"
 	}
+	if c.isCapcom() {
+		return "capcom"
+	}
 	return c.pane
 }
 
@@ -210,7 +235,7 @@ func (c paneCaller) name() string {
 // List serves pane.list: the panes the caller may read under agent.read_panes, never a title.
 func (s *paneService) List(ctx context.Context, c paneCaller, p api.PaneListParams) (api.PaneList, error) {
 	rule := s.rule()
-	if c.isCapcom() || (c.door == doorPeer && rule != readPanesAll) {
+	if (c.isCapcom() && rule == readPanesOff) || (c.door == doorPeer && !c.isCapcom() && rule != readPanesAll) {
 		return api.PaneList{}, s.deny("pane.list", c, rule, "")
 	}
 	release, ok := s.drv.listSlots.takeN(c.key(), paneDrivePer, paneDriveAll)
@@ -245,7 +270,7 @@ func (s *paneService) List(ctx context.Context, c paneCaller, p api.PaneListPara
 	if here {
 		out.Panes = append(out.Panes, s.localRows(rule, c)...)
 	}
-	rows, unreached := s.askPeers(ctx, ask)
+	rows, unreached := s.askPeers(ctx, ask, c.forwardAs())
 	out.Panes = append(out.Panes, rows...)
 	out.Unreached = unreached
 	return out, nil
@@ -312,7 +337,7 @@ func (s *paneService) localRows(rule string, c paneCaller) []api.PaneListEntry {
 
 // askPeers asks each peer for its own rows at once, each for at most paneListPeerTime. A peer
 // that is offline, lacks pane-drive or fails is listed as unreached. Its rows are untrusted.
-func (s *paneService) askPeers(ctx context.Context, links []channels.Link) ([]api.PaneListEntry, []api.PaneUnreached) {
+func (s *paneService) askPeers(ctx context.Context, links []channels.Link, as string) ([]api.PaneListEntry, []api.PaneUnreached) {
 	type answer struct {
 		rows []api.PaneListEntry
 		miss *api.PaneUnreached
@@ -334,7 +359,7 @@ func (s *paneService) askPeers(ctx context.Context, links []channels.Link) ([]ap
 			ctx, cancel := context.WithTimeout(ctx, paneListPeerTime)
 			defer cancel()
 			var r api.PaneList
-			if err := l.Caller.Call(ctx, "pane.list", api.PaneListParams{}, &r); err != nil {
+			if err := l.Caller.Call(ctx, "pane.list", api.PaneListParams{As: as}, &r); err != nil {
 				reason := "no answer in time"
 				var ce *control.Error
 				if errors.As(err, &ce) {
@@ -402,7 +427,7 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 	defer release()
 	if peer != nil {
 		fwd := p
-		fwd.Session = bare
+		fwd.Session, fwd.As = bare, c.forwardAs()
 		var r api.PaneTyped
 		fctx, cancel := context.WithTimeout(ctx, s.drv.forwardWait())
 		defer cancel()
@@ -420,7 +445,8 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 	defer cancel()
 	rule := s.ruleOf(gateDrive)
 	n, err := s.drv.typer.typeInto(ctx, t.pane, typeWrite{text: p.Text, enter: p.Enter, agentDoor: c.door != doorOwner, recent: recent,
-		from: s.envelopeFrom(c), requireAgent: c.door == doorRoute && rule == drivePanesAgents})
+		from: s.envelopeFrom(c), requireAgent: (c.door == doorRoute || c.isCapcom()) && rule == drivePanesAgents,
+		raw: c.isCapcom() && rule == readPanesAll})
 	if err != nil {
 		return api.PaneTyped{}, err
 	}
@@ -464,9 +490,10 @@ func (a *agentService) typeInto(ctx context.Context, pane string, w typeWrite) (
 		return 0, control.Errorf(api.ErrorKindInvalid, "an agent sends Enter into an agent's pane only with text: Enter alone would submit what is in its prompt")
 	}
 	text := w.text
-	if w.agentDoor && agent {
+	if w.agentDoor && agent && !w.raw {
 		// An agent's text reaches another agent as an agent message, never as the user's own
 		// input: the first character the harness sees is the envelope's, never "!" or "/".
+		// Capcom's raw line under all goes as typed, still as one paste.
 		text = channels.Envelope(typeID(), w.from, text)
 	}
 	var writes [][]byte
@@ -509,6 +536,9 @@ func typeID() string {
 // envelopeFrom names the caller in the envelope: host/session for a filed pane, the pane id for
 // an unfiled one, and a peer for a peer link, which does not say which agent asked.
 func (s *paneService) envelopeFrom(c paneCaller) string {
+	if c.isCapcom() {
+		return "capcom"
+	}
 	switch c.door {
 	case doorPeer:
 		return "an agent on another hab"
@@ -562,8 +592,11 @@ func (s *paneService) New(ctx context.Context, c paneCaller, p api.PaneNewParams
 		return api.PaneStarted{}, s.denyExited("pane.new", c)
 	}
 	switch {
-	case c.isCapcom():
+	case c.isCapcom() && rule != readPanesAll:
+		// Capcom starts a pane only under all: under project it has no project to start in.
 		return api.PaneStarted{}, s.denyBy(gateDrive, "pane.new", c, rule, "")
+	case c.isCapcom() && p.InProject:
+		return api.PaneStarted{}, control.Errorf(api.ErrorKindInvalid, "Capcom has no project: leave in_project out, and give cwd")
 	case c.door == doorOwner, rule == readPanesAll:
 	case c.door == doorPeer, rule != readPanesProject, project == "", p.Cwd != "":
 		// off and agents start nothing: an agent that wants another agent uses spawn, which
@@ -579,7 +612,7 @@ func (s *paneService) New(ctx context.Context, c paneCaller, p api.PaneNewParams
 		return api.PaneStarted{}, control.Errorf(api.ErrorKindInvalid, "argv starts with an empty program")
 	}
 	cp := api.SessionCreateParams{Argv: p.Argv, Cwd: p.Cwd, Name: p.Name}
-	if c.door == doorRoute && p.Cwd == "" {
+	if c.door == doorRoute && !c.isCapcom() && p.Cwd == "" {
 		cp.CwdOf = c.pane
 	}
 	if p.InProject {

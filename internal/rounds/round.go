@@ -34,7 +34,7 @@ func (m Mode) Messages() bool { return m == ModeCapcom || m == ModeGroup }
 
 // Actions is the closed set of a Capcom job's action words (capcom-service.md 9.6), in the
 // order a round stores them.
-var Actions = []string{"hand_off", "start_session", "set_up_project", "group", "card", "fetch"}
+var Actions = []string{"hand_off", "start_session", "set_up_project", "group", "card", "fetch", "drive"}
 
 // NormalActions returns words in the order of Actions, each once, or an error naming the first
 // word outside the set.

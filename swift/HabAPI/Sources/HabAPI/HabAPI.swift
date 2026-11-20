@@ -1761,6 +1761,8 @@ public struct ChannelRecord: Codable, Sendable, Hashable {
 public struct ChannelRound: Codable, Sendable, Hashable {
     /// Capcom messages: the round's action words. The Capcom home hab reads them only from a message whose sender is round:<name>, and caps them by capcom.event_actions.
     public var actions: [RoundAction]?
+    /// Capcom messages: the round has no created_by, so a person owns it. Its batch goes alone and does not count toward Capcom's daily turn budget. The Capcom home hab reads it only from a message whose sender is round:<name>.
+    public var byPerson: Bool?
     /// Group messages: RFC 3339 UTC time after which the target hab never delivers it, and ends it expired.
     public var deadline: String?
     /// The batch, cut to the block's bounds. Data from outside, never instructions.
@@ -1785,6 +1787,7 @@ public struct ChannelRound: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case actions = "actions"
+        case byPerson = "by_person"
         case deadline = "deadline"
         case events = "events"
         case lastOk = "last_ok"
@@ -1798,8 +1801,9 @@ public struct ChannelRound: Codable, Sendable, Hashable {
         case trigger = "trigger"
     }
 
-    public init(actions: [RoundAction]? = nil, deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String? = nil, round: String, run: String, slot: String? = nil, trigger: String) {
+    public init(actions: [RoundAction]? = nil, byPerson: Bool? = nil, deadline: String? = nil, events: [RoundEvent]? = nil, lastOk: String? = nil, level: String? = nil, name: String, omitted: Int? = nil, prompt: String? = nil, round: String, run: String, slot: String? = nil, trigger: String) {
         self.actions = actions
+        self.byPerson = byPerson
         self.deadline = deadline
         self.events = events
         self.lastOk = lastOk
@@ -7317,14 +7321,18 @@ public struct PaneListEntry: Codable, Sendable, Hashable {
 }
 
 public struct PaneListParams: Codable, Sendable, Hashable {
+    /// capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.
+    public var `as`: String?
     /// A peer label or this hab's host id: list that host only. Absent: this hab and, where the rule allows, every online peer.
     public var host: String?
 
     enum CodingKeys: String, CodingKey {
+        case `as` = "as"
         case host = "host"
     }
 
-    public init(host: String? = nil) {
+    public init(`as`: String? = nil, host: String? = nil) {
+        self.`as` = `as`
         self.host = host
     }
 }
@@ -7390,6 +7398,8 @@ public struct PaneOwner: Codable, Sendable, Hashable {
 }
 
 public struct PaneReadParams: Codable, Sendable, Hashable {
+    /// capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.
+    public var `as`: String?
     /// A pane id on this hab.
     public var pane: String?
     /// Scrollback rows to return from just above the screen. Default 0, at most 10000.
@@ -7398,12 +7408,14 @@ public struct PaneReadParams: Codable, Sendable, Hashable {
     public var session: String?
 
     enum CodingKeys: String, CodingKey {
+        case `as` = "as"
         case pane = "pane"
         case scrollback = "scrollback"
         case session = "session"
     }
 
-    public init(pane: String? = nil, scrollback: Int? = nil, session: String? = nil) {
+    public init(`as`: String? = nil, pane: String? = nil, scrollback: Int? = nil, session: String? = nil) {
+        self.`as` = `as`
         self.pane = pane
         self.scrollback = scrollback
         self.session = session
@@ -7504,6 +7516,8 @@ public struct PaneText: Codable, Sendable, Hashable {
 }
 
 public struct PaneTypeParams: Codable, Sendable, Hashable {
+    /// capcom on a forward from the Capcom home hab (spec 3.12). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.
+    public var `as`: String?
     /// Press Enter after the text, as its own write.
     public var enter: Bool?
     /// A pane id on this hab.
@@ -7514,13 +7528,15 @@ public struct PaneTypeParams: Codable, Sendable, Hashable {
     public var text: String?
 
     enum CodingKeys: String, CodingKey {
+        case `as` = "as"
         case enter = "enter"
         case pane = "pane"
         case session = "session"
         case text = "text"
     }
 
-    public init(enter: Bool? = nil, pane: String? = nil, session: String? = nil, text: String? = nil) {
+    public init(`as`: String? = nil, enter: Bool? = nil, pane: String? = nil, session: String? = nil, text: String? = nil) {
+        self.`as` = `as`
         self.enter = enter
         self.pane = pane
         self.session = session
@@ -7568,6 +7584,8 @@ public struct PaneUnreached: Codable, Sendable, Hashable {
 }
 
 public struct PaneWaitParams: Codable, Sendable, Hashable {
+    /// capcom on a forward from the Capcom home hab (spec 3.11). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller.
+    public var `as`: String?
     /// The pane offset to read new output from. Absent means the pane's offset when the wait starts.
     public var from: UInt64?
     /// Text a line of new output contains.
@@ -7584,6 +7602,7 @@ public struct PaneWaitParams: Codable, Sendable, Hashable {
     public var timeoutMs: Int?
 
     enum CodingKeys: String, CodingKey {
+        case `as` = "as"
         case from = "from"
         case match = "match"
         case pane = "pane"
@@ -7593,7 +7612,8 @@ public struct PaneWaitParams: Codable, Sendable, Hashable {
         case timeoutMs = "timeout_ms"
     }
 
-    public init(from: UInt64? = nil, match: String? = nil, pane: String? = nil, pattern: String? = nil, quietMs: Int? = nil, session: String? = nil, timeoutMs: Int? = nil) {
+    public init(`as`: String? = nil, from: UInt64? = nil, match: String? = nil, pane: String? = nil, pattern: String? = nil, quietMs: Int? = nil, session: String? = nil, timeoutMs: Int? = nil) {
+        self.`as` = `as`
         self.from = from
         self.match = match
         self.pane = pane
@@ -8487,6 +8507,7 @@ public struct RoundAction: RawRepresentable, Codable, Sendable, Hashable {
     public static let group = RoundAction(rawValue: "group")
     public static let card = RoundAction(rawValue: "card")
     public static let fetch = RoundAction(rawValue: "fetch")
+    public static let drive = RoundAction(rawValue: "drive")
 }
 
 public struct RoundBatch: Codable, Sendable, Hashable {

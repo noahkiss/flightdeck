@@ -321,6 +321,7 @@ const (
 	RoundActionGroup        RoundAction = "group"
 	RoundActionCard         RoundAction = "card"
 	RoundActionFetch        RoundAction = "fetch"
+	RoundActionDrive        RoundAction = "drive"
 )
 
 const (

@@ -1765,8 +1765,11 @@ Built choices (`internal/panetext`, `cmd/gff-hab/panes.go`, `internal/control/pa
 - `pane.wait` follows the pane with `Link.Subscribe`, as a data stream does, and skips a snapshot
   chunk (bytes lost). A subscription that falls behind is opened again from the last offset read.
 - Listing, typing and creating are `pane.list`, `pane.type` and `pane.new` (3.12).
-- Not built yet: the Capcom route's reads and its forward. The built hab refuses the Capcom
-  route before any target is looked up. Stage A10 (`capcom-service.md` 18) builds them.
+- The Capcom route's reads and its forward (A10). The forward sets `as` only for the Capcom
+  route; the params of any other caller lose it. The far hab compares the peer link's device id
+  from its hello with the Capcom home in its own belief, and takes `as` only on a match that is
+  not itself. `as` is in the params of `pane.read`, `pane.wait`, `pane.list` and `pane.type`,
+  never in an MCP tool's schema.
 
 Limits:
 
@@ -1983,6 +1986,8 @@ rules. Their descriptions say that screen text is untrusted program output.
 | `gff-hab new` prints names without control or bidi characters | `TestPrintStartedClean` |
 | Across hosts: list with the peer's label, type by `label/name`, the near rule gates the forward, the far rule refuses its peer door, `project` leaves a peer's rows out and denies `-host` | `TestPaneDrivePeer` |
 | The MCP pane tools, the read ones marked untrusted, the driving ones destructive and open-world | `TestPaneToolsUntrusted` |
+| The Capcom route: reads under `project` and `all`, refused under `off` with no forward; types under each value of `agent.drive_panes` with every project as its scope; the raw line only under `all`; control keys and Enter alone still refused; another agent's text stays enveloped; starts a pane only under `all`; each forward carries `as: "capcom"` | `TestPaneCapcomRead`, `TestPaneCapcomType`, `TestPaneCapcomNew`, `TestPaneCapcomRawLine`, `TestMayDrive`, `TestMayRead` |
+| The far hab takes `as: "capcom"` only from the peer that holds the Capcom mark; another peer, no mark, itself, the owner's door and a pane's route are judged under their own rule | `TestPaneCapcomMark` |
 
 Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 
@@ -1992,8 +1997,10 @@ Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 - The 2 s check reads the time of the last `pane.input` that reached the pane. It lives in
   memory: a type right after a gff-hab restart does not see input from before it.
 - `pane.new` calls the server's own `session.create` path, with its idempotency table.
-- Not built yet: the Capcom route's list, type, start and raw line. The built hab refuses the
-  Capcom route at every value. Stage A10 (`capcom-service.md` 18) builds them.
+- The Capcom route's list, type, start and raw line (A10). The raw line is a flag on the write:
+  it skips only the envelope, so the paste, the text rules, the Enter-alone refusal and the gate
+  still apply. In an agent's pane the envelope names the caller `capcom`. Capcom's `pane.new`
+  never takes the folder of a caller pane, and `in_project` is `invalid` for it.
 
 Limits:
 

@@ -18,7 +18,7 @@ import (
 
 // The bounds and refusals of reading panes (hab-logic-api.md 3.11): the near hab's rule on a
 // forward, another hab's text treated as untrusted, the wait bounds and lease, the cost of a
-// long open line, no existence oracle, and the Capcom route.
+// long open line, and no existence oracle. The Capcom route is in panecapcom_test.go.
 
 // paneErrKind returns the error kind of err, "" for none.
 func paneErrKind(err error) api.ErrorKind {
@@ -320,24 +320,6 @@ func TestCleanPeerText(t *testing.T) {
 	}
 	if e := cliErr(control.Errorf(api.ErrorKindDenied, "a‮b\x07c")); strings.ContainsAny(e.Error(), "‮\x07") || paneErrKind(e) != api.ErrorKindDenied {
 		t.Fatalf("cli error %q", e)
-	}
-}
-
-// TestPaneReadCapcom: the Capcom service's route reads no pane at any level, before any target
-// is looked up.
-func TestPaneReadCapcom(t *testing.T) {
-	t.Parallel()
-	s := &paneService{rule: func() string { return readPanesAll }, logf: t.Logf}
-	c := paneCaller{door: doorRoute, pane: capcomRoute}
-	if _, err := s.Read(context.Background(), c, api.PaneReadParams{Session: "any"}); paneErrKind(err) != api.ErrorKindDenied ||
-		!strings.Contains(err.Error(), "Capcom") {
-		t.Fatalf("read: %v", err)
-	}
-	if _, err := s.Wait(context.Background(), c, api.PaneWaitParams{Session: "bee/any", QuietMS: 1}); paneErrKind(err) != api.ErrorKindDenied {
-		t.Fatalf("wait: %v", err)
-	}
-	if mayRead(readPanesAll, c, "", paneTarget{pane: "00000000-0000-0000-0000-000000000002"}) {
-		t.Fatal("mayRead lets the Capcom route read under all")
 	}
 }
 
