@@ -1388,7 +1388,7 @@ it, `actions`: the action words this job's round messages may use.
 - **Standing instructions are Capcom jobs.** "Watch this build and keep that agent fresh" in a
   user turn becomes a `capcom` round: Capcom creates it with the trigger and the prompt the
   user's words give, as any agent may (`rounds.md` 12 Q1).
-  - **The job is the user's.** A `capcom` round the Capcom route creates in a user turn has no
+  - **The job is the user's.** A `capcom` round the Capcom route creates in a user turn (one a user's item opened, not joined; 9.9) has no
     `created_by`, as a person's round has: the user's message asked for it. It is protected as a
     granted job is: an agent route may only remove its words, and any other edit, a pause or a
     delete from an agent route is `denied`. So it runs outside the daily turn budget (9.3), and
@@ -1567,10 +1567,15 @@ Where 9.2 to 9.6 left a choice open:
   any turn.
 - **The batch input** at `all` lists every word but `card` and `fetch`, plus the words of the
   turn's jobs.
-- **Standing instructions.** A `capcom` round the Capcom route creates has no `created_by`:
-  the guard refuses round changes in an event turn, so only a user turn reaches the create. A
-  round of another mode keeps its creator. At `all` the thread gets the record card "Capcom set
-  up job <name>", of type `job`, its ref the job.
+- **Standing instructions.** A `capcom` round the Capcom route creates in a turn a user's item
+  opened has no `created_by` and the mark `by_person`: it is the user's job. The guard refuses
+  round changes in an event turn. A turn that a user message only joined (an event turn first)
+  keeps Capcom as the creator, with no mark: event text came before the user spoke, so the job
+  counts toward the budget and stays Capcom's until a person grants it words. The engine link
+  tells the two apart (`UserOpened`; unknown after a reconnect, so no). A round of another mode
+  keeps its creator. At every level the thread gets the record card "Capcom set up job
+  <name>", of type `job`, its ref the job; below `all` it adds that the job acts only with the
+  words the user turns on, and for a joined turn that the job counts as Capcom's.
 - **Not built yet: the grant card.** Below `all`, the manual tells Capcom to name the words a
   job needs, and the user turns them on in Capcom jobs (`app.md` 21.5), which shows the prompt
   and grants at the revision shown. The one-tap card in the thread waits for a later change.

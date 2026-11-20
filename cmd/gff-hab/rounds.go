@@ -464,11 +464,13 @@ type roundsConfig struct {
 // roundsService runs the rounds of one gff-hab.
 type roundsService struct {
 	cfg roundsConfig
-	// capcomJob hears a capcom round the Capcom route made in a user turn: the service's
-	// record card (capcom-service.md 9.6). Nil: none.
-	capcomJob func(r api.Round)
-	store     *rounds.Store
-	sched     *rounds.Scheduler
+	// capcomJob hears a capcom round the Capcom route made: the service's record card
+	// (capcom-service.md 9.6); person is true when it is the user's job. Nil: none.
+	capcomJob func(r api.Round, person bool)
+	// capcomUserOpened reports whether a user's item opened Capcom's running turn. Nil: never.
+	capcomUserOpened func() bool
+	store            *rounds.Store
+	sched            *rounds.Scheduler
 
 	editMu sync.Mutex // one edit at a time: a revision check and its update
 	liveMu sync.Mutex // one live-state report of a harness run at a time (liveLater)
@@ -2256,17 +2258,19 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 				by = ss.ID
 			}
 			capcomJob := pane == capcomRoute && p.Round.Mode == api.RoundModeCapcom
-			if capcomJob {
+			person := capcomJob && svc.capcomUserOpened != nil && svc.capcomUserOpened()
+			if person {
 				// A standing instruction (capcom-service.md 9.6): a capcom round the Capcom
-				// route makes is the user's, as a person's round is. The guard refuses round
-				// changes in an event turn, so only a user turn reaches here. With no
-				// created_by, no agent route may edit, pause or delete it; one may only remove
-				// its words. Its round messages run outside the daily turn budget (by_person).
+				// route makes in a turn a user's message opened is the user's, as a person's
+				// round is. With no created_by, no agent route may edit, pause or delete it;
+				// one may only remove its words. Its round messages run outside the daily turn
+				// budget (by_person). A turn a user message only joined keeps Capcom as the
+				// creator: its event text came first.
 				by = ""
 			}
 			r, err := svc.Create(ctx, p, by)
 			if err == nil && capcomJob && svc.capcomJob != nil {
-				svc.capcomJob(r.Round)
+				svc.capcomJob(r.Round, person)
 			}
 			return r, nil, err
 		case "round.update":

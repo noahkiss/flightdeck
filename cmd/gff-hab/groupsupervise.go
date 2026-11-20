@@ -29,7 +29,9 @@ type memberSwap struct {
 	// create runs session.create on this hab, as its own confirmations do.
 	create func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	folder func(ctx context.Context, session string) string // nil or "": the record's
-	logf   func(string, ...any)
+	// start is how session.create started a session (the resume book); nil: not known.
+	start func(session string) (resumeEntry, bool)
+	logf  func(string, ...any)
 }
 
 // asideName is the first free <name>-<n> for the old session.
@@ -64,6 +66,12 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 	if w.folder != nil {
 		if f := w.folder(ctx, ss.ID); f != "" {
 			folder = f
+		}
+	}
+	if model == "" && w.start != nil {
+		// No group record (a session action's recreate): the model the member was started with.
+		if e, ok := w.start(ss.ID); ok && e.Harness == st.Harness {
+			model = e.Model
 		}
 	}
 	if folder == "" {
@@ -151,6 +159,13 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 // swap, when it was made.
 func swapSuccessor(store *structure.Store, old, name, group string) (string, bool) {
 	s2, ok := store.SessionByName(name)
+	if group == "" {
+		// A session action's recreate: the fresh session is in no group.
+		if !ok || s2.ID == old || s2.Group != nil {
+			return "", false
+		}
+		return s2.ID, true
+	}
 	if !ok || s2.ID == old || s2.Group == nil || s2.Group.ID != group {
 		return "", false
 	}
@@ -174,9 +189,11 @@ func undoSwaps(store *structure.Store, logf func(string, ...any)) map[string]str
 			continue
 		}
 		g := m.Group
-		if err := store.SetGroup(old, &g, m.Envelope); err != nil {
-			logf("supervise: undoing the swap of %s: %v", m.Name, err)
-			continue
+		if g.ID != "" { // a session action's recreate had no group
+			if err := store.SetGroup(old, &g, m.Envelope); err != nil {
+				logf("supervise: undoing the swap of %s: %v", m.Name, err)
+				continue
+			}
 		}
 		if ss.Name != m.Name {
 			if _, err := store.RenameSession(old, m.Name); err != nil {

@@ -68,6 +68,9 @@ func TestLinkEventBatches(t *testing.T) {
 	}
 	e.send(Message{Type: TInputTaken, Item: json.RawMessage(`"` + u2.ID + `"`)})
 	waitFor(t, "a user turn", func() bool { return h.link.Status().UserTurn })
+	if h.link.Status().UserOpened {
+		t.Fatal("a joined event turn counts as opened by the user (capcom-service.md 9.6)")
+	}
 	e.send(Message{Type: TReply, Turn: StrTurn("t1"), Text: "the disk is full"})
 	e.send(Message{Type: TTurnEnded, Turn: StrTurn("t1"), Result: ResultSuccess})
 	waitFor(t, "the outcome", func() bool { mu.Lock(); defer mu.Unlock(); return slices.Equal(outs, []string{"m1 told"}) })
@@ -94,6 +97,9 @@ func TestLinkBatchWaitsForTurn(t *testing.T) {
 	}
 	e.send(Message{Type: TTurnStarted, Turn: StrTurn("t1"), Origin: "user", Items: []string{u.ID}})
 	waitFor(t, "the user turn", func() bool { s := h.link.Status(); return s.Turn == "t1" && s.UserTurn })
+	if !h.link.Status().UserOpened {
+		t.Fatal("a turn a user message opened is not marked opened")
+	}
 	ev, _, _ := h.thread.Add(capcomthread.Item{Kind: capcomthread.KindEvent, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: "outside text"})
 	q.Add(capcomevents.Event{Item: ev.ID, Urgent: true})
 	h.link.Kick()

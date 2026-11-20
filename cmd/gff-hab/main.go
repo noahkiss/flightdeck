@@ -2022,7 +2022,9 @@ func serve(args []string) error {
 				}
 				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
 			}}
+		rec.start = resumes.get
 		acts.recreate = rec.recreate
+		acts.recreatable = rec.recreatable
 		paneSvc.acts = acts
 		defer acts.Close()
 	}
@@ -2213,7 +2215,8 @@ func serve(args []string) error {
 		hooks.SetRounds(roundHook(store, roundsSvc))
 		if capcomEng != nil {
 			eng, host := capcomEng, *hostID
-			roundsSvc.capcomJob = func(r api.Round) { eng.jobMade(host, r) }
+			roundsSvc.capcomJob = func(r api.Round, person bool) { eng.jobMade(host, r, person) }
+			roundsSvc.capcomUserOpened = func() bool { return eng.turnState(0).UserOpened }
 		}
 	}
 	if agentSvc != nil {

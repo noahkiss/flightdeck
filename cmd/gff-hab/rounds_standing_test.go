@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -19,7 +21,9 @@ func TestStandingInstruction(t *testing.T) {
 		c.catalog = capcomCatalog
 	})
 	var heard []string
-	svc.capcomJob = func(r api.Round) { heard = append(heard, r.Name) }
+	svc.capcomJob = func(r api.Round, person bool) { heard = append(heard, r.Name) }
+	opened := true
+	svc.capcomUserOpened = func() bool { return opened }
 	h := roundHook(st, svc)
 	ctx := context.Background()
 	call := func(pane, method string, p any) error {
@@ -63,5 +67,40 @@ func TestStandingInstruction(t *testing.T) {
 	none.Actions = nil
 	if err := call(capcomRoute, "round.update", api.RoundUpdateParams{ID: r.ID, Round: none}); err != nil {
 		t.Errorf("removing a word from Capcom's route: %v", err)
+	}
+	// An event turn that a user message only joined: the job keeps Capcom as its creator, is no
+	// person's, and still gets its record card.
+	opened = false
+	joined := spec
+	joined.Name = "joined"
+	if err := call(capcomRoute, "round.create", api.RoundCreateParams{Round: joined}); err != nil {
+		t.Fatal(err)
+	}
+	j, _ := svc.Get(api.RoundRef{Name: "joined"})
+	e, _ := svc.store.Get(j.ID)
+	if j.CreatedBy == "" || e.Round.ByPerson {
+		t.Fatalf("a joined turn's job: created_by %q, by_person %v", j.CreatedBy, e.Round.ByPerson)
+	}
+	if len(heard) != 2 {
+		t.Fatalf("heard %v", heard)
+	}
+}
+
+// TestJobMadeCard: Capcom's record card for a job it set up shows at every level, and says when
+// the job is not the user's.
+func TestJobMadeCard(t *testing.T) {
+	t.Parallel()
+	h := newJobsHarness(t)
+	for _, c := range []struct {
+		level  string
+		person bool
+		want   string
+	}{{`"all"`, true, "Capcom set up job keeper"}, {`"allow"`, true, "only with the words you turn on"}, {`"ask"`, false, "counts as Capcom's"}} {
+		h.set[settings.CapcomEventActions] = c.level
+		h.e.jobMade("host-a", api.Round{RoundSpec: api.RoundSpec{Name: "keeper"}}, c.person)
+		cards := h.jobCards()
+		if len(cards) == 0 || !strings.Contains(cards[len(cards)-1].Text, c.want) || cards[len(cards)-1].Card.Ref != "host-a/keeper" {
+			t.Fatalf("%s: cards %+v", c.level, cards)
+		}
 	}
 }

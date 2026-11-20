@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -56,9 +57,12 @@ type sessionActionService struct {
 	restart      func(ctx context.Context, session string) (string, error)
 	closePane    func(ctx context.Context, pane string) error
 	closeSession func(session string) error
-	recreate     func(ctx context.Context, ss api.Session, st api.AgentState, seed string) (string, error)
-	publish      func(structure.Event)
-	logf         func(string, ...any)
+	recreate     func(ctx context.Context, ss api.Session, st api.AgentState, seed, seedFrom string) (string, error)
+	// recreatable refuses a recreate that would start the session wider, or as something else,
+	// than it was started (memberSwap.recreatable). Nil: no check.
+	recreatable func(ss api.Session, st api.AgentState) error
+	publish     func(structure.Event)
+	logf        func(string, ...any)
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -114,8 +118,15 @@ func checkSessionAction(p api.SessionActionParams) error {
 	return nil
 }
 
+// actionOpts are what the door adds to an action: recheck runs the caller's rule again just
+// before the action runs (nil for the owner), and seedFrom names who wrote the follow-up.
+type actionOpts struct {
+	recheck  func() error
+	seedFrom string
+}
+
 // Request starts an action on a session of this hab and answers at once with state queued.
-func (s *sessionActionService) Request(ss api.Session, action api.SessionActionKind, followUp string) (api.SessionAction, error) {
+func (s *sessionActionService) Request(ss api.Session, action api.SessionActionKind, followUp string, o actionOpts) (api.SessionAction, error) {
 	if ss.Pane == "" || ss.State == api.SessionStateExited {
 		return api.SessionAction{}, control.Errorf(api.ErrorKindConflict, "session %s has no live pane", ss.Name)
 	}
@@ -148,6 +159,11 @@ func (s *sessionActionService) Request(ss api.Session, action api.SessionActionK
 		if s.recreate == nil {
 			return api.SessionAction{}, control.Errorf(api.ErrorKindUnavailable, "this hab cannot recreate sessions")
 		}
+		if s.recreatable != nil {
+			if err := s.recreatable(ss, st); err != nil {
+				return api.SessionAction{}, err
+			}
+		}
 	}
 	s.mu.Lock()
 	if s.closed {
@@ -161,7 +177,8 @@ func (s *sessionActionService) Request(ss api.Session, action api.SessionActionK
 	s.pending[ss.ID] = a
 	s.mu.Unlock()
 	if action == "compact" || action == "clear" {
-		_, err := s.compacts.Action(ss.Pane, "/"+string(action), followUp, func(c api.Compaction) { s.fromCompaction(a, c) })
+		// The rule is checked again under each send's claim, just before a key goes in.
+		_, err := s.compacts.Action(ss.Pane, "/"+string(action), followUp, o.recheck, func(c api.Compaction) { s.fromCompaction(a, c) })
 		if err != nil {
 			s.mu.Lock()
 			delete(s.pending, ss.ID)
@@ -174,7 +191,7 @@ func (s *sessionActionService) Request(ss api.Session, action api.SessionActionK
 	s.emit(a)
 	go func() {
 		defer s.wg.Done()
-		s.run(a, ss, followUp)
+		s.run(a, ss, agent, followUp, o)
 	}()
 	return s.snapshot(a), nil
 }
@@ -240,7 +257,7 @@ func (s *sessionActionService) waitIdle(pane string) error {
 }
 
 // run moves restart, close and recreate through their steps.
-func (s *sessionActionService) run(a *api.SessionAction, ss api.Session, followUp string) {
+func (s *sessionActionService) run(a *api.SessionAction, ss api.Session, hadAgent bool, followUp string, o actionOpts) {
 	if err := s.waitIdle(ss.Pane); err != nil {
 		s.step(a, actionFailed, err.Error())
 		return
@@ -256,6 +273,17 @@ func (s *sessionActionService) run(a *api.SessionAction, ss api.Session, followU
 		ss = now
 	}
 	st, _ := s.agents.Get(ss.Pane)
+	if hadAgent && (st.State == "" || st.State == api.AgentStatusNone || st.State == api.AgentStatusExited || st.Harness != a.Harness) {
+		s.step(a, actionFailed, "denied: the agent left the pane while the action waited")
+		return
+	}
+	// Authorise again: the rule, or the pane's program, may have changed during the wait.
+	if o.recheck != nil {
+		if err := o.recheck(); err != nil {
+			s.step(a, actionFailed, "denied: "+errText(err))
+			return
+		}
+	}
 	s.step(a, actionRunning, "")
 	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
 	defer cancel()
@@ -275,7 +303,7 @@ func (s *sessionActionService) run(a *api.SessionAction, ss api.Session, followU
 			return
 		}
 	case "recreate":
-		id, err := s.recreate(ctx, ss, st, followUp)
+		id, err := s.recreate(ctx, ss, st, followUp, o.seedFrom)
 		if err != nil {
 			s.step(a, actionFailed, errText(err))
 			return
@@ -287,14 +315,101 @@ func (s *sessionActionService) run(a *api.SessionAction, ss api.Session, followU
 	s.step(a, actionDone, "")
 }
 
-// recreate starts a fresh session under ss's name, with the same folder, harness and model, and
-// follow-up as its seed (hab-logic-api.md 3.13). The old session is renamed <name>-<n> and its
-// pane closed; its conversation stays resumable. Messages held for it move to the new one. A
-// group member goes through the group's swap, which keeps its group. A failed create puts the
-// old name back.
-func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentState, seed string) (string, error) {
+// recreateStart is how a recreate starts the fresh session: the argv and model the old one was
+// started with, the session-picking flags taken out.
+type recreateStart struct {
+	argv  []string
+	model string
+}
+
+// recreatePlan decides how a session starts again fresh (hab-logic-api.md 3.13), so a recreate
+// never starts it wider, or as something else, than it was started. It refuses Capcom's own
+// session and a round's run session, which their owners start; a harness the owner started by
+// hand in a shell, whose flags the hab never saw; and Codex or opencode started with flags. A
+// Claude Code start keeps its flags but those that pick the session. A plain shell starts again
+// as it was. The hab keeps no start environment, so none is carried.
+func (w *memberSwap) recreatePlan(ss api.Session, st api.AgentState) (recreateStart, error) {
+	use := func(why string) error {
+		return control.Errorf(api.ErrorKindUnavailable, "recreate is not available for session %s: %s; use restart, which keeps its start", ss.Name, why)
+	}
+	switch {
+	case ss.Kind == api.SessionKindCapcom:
+		return recreateStart{}, use("it is a Capcom session")
+	case ss.Round != nil:
+		return recreateStart{}, use("a round's run started it, with the round's arguments, environment and limits")
+	}
+	var e resumeEntry
+	known := false
+	if w.start != nil {
+		e, known = w.start(ss.ID)
+	}
+	if st.Harness == "" {
+		if known && e.Harness == "" {
+			return recreateStart{argv: slices.Clone(e.Argv)}, nil
+		}
+		if known && e.Harness != "" {
+			return recreateStart{}, use("its harness is not running")
+		}
+		return recreateStart{}, nil // a shell the hab knows nothing more of: the hab's shell
+	}
+	if !known || e.Harness != st.Harness {
+		return recreateStart{}, use(st.Harness + " was started by hand or by another program, so how it started is not known")
+	}
+	argv := slices.Clone(e.Argv)
+	switch {
+	case len(argv) <= 1:
+	case st.Harness == detect.KindClaude:
+		argv = stripSessionFlags(argv)
+	case st.Harness == detect.KindCodex:
+		argv = slices.DeleteFunc(argv, func(a string) bool { return a == "--no-daemon" })
+		if len(argv) > 1 {
+			return recreateStart{}, use("Codex was started with flags the hab does not carry")
+		}
+	default:
+		return recreateStart{}, use(st.Harness + " was started with flags the hab does not carry")
+	}
+	return recreateStart{argv: argv, model: e.Model}, nil
+}
+
+// stripSessionFlags drops the Claude Code flags that pick the session, and their values.
+func stripSessionFlags(argv []string) []string {
+	out := []string{argv[0]}
+	for i := 1; i < len(argv); i++ {
+		name, _, inline := strings.Cut(argv[i], "=")
+		if !slices.Contains(claudeSessionFlags, name) {
+			out = append(out, argv[i])
+			continue
+		}
+		takesValue := name == "--session-id" || name == "--resume" || name == "-r"
+		if takesValue && !inline && i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+			i++
+		}
+	}
+	return out
+}
+
+// recreatable is recreatePlan's refusal alone, for the request.
+func (w *memberSwap) recreatable(ss api.Session, st api.AgentState) error {
+	if ss.Group != nil {
+		return nil
+	}
+	_, err := w.recreatePlan(ss, st)
+	return err
+}
+
+// recreate starts a fresh session under ss's name, with the same folder and start, and
+// follow-up as its seed from seedFrom (hab-logic-api.md 3.13). The old session is renamed
+// <name>-<n> and its pane closed; its conversation stays resumable. Messages held for it move to
+// the new one. A group member goes through the group's swap, which keeps its group. The swap
+// mark makes a stop mid-way undone or finished at the next start; a failed create puts the old
+// name back unless the fresh session runs all the same.
+func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentState, seed, seedFrom string) (string, error) {
 	if ss.Group != nil {
 		return w.swap(ctx, ss, st, nil, seed)
+	}
+	plan, err := w.recreatePlan(ss, st)
+	if err != nil {
+		return "", err
 	}
 	folder := ""
 	if w.folder != nil {
@@ -310,13 +425,22 @@ func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentS
 	defer release()
 	name := ss.Name
 	aside := w.asideName(name)
+	// The mark goes on disk first, as a group swap's: a gff-hab that stops mid-way finishes or
+	// undoes it at its next start (undoSwaps, finishSwaps). No group: Group stays empty.
+	if err := w.store.SetSwap(ss.ID, &structure.SwapMark{Name: name, Aside: aside}); err != nil {
+		return "", err
+	}
 	if err := w.rename(ss.ID, aside); err != nil {
+		w.store.SetSwap(ss.ID, nil)
 		return "", fmt.Errorf("renaming the old session: %s", errText(err))
 	}
 	key := sha256.Sum256([]byte(ss.ID + "\x00recreate\x00" + name))
-	p := api.SessionCreateParams{Name: name, Harness: st.Harness, IdempotencyKey: "recreate-" + hex.EncodeToString(key[:16])}
+	p := api.SessionCreateParams{Name: name, Harness: st.Harness, Argv: plan.argv, IdempotencyKey: "recreate-" + hex.EncodeToString(key[:16])}
 	if st.Harness != "" {
-		p.Model, p.Seed = ss.Model, seed
+		p.Model, p.Seed = plan.model, seed
+		if seed != "" && validSeedFrom(seedFrom) {
+			p.SeedFrom = seedFrom
+		}
 	}
 	if ss.Project != "" {
 		p.ProjectDir = folder // filed again in the folder's project
@@ -325,10 +449,20 @@ func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentS
 	}
 	made, err := w.create(ctx, p)
 	if err != nil {
-		if rerr := w.rename(ss.ID, name); rerr != nil {
-			w.logf("session action: putting back the name of %s: %v", aside, rerr)
+		// A create that timed out may have made the session all the same: then go on with it.
+		id, ok := swapSuccessor(w.store, ss.ID, name, "")
+		if !ok {
+			if rerr := w.rename(ss.ID, name); rerr != nil {
+				w.logf("session action: putting back the name of %s: %v", aside, rerr)
+			}
+			w.store.SetSwap(ss.ID, nil)
+			return "", err
 		}
-		return "", err
+		w.logf("session action: %s: the create answered %v, but the fresh session %s runs; the recreate goes on", name, err, id)
+		made = api.SessionCreated{Session: id}
+	}
+	if err := w.store.SetReplaced(made.Session, ss.ID); err != nil {
+		w.logf("session action: %s: replaced: %v", name, err)
 	}
 	if n, err := w.move(ss.ID, made.Session); err != nil {
 		w.logf("session action: %s: moving its held messages: %v", name, err)
@@ -341,6 +475,9 @@ func (w *memberSwap) recreate(ctx context.Context, ss api.Session, st api.AgentS
 			w.logf("session action: closing the old pane of %s (%s): %v", name, aside, err)
 		}
 		cancel()
+	}
+	if err := w.store.SetSwap(ss.ID, nil); err != nil {
+		w.logf("session action: %s: clearing the swap mark: %v", name, err)
 	}
 	return made.Session, nil
 }
@@ -379,13 +516,31 @@ func (s *paneService) Action(ctx context.Context, c paneCaller, p api.SessionAct
 			return api.SessionAction{}, peerErr(peer.Label, err)
 		}
 		r.ID, r.State, r.Reason = panetext.CleanControls(r.ID), panetext.CleanControls(r.State), panetext.CleanControls(r.Reason)
+		r.Action, r.Harness = p.Action, panetext.CleanControls(r.Harness)
 		r.Session, r.SessionID, r.NewSession = peer.Label+"/"+bare, "", ""
 		return r, nil
 	}
 	if !t.filed {
 		return api.SessionAction{}, control.Errorf(api.ErrorKindInvalid, "pane %s has no session", t.pane)
 	}
-	r, err := s.acts.Request(t.session, p.Action, p.FollowUp)
+	var o actionOpts
+	if c.isCapcom() {
+		// Capcom wrote the follow-up; and its rule is checked again just before the action
+		// runs, on the same pane: the rule, or the pane's program, may change while it waits.
+		o.seedFrom = s.host + "/" + capcomServiceName
+		pane, id := t.pane, t.session.ID
+		o.recheck = func() error {
+			t2, _, _, err := s.prepareBy(gateDrive, "session.action", c, "", id)
+			if err != nil {
+				return err
+			}
+			if !samePane(t2.pane, pane) {
+				return control.Errorf(api.ErrorKindDenied, "the session's pane changed")
+			}
+			return nil
+		}
+	}
+	r, err := s.acts.Request(t.session, p.Action, p.FollowUp, o)
 	if err != nil {
 		return api.SessionAction{}, err
 	}

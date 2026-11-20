@@ -2094,10 +2094,29 @@ Built choices (A10; `cmd/gff-hab/sessionaction.go`, `sessionactioncli.go`):
 - **restart, close and recreate** wait in `queued` until the agent is `idle`, `done` or `error`,
   or runs no agent, then run. `close` closes the pane, then the record. `recreate` holds the
   old session's messages, renames it `<name>-<n>`, starts the new session in the old one's
-  folder (filed again in its project when the old one was filed, else unfiled), with its harness,
-  its model and `follow_up` as its seed, moves the held messages, and closes the old pane; a
-  failed start puts the name back. Restart, close and recreate read the session again after the
-  wait, and fail when its pane closed or moved meanwhile. A group member's `recreate` is the group swap.
+  folder (filed again in its project when the old one was filed, else unfiled), moves the held
+  messages, and closes the old pane. Restart, close and recreate read the session again after
+  the wait, and fail when its pane closed or moved meanwhile.
+- **recreate never widens the start.** The new session starts as `session.create` started the
+  old one (the resume book): its argv and model, with Claude Code's session-picking flags
+  (`--session-id`, `--resume`, `--continue`, `--fork-session`) taken out, and `follow_up` as its
+  seed. It answers `unavailable`, with a hint to use `restart`, for Capcom's own session, a
+  round's run session (its arguments, environment and limits are the round's), a harness the
+  owner started by hand in a shell (its flags were never seen), Codex started with flags other
+  than `--no-daemon`, and opencode started with any. A plain shell starts as it was. The hab
+  keeps no start environment, so none is carried. A group member's `recreate` is the group
+  swap, with the model it was started with when no group record is at hand.
+- **recreate survives a stop.** It sets the group swap's mark before the rename, so a gff-hab
+  that stops mid-way undoes the rename, or finishes with the fresh session, at its next start.
+  A start that answers an error but made the session all the same goes on with it.
+- **Authorised twice.** The Capcom route's rule runs again just before the action does: for
+  restart, close and recreate after the wait, and for compact and clear under each send's
+  claim. A rule that no longer passes, or a pane whose program changed, ends the action
+  `failed` with "denied". For every caller, an agent that left the pane during the wait ends it
+  the same way.
+- **The follow-up names Capcom.** A `recreate` from Capcom sends its follow-up as a seed from
+  `<host>/capcom`, so the new agent does not take it for the owner's.
+- **A peer's answer** loses control characters in every field, and carries the action asked for.
 - **The door.** `session.action` sits with the pane methods: on the route it is in the pane
   methods' list, and on the control connection it is served beside them. The owner's door runs
   it at every value; the Capcom route and its marked forward under `pane.type`'s rule for
@@ -2106,7 +2125,9 @@ Built choices (A10; `cmd/gff-hab/sessionaction.go`, `sessionactioncli.go`):
 - **Start mode** is not recorded or carried yet (`harness-adapters.md`, Start mode).
 
 Tests: `TestSessionActionClear`, `TestSessionActionCompact`, `TestSessionActionRefusals`,
-`TestSessionActionAfterTurn`, `TestSessionActionDoors`, `TestRecreate`, and `TestSessionActionHab` against a real hab: `gff-hab action` refused from a pane, `close` and `recreate` of shell sessions from the owner's door (`docs/testing.md`).
+`TestSessionActionAfterTurn`, `TestSessionActionDoors`, `TestSessionActionReauthorize`,
+`TestSessionActionPeerAnswer`, `TestSessionActionDoorWiring`, `TestRecreate`,
+`TestRecreateTimedOutCreate`, `TestRecreateRefusals`, and `TestSessionActionHab` against a real hab: `gff-hab action` refused from a pane, `close` and `recreate` of shell sessions from the owner's door (`docs/testing.md`).
 
 ---
 

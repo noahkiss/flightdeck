@@ -153,8 +153,18 @@ func (s *compactService) Start(pane, followUp string, guard func(pane string) er
 // Action is a session action's compact or clear on a Claude Code pane (hab-logic-api.md 3.13):
 // the same steps as a self-compact, with /clear and its SessionStart source clear for clear.
 // onStep hears each step; no agent.compact event goes.
-func (s *compactService) Action(pane, command, followUp string, onStep func(api.Compaction)) (api.Compaction, error) {
-	return s.request(pane, api.CompactParams{FollowUp: followUp}, nil, nil, command, onStep)
+func (s *compactService) Action(pane, command, followUp string, recheck func() error, onStep func(api.Compaction)) (api.Compaction, error) {
+	// Under each send's claim: the typing wait, then the caller's rule again (nil: none).
+	guard := func(p string) error {
+		if err := s.guard(p); err != nil {
+			return err
+		}
+		if recheck != nil {
+			return recheck()
+		}
+		return nil
+	}
+	return s.request(pane, api.CompactParams{FollowUp: followUp}, guard, nil, command, onStep)
 }
 
 func (s *compactService) request(pane string, p api.CompactParams, guard func(string) error, done chan api.Compaction,

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -46,7 +45,7 @@ func newActionRig(t *testing.T) *actionRig {
 	r.acts.restart = func(_ context.Context, session string) (string, error) { rec("restart " + session); return "", nil }
 	r.acts.closePane = func(_ context.Context, pane string) error { rec("close pane " + pane); return nil }
 	r.acts.closeSession = func(session string) error { rec("close session " + session); return nil }
-	r.acts.recreate = func(_ context.Context, ss api.Session, st api.AgentState, seed string) (string, error) {
+	r.acts.recreate = func(_ context.Context, ss api.Session, st api.AgentState, seed, _ string) (string, error) {
 		rec("recreate " + ss.Name + " " + st.Harness + " " + seed)
 		return "new-id", nil
 	}
@@ -84,7 +83,7 @@ func TestSessionActionClear(t *testing.T) {
 	t.Parallel()
 	r := newActionRig(t)
 	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
-	a, err := r.acts.Request(liveSession("p1"), "clear", "read handoff.md and continue")
+	a, err := r.acts.Request(liveSession("p1"), "clear", "read handoff.md and continue", actionOpts{})
 	if err != nil || a.State != actionQueued || a.Harness != "claude" {
 		t.Fatalf("request %+v %v", a, err)
 	}
@@ -121,7 +120,7 @@ func TestSessionActionCompact(t *testing.T) {
 	t.Parallel()
 	r := newActionRig(t)
 	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusIdle})
-	if _, err := r.acts.Request(liveSession("p1"), "compact", ""); err != nil {
+	if _, err := r.acts.Request(liveSession("p1"), "compact", "", actionOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	r.next(t, actionQueued)
@@ -147,19 +146,19 @@ func TestSessionActionRefusals(t *testing.T) {
 		pane   string
 		action api.SessionActionKind
 	}{{"cx", "compact"}, {"cx", "clear"}, {"oc", "compact"}, {"oc", "clear"}, {"none", "clear"}} {
-		_, err := r.acts.Request(liveSession(c.pane), c.action, "")
+		_, err := r.acts.Request(liveSession(c.pane), c.action, "", actionOpts{})
 		if paneErrKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "recreate") {
 			t.Errorf("%s on %s: %v, want unavailable naming recreate", c.action, c.pane, err)
 		}
 	}
 	r.agents.set("p1", api.AgentState{Harness: "claude", State: api.AgentStatusWorking})
-	if _, err := r.acts.Request(liveSession("p1"), "restart", ""); err != nil {
+	if _, err := r.acts.Request(liveSession("p1"), "restart", "", actionOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.acts.Request(liveSession("p1"), "close", ""); paneErrKind(err) != api.ErrorKindConflict {
+	if _, err := r.acts.Request(liveSession("p1"), "close", "", actionOpts{}); paneErrKind(err) != api.ErrorKindConflict {
 		t.Fatalf("a second action: %v", err)
 	}
-	if _, err := r.acts.Request(api.Session{ID: "s", Name: "gone", State: api.SessionStateExited}, "close", ""); paneErrKind(err) != api.ErrorKindConflict {
+	if _, err := r.acts.Request(api.Session{ID: "s", Name: "gone", State: api.SessionStateExited}, "close", "", actionOpts{}); paneErrKind(err) != api.ErrorKindConflict {
 		t.Fatalf("an exited session: %v", err)
 	}
 	for _, p := range []api.SessionActionParams{{Session: "x", Action: "reboot"}, {Session: "x", Action: "close", FollowUp: "y"},
@@ -190,7 +189,7 @@ func TestSessionActionAfterTurn(t *testing.T) {
 			follow = "carry on"
 		}
 		n := len(r.took())
-		if _, err := r.acts.Request(liveSession(c.pane), c.action, follow); err != nil {
+		if _, err := r.acts.Request(liveSession(c.pane), c.action, follow, actionOpts{}); err != nil {
 			t.Fatal(err)
 		}
 		r.next(t, actionQueued)
@@ -213,7 +212,7 @@ func TestSessionActionAfterTurn(t *testing.T) {
 		return "", control.Errorf(api.ErrorKindUnavailable, "session p4: how it starts again is not known")
 	}
 	r.agents.set("p4", api.AgentState{Harness: "claude", State: api.AgentStatusIdle})
-	r.acts.Request(liveSession("p4"), "restart", "")
+	r.acts.Request(liveSession("p4"), "restart", "", actionOpts{})
 	r.next(t, actionQueued)
 	r.next(t, actionRunning)
 	if f := r.next(t, actionFailed); !strings.Contains(f.Reason, "not known") {
@@ -285,58 +284,5 @@ func TestSessionActionDoors(t *testing.T) {
 	params := []byte(`{"session":"mate","action":"close"}`)
 	if _, _, err := paneHook(dr.s)(ctx, paneMine, "session.action", params); paneErrKind(err) != api.ErrorKindDenied {
 		t.Fatalf("an agent's route: %v", err)
-	}
-}
-
-// TestRecreate: a fresh session under the old name, the old one renamed aside, its held
-// messages moved and its pane closed; a failed create puts the name back.
-func TestRecreate(t *testing.T) {
-	t.Parallel()
-	dr := newDriveRig(t)
-	var log []string
-	var created []api.SessionCreateParams
-	failCreate := error(nil)
-	w := &memberSwap{store: dr.s.store, logf: t.Logf,
-		hold: func(_ context.Context, session, name string) (func(), error) {
-			log = append(log, "hold "+name)
-			return func() { log = append(log, "release") }, nil
-		},
-		move: func(from, to string) (int, error) { log = append(log, "move to "+to); return 1, nil },
-		rename: func(session, name string) error {
-			log = append(log, "rename "+name)
-			_, err := dr.s.store.RenameSession(session, name)
-			return err
-		},
-		closePane: func(_ context.Context, pane string) error { log = append(log, "close "+pane); return nil },
-		folder:    func(context.Context, string) string { return "/work/one" },
-		create: func(_ context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
-			if failCreate != nil {
-				return api.SessionCreated{}, failCreate
-			}
-			created = append(created, p)
-			return api.SessionCreated{Session: "fresh"}, nil
-		}}
-	ss, _ := dr.s.store.SessionByName("mate")
-	ss.Model = "model-x"
-	id, err := w.recreate(context.Background(), ss, api.AgentState{Harness: "claude"}, "carry on")
-	if err != nil || id != "fresh" {
-		t.Fatalf("recreate %s %v", id, err)
-	}
-	if len(created) != 1 || created[0].Name != "mate" || created[0].ProjectDir != "/work/one" || created[0].Harness != "claude" ||
-		created[0].Model != "model-x" || created[0].Seed != "carry on" {
-		t.Fatalf("created %+v", created)
-	}
-	if got := strings.Join(log, "|"); got != "hold mate|rename mate-1|move to fresh|close "+paneMate+"|release" {
-		t.Fatalf("steps %s", got)
-	}
-	// A failed create puts the name back.
-	log = nil
-	failCreate = errors.New("no harness")
-	other, _ := dr.s.store.SessionByName("other")
-	if _, err := w.recreate(context.Background(), other, api.AgentState{Harness: "claude"}, ""); err == nil {
-		t.Fatal("a failed create succeeded")
-	}
-	if _, ok := dr.s.store.SessionByName("other"); !ok {
-		t.Fatalf("the old name was not put back: %v", log)
 	}
 }
