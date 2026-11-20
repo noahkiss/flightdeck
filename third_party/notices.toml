@@ -140,7 +140,7 @@ name = "kaldi-native-fbank"
 url = "https://github.com/csukuangfj/kaldi-native-fbank"
 license = "Apache-2.0"
 files = ["third_party/licenses/kaldi-native-fbank/LICENSE"]
-release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.22.4 (the version sherpa-onnx pins)" }
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.23.1 (the version sherpa-onnx pins)" }
 
 [[component]]
 name = "KISS FFT"
@@ -150,11 +150,39 @@ files = ["third_party/licenses/kissfft/COPYING", "third_party/licenses/kissfft/B
 release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "the version kaldi-native-fbank pins" }
 
 [[component]]
-name = "kaldi-decoder and kaldifst"
+name = "kaldi-decoder"
 url = "https://github.com/k2-fsa/kaldi-decoder"
 license = "Apache-2.0"
 files = ["third_party/licenses/kaldi-decoder/LICENSE"]
-release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "0.3.0 (the version sherpa-onnx pins)" }
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "0.4.0 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "kaldifst"
+url = "https://github.com/k2-fsa/kaldifst"
+license = "Apache-2.0"
+files = ["third_party/licenses/kaldifst/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.9.0 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "kaldi-hmm-gmm"
+url = "https://github.com/csukuangfj/kaldi-hmm-gmm"
+license = "Apache-2.0"
+files = ["third_party/licenses/kaldi-hmm-gmm/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.2.1 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "kaldi_native_io"
+url = "https://github.com/csukuangfj/kaldi_native_io"
+license = "Apache-2.0"
+files = ["third_party/licenses/kaldi-native-io/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.23.2 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "Eigen"
+url = "https://gitlab.com/libeigen/eigen"
+license = "MPL-2.0; some files BSD-3-Clause, Apache-2.0 or the MINPACK licence"
+files = ["third_party/licenses/eigen/COPYING.README", "third_party/licenses/eigen/COPYING.MPL2", "third_party/licenses/eigen/COPYING.BSD", "third_party/licenses/eigen/COPYING.APACHE", "third_party/licenses/eigen/COPYING.MINPACK"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library, through kaldi-hmm-gmm)", version = "5.0.1 (the version sherpa-onnx pins)" }
 
 [[component]]
 name = "OpenFst"

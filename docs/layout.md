@@ -190,7 +190,7 @@ cgo and gff-hab builds with `CGO_ENABLED=0` (`voice.md`, Hab speech engine).
   `make check-pure`, `make build`, `make vet` and `make test-pure` skip it. It stays in the one
   module: it adds nothing to `go.mod`, because it calls the C API directly, not sherpa-onnx's Go
   bindings.
-- **Pinned, not vendored.** `make sherpa-onnx` downloads the static C library of sherpa-onnx 2.0.1
+- **Pinned, not vendored.** `make sherpa-onnx` downloads the static C library of sherpa-onnx 2.0.2
   for this platform (macOS arm64 and x86_64, Linux x86_64 and aarch64) and its `c-api.h` from the
   same tag into `build/sherpa-onnx`, checks both SHA-256 sums from the Makefile, and writes a
   pkg-config file for them. onnxruntime is linked into that library.
