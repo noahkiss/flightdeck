@@ -155,7 +155,7 @@ that hands a message to Capcom or to a coordinator is a new thing a run does.
 | `debounce`, `cooldown` | No | `event` and `watch` only: default 30 s and 5 minutes (4.5) |
 | `secrets` | No | `watch` only: the name of a secret set in the hab's config (4.4) |
 | `harness` | `fresh` with a prompt | `claude`, `codex`, `opencode`, or a later adapter |
-| `model`, `harness_args` | No | Passed to the harness at start, as `session.create` does. Permission modes go here; the hab adds none of its own |
+| `model`, `harness_args` | No | Passed to the harness at start, as `session.create` does. A permission mode here wins; with none, the hab adds `agent.start_mode`'s flag (`harness-adapters.md`, Start mode) |
 | `command` | No | `fresh` only: a plain program (`argv`) instead of a harness and a prompt. Success is exit status 0 |
 | `project` | `fresh` | The project, by id. The folder is the project's most recent folder on the runner (`hab-logic-api.md` 3.9, project folders) |
 | `cwd` | No | A folder inside the project, instead of its most recent one |
@@ -967,7 +967,8 @@ thing this feature must never do.
 - The timeout keeps counting. A run still blocked at its timeout ends as `timed_out`; the request
   stays open in the session for the user to answer later.
 - Rounds never answer permissions. A round that should run without prompts says so in
-  `harness_args`, with the harness's own permission mode, chosen by the user.
+  `harness_args`, with the harness's own permission mode, chosen by the user, or runs under an
+  `agent.start_mode` that skips them (`harness-adapters.md`, Start mode).
 
 Decision: a blocked run stays live and answerable. Reason: Paseo fails such a run, but our runs
 are visible sessions; an approval from the phone lets the job finish, which is the point of

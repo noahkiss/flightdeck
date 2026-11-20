@@ -1239,13 +1239,14 @@ defines the internals. Each row is **shared**: a change on either side updates b
   down (`capcom-service.md` 9.1), so reports to a Capcom coordinator go in at once and never
   wait in the record's inbox (5.5).
 - Capcom's tool list includes the coordinator's group tools of 15.2 (`capcom-service.md` 5.1).
-  An event turn may not call them (`capcom-service.md` 9.4), except under a Capcom job's `group`
-  action (`capcom-service.md` 9.6).
+  Below `capcom.event_actions = all`, an event turn may not call them (`capcom-service.md` 9.4),
+  except under a Capcom job's `group` action (`capcom-service.md` 9.6).
 - The group card links from Capcom's thread, and Capcom sums up the result there.
 - A group whose coordinator is Capcom has Capcom's home host as its home hab. When the Capcom
   mark moves, the group moves with it, also when the old home slept through the re-assignment
   (5.7).
-- Capcom has no shell. The heavy-run lock and the lane do not need one from the coordinator.
+- The engine has no shell of its own (`capcom-service.md` 5.1). The heavy-run lock and the lane
+  do not need one from the coordinator.
 
 Built (B8):
 

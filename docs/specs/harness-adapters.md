@@ -27,10 +27,11 @@ Every claim about a harness names its source in [Sources](#sources).
 13. [Agent kit](#agent-kit)
 14. [Spawn](#spawn)
 15. [Permission answers](#permission-answers)
-16. [Edge cases](#edge-cases)
-17. [Fixtures](#fixtures)
-18. [Open decisions](#open-decisions)
-19. [Sources](#sources)
+16. [Start mode](#start-mode)
+17. [Edge cases](#edge-cases)
+18. [Fixtures](#fixtures)
+19. [Open decisions](#open-decisions)
+20. [Sources](#sources)
 
 ## Terms
 
@@ -1530,6 +1531,41 @@ and several questions all go this way (checked live against Claude Code 2.1.329)
   the app. Choice `answer` on an opencode pane is `unavailable` in the same words.
 - Claude's question with no request id (a `Notification` `elicitation_dialog`) opens no
   request, so the app answers it only in the terminal.
+
+## Start mode
+
+One setting decides how far a new agent session may go without asking: `agent.start_mode`
+(`app.md` 20.4). The hab adds the harness's own permission flag when it starts a harness.
+
+| Value | Means | Claude Code | Codex | opencode |
+|---|---|---|---|---|
+| `ask` (default) | The harness's own default: it asks before edits and commands | No flag | No flag | No change |
+| `edits` | File edits without asking; commands still ask | `--permission-mode acceptEdits` | `--full-auto` | Unverified |
+| `bypass` | No permission prompts | `--permission-mode bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` | Unverified |
+
+- **Unverified.** The Claude Code and Codex flags come from each harness's documented CLI, not
+  yet from a test against the pinned versions. opencode sets permissions in its config, and a
+  per-process override is not checked. Until a row is checked, the hab adds nothing for it and
+  logs one line per start. The stage that builds this checks each flag first.
+- **Where it applies.** Every start of a harness through `session.create` with `harness` set:
+  the app, `gff`, `spawn`, Capcom's `start_session`, rounds (`rounds.md` 3), group members and
+  `recreate` (`hab-logic-api.md` 3.13). Not a plain program, and not a pane the user starts by
+  hand.
+- **An explicit flag wins.** When `argv`, `harness_args` or an alias already names a permission
+  mode for that harness, the hab adds nothing.
+- **Kept on the session.** The record keeps the mode it started with. `session.resume`,
+  `session.restart` and `recreate` start again with that mode, not the current setting.
+- **Read at each start.** A change applies to the next start; a running session keeps its mode.
+- The app shows the mode on a session's details when it is not `ask`.
+
+Decision: one hab-side preference for the start mode, with no level. Reason: the owner wants one
+global setting for the mode every new session starts in. A level never sets a harness's own
+bypass flag (`app.md` 20.2), so the level picker leaves it alone; the user sets it once.
+
+Not built yet. Its acceptance: each value adds its flag on a fake harness's argv for Claude Code
+and Codex; an explicit flag in `harness_args` or an alias suppresses it; `session.resume` and
+`recreate` keep the recorded mode after the setting changed; a plain program gets nothing; an
+unverified row adds nothing and logs once.
 
 ## Edge cases
 
