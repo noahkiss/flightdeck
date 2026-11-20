@@ -129,6 +129,35 @@ final class RoundsListTests: XCTestCase {
         XCTAssertEqual(reviews.reach, .tellsYou)
     }
 
+    func testPausedJobShowsUnpauseNotItsReach() throws {
+        let s = sections([hab("h1", "workbench", online: false, [
+            round("checks", mode: .capcom, trigger: onNotice, project: nil, actions: [.handOff], paused: true),
+        ])])
+        let row = try XCTUnwrap(s.first?.rows.first)
+        XCTAssertTrue(row.paused, "the row shows Unpause")
+        XCTAssertFalse(row.online, "Unpause waits for the hab")
+        XCTAssertEqual(row.reach, .actsAlone, "still a job, so its section's note holds")
+        XCTAssertEqual(s.first?.note, "Capcom handles these")
+        XCTAssertTrue(row.meta.hasPrefix("Paused · No run yet"), row.meta)
+    }
+
+    /// The home's `capcom.event_actions` reaches the job rows (capcom-service.md 9.6).
+    func testHomeEventActionsFromTheSnapshot() async throws {
+        let h = await sampleHab("bench")
+        await h.setCapability(RoundCenter.capability, true)
+        await h.loadSetting(SettingsRegistry.capcomEventActions, .string("ask"))
+        try await h.loadRound(RoundSpec(actions: [.handOff], mode: .capcom, name: "checks", prompt: "Hand it off.",
+                                        trigger: RoundTrigger(event: "notice.raised", kind: .event)))
+        let f = Fleet()
+        f.roundDefaults = UserDefaults(suiteName: "RoundsListTests-\(UUID().uuidString)")!
+        f.add(HabConnection(id: "bench", transport: h.transport(), timing: fastTiming()), label: "bench")
+        await f.setActive(true)
+        await eventually("round") { f.rounds.habs.first?.rows.count == 1 }
+        XCTAssertEqual(f.rounds.listSections(home: "bench").first?.rows.first?.reach, .asksFirst)
+        XCTAssertEqual(f.rounds.listSections(home: nil).first?.rows.first?.reach, .actsAlone, "no home: the built-in allow")
+        await f.setActive(false)
+    }
+
     func testReachFollowsTheHomesEventActions() {
         let some: Set<RoundAction> = [.handOff], none: Set<RoundAction> = []
         XCTAssertEqual(CapcomJobReach.of(words: some, eventActions: "allow"), .actsAlone)

@@ -349,7 +349,7 @@ The root is a stock tab view with four tabs, in this order:
 | Tab | Symbol | Holds |
 |---|---|---|
 | Sessions | `rectangle.stack` | The status board (3.1), with a badge of the needs-you count |
-| Capcom | `dot.radiowaves.left.and.right` | The Capcom view (4.10) under a large "Capcom" title |
+| Capcom | `dot.radiowaves.left.and.right` | The Capcom view (4.10) under a "Capcom" title |
 | Rounds | `clock.arrow.circlepath` | The rounds list (21.2) with New round and the "Show run sessions" switch in its bar |
 | Settings | `slider.horizontal.3` | The Settings tab (20.7) |
 
@@ -1036,16 +1036,19 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   Capcom has no project to watch in a terminal; the terminal is there for a first-start trust
   prompt (`capcom.md` 7.5). Every session with kind `capcom` gets this style, opened from its
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
-- **The Capcom tab (iPhone).** The tab's root is the Capcom view under a large "Capcom"
-  title. The subtitle says where Capcom runs: "Runs on <hab> · answers and routes anything",
-  else the entry row's words for the state. The compose button (New conversation) sits in the
-  bar; a pane Capcom's terminal is "Show terminal" in the More menu, not a switch in the
-  title's place. The composer reads "Ask Capcom", and the usage pacing line sits over the
-  composer as plain text. The subtitle needs iOS 26; before it the title shows alone. Design
-  call: the tab is Capcom's home, so its title names it, as the approved artboard does. The
-  artboard's "New topic" stays "New conversation": the hab writes that label on its divider
+- **The Capcom tab (iPhone).** The tab's root is the Capcom view under a "Capcom" title: large
+  while the view shows a state, inline over the thread, since the chat opens scrolled to its
+  end. The subtitle says where Capcom runs: "Runs on <hab> · answers and routes anything",
+  else the entry row's words for the state; a narrow bar cuts it short. The compose button
+  (New conversation) sits in the bar; a pane Capcom's terminal is "Show terminal" in the More
+  menu, not a switch in the title's place. The usage pacing line sits over the composer as
+  plain text. The subtitle needs iOS 26; before it the title shows alone. Design call: the tab
+  is Capcom's home, so its title names it, as the approved design does. The design's "New
+  topic" stays "New conversation": the hab writes that label on its divider
   (`capcom-service.md` 7.5), and one concept keeps one word. Code: `CapcomCenter.tabSubtitle`,
   `CapcomScreen(tab:)`. Tests: `RoundsListTests.testCapcomTabWords`.
+- **Composer.** Every Capcom session's composer reads "Ask Capcom" where another reads
+  "Message".
 - **Usage pacing.** While the home's catalog lists the `capcom` consumer of the usage
   governor at a pace other than `ok`, or unpaced, a line sits above the thread (over the
   composer on the Capcom tab):
@@ -4275,15 +4278,16 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   bar and "Show run sessions" in its More menu. One list holds every hab's rounds, split by
   what starts them: "On a schedule" (cron and once), "When something happens" (event and
   watch), then "By hand". An empty section does not show. A section whose rows are all Capcom
-  jobs says "Capcom handles these" beside its header. Each row: the name; the prompt's first
+  jobs says "Capcom handles these" beside its header, or under it when both do not fit. Each row: the name; the prompt's first
   line (else the command); then the trigger, the project's name and the hab ("<hab>
   (offline)" when it is), led by "Paused" or "Completed". On the right: the last run's state
   and how long ago it ended ("Succeeded", "3 days ago"), else "Next" and the next run; a paused
-  round shows Unpause there instead. A Capcom job's row leads its third line with the last
+  round shows Unpause there instead (off while its hab is offline; a refusal shows under the
+  row), and a completed one shows nothing there. A Capcom job's row leads its third line with the last
   outcome and its time ("Acted today 14:02", "No run yet") and shows on the right what the job
   may do. With no rounds yet, the list says so and offers New round. Design call: the approved
-  artboard puts the hab in the row, not one section per hab, and splits by trigger; "By hand"
-  keeps "On a schedule" true. The artboard's "Passed" and "Resume" stay "Succeeded" and
+  design puts the hab in the row, not one section per hab, and splits by trigger; "By hand"
+  keeps "On a schedule" true. The design's "Passed" and "Resume" stay "Succeeded" and
   "Unpause": they are the round page's words, and a round's mode can be `resume`.
 - **What a job may do.** "Acts alone", "Asks first" or "Tells you", from the job's words and the
   Capcom home's `capcom.event_actions` (`capcom-service.md` 9.4, 9.6): `all` acts alone for

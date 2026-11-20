@@ -40,6 +40,8 @@ public struct RoundsListRow: Identifiable, Hashable, Sendable {
     public var when: String?
     /// Capcom jobs only.
     public var reach: CapcomJobReach?
+    /// The round's hab is online: Unpause needs it.
+    public var online = true
     public var id: String { row.id }
     public var paused: Bool { row.mark == .paused }
     public var completed: Bool { row.mark == .completed }
@@ -122,6 +124,7 @@ public enum RoundsList {
         meta.append(hab.online ? hab.label : "\(hab.label) (offline)")
 
         var out = RoundsListRow(row: r, title: round.name, summary: summary(round), meta: meta.joined(separator: " · "))
+        out.online = hab.online
         if job { out.reach = CapcomJobReach.of(words: Set(round.actions ?? []), eventActions: eventActions) }
         if r.mark != nil { return out }
         if !job, let last = round.lastRun {

@@ -1856,7 +1856,16 @@ public actor FakeHab {
             projects: projects.values.sorted { $0.id < $1.id },
             rounds: capabilities.contains(RoundCenter.capability) ? roundBook.list() : nil,
             seq: seq,
-            sessions: sessions.values.sorted { $0.id < $1.id })
+            sessions: sessions.values.sorted { $0.id < $1.id },
+            settings: snapshotSettings.isEmpty ? nil : snapshotSettings.values.sorted { $0.id < $1.id })
+    }
+
+    /// Hab-side settings the snapshot carries, by id (app.md 20.5).
+    private var snapshotSettings: [String: Setting] = [:]
+
+    /// Puts a hab-side setting in the snapshot, as set by a client.
+    public func loadSetting(_ id: String, _ value: JSONValue) {
+        snapshotSettings[id] = Setting(default: value, id: id, revision: 1, source: .client, value: value)
     }
 
     private func startHeartbeat(_ c: Conn) {

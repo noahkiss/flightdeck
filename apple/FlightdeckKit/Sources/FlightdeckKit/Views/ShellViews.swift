@@ -868,6 +868,7 @@ struct RoundsTab: View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 30)) { ctx in
                 let sections = center.listSections(home: home, now: ctx.date)
+                ScrollViewReader { proxy in
                 List {
                     ForEach(sections) { s in
                         Section {
@@ -890,10 +891,20 @@ struct RoundsTab: View {
                                 }
                             }
                         }
+                        .id(s.id)
                     }
                 }
                 .overlay {
                     if sections.isEmpty { empty }
+                }
+                #if DEBUG
+                // Debug builds: `-FlightdeckRoundsSection events` scrolls to that section.
+                .task {
+                    guard let k = UserDefaults.standard.string(forKey: "FlightdeckRoundsSection") else { return }
+                    try? await Task.sleep(for: .seconds(3))
+                    proxy.scrollTo(k, anchor: .top)
+                }
+                #endif
                 }
             }
             .navigationDestination(for: RoundRow.self) { row in
@@ -962,6 +973,12 @@ struct RoundsListRowView: View {
                 Text(row.meta)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                // Unpause's refusal, in the hab's words (21.3).
+                if let e = center.errors[row.id] {
+                    Text(e)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
             }
         } trailing: {
             trailing
@@ -972,19 +989,21 @@ struct RoundsListRowView: View {
 
     @ViewBuilder
     private var trailing: some View {
-        if let reach = row.reach {
+        if row.paused {
+            Button("Unpause") { Task { await center.setPaused(row.row, false) } }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderless)
+                .disabled(!row.online || center.busy.contains(row.id))
+        } else if row.completed {
+            EmptyView()
+        } else if let reach = row.reach {
             Text(reach.rawValue)
                 .font(.footnote.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(reachColor(reach).opacity(0.15)))
-                .foregroundStyle(reachColor(reach))
+                .background(Capsule().fill(reachColor(reach).opacity(0.2)))
+                .foregroundStyle(.primary)
                 .fixedSize()
-        } else if row.paused {
-            Button("Unpause") { Task { await center.setPaused(row.row, false) } }
-                .font(.subheadline.weight(.semibold))
-                .buttonStyle(.borderless)
-                .disabled(center.busy.contains(row.id))
         } else if let status = row.status {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(status)
