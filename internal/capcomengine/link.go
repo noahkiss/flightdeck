@@ -32,9 +32,12 @@ type Status struct {
 	// running turn or joined it. A turn without one is an event turn for what it may do (9.4):
 	// an event batch's, an agent report's.
 	UserTurn bool
-	Typing   bool
-	Approval *Approval // the open approval, or nil
-	Draining bool      // shutdown was sent
+	// UserOpened: a user item opened the running turn; a user message that joins an event turn
+	// never sets it. Unknown after a reconnect, so false (capcom-service.md 9.6).
+	UserOpened bool
+	Typing     bool
+	Approval   *Approval // the open approval, or nil
+	Draining   bool      // shutdown was sent
 }
 
 // Has reports whether the engine declared a capability.
@@ -416,6 +419,7 @@ func (l *Link) handle(c *conn, m Message) {
 			// The engine says whether a user item opened or joined the turn. An engine that does
 			// not say leaves it an event turn: unknown is never a user turn (9.4, 9.6).
 			l.st.UserTurn = t.User
+			l.st.UserOpened = false
 			running = t.Turn
 			l.turnKnownLocked()
 		}
@@ -489,10 +493,10 @@ func (l *Link) handle(c *conn, m Message) {
 		c.batchOut = false
 		l.st.Turn, l.st.Origin = m.TurnID(), m.Origin
 		l.opened = append([]string(nil), m.Items...)
-		l.st.UserTurn = false
+		l.st.UserTurn, l.st.UserOpened = false, false
 		for _, id := range m.Items {
 			if it, ok := th.Get(id); ok && userItem(it) {
-				l.st.UserTurn = true
+				l.st.UserTurn, l.st.UserOpened = true, true
 			}
 		}
 		l.typingLocked(m.Origin == "user")
@@ -572,7 +576,7 @@ func (l *Link) handle(c *conn, m Message) {
 		l.mu.Lock()
 		origin := l.st.Origin
 		if l.st.Turn == m.TurnID() || m.TurnID() == "" {
-			l.st.Turn, l.st.Origin, l.st.UserTurn = "", "", false
+			l.st.Turn, l.st.Origin, l.st.UserTurn, l.st.UserOpened = "", "", false, false
 		}
 		l.typingLocked(false)
 		l.mu.Unlock()

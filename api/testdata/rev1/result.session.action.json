@@ -1,0 +1,21 @@
+{
+  "action": "recreate",
+  "at": "at-11",
+  "harness": "harness-7",
+  "id": "id-4",
+  "new_session": "new_session-10",
+  "reason": "reason-9",
+  "seq": 3,
+  "session": "session-5",
+  "session_id": "session_id-6",
+  "state": "state-8",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

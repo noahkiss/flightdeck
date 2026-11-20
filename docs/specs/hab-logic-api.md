@@ -2048,7 +2048,7 @@ not yet prove it against the pinned harness version; the stage that builds it ch
 | Action | Claude Code | Codex | opencode |
 |---|---|---|---|
 | `compact` | `/compact` through `session.send`'s path. Start: the `PreCompact` hook or a `compact_boundary` record; end: `SessionStart` with source `compact`, or the record. Built for an agent's own pane and for group members (`harness-adapters.md`, Self-compact; `groups.md` 9.2) | `/compact` through the same path. End: the rollout's `compacted` record, which the chat view already reads (`harness-adapters.md`, Codex). Unverified: no Codex hook reports a compaction, so the record is the only end signal | Unverified: the server API's compaction route in opencode 2.x. Until checked, `unavailable` |
-| `clear` | `/clear` through the same path. End: `SessionStart` with source `clear` *(gk)*, which binds the new native session id to the pane, as the hook client already handles (`internal/hook/client.go`). Unverified: the source word against the pinned version | Unverified: `/new` *(gk)* starts a new conversation in the TUI, and its `SessionStart` hook binds the new id. Until checked, `unavailable` | Unverified: a new session through the server API that the TUI then shows. Until checked, `unavailable` |
+| `clear` | `/clear` through the same path. End: `SessionStart` with source `clear`, which binds the new native session id to the pane, as the hook client already handles (`internal/hook/client.go`). Checked in A10 (built choices below) | Unverified: `/new` *(gk)* starts a new conversation in the TUI, and its `SessionStart` hook binds the new id. Until checked, `unavailable` | Unverified: a new session through the server API that the TUI then shows. Until checked, `unavailable` |
 | `restart`, `close`, `recreate` | The same for every harness: the resume book, `pane.close`, `session.close` and `session.create` (3.9). `recreate` is built for group members (`cmd/gff-hab/supervise.go`); this method makes it general | As Claude Code | As Claude Code |
 
 - **`unavailable`** names the harness and the action. The caller may `recreate` instead, which
@@ -2080,9 +2080,57 @@ label/name> <compact|clear|restart|close|recreate> [follow-up | -]`, the door pi
 `gff-hab mcp` lists `session_action` only on the Capcom route, with `destructiveHint` and
 `openWorldHint` true.
 
-Not built yet. Stage A10 (`capcom-service.md` 18) builds the method, the Claude Code
-translations, `restart`, `close` and a general `recreate`. Each unverified row is checked and
-built, or stays `unavailable`.
+Built choices (A10; `cmd/gff-hab/sessionaction.go`, `sessionactioncli.go`):
+
+- **What was checked.** Claude Code `clear`: the installed Claude Code 2.1.329 lists `clear` among
+  its `SessionStart` sources, so `clear` is built. Codex 0.170 lists `/new`, `/compact` and the
+  hooks `PreCompact`, `PostCompact` and `SessionStart`, but the Codex adapter does not yet read
+  them as a compaction's or a clear's end, so Codex `compact` and `clear` answer `unavailable`.
+  opencode was not installed to check: both answer `unavailable`.
+- **compact and clear** run through the self-compact machinery (`compact.go`) with the command
+  and the `SessionStart` source each needs. Its steps go out as `session.action` events, mapped
+  `compacting` to `running`; no `agent.compact` event goes for them. Its pending compaction is
+  the one per session.
+- **restart, close and recreate** wait in `queued` until the agent is `idle`, `done` or `error`,
+  or runs no agent, then run. `close` closes the pane, then the record. `recreate` holds the
+  old session's messages, renames it `<name>-<n>`, starts the new session in the old one's
+  folder (filed again in its project when the old one was filed, else unfiled), moves the held
+  messages, and closes the old pane. Restart, close and recreate read the session again after
+  the wait, and fail when its pane closed or moved meanwhile.
+- **recreate never widens the start.** The new session starts as `session.create` started the
+  old one (the resume book): its argv and model, with Claude Code's session-picking flags
+  (`--session-id`, `--resume`, `--continue`, `--fork-session`) taken out, and `follow_up` as its
+  seed. It answers `unavailable`, with a hint to use `restart`, for Capcom's own session, a
+  round's run session (its arguments, environment and limits are the round's), a harness the
+  owner started by hand in a shell (its flags were never seen), Codex started with flags other
+  than `--no-daemon`, and opencode started with any. A plain shell starts as it was. The hab
+  keeps no start environment, so none is carried. A group member's `recreate` is the group
+  swap, with the model it was started with when no group record is at hand.
+- **recreate survives a stop.** It sets the group swap's mark before the rename, so a gff-hab
+  that stops mid-way undoes the rename, or finishes with the fresh session, at its next start.
+  A start that answers an error but made the session all the same goes on with it.
+- **Authorised twice.** The Capcom route's rule runs again just before the action does: for
+  restart, close and recreate after the wait, and for compact and clear under each send's
+  claim. A rule that no longer passes, or a pane whose program changed, ends the action
+  `failed` with "denied". For every caller, an agent that left the pane during the wait ends it
+  the same way.
+- **The follow-up names Capcom.** A `recreate` from Capcom sends its follow-up as a seed from
+  Capcom at its home: `<host>/capcom` for its own route, `<label>/capcom` with the Capcom home's
+  peer label for its forward. A group member's recreate does the same through the group swap. So
+  the new agent does not take it for the owner's.
+- **A peer's answer** loses control characters in every field, and carries the action asked for.
+- **The door.** `session.action` sits with the pane methods: on the route it is in the pane
+  methods' list, and on the control connection it is served beside them. The owner's door runs
+  it at every value; the Capcom route and its marked forward under `pane.type`'s rule for
+  Capcom; every other agent door answers `denied`. The forward needs `session-action` on the
+  peer. The owner's `label/name` forward carries no mark, so the far hab judges it as a peer.
+- **Start mode** is not recorded or carried yet (`harness-adapters.md`, Start mode).
+
+Tests: `TestSessionActionClear`, `TestSessionActionCompact`, `TestSessionActionRefusals`,
+`TestSessionActionAfterTurn`, `TestSessionActionDoors`, `TestSessionActionReauthorize`,
+`TestSessionActionPeerAnswer`, `TestSessionActionDoorWiring`, `TestRecreate`,
+`TestRecreateTimedOutCreate`, `TestRecreateRefusals`, `TestRecreateGroupMember`, `TestRecreateCutShort`,
+`TestSessionActionSeedFrom`, `TestSessionActionRecheckPane`, and `TestSessionActionHab` against a real hab: `gff-hab action` refused from a pane, `close` and `recreate` of shell sessions from the owner's door (`docs/testing.md`).
 
 ---
 

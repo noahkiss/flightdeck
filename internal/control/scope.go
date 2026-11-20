@@ -156,6 +156,10 @@ func (f *filter) pass(e structure.Event) bool {
 		// A content item names its session; its id is the item id.
 		it, ok := e.Data.(api.ContentItem)
 		return ok && f.sessions[it.Session]
+	case api.EventSessionAction:
+		// A session action names its session; its id is the action id (spec 3.13).
+		a, ok := e.Data.(api.SessionAction)
+		return ok && f.sessions[a.SessionID]
 	case api.EventAgentCompact:
 		// A compaction names its session; its id is the compaction id.
 		c, ok := e.Data.(api.Compaction)

@@ -29,7 +29,9 @@ type memberSwap struct {
 	// create runs session.create on this hab, as its own confirmations do.
 	create func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	folder func(ctx context.Context, session string) string // nil or "": the record's
-	logf   func(string, ...any)
+	// start is how session.create started a session (the resume book); nil: not known.
+	start func(session string) (resumeEntry, bool)
+	logf  func(string, ...any)
 }
 
 // asideName is the first free <name>-<n> for the old session.
@@ -50,6 +52,12 @@ func (w *memberSwap) asideName(name string) string {
 // the old one's group and envelope, moves the held messages to it, and closes the old pane.
 // The old conversation stays resumable. It returns the new session's id.
 func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState, rec *api.Group, seed string) (string, error) {
+	return w.swapFrom(ctx, ss, st, rec, seed, "")
+}
+
+// swapFrom is swap with the seed's author when no group record names one: a session action's
+// recreate from Capcom (hab-logic-api.md 3.13).
+func (w *memberSwap) swapFrom(ctx context.Context, ss api.Session, st api.AgentState, rec *api.Group, seed, seedFrom string) (string, error) {
 	if ss.Group == nil {
 		return "", fmt.Errorf("session %s is no member", ss.Name)
 	}
@@ -64,6 +72,12 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 	if w.folder != nil {
 		if f := w.folder(ctx, ss.ID); f != "" {
 			folder = f
+		}
+	}
+	if model == "" && w.start != nil {
+		// No group record (a session action's recreate): the model the member was started with.
+		if e, ok := w.start(ss.ID); ok && e.Harness == st.Harness {
+			model = e.Model
 		}
 	}
 	if folder == "" {
@@ -113,6 +127,8 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 		TrustCover: &api.TrustCover{Group: group.ID, Confirmation: conf, Harness: st.Harness, BranchPrefix: confirm.GroupBranchPrefix(group.ID)}}
 	if rec != nil && validSeedFrom(rec.Coordinator.Address) {
 		p.SeedFrom = rec.Coordinator.Address
+	} else if seed != "" && validSeedFrom(seedFrom) {
+		p.SeedFrom = seedFrom
 	}
 	made, err := w.create(withOwnCover(ctx), p)
 	if err != nil {
@@ -151,6 +167,13 @@ func (w *memberSwap) swap(ctx context.Context, ss api.Session, st api.AgentState
 // swap, when it was made.
 func swapSuccessor(store *structure.Store, old, name, group string) (string, bool) {
 	s2, ok := store.SessionByName(name)
+	if group == "" {
+		// A session action's recreate: the fresh session is in no group.
+		if !ok || s2.ID == old || s2.Group != nil {
+			return "", false
+		}
+		return s2.ID, true
+	}
 	if !ok || s2.ID == old || s2.Group == nil || s2.Group.ID != group {
 		return "", false
 	}
@@ -174,9 +197,11 @@ func undoSwaps(store *structure.Store, logf func(string, ...any)) map[string]str
 			continue
 		}
 		g := m.Group
-		if err := store.SetGroup(old, &g, m.Envelope); err != nil {
-			logf("supervise: undoing the swap of %s: %v", m.Name, err)
-			continue
+		if g.ID != "" { // a session action's recreate had no group
+			if err := store.SetGroup(old, &g, m.Envelope); err != nil {
+				logf("supervise: undoing the swap of %s: %v", m.Name, err)
+				continue
+			}
 		}
 		if ss.Name != m.Name {
 			if _, err := store.RenameSession(old, m.Name); err != nil {

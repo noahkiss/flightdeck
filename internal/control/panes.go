@@ -26,12 +26,14 @@ type Panes interface {
 	List(ctx context.Context, from PaneCaller, p api.PaneListParams) (api.PaneList, error)
 	Type(ctx context.Context, from PaneCaller, p api.PaneTypeParams) (api.PaneTyped, error)
 	New(ctx context.Context, from PaneCaller, p api.PaneNewParams) (api.PaneStarted, error)
+	// Action serves session.action (spec 3.13).
+	Action(ctx context.Context, from PaneCaller, p api.SessionActionParams) (api.SessionAction, error)
 }
 
 // IsPaneMethod says whether method is served by Panes.
 func IsPaneMethod(method string) bool {
 	switch method {
-	case "pane.read", "pane.wait", "pane.list", "pane.type", "pane.new":
+	case "pane.read", "pane.wait", "pane.list", "pane.type", "pane.new", "session.action":
 		return true
 	}
 	return false
@@ -98,6 +100,14 @@ func (c *conn) handlePanes(m message) {
 				return r, err
 			}
 		}
+	case "session.action":
+		var p api.SessionActionParams
+		if e = c.decodeUp(m, &p); e == nil && ps != nil {
+			call = func(ctx context.Context) (any, error) {
+				r, err := ps.Action(ctx, from, p)
+				return r, err
+			}
+		}
 	}
 	if e == nil && call == nil {
 		e = appErr(api.ErrorKindUnavailable, "%s needs gff-hab serve with its holder link; the pane-read and pane-drive capabilities are absent", m.Method)
@@ -130,6 +140,9 @@ func (c *conn) handlePanes(m message) {
 			r.Seq = s
 			res = api.NonNil(r)
 		case api.PaneStarted:
+			r.Seq = s
+			res = api.NonNil(r)
+		case api.SessionAction:
 			r.Seq = s
 			res = api.NonNil(r)
 		}

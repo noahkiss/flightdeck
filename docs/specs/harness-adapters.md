@@ -1252,6 +1252,7 @@ any harness, and see the connected hosts. Nothing in it needs a tool outside Fli
 | Send and wait | `gff-hab send`, `gff-hab wait`, MCP tools `channel_send` and `channel_wait` (`mesh.md` 6.5, 6.6) |
 | Read other panes | `gff-hab screen`, `gff-hab wait -pane`, under `agent.read_panes` (`hab-logic-api.md` 3.11) |
 | Drive other panes | `gff-hab panes`, `gff-hab type`, `gff-hab new`, MCP tools `pane_list`, `pane_read`, `pane_wait`, `pane_type` and `pane_new`, under `agent.read_panes` and `agent.drive_panes` (`hab-logic-api.md` 3.11, 3.12) |
+| Session actions | `gff-hab action`, the owner's (`hab-logic-api.md` 3.13); the MCP tool `session_action` only on the Capcom engine's server (`gff-hab mcp -capcom`). An agent's own pane route is refused: an agent compacts itself with `gff agent compact` |
 | Who runs where | Read tools `agents`, `hosts`, `projects`, `suggest_host` (`gff-hab read`, `gff-hab mcp`; `capcom.md` 5.5) |
 | Envelope and delivery | [Input delivery](#input-delivery) and `mesh.md` 6.5 |
 | Manual | `gff-hab mcp --skill` prints it, made from the tool list of the binary that prints it |

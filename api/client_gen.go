@@ -397,6 +397,14 @@ const (
 )
 
 const (
+	SessionActionKindCompact  SessionActionKind = "compact"
+	SessionActionKindClear    SessionActionKind = "clear"
+	SessionActionKindRestart  SessionActionKind = "restart"
+	SessionActionKindClose    SessionActionKind = "close"
+	SessionActionKindRecreate SessionActionKind = "recreate"
+)
+
+const (
 	SessionKindCapcom SessionKind = "capcom"
 )
 
@@ -480,6 +488,7 @@ const (
 	EventChatMessage      EventType = "chat.message"
 	EventSessionTurnEnd   EventType = "session.turn_end"
 	EventAgentCompact     EventType = "agent.compact"
+	EventSessionAction    EventType = "session.action"
 	EventUsageUpdated     EventType = "usage.updated"
 	EventCommandUpdated   EventType = "command.updated"
 	EventPeerUpdated      EventType = "peer.updated"
@@ -559,6 +568,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventAgentCompact:
 		var v Compaction
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventSessionAction:
+		var v SessionAction
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventUsageUpdated:
@@ -1061,6 +1074,13 @@ func (c Client) PaneType(ctx context.Context, params PaneTypeParams) (PaneTyped,
 func (c Client) PaneNew(ctx context.Context, params PaneNewParams) (PaneStarted, error) {
 	var result PaneStarted
 	err := c.Caller.Call(ctx, "pane.new", params, &result)
+	return result, err
+}
+
+// SessionAction calls session.action. Run a named action on a session: compact, clear, restart, close or recreate, which the hab translates for the harness in its pane; answers at once with state queued, and each step sends a session.action event. The owner's door and the Capcom route only (spec 3.13). Needs the session-action capability.
+func (c Client) SessionAction(ctx context.Context, params SessionActionParams) (SessionAction, error) {
+	var result SessionAction
+	err := c.Caller.Call(ctx, "session.action", params, &result)
 	return result, err
 }
 

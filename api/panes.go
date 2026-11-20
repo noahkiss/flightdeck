@@ -123,6 +123,34 @@ type PaneNewParams struct {
 	Name      string   `json:"name,omitempty" doc:"The session name. Default: the program's base name, with a number when taken."`
 }
 
+// --- Session actions (spec 3.13) ---
+
+// SessionActionKind is a named action on a session. The client sends it, so the set is closed.
+type SessionActionKind string
+
+// SessionActionParams names the session and the action (spec 3.13).
+type SessionActionParams struct {
+	Session  string            `json:"session" doc:"A session id or name on this hab, or label/name for a session on a peer (spec 3.11)."`
+	Action   SessionActionKind `json:"action" doc:"compact, clear, restart, close or recreate."`
+	FollowUp string            `json:"follow_up,omitempty" doc:"compact, clear and recreate only: the first message after the action, at most 8000 characters."`
+	As       string            `json:"as,omitempty" doc:"capcom on a forward from the Capcom home hab (spec 3.13). Taken only over a peer link from the hab that holds the Capcom mark; ignored from any other caller."`
+}
+
+// SessionAction is one session action and its state (spec 3.13). The answer of session.action
+// and the data of the session.action event.
+type SessionAction struct {
+	Seq
+	ID         string            `json:"id"`
+	Session    string            `json:"session" doc:"The session's name; label/name from a peer."`
+	SessionID  string            `json:"session_id,omitempty"`
+	Action     SessionActionKind `json:"action"`
+	Harness    string            `json:"harness,omitempty"`
+	State      string            `json:"state" doc:"queued, sent, running, done or failed."`
+	Reason     string            `json:"reason,omitempty" doc:"Why it failed."`
+	NewSession string            `json:"new_session,omitempty" doc:"recreate: the new session's id, once it runs."`
+	At         string            `json:"at" doc:"RFC 3339 time of this step."`
+}
+
 // PaneStarted is the answer of pane.new.
 type PaneStarted struct {
 	Seq

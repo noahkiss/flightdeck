@@ -124,7 +124,7 @@ func TestPaneCapcomType(t *testing.T) {
 		{drivePanesAgents, "other", false, true, true}, {drivePanesAgents, "shell", false, false, false},
 		{readPanesOff, "mate", false, false, false},
 	} {
-		r.rule = w.rule
+		r.setRule(w.rule)
 		n := len(r.typed.writes)
 		_, err := r.s.Type(ctx, fromCap, api.PaneTypeParams{Session: w.session, Text: "/compact", Enter: true})
 		if (err == nil) != w.ok {
@@ -143,7 +143,7 @@ func TestPaneCapcomType(t *testing.T) {
 		}
 	}
 	// ESC, Ctrl-C and CR stay refused at all.
-	r.rule = readPanesAll
+	r.setRule(readPanesAll)
 	for _, text := range []string{"\x1b", "\x03", "x\r"} {
 		if _, err := r.s.Type(ctx, fromCap, api.PaneTypeParams{Session: "mate", Text: text}); paneErrKind(err) != api.ErrorKindInvalid {
 			t.Errorf("at all, %q: %v, want invalid", text, err)
@@ -156,12 +156,12 @@ func TestPaneCapcomType(t *testing.T) {
 	}
 	// The forward carries the mark at every value but off.
 	for _, rule := range []string{readPanesAll, readPanesProject, drivePanesAgents} {
-		r.rule = rule
+		r.setRule(rule)
 		if _, err := r.s.Type(ctx, fromCap, api.PaneTypeParams{Session: "bee/far", Text: "x"}); err != nil {
 			t.Errorf("%s: forward: %v", rule, err)
 		}
 	}
-	r.rule = readPanesOff
+	r.setRule(readPanesOff)
 	if _, err := r.s.Type(ctx, fromCap, api.PaneTypeParams{Session: "bee/far", Text: "x"}); paneErrKind(err) != api.ErrorKindDenied {
 		t.Errorf("off: forward: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestPaneCapcomNew(t *testing.T) {
 	t.Parallel()
 	r := newDriveRig(t)
 	ctx := context.Background()
-	r.rule = readPanesAll
+	r.setRule(readPanesAll)
 	if _, err := r.s.New(ctx, fromCap, api.PaneNewParams{Cwd: "/tmp", Argv: []string{"/bin/sh"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestPaneCapcomNew(t *testing.T) {
 		t.Errorf("in_project: %v", err)
 	}
 	for _, rule := range []string{readPanesProject, drivePanesAgents, readPanesOff} {
-		r.rule = rule
+		r.setRule(rule)
 		if _, err := r.s.New(ctx, fromCap, api.PaneNewParams{Cwd: "/tmp"}); paneErrKind(err) != api.ErrorKindDenied {
 			t.Errorf("%s: %v, want denied", rule, err)
 		}
@@ -210,7 +210,7 @@ func TestPaneCapcomMark(t *testing.T) {
 	r := newDriveRig(t)
 	home := "home-device"
 	r.s.capcomHome = func() string { return home }
-	r.rule = readPanesProject // the peer door may type nothing here; Capcom may type into a shell
+	r.setRule(readPanesProject) // the peer door may type nothing here; Capcom may type into a shell
 	ctl := controlPanes{r.s}
 	ctx := context.Background()
 	typeAs := func(from control.PaneCaller, as string) error {
@@ -251,7 +251,7 @@ func TestPaneCapcomMark(t *testing.T) {
 	if err := typeAs(control.PaneCaller{}, asCapcom); err != nil {
 		t.Errorf("the owner: %v", err)
 	}
-	r.rule = drivePanesAgents
+	r.setRule(drivePanesAgents)
 	params, _ := json.Marshal(api.PaneTypeParams{Session: "other", Text: "x", As: asCapcom})
 	if _, _, err := paneHook(r.s)(ctx, paneMine, "pane.type", params); paneErrKind(err) != api.ErrorKindDenied {
 		t.Errorf("a pane's route with as=capcom: %v, want denied", err)

@@ -312,6 +312,21 @@ func (e *capcomEngine) eventGate(turn, tool string) (string, error) {
 	return "for job " + job, nil
 }
 
+// jobMade adds the record card of a standing instruction (9.6): a capcom round Capcom made in a
+// user turn. At all the job needs no words, so the card says it is set up. Below all the
+// manual tells Capcom to name the words the job needs, which the user grants in Capcom jobs.
+func (e *capcomEngine) jobMade(host string, r api.Round, person bool) {
+	job := host + "/" + r.Name
+	text := "Capcom set up job " + r.Name
+	switch {
+	case !person:
+		text += ". A user message joined the turn, so it counts as Capcom's: it stays inside the daily budget until you grant it words in Capcom jobs"
+	case e.eventActionsLevel() != eventActionsAll:
+		text += ". It acts on events only with the words you turn on in Capcom jobs"
+	}
+	e.jobCard(e.turnState(0).Turn, text, job)
+}
+
 // turnCause names what began an event turn, for the card of an action no job granted (9.6):
 // "After a notice: disk full", "After job host/mail", or "After an agent's report".
 func (e *capcomEngine) turnCause(turn string) string {

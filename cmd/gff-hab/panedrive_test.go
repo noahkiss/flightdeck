@@ -45,11 +45,25 @@ func (l *typeLog) typeInto(_ context.Context, pane string, w typeWrite) (int, er
 // driveRig is a paneService over a structure store with four filed sessions and one unfiled.
 type driveRig struct {
 	s       *paneService
+	ruleMu  sync.Mutex // the rule is read by queued actions' goroutines
 	rule    string
 	typed   *typeLog
 	created []api.SessionCreateParams
 	peer    *channels.Link
 	failNew error // create's answer, when set
+}
+
+// setRule sets agent.drive_panes; getRule is the service's getter.
+func (r *driveRig) setRule(v string) {
+	r.ruleMu.Lock()
+	r.rule = v
+	r.ruleMu.Unlock()
+}
+
+func (r *driveRig) getRule() string {
+	r.ruleMu.Lock()
+	defer r.ruleMu.Unlock()
+	return r.rule
 }
 
 func newDriveRig(t *testing.T) *driveRig {
@@ -78,7 +92,7 @@ func newDriveRig(t *testing.T) *driveRig {
 	}
 	r := &driveRig{rule: readPanesAll, typed: &typeLog{}}
 	r.peer = &channels.Link{Label: "bee", DeviceID: "far", Online: true, Caps: []string{paneDriveCapability}}
-	r.s = &paneService{store: st, rule: func() string { return readPanesAll }, drive: func() string { return r.rule },
+	r.s = &paneService{store: st, rule: func() string { return readPanesAll }, drive: r.getRule,
 		links: func() []channels.Link { return []channels.Link{*r.peer} }, self: "near", host: "here", logf: t.Logf}
 	agents := map[string]bool{paneMine: true, paneMate: true, paneOther: true}
 	r.s.drv = paneDrive{typer: r.typed,
@@ -192,7 +206,7 @@ func TestPaneTypeRule(t *testing.T) {
 		{readPanesOff, []want{{fromMine, "me", api.ErrorKindDenied}, {fromMine, "mate", api.ErrorKindDenied}, {fromMine, "ghost", api.ErrorKindDenied},
 			{fromPeer, "mate", api.ErrorKindDenied}, {fromOwner, "mate", ""}, {fromCap, "mate", api.ErrorKindDenied}, {fromCap, "ghost", api.ErrorKindDenied}}},
 	} {
-		r.rule = c.rule
+		r.setRule(c.rule)
 		for _, w := range c.cases {
 			err := typeTo(w.caller, w.session)
 			if paneErrKind(err) != w.kind {
@@ -205,7 +219,7 @@ func TestPaneTypeRule(t *testing.T) {
 		}
 	}
 	// Bad input is invalid before the rule.
-	r.rule = readPanesAll
+	r.setRule(readPanesAll)
 	if _, err := r.s.Type(ctx, fromMine, api.PaneTypeParams{Session: "mate"}); paneErrKind(err) != api.ErrorKindInvalid {
 		t.Errorf("no text, no enter: %v", err)
 	}
@@ -250,7 +264,7 @@ func TestPaneNewRule(t *testing.T) {
 		_, err := r.s.New(ctx, c, p)
 		return err
 	}
-	r.rule = readPanesAll
+	r.setRule(readPanesAll)
 	if err := newFrom(fromMine, api.PaneNewParams{Cwd: "/tmp", Argv: []string{"/bin/sh"}}); err != nil {
 		t.Fatalf("all, cwd: %v", err)
 	}
@@ -266,7 +280,7 @@ func TestPaneNewRule(t *testing.T) {
 	if err := newFrom(fromOwner, api.PaneNewParams{InProject: true}); paneErrKind(err) != api.ErrorKindInvalid {
 		t.Fatalf("owner, in_project: %v", err)
 	}
-	r.rule = readPanesProject
+	r.setRule(readPanesProject)
 	n := len(r.created)
 	if err := newFrom(fromMine, api.PaneNewParams{}); err != nil {
 		t.Fatalf("project: %v", err)
@@ -296,7 +310,7 @@ func TestPaneNewRule(t *testing.T) {
 	}
 	r.failNew = nil
 	for _, rule := range []string{drivePanesAgents, readPanesOff} {
-		r.rule = rule
+		r.setRule(rule)
 		for _, c := range []paneCaller{fromMine, fromPeer, fromCap} {
 			if err := newFrom(c, api.PaneNewParams{}); paneErrKind(err) != api.ErrorKindDenied {
 				t.Errorf("%s, door %d: %v, want denied", rule, c.door, err)
@@ -467,11 +481,11 @@ func TestPaneTypeDoors(t *testing.T) {
 	t.Parallel()
 	r := newDriveRig(t)
 	ctx := context.Background()
-	r.rule = drivePanesAgents
+	r.setRule(drivePanesAgents)
 	if _, err := r.s.Type(ctx, fromMine, api.PaneTypeParams{Session: "mate", Text: "!ls"}); err != nil {
 		t.Fatal(err)
 	}
-	r.rule = readPanesAll
+	r.setRule(readPanesAll)
 	if _, err := r.s.Type(ctx, fromPeer, api.PaneTypeParams{Session: "mate", Text: "/exit"}); err != nil {
 		t.Fatal(err)
 	}

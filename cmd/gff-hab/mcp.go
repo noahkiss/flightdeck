@@ -300,7 +300,7 @@ func mcpTools() []map[string]any { return mcpToolsOf(allTools()) }
 // tools is the server's tool list: every kit tool, and the personal tools with -capcom.
 func (m *mcpServer) tools() []kitTool {
 	if m.capcom {
-		return append(allTools(), personalTools...)
+		return append(append(allTools(), personalTools...), capcomTools...)
 	}
 	return allTools()
 }
