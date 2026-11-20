@@ -354,8 +354,10 @@ cache, so the linux arm64 release leg starts warm (5).
 
 One job on ubuntu, a call of the shared `node-ci.yml` with `working-directory: capcom-engine`:
 `npm ci` from `package-lock.json` (cached by `setup-node`), then the package scripts `typecheck`,
-`build` and `test`, the same as `cd capcom-engine && npm ci && npm run typecheck && npm run build &&
-npm test` locally. The tests run against a fake SDK and a fake hab, with no credential and no
+`build`, `test` and `release-pack`, the same as `cd capcom-engine && npm ci && npm run typecheck &&
+npm run build && npm test && npm run release-pack` locally. `release-pack` writes the release's
+engine folder into `dist/capcom` (7.2, 7.8), so a dependency without a licence file fails here
+before a release does. The tests run against a fake SDK and a fake hab, with no credential and no
 network. The Node version is `capcom-engine/.node-version` (26); the engine's floor stays
 `engines.node` in `package.json`. Timeout 15 minutes. Before this workflow, nothing in CI ran the
 engine's tests, so a Renovate bump of an SDK was gated by nothing. The job is the fast check
@@ -391,6 +393,7 @@ holds: macOS runs only what needs it.
 | `ci.yml`, `capcom-engine.yml`, `hygiene.yml`, `nightly.yml`, every `plan`, `verify` and `publish` job | `ubuntu-latest` | Default. go-ci and node-ci run here |
 | `apple.yml` | `xcode-27` (arm64) | Xcode 27.2, Swift |
 | `macos-go.yml` | `macos-26` (arm64) | launchd, macOS PTYs; needs only the command line clang |
+| `release.yml` engine job | `ubuntu-24.04` | Packs the Capcom engine folder once for every archive (7.4) |
 | `release.yml` linux amd64 leg | `ubuntu-24.04` | Native cgo build (7.3) |
 | `release.yml` linux arm64 leg | `ubuntu-24.04-arm` | Native cgo build; free on a public repo |
 | `release.yml` darwin arm64 leg | `macos-26` | Native cgo build, then sign and notarize; no Xcode project |
@@ -425,6 +428,7 @@ build.
 | SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, and every `swift test` `--only-use-versions-from-resolved-file` (3.4), so a graph that drifts from the pins fails instead of floating |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
+| npm (the release's `engine` job) | None | `npm ci` in the job | `setup-node` runs with `package-manager-cache: false`, for the reason fastlane has none: a cache saved on a tag serves that tag only. `capcom-engine.yml` caches through node-ci (3.7) |
 
 **Tests and releases share one libghostty build.** Every CI job builds libghostty with its
 platform's release `GHOSTTY_ZIGFLAGS` (7.3), so one cache entry per platform serves the tests and
@@ -545,9 +549,9 @@ both halves, and the App Store version must rise with every hab fix.
 
 | Asset | Holds |
 |---|---|
-| `gff_<version>_linux_amd64.tar.gz` | `gff`, `gff-hab`, `gff-hab-holder`, `LICENSE`, `NOTICE` |
+| `gff_<version>_linux_amd64.tar.gz` | `gff`, `gff-hab`, `gff-hab-holder`, `LICENSE`, `NOTICE`, `capcom/` |
 | `gff_<version>_linux_arm64.tar.gz` | The same |
-| `gff_<version>_darwin_arm64.tar.gz` | `GFF Hab.app`, `GFF Holder.app` (signed, notarized, stapled; each holds `LICENSE` and `NOTICE` in `Contents/Resources`), `gff` (signed, notarized), `LICENSE`, `NOTICE` |
+| `gff_<version>_darwin_arm64.tar.gz` | `GFF Hab.app`, `GFF Holder.app` (signed, notarized, stapled; each holds `LICENSE` and `NOTICE` in `Contents/Resources`), `gff` (signed, notarized), `LICENSE`, `NOTICE`, `capcom/` |
 | `<asset>.sha256` for each | One line, `sha256sum` format. The tap reads these (8.2) |
 | `SHA256SUMS` | Every asset's line |
 
@@ -560,11 +564,15 @@ extended attribute headers and no `._` files.
 The speech helper (`gff-hab-speech`) is not in a release yet. `gff-hab install` does not copy it,
 and its libopus link is dynamic (`voice.md`). It joins when that is settled.
 
-The Capcom engine (`capcom-engine/`) is not in a release yet either. `capcom-service.md` 3.1 puts
-it in `libexec/capcom/` of the archive and the formula, with Node.js a formula dependency. Until
-it ships, an installed hab finds no engine: `gff-hab install` copies none, and the jobs it writes
-pass no `GFF_HAB_CAPCOM_ENGINE`. With `[capcom] engine` unset, Capcom runs in a pane and needs
-none.
+`capcom/` is the Capcom engine folder, the same bytes in every archive: `gff-hab-capcom.mjs`
+(the engine, bundled by esbuild), `package.json`, `package-lock.json`, and `NOTICE` with the
+notices of the packages in the bundle (7.8). `make capcom-pack` writes it into
+`<RELEASE_DIR>/capcom`. It holds no `node_modules`: the Claude Agent SDK and the Codex SDK carry a
+native binary per platform, and the Claude Agent SDK's licence grants no right to redistribute
+it. `gff-hab install` copies the folder and runs `npm ci` in the copy when `[capcom] engine` is
+set (`capcom-service.md` 3.1). With `[capcom] engine` unset, Capcom runs in a pane and the folder
+is unused. On macOS the folder sits beside the bundles, outside them, so signing does not cover
+it: it holds JavaScript and JSON only.
 
 ### 7.3 Build path per OS and arch
 
@@ -643,9 +651,19 @@ in the libghostty rule. The release values:
    is recorded (not on a dry run). Outputs `version`, `tap_inputs` and `previous`: the newest
    published final `v<x.y.z>` release other than the tag, empty before the first. Each failure
    says which check failed and what to do.
-2. **`linux`** (matrix: amd64, arm64; `needs: verify`). Restore the libghostty cache, build (7.3),
-   pack the tarball and its `.sha256`, then smoke-test the unpacked tarball with
-   `scripts/release-smoke.sh <dir> <version>`: each binary's `version` prints `<name> <version>`;
+2. **`engine`** (ubuntu, `needs: verify`, `contents: read`, no environment). `actions/setup-node`
+   with `capcom-engine/.node-version`, then `make capcom-pack` (`npm ci`, the build, and
+   `pack.mjs`, which writes the folder and its `NOTICE`), then the engine's `typecheck` and tests:
+   `verify` checks `ci.yml` runs only, so this is the release's gate on the engine. Uploads
+   `capcom/` as the workflow artifact `capcom-engine`, which the build jobs download; the name is
+   outside `publish`'s `release-*` pattern, so it is never a release asset. It runs npm install
+   scripts, so it holds no secret. Timeout 15 minutes.
+3. **`linux`** (matrix: amd64, arm64; `needs: [verify, engine]`). Restore the libghostty cache,
+   build (7.3), download `capcom-engine` into the archive folder as `capcom/`, pack the tarball
+   and its `.sha256`, then smoke-test the unpacked tarball with
+   `scripts/release-smoke.sh <dir> <version>`: `capcom/` holds the four engine files, no
+   `node_modules`, a manifest and a lockfile that name both SDKs, and a `NOTICE` with no entry
+   for either; each binary's `version` prints `<name> <version>`;
    `go version -m` lists `-tags=ghostty` for `gff-hab` and `gff`; `ldd gff-hab` lists no
    libghostty; no glibc symbol version above 2.31 (`objdump -T`); `gff-hab-holder` is static; a
    holder and gff-hab start in a temporary directory and `gff-hab api call hab.hello` answers.
@@ -655,7 +673,7 @@ in the libghostty rule. The release values:
    `GFF_SVC_TO` the new one (`testing.md`). A program started under the old release must keep
    running through the install of the new one. Upload as a workflow artifact. Timeout 30
    minutes.
-3. **`darwin`** (`needs: verify`, environment `release`). Build (7.3). Throwaway keychain;
+4. **`darwin`** (`needs: [verify, engine]`, environment `release`). Build (7.3). Throwaway keychain;
    `fastlane match developer_id --readonly --skip_provisioning_profiles` with the store flags of
    10.2 (`--git_url`, `--git_branch main`, `--skip_docs`) installs the Developer ID certificate
    into it. Store a notary profile in the same keychain. Run
@@ -664,7 +682,8 @@ in the libghostty rule. The release values:
    `GFF_BUNDLE_PREFIX`, `GFF_SIGN_IDENTITY`, `GFF_TEAM_ID`, `GFF_NOTARY_PROFILE`,
    `GFF_SIGN_KEYCHAIN` and `GFF_NOTARY_KEYCHAIN` from the job. The script signs inside out,
    notarizes one zip, staples, and runs every check of `macos-identity.md` 5.3, including the
-   requirement comparison that refuses a release which would drop every grant. Pack, `.sha256`,
+   requirement comparison that refuses a release which would drop every grant. Pack (with
+   `capcom/` from the `engine` job beside the bundles), `.sha256`,
    then smoke the unpacked tarball: `codesign --verify --strict`, `stapler validate` and `spctl`
    on each bundle, then `scripts/release-smoke.sh`, which on macOS checks that `gff-hab` and `gff`
    link only system libraries and name macOS 13.0 as their minimum. Then the update check, as on
@@ -679,7 +698,7 @@ in the libghostty rule. The release values:
    identity's SHA-1 hash from `security find-identity`, so no certificate name reaches the log.
    The notary profile is `gff-release`, stored in the throwaway keychain. The bundle prefix comes
    from `apple/Config/Names.xcconfig`.
-4. **`publish`** (ubuntu, `needs: [linux, darwin]`, `contents: write`; skipped on a dry run). Download the artifacts,
+5. **`publish`** (ubuntu, `needs: [linux, darwin]`, `contents: write`; skipped on a dry run). Download the artifacts,
    check each `.sha256`, write `SHA256SUMS`, create the GitHub release as a draft, attach every
    asset, then publish it. When a release for the tag already exists, draft or not, `publish`
    fails and touches nothing, so no asset is ever replaced. `verify` makes the same check first,
@@ -691,7 +710,7 @@ in the libghostty rule. The release values:
    (7.7), `publish` passes it as `--notes-file`, and GitHub's generated list of pull requests
    follows it; without the file it warns and publishes generated notes only. `publish` checks
    out that folder alone.
-5. **`bump-tap`** (`needs: [verify, publish]`, not on an `-rc.` tag or a dry run):
+6. **`bump-tap`** (`needs: [verify, publish]`, not on an `-rc.` tag or a dry run):
    `dispatch-and-wait.yml` (section 8). A red `bump-tap` is retried with "Re-run failed jobs" on
    the run that published. A new dispatch would stop at `verify`: the release exists.
 
@@ -842,6 +861,17 @@ before signing and beside the bundles; `scripts/release-smoke.sh` fails when eit
 beside the binaries or in a bundle, or when `NOTICE` has no entry for libghostty, Ghostty and
 `golang.org/x/sys`.
 
+**The Capcom engine's notices.** `capcom/NOTICE` is not committed: `capcom-engine/pack.mjs`
+writes it at pack time (`make capcom-pack`). The build writes esbuild's metafile
+(`dist/meta.json`); each input under `node_modules/` names a package in the bundle, a nested
+copy counting as its own. For each, `NOTICE` prints the name, the version, the source, the
+licence from its `package.json`, then every `LICENSE`, `LICENCE`, `COPYING` and `NOTICE` file at
+the package's top level, read from `node_modules` at the locked version; a repeated text is named
+instead. The script fails when a bundled package has no licence file, or when the Claude Agent
+SDK or the Codex SDK is in the bundle: both stay external, and `gff-hab install` downloads them
+from npm under their own licences. `release-smoke.sh` checks the file is there and names neither
+SDK. A bump in `package-lock.json` therefore changes the notices with no step by hand.
+
 **Adding a dependency.** A new Go module needs nothing by hand unless it has no licence file. A
 new Swift package needs its texts under `third_party/licenses/swift/<identity>/` and a
 `[[swift]]` entry. A new C library, Zig package, font or data set needs its texts and a
@@ -898,7 +928,7 @@ match `GHOSTTY_COMMIT`. Both move on the cadence above, so they stay within week
 
 | Tap entry | Installs | Bumped by |
 |---|---|---|
-| Formula `gff` (Q4) | Linux: the three binaries into `bin`. macOS: `GFF Hab.app`, `GFF Holder.app` and `gff` into `libexec`, and links `gff` and `gff-hab` in `bin` | `release.yml`, on a final `v*` tag |
+| Formula `gff` (Q4) | Linux: the three binaries into `bin`. macOS: `GFF Hab.app`, `GFF Holder.app` and `gff` into `libexec`, and links `gff` and `gff-hab` in `bin`. Both: `capcom/` into `libexec/capcom`, and `depends_on "node"` | `release.yml`, on a final `v*` tag |
 | Cask `flightdeck` | The Mac app | `app-release.yml`, on a final `app-v*` tag |
 
 On macOS the hab installs from the formula's bundles: `gff-hab install` copies them into
@@ -917,6 +947,14 @@ client to copy. The holder gets no link: on macOS install always uses launchd an
 holder bundle beside `GFF Hab.app`, and only the systemd path looks for `gff-hab-holder` on PATH.
 Homebrew changes nothing inside the bundles: their signatures still verify after `brew install`
 (proved with dev-signed bundles, 8.4).
+
+**The Capcom engine.** The formula installs `capcom/` into `libexec/capcom`, where `gff-hab
+install` finds it on both systems (`capcom-service.md` 3.1): beside `GFF Hab.app` on macOS, and
+`../libexec/capcom` from `bin/gff-hab` on Linux. It installs the folder only when the archive
+has one, so an older archive still installs. The formula runs no `npm`: `gff-hab install` runs
+`npm ci` in its own copy, and only when `[capcom] engine` is set. `depends_on "node"` brings
+Node.js and npm. The caveats say to set `[capcom] engine` and run `gff-hab install` again to
+start the Capcom service.
 
 **Upgrade and removal.** The service runs the copies in the state directory, not the keg. So
 after `brew upgrade gff` the hab keeps running the old build until `gff-hab install` runs again.

@@ -189,12 +189,29 @@ hab, through its route (3.3), and to the model provider.
 
 - **Language.** TypeScript on Node.js, with the Claude Agent SDK. The SDK bundles its native
   Claude Code binary; the engine pins the SDK version, and so the binary version.
-- **Packaging.** A bundled JavaScript file and the SDK's platform package, in
-  `libexec/capcom/` of the release archive and the Homebrew formula. Node.js is a runtime
-  dependency: the formula depends on it, and the Linux archive needs `node` on PATH. The version
-  floor is the SDK's, recorded in `mise.toml` for development. `gff-hab install` finds the
-  engine beside gff-hab, as it finds the holder, and refuses to set Capcom up with a clear line
-  when Node.js is missing or too old.
+- **Packaging.** Each release archive holds a folder `capcom/`: the bundled engine
+  (`gff-hab-capcom.mjs`), the npm manifest (`package.json`, `package-lock.json`) and the notices
+  of the packages in the bundle (`ci-release.md` 7.2, 7.8). The Homebrew formula puts it in
+  `libexec/capcom/`. The SDKs are not in it: they carry a native binary per platform, and the
+  Claude Agent SDK's licence grants no right to redistribute it. Node.js with npm is a runtime
+  dependency: the formula depends on it, and an archive user needs `node` on PATH. The version
+  floor is the SDK's (`engines.node` in `package.json`).
+- **Install.** When `[capcom] engine` is set, `gff-hab install` copies `capcom/` into
+  `<state>/capcom-engine/<hash>/` (the hash of the three engine files) and runs `npm ci
+  --omit=dev --ignore-scripts` there, which downloads the locked SDKs with their native binaries
+  (several hundred MB); when `capcom/` holds a `node_modules/` already, install copies that
+  instead. `<state>/capcom-engine/current` links to that directory. Install keeps
+  the current and the previous engine directory, so an engine still finishing its turn keeps its
+  files; `gff-hab uninstall` removes them all. A failed `npm ci` is one notice, not a failed
+  install. With `[capcom] engine` unset, install copies no engine and downloads nothing. Install
+  finds `capcom/` beside gff-hab, as it finds the holder: `libexec/capcom/` beside `bin/` (the
+  formula on Linux), `capcom/` beside gff-hab (the Linux archive), or `capcom/` beside the
+  `GFF Hab.app` gff-hab is in (the darwin archive and the formula on macOS). It refuses to set
+  Capcom up with one clear line when Node.js is missing or too old, or no `capcom/` is there.
+- **Lookup.** gff-hab runs `$GFF_HAB_CAPCOM_ENGINE` when set; else the engine in one of those
+  folders beside its own executable, or in `capcom-engine/dist/` of a checkout; else the
+  installed `<state>/capcom-engine/current`. An engine run from an archive's own `capcom/`
+  needs `npm ci --omit=dev` there first.
 - **One engine per host.** gff-hab runs it only while this hab holds the Capcom mark (3.2).
 
 ### 3.2 The job
