@@ -313,9 +313,17 @@ func (e *capcomEngine) eventGate(turn, tool string) (string, error) {
 }
 
 // jobMade adds the record card of a standing instruction (9.6): a capcom round Capcom made in a
-// user turn. At all the job needs no words, so the card says it is set up. Below all the
-// manual tells Capcom to name the words the job needs, which the user grants in Capcom jobs.
-func (e *capcomEngine) jobMade(host string, r api.Round, person bool) {
+// user turn. At all the job needs no words but card and fetch, so the card says it is set up.
+// When Capcom asked for words the level does not give every event turn, the user's job gets a
+// grant card instead (9.9): one tap grants them.
+func (e *capcomEngine) jobMade(host string, r api.Round, person bool, want []string) {
+	if person {
+		ask := e.grantAsk(want)
+		if len(ask) > 0 {
+			e.grantCard(e.turnState(0).Turn, r, ask, "")
+			return
+		}
+	}
 	job := host + "/" + r.Name
 	text := "Capcom set up job " + r.Name
 	switch {

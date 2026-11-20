@@ -1,0 +1,99 @@
+{
+  "data": {
+    "answer": {
+      "by": "by-33",
+      "choice": "choice-32",
+      "time": "time-34",
+      "x_unknown_field": "later"
+    },
+    "attachments": [
+      "attachments-9"
+    ],
+    "attribution": [
+      {
+        "source": "source-37",
+        "text": "text-38",
+        "url": "url-39",
+        "x_unknown_field": "later"
+      }
+    ],
+    "author": {
+      "address": "address-6",
+      "device": "device-5",
+      "kind": "flightdeck",
+      "x_unknown_field": "later"
+    },
+    "card": {
+      "choices": [
+        "choices-18"
+      ],
+      "event": {
+        "all_day": true,
+        "due": "due-22",
+        "end": "end-21",
+        "location": "location-23",
+        "notes": "notes-24",
+        "start": "start-20",
+        "title": "title-19",
+        "tz": "tz-26",
+        "url": "url-25",
+        "x_unknown_field": "later"
+      },
+      "grant": {
+        "actions": [
+          "drive"
+        ],
+        "name": "name-28",
+        "prompt": "prompt-30",
+        "revision": 29,
+        "round": "round-27",
+        "trigger": "trigger-31",
+        "x_unknown_field": "later"
+      },
+      "ref": "ref-17",
+      "type": "type-16",
+      "x_unknown_field": "later"
+    },
+    "context": [
+      {
+        "host": "host-11",
+        "kind": "logbook",
+        "ref": "ref-10",
+        "title": "title-12",
+        "x_unknown_field": "later"
+      }
+    ],
+    "event": true,
+    "id": "id-3",
+    "images": [
+      "images-8"
+    ],
+    "kind": "divider",
+    "read": "read-36",
+    "summary": "summary-35",
+    "text": "text-7",
+    "time": "time-4",
+    "tools": [
+      {
+        "name": "name-14",
+        "summary": "summary-15",
+        "x_unknown_field": "later"
+      }
+    ],
+    "turn": "turn-13",
+    "x_unknown_field": "later"
+  },
+  "id": "id-42",
+  "revision": 40,
+  "seq": 41,
+  "type": "capcom.item",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

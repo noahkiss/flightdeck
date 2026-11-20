@@ -32,8 +32,9 @@ type Status struct {
 	// running turn or joined it. A turn without one is an event turn for what it may do (9.4):
 	// an event batch's, an agent report's.
 	UserTurn bool
-	// UserOpened: a user item opened the running turn; a user message that joins an event turn
-	// never sets it. Unknown after a reconnect, so false (capcom-service.md 9.6).
+	// UserOpened: a user item opened the running turn, and no event batch, agent report or
+	// unknown item opened it with the user's; a user message that joins an event turn never sets
+	// it. Unknown after a reconnect, so false (capcom-service.md 9.6, 9.9).
 	UserOpened bool
 	Typing     bool
 	Approval   *Approval // the open approval, or nil
@@ -489,16 +490,32 @@ func (l *Link) handle(c *conn, m Message) {
 			th.Add(capcomthread.Item{Kind: capcomthread.KindDivider, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck}, Text: divider, Summary: summary})
 		}
 	case TTurnStarted:
+		// A user item among the opening items makes a user turn (9.4). The user opened it only
+		// when no event batch or agent report opened it too: event text the model reads first
+		// must not count as the user's (capcom-service.md 9.6, 9.9).
+		user, event := false, false
+		for _, id := range m.Items {
+			if l.cfg.Events != nil {
+				if _, ok := l.cfg.Events.Batch(id); ok {
+					event = true
+					continue
+				}
+			}
+			it, ok := th.Get(id)
+			switch {
+			case !ok:
+				event = true // unknown: fail closed
+			case userItem(it):
+				user = true
+			case it.Kind == capcomthread.KindAgent || it.Kind == capcomthread.KindRound || it.Kind == capcomthread.KindEvent:
+				event = true
+			}
+		}
 		l.mu.Lock()
 		c.batchOut = false
 		l.st.Turn, l.st.Origin = m.TurnID(), m.Origin
 		l.opened = append([]string(nil), m.Items...)
-		l.st.UserTurn, l.st.UserOpened = false, false
-		for _, id := range m.Items {
-			if it, ok := th.Get(id); ok && userItem(it) {
-				l.st.UserTurn, l.st.UserOpened = true, true
-			}
-		}
+		l.st.UserTurn, l.st.UserOpened = user, user && !event
 		l.typingLocked(m.Origin == "user")
 		l.stopQuietLocked()
 		l.turnKnownLocked()

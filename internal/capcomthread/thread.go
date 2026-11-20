@@ -126,7 +126,28 @@ type Card struct {
 	Proposal bool `json:"proposal,omitempty"`
 	// Event is what a calendar or reminder card adds (8.5).
 	Event *CardEvent `json:"event,omitempty"`
+	// Grant is what a grant card offers (capcom-service.md 9.6, 9.9).
+	Grant *CardGrant `json:"grant,omitempty"`
 }
+
+// CardGrant is a grant card's job and words. Rev and Digest pin the round as the card shows it:
+// Rev within one gff-hab epoch, Digest across restarts, which reset revisions.
+type CardGrant struct {
+	Round   string   `json:"round"`
+	Name    string   `json:"name"`
+	Rev     uint64   `json:"rev"`
+	Digest  string   `json:"digest"`
+	Actions []string `json:"actions"`
+	Prompt  string   `json:"prompt"`
+	Trigger string   `json:"trigger"`
+}
+
+// CardGrantType is the card type of a grant card, and its choices.
+const (
+	CardGrantType = "grant"
+	ChoiceGrant   = "grant"
+	ChoiceNotNow  = "not_now"
+)
 
 // Card types of the personal tools (8.5) and their choices.
 const (
@@ -622,6 +643,11 @@ func clone(it *Item) Item {
 	if it.Card != nil {
 		card := *it.Card
 		card.Choices = append([]string(nil), it.Card.Choices...)
+		if g := it.Card.Grant; g != nil {
+			gc := *g
+			gc.Actions = append([]string(nil), g.Actions...)
+			card.Grant = &gc
+		}
 		c.Card = &card
 	}
 	if it.Answer != nil {

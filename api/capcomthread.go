@@ -24,10 +24,23 @@ type CapcomToolCall struct {
 
 // CapcomCard is a card item's content.
 type CapcomCard struct {
-	Type    string           `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal, memory or group."`
-	Ref     string           `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card."`
+	Type    string           `json:"type" doc:"approval, confirmation, handoff, calendar, reminder, proposal, memory, group, job or grant."`
+	Ref     string           `json:"ref,omitempty" doc:"approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card. job: the job as host/name. grant: the round id on the Capcom home hab."`
 	Choices []string         `json:"choices"`
 	Event   *CapcomCardEvent `json:"event,omitempty" doc:"calendar and reminder: what Add writes (capcom-service.md 8.5)."`
+	Grant   *CapcomCardGrant `json:"grant,omitempty" doc:"grant: the job and the words Grant gives it (capcom-service.md 9.6)."`
+}
+
+// CapcomCardGrant is what a grant card offers (capcom-service.md 9.6, 9.9). The hab wrote it from
+// the stored round when Capcom set the job up. Grant adds the words to that round as a person's
+// round.update, while the round is as the card shows it; the answer carries only the choice.
+type CapcomCardGrant struct {
+	Round    string        `json:"round" doc:"The round's id on the Capcom home hab."`
+	Name     string        `json:"name" doc:"The round's name."`
+	Revision uint64        `json:"revision" doc:"The round's revision when the card was made."`
+	Actions  []RoundAction `json:"actions" doc:"The words Grant adds, in the order of the closed set."`
+	Prompt   string        `json:"prompt" doc:"The job's prompt, whole: Capcom follows it when the job's events come in."`
+	Trigger  string        `json:"trigger" doc:"The job's trigger in plain words."`
 }
 
 // CapcomAnswer is a card's answer: the first wins.
@@ -106,7 +119,7 @@ type CapcomSiteParams struct {
 // CapcomCardAnswerParams answers a card of the Capcom thread (capcom-service.md 7.4).
 type CapcomCardAnswerParams struct {
 	Item   string `json:"item" doc:"The card's item id."`
-	Choice string `json:"choice" doc:"One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4)."`
+	Choice string `json:"choice" doc:"One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4). A grant card's grant adds its words to the round as a person's grant; a round changed since the card answers conflict, and a new card shows it again (9.9)."`
 }
 
 // CapcomCardAnswered is a card's answer and what it did.

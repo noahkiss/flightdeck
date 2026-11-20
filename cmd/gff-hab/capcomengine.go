@@ -88,6 +88,13 @@ type capcomEngine struct {
 	// localJob reads a Capcom job's words as its round holds them now, when the round runs on
 	// this hab (host is this hab's host id); local false for another host's job. Nil: none local.
 	localJob func(host, name string) (words []string, local bool)
+	// jobs grants a grant card's words and reads the round again for a new card (9.9). Set in
+	// serve with the rounds service; nil: Grant answers unavailable.
+	jobs jobGranter
+	// grantMu holds one grant card's answer at a time, so the first answer wins across devices.
+	grantMu sync.Mutex
+	// grantTurn is the turn that has its one grant card (9.9), under grantMu.
+	grantTurn string
 	// turnNow stands in for the link's turn state in tests; nil: the link's.
 	turnNow func() capcomengine.Status
 
@@ -810,6 +817,10 @@ func apiItem(it capcomthread.Item) api.CapcomItem {
 		if ev := it.Card.Event; ev != nil {
 			out.Card.Event = &api.CapcomCardEvent{Title: ev.Title, Start: ev.Start, End: ev.End, AllDay: ev.AllDay, Due: ev.Due,
 				Location: ev.Location, Notes: ev.Notes, URL: ev.URL, TZ: ev.TZ}
+		}
+		if g := it.Card.Grant; g != nil {
+			out.Card.Grant = &api.CapcomCardGrant{Round: g.Round, Name: g.Name, Revision: g.Rev, Actions: apiActions(g.Actions),
+				Prompt: g.Prompt, Trigger: g.Trigger}
 		}
 	}
 	for _, a := range it.Attribution {

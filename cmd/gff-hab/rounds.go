@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -465,8 +467,13 @@ type roundsConfig struct {
 type roundsService struct {
 	cfg roundsConfig
 	// capcomJob hears a capcom round the Capcom route made: the service's record card
-	// (capcom-service.md 9.6); person is true when it is the user's job. Nil: none.
-	capcomJob func(r api.Round, person bool)
+	// (capcom-service.md 9.6); person is true when it is the user's job. want is the words
+	// Capcom asked for, which the round does not have: the service's grant card offers them
+	// (9.9). Nil: none, and a create that asks for words is refused.
+	capcomJob func(r api.Round, person bool, want []string)
+	// capcomGrantReserve takes the running Capcom turn's one grant card before a create that asks
+	// for words (9.9); an error refuses the create. Nil: no limit.
+	capcomGrantReserve func(want []string) error
 	// capcomUserOpened reports whether a user's item opened Capcom's running turn. Nil: never.
 	capcomUserOpened func() bool
 	store            *rounds.Store
@@ -1933,6 +1940,13 @@ func (s *roundsService) updateRound(ctx context.Context, p api.RoundUpdateParams
 	r.ID = p.ID
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
+	return s.updateLocked(ctx, p, r, check, false)
+}
+
+// updateLocked is round.update's write, with editMu held. cardGrant is a grant card's Grant,
+// whose caller checked the definition's digest under the same lock: the revision is not
+// compared, since a run start or end moves it without changing the round (capcom-service.md 9.9).
+func (s *roundsService) updateLocked(ctx context.Context, p api.RoundUpdateParams, r rounds.Round, check func(old api.Round) error, cardGrant bool) (api.Round, error) {
 	old, ok := s.store.Get(p.ID)
 	if !ok {
 		return api.Round{}, control.Errorf(api.ErrorKindNotFound, "no round %s on this hab", p.ID)
@@ -1976,12 +1990,12 @@ func (s *roundsService) updateRound(ctx context.Context, p api.RoundUpdateParams
 		// the owner (capcom-service.md 9.3, 9.6).
 		return api.Round{}, errGrant("round.update over a peer link")
 	}
-	if p.Revision == 0 && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
+	if !cardGrant && p.Revision == 0 && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
 		// A grant names the revision the person read, so the prompt they let act is the one
 		// they saw, not one an agent wrote since (capcom-service.md 9.6).
 		return api.Round{}, control.Errorf(api.ErrorKindInvalid, "round %s: a grant of action words names the revision you read (revision); read the round and its prompt, then grant", r.Name)
 	}
-	if p.Revision != 0 && p.Revision != rev {
+	if !cardGrant && p.Revision != 0 && p.Revision != rev {
 		return api.Round{}, control.Errorf(api.ErrorKindConflict, "round %s is at revision %d, not %d; read it again", r.Name, rev, p.Revision)
 	}
 	if _, err := s.sched.Update(r); err != nil {
@@ -1992,6 +2006,52 @@ func (s *roundsService) updateRound(ctx context.Context, p api.RoundUpdateParams
 	}
 	s.rememberTarget(r)
 	return s.round(p.ID)
+}
+
+// roundDigest pins a round's definition as a grant card shows it (capcom-service.md 9.9): every
+// field but its words and its pause mark. Revisions restart with gff-hab and a run moves them,
+// so the card's Grant compares this instead.
+func roundDigest(r api.Round) string {
+	spec := r.RoundSpec
+	spec.Actions = nil
+	b, _ := json.Marshal(struct {
+		ID   string        `json:"id"`
+		Spec api.RoundSpec `json:"spec"`
+	}{r.ID, normalSpec(spec)})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// GrantCard is a person's Grant on a grant card (capcom-service.md 9.9). Under the edit lock it
+// checks that the capcom round id still has the digest the card showed, reads the words the round
+// holds now, and adds the card's words as the person's round.update from the owner's door. So no
+// edit, and no removal of a word, lands between the check and the write, and a run that only
+// moved the revision does not refuse it. A changed round answers conflict and grants nothing.
+// added is the words the round did not hold; none when it already held them all.
+func (s *roundsService) GrantCard(ctx context.Context, id, digest string, words []string) (r api.Round, added []string, err error) {
+	s.editMu.Lock()
+	defer s.editMu.Unlock()
+	cur, err := s.round(id)
+	if err != nil {
+		return api.Round{}, nil, err
+	}
+	if cur.Mode != api.RoundModeCapcom || roundDigest(cur) != digest {
+		return api.Round{}, nil, control.Errorf(api.ErrorKindConflict, "round %s changed since the card: read its prompt again", cur.Name)
+	}
+	have := actionWords(cur.Actions)
+	if added = rounds.Granted(have, words); len(added) == 0 {
+		return cur, nil, nil
+	}
+	spec := cur.RoundSpec
+	spec.ProjectRemote = "" // read only here: the project id stays
+	spec.Actions = apiActions(append(have, words...))
+	def, err := s.definition(ctx, spec)
+	if err != nil {
+		return api.Round{}, nil, err
+	}
+	def.ID = id
+	r, err = s.updateLocked(ctx, api.RoundUpdateParams{ID: id, Round: spec}, def, nil, true)
+	return r, added, err
 }
 
 func (s *roundsService) Delete(ref api.RoundRef) error {
@@ -2248,8 +2308,26 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if p.Batch != nil {
 				return nil, nil, control.Errorf(api.ErrorKindDenied, "from a pane, a round is created with no pending batch: only a move carries one")
 			}
+			capcomJob := pane == capcomRoute && p.Round.Mode == api.RoundModeCapcom
+			person := capcomJob && svc.capcomUserOpened != nil && svc.capcomUserOpened()
+			var want []string
 			if len(p.Round.Actions) > 0 {
-				return nil, nil, errGrant(method)
+				if !person || svc.capcomJob == nil {
+					return nil, nil, errGrant(method)
+				}
+				// A standing instruction that needs words (capcom-service.md 9.6, 9.9): the job
+				// is made with none, and the service asks the user for them on a grant card. Only
+				// the person's tap on it grants.
+				var err error
+				if want, err = rounds.NormalActions(actionWords(p.Round.Actions)); err != nil {
+					return nil, nil, roundErr(err)
+				}
+				if svc.capcomGrantReserve != nil {
+					if err := svc.capcomGrantReserve(want); err != nil {
+						return nil, nil, err
+					}
+				}
+				p.Round.Actions = nil
 			}
 			// An unfiled pane is an agent too: it gets a creator, so its round is never taken
 			// for a person's (capcom-service.md 9.3).
@@ -2257,8 +2335,6 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if filed {
 				by = ss.ID
 			}
-			capcomJob := pane == capcomRoute && p.Round.Mode == api.RoundModeCapcom
-			person := capcomJob && svc.capcomUserOpened != nil && svc.capcomUserOpened()
 			if person {
 				// A standing instruction (capcom-service.md 9.6): a capcom round the Capcom
 				// route makes in a turn a user's message opened is the user's, as a person's
@@ -2270,7 +2346,7 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			}
 			r, err := svc.Create(ctx, p, by)
 			if err == nil && capcomJob && svc.capcomJob != nil {
-				svc.capcomJob(r.Round, person)
+				svc.capcomJob(r.Round, person, want)
 			}
 			return r, nil, err
 		case "round.update":

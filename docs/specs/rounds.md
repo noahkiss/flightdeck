@@ -202,7 +202,9 @@ Rules:
 - **Field rules (Capcom jobs).** `actions` is for `capcom` rounds only, from the closed set of
   `capcom-service.md` 9.6. A create, update or apply from any agent route (a pane's, or
   Capcom's own) that sets a non-empty `actions` or adds a word is refused `denied`; only a
-  person grants Capcom an action. Removing words is allowed from anywhere. While `actions` is
+  person grants Capcom an action. One exception asks instead of setting: Capcom's create of a
+  `capcom` round, in a turn a user's message opened, makes the round with no words and raises
+  a grant card for them (`capcom-service.md` 9.9). Removing words is allowed from anywhere. While `actions` is
   not empty, an agent route may only remove words: any other edit, a pause or a delete from it
   is `denied`, and a person's grant clears `created_by`.
 

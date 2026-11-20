@@ -2215,7 +2215,9 @@ func serve(args []string) error {
 		hooks.SetRounds(roundHook(store, roundsSvc))
 		if capcomEng != nil {
 			eng, host := capcomEng, *hostID
-			roundsSvc.capcomJob = func(r api.Round, person bool) { eng.jobMade(host, r, person) }
+			roundsSvc.capcomJob = func(r api.Round, person bool, want []string) { eng.jobMade(host, r, person, want) }
+			eng.jobs = roundsSvc
+			roundsSvc.capcomGrantReserve = eng.reserveGrant
 			roundsSvc.capcomUserOpened = func() bool { return eng.turnState(0).UserOpened }
 		}
 	}

@@ -578,6 +578,53 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(c.hab("h1")?.settings[R.permissionWait]?.revision, 3)
     }
 
+    // MARK: - Quiet hours
+
+    /// `capcom.quiet_hours` (app.md 20.4): `off` and HH:MM-HH:MM read and write as the hab
+    /// takes them, a value the app cannot read is nil (the row shows it and never writes), the
+    /// time pickers round-trip whole minutes, and the off switch writes the home hab only.
+    @MainActor
+    func testQuietHours() async throws {
+        XCTAssertEqual(QuietHours.parse("off"), .off)
+        XCTAssertEqual(QuietHours.parse("22:00-07:00"), .range(start: 1320, end: 420))
+        XCTAssertEqual(QuietHours.parse("07:05-07:05"), .range(start: 425, end: 425))
+        for bad in ["", "Off", "10pm-7am", "24:00-07:00", "22:60-07:00", "2:00-07:00", "22:00", "22:00-07:00-08:00", "２２:00-07:00"] {
+            XCTAssertNil(QuietHours.parse(bad), bad)
+        }
+        XCTAssertEqual(QuietHours.off.value, "off")
+        XCTAssertEqual(QuietHours.range(start: 1320, end: 420).value, "22:00-07:00")
+        XCTAssertEqual(QuietHours.range(start: 5, end: 1439).value, "00:05-23:59")
+        XCTAssertEqual(QuietHours.standard.value, "22:00-07:00")
+        XCTAssertEqual(QuietHours.range(start: 1320, end: 420).with(end: 450).value, "22:00-07:30")
+        XCTAssertEqual(QuietHours.off.with(start: 60), .off)
+        for m in [0, 59, 420, 1320, 1439] {
+            XCTAssertEqual(QuietHours.minutes(QuietHours.date(m)), m)
+        }
+        XCTAssertEqual(R.def(QuietHours.id)?.kind, .page, "searchable, kept on the Capcom host page")
+
+        var sent: [String: [SettingWrite]] = [:]
+        let (c, _) = try center("SettingsTests.quiet") { hab, p in
+            sent[hab, default: []] += p.values
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
+        }
+        var home = balancedHab()
+        home.settings[QuietHours.id] = setting(QuietHours.id, .string("22:00-07:00"))
+        var other = balancedHab("h2", label: "beta")
+        other.settings[QuietHours.id] = setting(QuietHours.id, .string("22:00-07:00"))
+        c.update(habID: home.habID, label: home.label, state: state(home))
+        c.update(habID: other.habID, label: other.label, state: state(other))
+        await c.setOneHab(QuietHours.id, habID: "h1", .string(QuietHours.off.value))
+        XCTAssertEqual(sent["h1"], [SettingWrite(id: QuietHours.id, revision: 1, value: .string("off"))])
+        XCTAssertNil(sent["h2"], "quiet hours go to the home hab only")
+        XCTAssertEqual(c.hab("h1")?.settings[QuietHours.id]?.value, .string("off"))
+        // A value the hab's config locks is never written.
+        var locked = balancedHab("h3", label: "gamma")
+        locked.settings[QuietHours.id] = setting(QuietHours.id, .string("23:00-06:00"), source: .config)
+        c.update(habID: locked.habID, label: locked.label, state: state(locked))
+        await c.setOneHab(QuietHours.id, habID: "h3", .string("off"))
+        XCTAssertNil(sent["h3"])
+    }
+
     // MARK: - Voice
 
     func testYesAllows() {

@@ -330,6 +330,9 @@ public actor FakeHab {
 
     /// Every `capcom.card.answer` received, oldest first, refused ones too.
     public private(set) var capcomCardAnswers: [CapcomCardAnswerParams] = []
+    /// The next grant card's Grant finds the job changed (capcom-service.md 9.9).
+    private var capcomGrantChanged = false
+    public func setCapcomGrantChanged(_ on: Bool) { capcomGrantChanged = on }
     /// Every `device.context.put` received, oldest first.
     public private(set) var deviceContextPuts: [DeviceContextPutParams] = []
     /// Every `diag.friction` the hab took, oldest first (capability `friction`).
@@ -1268,6 +1271,20 @@ public actor FakeHab {
             }
             guard card.choices.contains(p.choice) else {
                 await fail(c, id: id, kind: .invalid, hint: "card \(p.item) does not offer \(p.choice)")
+                break
+            }
+            if card.type == CapcomGrantCard.type, p.choice == CapcomGrantCard.grant, capcomGrantChanged {
+                // The job changed since the card (capcom-service.md 9.9): nothing is granted, the
+                // card ends expired, and a new card shows the job as it is now.
+                capcomGrantChanged = false
+                it.answer = CapcomAnswer(choice: "expired", time: Fixture.stamp(Date()))
+                await putCapcomItem(it)
+                var again = it
+                again.id = nextCapcomItemID()
+                again.answer = nil
+                again.text = "The job changed since the last card. Read its prompt again.\n\n" + (it.text ?? "")
+                await putCapcomItem(again)
+                await fail(c, id: id, kind: .conflict, hint: "job \(card.grant?.name ?? "") changed since the card, and nothing was granted")
                 break
             }
             if p.choice == "add", let d = CapcomEventDraft.of(it), d.isPast(Date()) {

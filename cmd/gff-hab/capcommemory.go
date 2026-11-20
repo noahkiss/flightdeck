@@ -168,6 +168,9 @@ func (e *capcomEngine) CardAnswer(ctx context.Context, client string, p api.Capc
 	if !slices.Contains(it.Card.Choices, p.Choice) {
 		return api.CapcomCardAnswered{}, control.Errorf(api.ErrorKindInvalid, "card %s offers %s, not %q", p.Item, strings.Join(it.Card.Choices, ", "), p.Choice)
 	}
+	if it.Card.Type == capcomthread.CardGrantType {
+		return e.answerGrant(ctx, it.ID, client, p.Choice)
+	}
 	if it.Card.Type == capcomthread.CardCalendar || it.Card.Type == capcomthread.CardReminder {
 		return e.answerEventCard(it, client, p.Choice)
 	}

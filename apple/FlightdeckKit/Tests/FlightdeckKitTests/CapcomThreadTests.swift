@@ -183,6 +183,57 @@ final class CapcomThreadTests: XCTestCase {
         await f.setActive(false)
     }
 
+    /// A grant card (capcom-service.md 9.9): the words by their switch titles, the prompt whole,
+    /// one tap to grant with only the card and the choice sent; a job changed since the card
+    /// grants nothing and a new card shows it again; Not now answers the new one.
+    func testGrantCard() async throws {
+        let a = await serviceHab("bench")
+        let f = await fleet([a])
+        let (m, t) = try await open(f)
+        let prompt = "When a build fails, hand its log to the project's agent.\nKeep api-lead fresh."
+        let grant = CapcomCardGrant(actions: [.handOff, .drive], name: "builds", prompt: prompt, revision: 3, round: "r-1", trigger: "manual")
+        let card = await a.addCapcomItem(kind: "card", author: "flightdeck", text: "Capcom set up job builds. Let it act with: hand_off, drive?",
+                                         card: CapcomCard(choices: ["grant", "not_now"], grant: grant, ref: "r-1", type: "grant"))
+        await eventually("card") { t.items.contains { $0.id == card.id } }
+        let g = try XCTUnwrap(CapcomGrantCard.of(card))
+        XCTAssertEqual(g.title, "Let job builds act?")
+        XCTAssertEqual(g.words, ["Hand off work to an agent", "Type into panes and keep agents fresh"])
+        XCTAssertEqual(g.prompt, prompt, "the prompt shows whole")
+        XCTAssertNil(g.lead)
+        XCTAssertNil(g.answered)
+        XCTAssertEqual(CapcomCardChoice.icon("grant"), "key")
+        XCTAssertNil(g.length)
+        XCTAssertEqual(CapcomGrantCard.shown("watch\n\n\n \n\t\nthen act\n\n"), "watch\n\nthen act")
+        var long = g
+        long.prompt = String(repeating: "x", count: 1200)
+        XCTAssertEqual(long.length, 1200.formatted() + " characters")
+
+        await t.answerGrant(card, grant: true)
+        await eventually("granted") { t.items.first { $0.id == card.id }?.answer?.choice == "grant" }
+        var answers = await a.capcomCardAnswers
+        XCTAssertEqual(answers.last, CapcomCardAnswerParams(choice: "grant", item: card.id))
+        XCTAssertEqual(CapcomGrantCard.of(t.items.first { $0.id == card.id }!)?.answered, "Granted")
+        XCTAssertNil(t.notice)
+
+        // The job changed before the tap: nothing is granted, the old card ends, a new one shows.
+        let other = await a.addCapcomItem(kind: "card", author: "flightdeck", text: "Capcom set up job builds.",
+                                          card: CapcomCard(choices: ["grant", "not_now"], grant: grant, ref: "r-1", type: "grant"))
+        await eventually("second card") { t.items.contains { $0.id == other.id } }
+        await a.setCapcomGrantChanged(true)
+        await t.answerGrant(other, grant: true)
+        XCTAssertEqual(t.notice?.hasPrefix("conflict:"), true)
+        await eventually("expired") { t.items.first { $0.id == other.id }?.answer?.choice == "expired" }
+        await eventually("shown again") { t.items.contains { $0.id > other.id && $0.card?.type == "grant" } }
+        let again = try XCTUnwrap(t.items.last { $0.card?.type == "grant" })
+        XCTAssertEqual(CapcomGrantCard.of(again)?.lead, "The job changed since the last card. Read its prompt again.")
+        await t.answerGrant(again, grant: false)
+        await eventually("not now") { t.items.first { $0.id == again.id }?.answer?.choice == "not_now" }
+        answers = await a.capcomCardAnswers
+        XCTAssertEqual(answers.last, CapcomCardAnswerParams(choice: "not_now", item: again.id))
+        m.stop()
+        await f.setActive(false)
+    }
+
     func testAllowedSitesInSettings() async throws {
         let a = await serviceHab("bench")
         await a.setCapcomSites(["example.com", "example.org"])

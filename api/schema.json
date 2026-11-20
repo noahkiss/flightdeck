@@ -2964,7 +2964,7 @@
       "params": [
         {
           "name": "choice",
-          "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4).",
+          "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4). A grant card's grant adds its words to the round as a person's grant; a round changed since the card answers conflict, and a new card shows it again (9.9).",
           "required": true,
           "schema": {
             "type": "string"
@@ -6094,13 +6094,17 @@
             "$ref": "#/components/schemas/CapcomCardEvent",
             "description": "calendar and reminder: what Add writes (capcom-service.md 8.5)."
           },
+          "grant": {
+            "$ref": "#/components/schemas/CapcomCardGrant",
+            "description": "grant: the job and the words Grant gives it (capcom-service.md 9.6)."
+          },
           "ref": {
             "type": "string",
-            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card."
+            "description": "approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card. job: the job as host/name. grant: the round id on the Capcom home hab."
           },
           "type": {
             "type": "string",
-            "description": "approval, confirmation, handoff, calendar, reminder, proposal, memory or group."
+            "description": "approval, confirmation, handoff, calendar, reminder, proposal, memory, group, job or grant."
           }
         },
         "required": [
@@ -6113,7 +6117,7 @@
         "properties": {
           "choice": {
             "type": "string",
-            "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4)."
+            "description": "One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4). A grant card's grant adds its words to the round as a person's grant; a round changed since the card answers conflict, and a new card shows it again (9.9)."
           },
           "item": {
             "type": "string",
@@ -6184,6 +6188,47 @@
         },
         "required": [
           "title"
+        ]
+      },
+      "CapcomCardGrant": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "description": "The words Grant adds, in the order of the closed set.",
+            "items": {
+              "$ref": "#/components/schemas/RoundAction"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "The round's name."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The job's prompt, whole: Capcom follows it when the job's events come in."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The round's revision when the card was made."
+          },
+          "round": {
+            "type": "string",
+            "description": "The round's id on the Capcom home hab."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "The job's trigger in plain words."
+          }
+        },
+        "required": [
+          "round",
+          "name",
+          "revision",
+          "actions",
+          "prompt",
+          "trigger"
         ]
       },
       "CapcomContextItem": {
@@ -14522,7 +14567,7 @@
         "properties": {
           "actions": {
             "type": "array",
-            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
             "items": {
               "$ref": "#/components/schemas/RoundAction"
             }
@@ -15174,7 +15219,7 @@
         "properties": {
           "actions": {
             "type": "array",
-            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
+            "description": "Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.",
             "items": {
               "$ref": "#/components/schemas/RoundAction"
             }

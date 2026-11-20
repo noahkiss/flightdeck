@@ -473,28 +473,32 @@ public struct CapcomCard: Codable, Sendable, Hashable {
     public var choices: [String]
     /// calendar and reminder: what Add writes (capcom-service.md 8.5).
     public var event: CapcomCardEvent?
-    /// approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card.
+    /// grant: the job and the words Grant gives it (capcom-service.md 9.6).
+    public var grant: CapcomCardGrant?
+    /// approval: the request id, as approval.answer takes it. memory: the Logbook record, or the proposal while it waits for review. group: the group id, which opens the group's card. job: the job as host/name. grant: the round id on the Capcom home hab.
     public var ref: String?
-    /// approval, confirmation, handoff, calendar, reminder, proposal, memory or group.
+    /// approval, confirmation, handoff, calendar, reminder, proposal, memory, group, job or grant.
     public var type: String
 
     enum CodingKeys: String, CodingKey {
         case choices = "choices"
         case event = "event"
+        case grant = "grant"
         case ref = "ref"
         case type = "type"
     }
 
-    public init(choices: [String], event: CapcomCardEvent? = nil, ref: String? = nil, type: String) {
+    public init(choices: [String], event: CapcomCardEvent? = nil, grant: CapcomCardGrant? = nil, ref: String? = nil, type: String) {
         self.choices = choices
         self.event = event
+        self.grant = grant
         self.ref = ref
         self.type = type
     }
 }
 
 public struct CapcomCardAnswerParams: Codable, Sendable, Hashable {
-    /// One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4).
+    /// One of the card's choices. A memory line's undo deletes the capcom guide it names, or rejects the proposal while it waits for review (capcom-service.md 6.4). A grant card's grant adds its words to the round as a person's grant; a round changed since the card answers conflict, and a new card shows it again (9.9).
     public var choice: String
     /// The card's item id.
     public var item: String
@@ -568,6 +572,39 @@ public struct CapcomCardEvent: Codable, Sendable, Hashable {
         self.title = title
         self.tz = tz
         self.url = url
+    }
+}
+
+public struct CapcomCardGrant: Codable, Sendable, Hashable {
+    /// The words Grant adds, in the order of the closed set.
+    public var actions: [RoundAction]
+    /// The round's name.
+    public var name: String
+    /// The job's prompt, whole: Capcom follows it when the job's events come in.
+    public var prompt: String
+    /// The round's revision when the card was made.
+    public var revision: UInt64
+    /// The round's id on the Capcom home hab.
+    public var round: String
+    /// The job's trigger in plain words.
+    public var trigger: String
+
+    enum CodingKeys: String, CodingKey {
+        case actions = "actions"
+        case name = "name"
+        case prompt = "prompt"
+        case revision = "revision"
+        case round = "round"
+        case trigger = "trigger"
+    }
+
+    public init(actions: [RoundAction], name: String, prompt: String, revision: UInt64, round: String, trigger: String) {
+        self.actions = actions
+        self.name = name
+        self.prompt = prompt
+        self.revision = revision
+        self.round = round
+        self.trigger = trigger
     }
 }
 
@@ -8317,7 +8354,7 @@ public struct RevisionRange: Codable, Sendable, Hashable {
 }
 
 public struct Round: Codable, Sendable, Hashable {
-    /// Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.
+    /// Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.
     public var actions: [RoundAction]?
     /// once (the default) or skip.
     public var catchUp: RoundCatchUp?
@@ -8942,7 +8979,7 @@ public struct RoundRunsParams: Codable, Sendable, Hashable {
 }
 
 public struct RoundSpec: Codable, Sendable, Hashable {
-    /// Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, and while actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.
+    /// Capcom rounds only: the action words Capcom may use in the event turn that takes this round's message, capped by capcom.event_actions on the Capcom home hab. Only a person grants a word: a create, update or apply from a pane's route or Capcom's that adds one is refused with denied, except Capcom's create of a capcom round in a turn a user's message opened, which makes the round with no words and raises a grant card for them (capcom-service.md 9.9). While actions is not empty such a route may only remove words. Removing words is allowed from anywhere. A person's grant clears created_by.
     public var actions: [RoundAction]?
     /// once (the default) or skip.
     public var catchUp: RoundCatchUp?
