@@ -206,12 +206,13 @@ func Waits(harness string) bool {
 }
 
 // PermissionDecision turns the hab's answer body into the PermissionRequest hook output of
-// Claude Code and Codex, which share one shape. It returns nil for an answer with no decision:
+// Claude Code and Codex, which share one shape. An allow keeps its updatedInput. It returns nil for an answer with no decision:
 // the hook then prints nothing, and the harness shows its own dialog.
 func PermissionDecision(answer []byte) ([]byte, error) {
 	var a struct {
-		Behavior string `json:"behavior"`
-		Message  string `json:"message,omitempty"`
+		Behavior     string          `json:"behavior"`
+		Message      string          `json:"message,omitempty"`
+		UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	}
 	if err := json.Unmarshal(answer, &a); err != nil {
 		return nil, fmt.Errorf("hab answer: %w", err)
@@ -220,8 +221,9 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 		return nil, nil
 	}
 	type decision struct {
-		Behavior string `json:"behavior"`
-		Message  string `json:"message,omitempty"`
+		Behavior     string          `json:"behavior"`
+		Message      string          `json:"message,omitempty"`
+		UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	}
 	out := struct {
 		HookSpecificOutput struct {
@@ -233,6 +235,10 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 	out.HookSpecificOutput.Decision = decision{Behavior: a.Behavior}
 	if a.Behavior == "deny" {
 		out.HookSpecificOutput.Decision.Message = a.Message
+	} else if len(a.UpdatedInput) > 0 && string(a.UpdatedInput) != "null" {
+		// A Claude Code question's input with the owner's answers (harness-adapters.md,
+		// Question answers).
+		out.HookSpecificOutput.Decision.UpdatedInput = a.UpdatedInput
 	}
 	b, err := json.Marshal(out)
 	if err != nil {

@@ -374,3 +374,24 @@ func TestHookToEventStream(t *testing.T) {
 		t.Fatalf("structure agents %+v", res.Agents)
 	}
 }
+
+// TestPermissionDecisionInput: an allow keeps the hab's updatedInput (a Claude Code question's
+// input with the owner's answers) in the hook output; a deny never carries one; an answer with
+// no decision prints nothing.
+func TestPermissionDecisionInput(t *testing.T) {
+	t.Parallel()
+	in := `{"answers":{"Which color?":"Blue"},"questions":[{"question":"Which color?","options":[{"label":"Red"},{"label":"Blue"}]}]}`
+	for _, tc := range []struct{ name, answer, want string }{
+		{"allow with input", `{"behavior":"allow","updatedInput":` + in + `}`,
+			`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedInput":` + in + `}}}` + "\n"},
+		{"allow", `{"behavior":"allow"}`, `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` + "\n"},
+		{"deny drops input", `{"behavior":"deny","message":"no","updatedInput":` + in + `}`,
+			`{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"no"}}}` + "\n"},
+		{"no decision", `{}`, ""},
+	} {
+		out, err := PermissionDecision([]byte(tc.answer))
+		if err != nil || string(out) != tc.want {
+			t.Errorf("%s: %s %v", tc.name, out, err)
+		}
+	}
+}
