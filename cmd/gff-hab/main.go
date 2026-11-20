@@ -1399,7 +1399,7 @@ func serve(args []string) error {
 		paneSvc = &paneService{lk: lk, store: store, rule: ruleValue(setSvc), links: channelPeers{pm}.Links,
 			drive: wordSetting(setSvc, settings.AgentDrivePanes, drivePanesAgents),
 			self:  key.Fingerprint(), host: *hostID, logf: logger.Printf}
-		paneSvc.drv = paneDrive{agent: agents.Get, typed: typedAt.within,
+		paneSvc.drv = paneDrive{agent: agents.Get, typed: typedAt.within, live: linkLive(lk),
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
 				s := srv.Load()
 				if s == nil {

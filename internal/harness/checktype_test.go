@@ -55,6 +55,28 @@ func TestCheckType(t *testing.T) {
 	if err := s.CheckType("osc", false); err != nil {
 		t.Fatalf("osc only, owner: %v", err)
 	}
+	// A hooked Claude ends; a Codex with no hooks starts in the same pane. Claude's hooks say
+	// nothing of Codex's dialogs: an agent's door is refused.
+	s.Hook("seq", claude("SessionStart", `{"session_id":"c","hook_event_name":"SessionStart"}`, 1))
+	if err := s.CheckType("seq", true); err != nil {
+		t.Fatalf("hooked claude: %v", err)
+	}
+	s.Hook("seq", claude("SessionEnd", `{"session_id":"c","hook_event_name":"SessionEnd"}`, 2))
+	s.Apply("seq", "codex", api.StateSourceOsc, 3, Update{State: api.AgentStatusIdle, NewTurn: true})
+	if st, _ := s.Get("seq"); st.Harness != "codex" || st.State != api.AgentStatusIdle {
+		t.Fatalf("seq state %+v", st)
+	}
+	if err := s.CheckType("seq", true); !busy(err) || !strings.Contains(err.Error(), "no hook") {
+		t.Fatalf("hook-less codex after a hooked claude: %v", err)
+	}
+	// The same without the SessionEnd: the harness change alone drops the mark.
+	s.Hook("seq2", claude("SessionStart", `{"session_id":"d","hook_event_name":"SessionStart"}`, 1))
+	s.Apply("seq2", "codex", api.StateSourceOsc, 2, Update{State: api.AgentStatusIdle, NewTurn: true})
+	if st, _ := s.Get("seq2"); st.Harness == "codex" {
+		if err := s.CheckType("seq2", true); !busy(err) {
+			t.Fatalf("hook-less codex after a harness change: %v", err)
+		}
+	}
 	// An exited agent is a shell again.
 	s.Exited("osc")
 	if err := s.CheckType("osc", true); err != nil {

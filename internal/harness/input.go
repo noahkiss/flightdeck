@@ -86,9 +86,9 @@ func (s *Store) CheckType(paneID string, agentDoor bool) error {
 		return fmt.Errorf("%w: %s is blocked and waits for an answer; a typed key could give it", ErrBusy, p.st.Harness)
 	}
 	if agentDoor {
-		_, hook := p.lastT[api.StateSourceHook]
-		_, server := p.lastT[api.StateSourceServer]
-		if !hook && !server {
+		// The harness in the pane now must be the one that reported: a hook of an earlier
+		// harness in the pane says nothing of the next one's dialogs.
+		if (p.hooked == "" || p.hooked != p.st.Harness) && (p.served == "" || p.served != p.st.Harness) {
 			return fmt.Errorf("%w: %s in the pane reports through no hook, so the hab cannot see its dialogs; an agent may not type into it", ErrBusy, p.st.Harness)
 		}
 	}

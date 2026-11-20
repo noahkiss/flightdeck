@@ -354,9 +354,10 @@ func TestPaneTypeGate(t *testing.T) {
 	if err := typeIn("o", typeWrite{text: "hi", agentDoor: true}); paneErrKind(err) != api.ErrorKindConflict || len(writes()) != 2 {
 		t.Fatalf("no hooks, agent door: %v", err)
 	}
-	// An idle agent with hooks: one paste, then Enter; the pane holds until the turn starts.
+	// An idle agent with hooks, from the owner's door: one paste, then Enter; the pane holds
+	// until the turn starts.
 	a.agents.Hook("q", claudeEnv("SessionStart", `{"session_id":"b","hook_event_name":"SessionStart"}`, 1))
-	if err := typeIn("q", typeWrite{text: "hello\x1b[201~x", enter: true, agentDoor: true}); err != nil {
+	if err := typeIn("q", typeWrite{text: "hello\x1b[201~x", enter: true}); err != nil {
 		t.Fatalf("idle agent: %v", err)
 	}
 	w := writes()
@@ -375,16 +376,106 @@ func TestPaneTypeGate(t *testing.T) {
 		t.Fatalf("newline: %v, held %v", err, a.sendHeld("q"))
 	}
 	waitUntil(t, "the hold to end", func() bool { return !a.sendHeld("q") })
-	// Ctrl-C from the owner's door into a working agent is not the owner's interrupt.
-	a.agents.Hook("q", claudeEnv("UserPromptSubmit", `{"session_id":"b","hook_event_name":"UserPromptSubmit","prompt":"go"}`, 5))
-	if st, _ := a.agents.Get("q"); st.State != api.AgentStatusWorking {
-		t.Fatalf("q is %s, want working", st.State)
+}
+
+// TestPaneTypeNoKeys: no write pane.type makes into an agent's pane is a key, from any door: Esc
+// and Ctrl-C from the owner's door into a working Claude go inside the paste, so the agent keeps
+// working and the hab records no owner interrupt.
+func TestPaneTypeNoKeys(t *testing.T) {
+	t.Parallel()
+	keys := &keyLog{}
+	a := &agentService{agents: harness.NewStore(harness.Config{}), gate: harness.NewGate(time.Minute), input: keys, logf: t.Logf}
+	a.agents.Hook("w", claudeEnv("SessionStart", `{"session_id":"b","hook_event_name":"SessionStart"}`, 1))
+	a.agents.Hook("w", claudeEnv("UserPromptSubmit", `{"session_id":"b","hook_event_name":"UserPromptSubmit","prompt":"go"}`, 2))
+	for _, text := range []string{"\x03", "\x1b", "\x1b[27u"} {
+		if _, err := a.typeInto(context.Background(), "w", typeWrite{text: text, recent: func(string) bool { return false }}); err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
 	}
-	if err := typeIn("q", typeWrite{text: "\x03"}); err != nil {
-		t.Fatalf("owner Ctrl-C: %v", err)
+	keys.mu.Lock()
+	defer keys.mu.Unlock()
+	for _, w := range keys.writes {
+		if harness.InterruptKey("claude", w) || !strings.HasPrefix(string(w), "\x1b[200~") {
+			t.Errorf("write %q is a key", w)
+		}
 	}
-	if st, _ := a.agents.Get("q"); st.State != api.AgentStatusWorking {
-		t.Fatalf("after a typed Ctrl-C q is %s: a type marked an interrupt", st.State)
+	if st, _ := a.agents.Get("w"); st.State != api.AgentStatusWorking {
+		t.Fatalf("w is %s, want working", st.State)
+	}
+}
+
+// TestPaneTypeEnvelope: from an agent's door, text into an agent's pane arrives as an agent
+// message: the first character the harness sees is the envelope's, never "!" or "/". Enter
+// alone is refused there; a pane that no longer runs an agent is refused when the rule needed one.
+func TestPaneTypeEnvelope(t *testing.T) {
+	t.Parallel()
+	keys := &keyLog{}
+	a := &agentService{agents: harness.NewStore(harness.Config{}), gate: harness.NewGate(time.Minute), input: keys, logf: t.Logf}
+	never := func(string) bool { return false }
+	ctx := context.Background()
+	for i, text := range []string{"!ls", "/exit", "  !rm -rf x"} {
+		pane := "e" + string(rune('0'+i))
+		a.agents.Hook(pane, claudeEnv("SessionStart", `{"session_id":"s","hook_event_name":"SessionStart"}`, 1))
+		if _, err := a.typeInto(ctx, pane, typeWrite{text: text, enter: true, agentDoor: true, from: "here/me", recent: never}); err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+	}
+	keys.mu.Lock()
+	for _, w := range keys.writes {
+		s := strings.TrimPrefix(string(w), "\x1b[200~")
+		if s == "\r" {
+			continue
+		}
+		if !strings.HasPrefix(s, "[Flightdeck: agent message from 'here/me'") {
+			t.Errorf("write %q is not enveloped", w)
+		}
+	}
+	n := len(keys.writes)
+	keys.mu.Unlock()
+	// Enter alone into an agent from an agent's door.
+	a.agents.Hook("e9", claudeEnv("SessionStart", `{"session_id":"s","hook_event_name":"SessionStart"}`, 1))
+	if _, err := a.typeInto(ctx, "e9", typeWrite{enter: true, agentDoor: true, recent: never}); paneErrKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("Enter alone: %v", err)
+	}
+	// The rule needed an agent; the pane runs none now.
+	if _, err := a.typeInto(ctx, "shell", typeWrite{text: "ls", enter: true, agentDoor: true, requireAgent: true, recent: never}); paneErrKind(err) != api.ErrorKindConflict {
+		t.Fatalf("no agent under the claim: %v", err)
+	}
+	keys.mu.Lock()
+	defer keys.mu.Unlock()
+	if len(keys.writes) != n {
+		t.Fatalf("a refused type wrote %q", keys.writes[n:])
+	}
+}
+
+// TestPaneTypeDoors: both agent doors mark the write as an agent's and name the caller; under
+// agents the route needs an agent at write time; an exited caller types and starts nothing.
+func TestPaneTypeDoors(t *testing.T) {
+	t.Parallel()
+	r := newDriveRig(t)
+	ctx := context.Background()
+	r.rule = drivePanesAgents
+	if _, err := r.s.Type(ctx, fromMine, api.PaneTypeParams{Session: "mate", Text: "!ls"}); err != nil {
+		t.Fatal(err)
+	}
+	r.rule = readPanesAll
+	if _, err := r.s.Type(ctx, fromPeer, api.PaneTypeParams{Session: "mate", Text: "/exit"}); err != nil {
+		t.Fatal(err)
+	}
+	w := r.typed.writes
+	if len(w) != 2 || !w[0].agentDoor || !w[0].requireAgent || w[0].from != "here/me" || !w[1].agentDoor || w[1].requireAgent || w[1].from == "" {
+		t.Fatalf("writes %+v", w)
+	}
+	// The caller's own pane exited: refused at every value, for type and new.
+	r.s.drv.live = func(pane string) bool { return pane != paneMine }
+	if _, err := r.s.Type(ctx, fromMine, api.PaneTypeParams{Session: "mate", Text: "x"}); paneErrKind(err) != api.ErrorKindDenied {
+		t.Fatalf("exited caller, type: %v", err)
+	}
+	if _, err := r.s.New(ctx, fromMine, api.PaneNewParams{}); paneErrKind(err) != api.ErrorKindDenied {
+		t.Fatalf("exited caller, new: %v", err)
+	}
+	if _, err := r.s.Type(ctx, fromOwner, api.PaneTypeParams{Session: "mate", Text: "x"}); err != nil {
+		t.Fatalf("the owner: %v", err)
 	}
 }
 

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -14,6 +16,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/harness"
+	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/panetext"
 )
 
@@ -147,6 +150,8 @@ type paneDrive struct {
 	create func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error)
 	// typeSlots and listSlots bound the calls that can block.
 	typeSlots, listSlots waitSlots
+	// live reports whether a pane's program still runs; nil: the store's session state alone.
+	live func(pane string) bool
 	// forward bounds a forwarded pane.type; 0 is paneTypeTime plus paneTypeMargin. A test
 	// shortens it.
 	forward time.Duration
@@ -171,6 +176,11 @@ type typeWrite struct {
 	enter     bool
 	agentDoor bool                   // the call came through an agent's door
 	recent    func(pane string) bool // a person typed into the pane just now
+	// from names the calling agent in the envelope an agent's text gets in an agent's pane.
+	from string
+	// requireAgent: the rule allowed the call only because the pane runs an agent (agents); the
+	// write is refused when, under the claim, it no longer does.
+	requireAgent bool
 }
 
 // agentText says whether text may come through an agent's door: no ESC, and no C0 control but
@@ -378,6 +388,9 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 	case c.door != doorOwner && !agentText(p.Text):
 		return api.PaneTyped{}, control.Errorf(api.ErrorKindInvalid, "an agent's text may hold no control characters but tab and newline: no Esc, no CR; use enter for Enter")
 	}
+	if s.callerExited(c) {
+		return api.PaneTyped{}, s.denyExited("pane.type", c)
+	}
 	t, peer, bare, err := s.prepareBy(gateDrive, "pane.type", c, p.Pane, p.Session)
 	if err != nil {
 		return api.PaneTyped{}, err
@@ -405,11 +418,13 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 	recent := func(pane string) bool { return s.drv.typed != nil && s.drv.typed(pane, paneTypeQuiet) }
 	ctx, cancel := context.WithTimeout(ctx, paneTypeTime)
 	defer cancel()
-	n, err := s.drv.typer.typeInto(ctx, t.pane, typeWrite{text: p.Text, enter: p.Enter, agentDoor: c.door != doorOwner, recent: recent})
+	rule := s.ruleOf(gateDrive)
+	n, err := s.drv.typer.typeInto(ctx, t.pane, typeWrite{text: p.Text, enter: p.Enter, agentDoor: c.door != doorOwner, recent: recent,
+		from: s.envelopeFrom(c), requireAgent: c.door == doorRoute && rule == drivePanesAgents})
 	if err != nil {
 		return api.PaneTyped{}, err
 	}
-	s.logf("panes: pane.type: caller %s typed %d bytes into pane %s (%s %s)", c.name(), n, t.pane, gateDrive.setting(), s.ruleOf(gateDrive))
+	s.logf("panes: pane.type: caller %s typed %d bytes into pane %s (%s %s)", c.name(), n, t.pane, gateDrive.setting(), rule)
 	r := api.PaneTyped{Pane: t.pane, Bytes: n}
 	if t.filed {
 		r.Session = t.session.Name
@@ -442,13 +457,25 @@ func (a *agentService) typeInto(ctx context.Context, pane string, w typeWrite) (
 	}
 	st, ok := a.agents.Get(pane)
 	agent := ok && st.Revision > 0 && st.State != api.AgentStatusExited && st.State != api.AgentStatusNone
+	switch {
+	case w.requireAgent && !agent:
+		return 0, control.Errorf(api.ErrorKindConflict, "pane %s runs no agent now; agent.drive_panes agents types only into agents' panes", pane)
+	case w.agentDoor && agent && w.text == "":
+		return 0, control.Errorf(api.ErrorKindInvalid, "an agent sends Enter into an agent's pane only with text: Enter alone would submit what is in its prompt")
+	}
+	text := w.text
+	if w.agentDoor && agent {
+		// An agent's text reaches another agent as an agent message, never as the user's own
+		// input: the first character the harness sees is the envelope's, never "!" or "/".
+		text = channels.Envelope(typeID(), w.from, text)
+	}
 	var writes [][]byte
 	switch {
-	case w.text == "":
+	case text == "":
 	case agent:
-		writes = append(writes, harness.PasteWrite(w.text))
+		writes = append(writes, harness.PasteWrite(text))
 	default:
-		writes = append(writes, []byte(w.text))
+		writes = append(writes, []byte(text))
 	}
 	if w.enter {
 		writes = append(writes, []byte{'\r'})
@@ -472,6 +499,58 @@ func (a *agentService) typeInto(ctx context.Context, pane string, w typeWrite) (
 
 var _ paneTyper = (*agentService)(nil)
 
+// typeID is the id of one typed agent message's envelope.
+func typeID() string {
+	var b [6]byte
+	rand.Read(b[:])
+	return "t-" + hex.EncodeToString(b[:])
+}
+
+// envelopeFrom names the caller in the envelope: host/session for a filed pane, the pane id for
+// an unfiled one, and a peer for a peer link, which does not say which agent asked.
+func (s *paneService) envelopeFrom(c paneCaller) string {
+	switch c.door {
+	case doorPeer:
+		return "an agent on another hab"
+	case doorOwner:
+		return "the owner"
+	}
+	if ss, ok := s.store.SessionByPane(c.pane); ok {
+		return s.host + "/" + ss.Name
+	}
+	return "pane " + c.pane
+}
+
+// callerExited says whether a route caller's own pane has exited: a process its program left
+// behind keeps the route token, but no longer speaks for a live session (hab-logic-api.md 3.12).
+func (s *paneService) callerExited(c paneCaller) bool {
+	if c.door != doorRoute || c.isCapcom() {
+		return false
+	}
+	if ss, ok := s.store.SessionByPane(c.pane); ok && ss.State == api.SessionStateExited {
+		return true
+	}
+	return s.drv.live != nil && !s.drv.live(c.pane)
+}
+
+// linkLive reports whether a pane's program runs, as the holder link sees it.
+func linkLive(lk *link.Link) func(pane string) bool {
+	return func(pane string) bool {
+		u, ok := parseUUID(pane)
+		if !ok {
+			return false
+		}
+		st, ok := lk.Pane(u)
+		return ok && !st.Exited && !st.Gone
+	}
+}
+
+// denyExited refuses a call from an exited pane.
+func (s *paneService) denyExited(method string, c paneCaller) error {
+	s.logf("panes: %s denied: caller %s has exited", method, c.name())
+	return control.Errorf(api.ErrorKindDenied, "the calling pane's program has exited: it may not type into or start panes")
+}
+
 // --- pane.new ---
 
 // New serves pane.new: a shell or a program in a new session on this hab, through
@@ -479,6 +558,9 @@ var _ paneTyper = (*agentService)(nil)
 func (s *paneService) New(ctx context.Context, c paneCaller, p api.PaneNewParams) (api.PaneStarted, error) {
 	rule := s.ruleOf(gateDrive)
 	project := s.callerProject(c)
+	if s.callerExited(c) {
+		return api.PaneStarted{}, s.denyExited("pane.new", c)
+	}
 	switch {
 	case c.isCapcom():
 		return api.PaneStarted{}, s.denyBy(gateDrive, "pane.new", c, rule, "")

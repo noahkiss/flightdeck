@@ -89,6 +89,9 @@ type pane struct {
 	// since its session last ended. A turn its OSC 7501 reports show finishing with no such hook
 	// marks the hooks missing.
 	hooked string
+	// served is the harness whose server (opencode) last reported for this pane; reset with
+	// hooked. pane.type's gate reads both (CheckType).
+	served string
 	// stacked is set when the open request replaced another that was still open and
 	// unanswered. The harness may still show the first one's dialog, so keys never answer the
 	// open request (Shown); a waiting hook, keyed by request id, still may.
@@ -198,6 +201,9 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	prevOSC := p.oscLast
 	if src == api.StateSourceHook {
 		p.hooked = harness
+	}
+	if src == api.StateSourceServer {
+		p.served = harness
 	}
 	if src == api.StateSourceOsc && harness == p.st.Harness {
 		p.oscN, p.oscLast = p.oscN+1, u.State
@@ -340,7 +346,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	if u.Unbind {
 		// The session ended: its turn and its hooks say nothing about the next program in the
 		// pane, which may report over OSC 7501 alone (an untrusted Codex).
-		p.bound, p.turnSource, p.hooked = false, "", ""
+		p.bound, p.turnSource, p.hooked, p.served = false, "", "", ""
 	}
 
 	if same(p.st, next) {
@@ -540,7 +546,7 @@ func (s *Store) Exited(paneID string) {
 // exitLocked marks the pane's harness gone. The caller holds s.mu.
 func (s *Store) exitLocked(p *pane) {
 	p.resolve(p.open, "", api.AgentStatusExited)
-	p.bound, p.turnSource, p.hooked = false, "", ""
+	p.bound, p.turnSource, p.hooked, p.served = false, "", "", ""
 	p.oscLast, p.answering, p.answered, p.took, p.ownerStop = "", "", "", "", false
 	if p.st.State == api.AgentStatusNone || p.st.State == api.AgentStatusExited {
 		return // an OSC clear may have shown the exit already
