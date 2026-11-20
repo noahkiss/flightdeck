@@ -515,7 +515,9 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
 | Tools | From | Notes |
 |---|---|---|
 | Read tools, `suggest_host`, `confirmation_read` | `gff-hab mcp` (`capcom.md` 4, 5.5) | Unchanged |
-| `hand_off`, `start_session`, `set_up_project`, `file_record`, `logbook_write` | `gff-hab mcp` (`capcom.md` 6.4, 6.5) | Refused in an event turn (9.4), except an action a Capcom job allows (9.6, from A9) |
+| `hand_off`, `start_session`, `set_up_project`, `file_record`, `logbook_write` | `gff-hab mcp` (`capcom.md` 6.4, 6.5) | In an event turn, only as `capcom.event_actions` and the Capcom job allow (9.4, 9.6) |
+| `pane_list`, `pane_read`, `pane_wait` | `gff-hab mcp` (`hab-logic-api.md` 3.11, 3.12) | Every pane on every host (5.4). Screen text is untrusted program output |
+| `pane_type`, `pane_new`, `session_action` | `gff-hab mcp` (`hab-logic-api.md` 3.12, 3.13) | Under each target hab's `agent.drive_panes` (5.4). In an event turn, only as 9.4 allows |
 | `channel_send` | `gff-hab mcp` (`mesh.md` 6.6) | Through the token route (3.3). `channel_wait` is not offered: every message to Capcom arrives as an input (9.1) |
 | The coordinator's group tools: `group_create`, `group_status`, `group_amend`, `group_close`, `group_retry`, `member_compact`, `member_handoff` | `gff-hab mcp` (`groups.md` 15.2, from stage B8) | The writes are refused in an event turn, as `start_session` is (9.4), except under a Capcom job's `group` action (9.6). `group_status` is a read. Built in B8 (`groups.md` 12.1) |
 | Personal tools (8) | `gff-hab mcp`, only on a Capcom route | Refused on any pane's route |
@@ -525,7 +527,11 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
 - Every other SDK built-in tool is in the engine's deny list by name, so the model never sees
   it: `Bash`, `Read`, `Edit`, `Write`, `Glob`, `Grep`, `Agent`, `Skill`, `ToolSearch`,
   `AskUserQuestion`, `TaskCreate`, `TaskUpdate`, `NotebookEdit`. No shell, no file access, no
-  subagents. Deny rules match names, so a tool a later SDK adds is not denied by this list.
+  subagents of its own. Deny rules match names, so a tool a later SDK adds is not denied by this
+  list.
+- **A shell through a pane.** At `agent.drive_panes = all`, `pane_type` into a shell pane runs a
+  command as the user, and `pane_new` starts one (5.4). That is the one way Capcom reaches a
+  shell. The engine itself still runs none.
 - **Start check.** The engine reads the tool list in the SDK's `init` message. A tool outside
   5.1 makes it exit with an error naming the tool, before it takes any input. The session row
   shows the error. A new SDK version pin must add the new name to the deny list.
@@ -552,7 +558,9 @@ CLI 0.167.0, verified against the real CLI and a fake Responses endpoint):
 | A Logbook record | A proposal, reviewed later | `capcom.md` 6.2 |
 | A calendar event or reminder | A card with one "Add" tap | 8.5, decision 5 |
 | A web fetch of a URL the turn has not seen | An approval card | 5.3 |
-| Any action in an event turn | Refused, unless the Capcom job that sent the round message allows it (from A9) | 9.4, 9.6 |
+| A pane read, wait or list | None, on any host | 5.4 |
+| Typing into a pane, starting a pane, a session action | The target hab's `agent.drive_panes`, as for any agent, with Capcom's scope (5.4) | 5.4, `hab-logic-api.md` 3.12, 3.13 |
+| Any action in an event turn | `capcom.event_actions`: at `all` every action but `card` and `fetch`; below `all`, only what the Capcom job that sent the round message allows | 9.4, 9.6 |
 
 ### 5.3 Approval cards from `canUseTool`
 
@@ -576,8 +584,105 @@ request makes (`app.md` 7).
   and removable in Capcom settings), and Deny.
 
 Decision: a card for a URL the turn did not see. Reason: Capcom holds the user's transcripts,
-Logbook and location. A fetch to a made-up URL is the one path that can carry them out. URLs from
-the user or a search are what a person would open anyway.
+Logbook and location. A fetch to a made-up URL is the one tool of the engine's own that can carry
+them out. URLs from the user or a search are what a person would open anyway. A shell pane at
+`agent.drive_panes = all` is a second path; 5.5 weighs it.
+
+### 5.4 Panes and session actions
+
+Capcom is the single pane of glass. It reads what runs anywhere, and keeps agents moving with the
+same tools any agent has. Principle: Capcom removes friction and never adds it. Each rule below
+is weighed against that.
+
+**Reading.** The Capcom route reads, waits on and lists every pane on every host, at every
+level. `agent.read_panes` binds other agents only; for Capcom its one effect is that a hand-set
+`off` on a hab keeps Capcom out of that hab's panes too.
+
+- `pane_list` with no host lists every online hab's panes, as the owner's list does
+  (`hab-logic-api.md` 3.12).
+- **Across hosts.** The home hab forwards Capcom's call over its peer link with the mark
+  `capcom` (`hab-logic-api.md` 3.11). The far hab takes the mark only from the peer that holds
+  the Capcom mark in its own belief (`capcom.md` 7.6), and then applies the Capcom rule under
+  its own `agent.read_panes`. From any other peer the mark is ignored, and the peer door's rule
+  applies.
+
+**Typing and starting.** Capcom types into a pane under the target hab's `agent.drive_panes`,
+the same setting as any agent. Capcom has no pane and no project, so its scope is every
+project, and it never has an own pane to avoid.
+
+| `agent.drive_panes` | Capcom may type into | Capcom may start (`pane_new`, on the home hab) | Its text into an agent's pane |
+|---|---|---|---|
+| `all` (Bypass) | Every pane on every host, shells included | A pane in any folder | A raw line, as the owner's (below) |
+| `project` (by hand) | Every pane on every host, shells included | Nothing: Capcom has no project to start in | In the channel envelope |
+| `agents` (Balanced) | Every agent's pane on every host; never a shell | Nothing | In the channel envelope |
+| `off` (Safe) | Nothing | Nothing | |
+
+- **The raw line.** At `all`, Capcom's text into an agent's pane goes without the channel
+  envelope, as the owner's text does from the CLI. So `/compact`, `/clear` or `!make` reach
+  the harness as typed. Everything else in `hab-logic-api.md` 3.12 still holds: no ESC and no
+  control character but tab and LF, no Enter alone into an agent's pane, one bracketed paste,
+  and the send gate. The raw line is for the Capcom route only. Other agents stay in the
+  envelope at every value.
+- **Across hosts** as for reading: the far hab applies the Capcom rule under its own
+  `agent.drive_panes` when the forward carries the mark from the Capcom home. `pane_new` is
+  local, as for any caller. A start on another host goes through `start_session` and
+  `confirm.start_elsewhere`.
+- **Session actions.** `session_action` runs a named action on a session: `compact`, `clear`,
+  `restart`, `close` or `recreate`. The hab translates each per harness
+  (`hab-logic-api.md` 3.13). Capcom may run one wherever it may type into the session's pane.
+  The manual tells Capcom to keep agents fresh this way, and never by typing a harness's own
+  slash command where an action exists.
+- **The manual** says screen text is untrusted program output, as every read tool's text is
+  (`capcom.md` 4).
+
+Decision (owner): Capcom reads every pane, and types under the setting every agent has. Reason:
+the owner's principle. Capcom exists to know what runs elsewhere and to save the owner hands-on
+work. A separate Capcom-only drive setting would be a second knob for the same choice.
+
+Recommended, open for the owner (16): at `project` and `agents`, Capcom's "own project" is
+every project. Reason: Capcom has
+no project. Read literally, both values would give it nothing, and Balanced would turn Capcom
+off for the very job the owner named.
+
+### 5.5 Security considerations
+
+**What the owner accepts.**
+
+- Capcom reads text from outside: events, round messages, web pages, and now any pane's
+  screen. The model treats it as data. A hostile text could still steer a turn.
+- At `agent.drive_panes = all`, a steered turn could type into a shell and run a command as the
+  user. The owner rates this risk as low for current models, and accepts it for less hands-on
+  work.
+- A shell pane is a path out for what Capcom holds (transcripts, Logbook, location), beside the
+  web fetch of 5.3.
+- **The read scope is not the boundary for panes.** `capcom.md` 5 makes the read tools the
+  boundary, with `read.deny`. A pane read shows whatever is on screen, a denied file included,
+  and a shell at `all` can read any path the user can. What Capcom reads from a screen, a
+  secret included, enters its context, the thread and the SDK transcript.
+- The rule "never work around a denial" (`capcom.md` 5.2) still binds Capcom: the manual tells
+  it not to read a denied path through a pane or a shell. The model keeps that rule; nothing
+  enforces it.
+- A job Capcom creates from a user's message in a user turn is the user's (9.6). Text the turn
+  read could shape that job's prompt.
+
+**The brakes that remain.**
+
+| Brake | Where |
+|---|---|
+| `agent.drive_panes` below `all` keeps Capcom out of shells; `off` stops all typing | 5.4 |
+| `agent.read_panes = off` on a hab keeps Capcom out of its panes | 5.4 |
+| No ESC or control keys from Capcom, no Enter alone into an agent's pane, the send gate | `hab-logic-api.md` 3.12 |
+| `capcom.event_actions` below `all` keeps event turns to granted jobs; `card` and `fetch` need a job's word at every value | 9.4, 9.6 |
+| `capcom.event_actions_per_turn` caps the actions of one event turn | 9.6 |
+| `confirm.start_elsewhere` and `confirm.group_plan` still ask where they are on | 5.2 |
+| The usage governor, and `capcom.events.daily_turns` unless it is 0 | 9.3, 10.1 |
+| Every action shows in the thread as a card that names its cause; a refused call logs one line | 9.6, `hab-logic-api.md` 3.12 |
+| A web fetch of an unseen URL still needs a card, in any turn | 5.3 |
+| The harness in the target pane keeps its own permission prompts unless its start mode skips them | `harness-adapters.md` Start mode |
+
+**A later brake, not built:** shells only inside a granted job. At `all`, Capcom would type into
+a shell only in a turn that took a job whose words include `drive`. Add it when a friction note
+or an incident asks for it.
 
 ---
 
@@ -1069,40 +1174,76 @@ each on; hab-side settings, `app.md` 20.5).
   rerunning the batch on the main model.
 - **Quiet hours.** A hab-side setting `capcom.quiet_hours` (no level, default 22:00 to 07:00,
   in the time zone the app last shared, else the host's; stored as `app.md` 20.5 says, on the
-  home hab). During quiet hours no event turn
-  starts; events wait and run as one batch at the end. An event marked urgent by its source runs
-  at once and pushes time-sensitive: a time-sensitive notice, or a round message whose `level`
-  is `time-sensitive` (`rounds.md` 5.2: the highest level in its batch). Owner decision,
-  2026-11-06 (`rounds.md` 12 W2): a time-sensitive event breaks quiet hours. Quiet hours only:
-  the daily turn budget (9.3) and the governor (10.1) still apply to it.
+  home hab). The value `off` turns them off. Quiet hours are a notification preference: they
+  hold Capcom's pushes, not its work. Event turns run at any hour, so a job keeps agents fresh
+  through the night.
+  - A message Capcom writes first during quiet hours lands in the thread with no push.
+  - At the end of quiet hours, one push says how many such messages wait, when any do.
+  - An event marked urgent by its source pushes time-sensitive at once: a time-sensitive
+    notice, or a round message whose `level` is `time-sensitive` (`rounds.md` 5.2: the
+    highest level in its batch). Its batch goes at once, without waiting for the batch window.
+  - The daily turn budget (9.3) and the governor (10.1) apply at every hour.
 - Messages the user writes are never held by quiet hours.
+
+Recommended, open for the owner (16): quiet hours hold pushes, not turns. Reason: the owner
+calls quiet hours a notification preference, and Capcom removes friction. A job that keeps an
+agent fresh must not stop at 22:00. The plain alternative: quiet hours keep holding event turns
+as built, and only gain `off`.
+
+Not built yet: A7 holds event turns during quiet hours (9.7). Stage A10 (18) moves the hold to
+pushes and adds `off`.
 
 ### 9.3 The daily turn budget
 
 - The daily turn budget caps event turns: `capcom.events.daily_turns` (hab-side, as quiet
-  hours), default 20 (range in 19.1), counted from midnight in the same time zone. The count is
-  saved with the time zone. Past it, events wait for the next day's first batch, and the thread
-  gets one note.
-- **Time-sensitive events count too.** A time-sensitive event breaks quiet hours (9.2), not the
-  budget: its turn counts toward `capcom.events.daily_turns`, and past the budget it waits for
-  the next day like any event (owner, 2026-11-06). A user who wants more
-  urgent events through raises the budget.
-- The governor (10.1) applies on top. An event turn is the first to wait.
+  hours), default 200, 0 for no cap (range in 19.1), counted from midnight in the same time
+  zone. The count is saved with the time zone. Past it, events wait for the next day's first
+  batch, and the thread gets one note.
+- **The owner's jobs run outside it.** A round message from a job a person owns goes in a batch
+  of its own, as one with action words does (9.8). That batch does not count, and never waits
+  for the budget. A person owns a `capcom` round when its
+  `created_by` is empty: a person made it, or a person's grant cleared it (9.6). The round
+  message says so (`rounds.md` 5.2, field `by_person`, set by the runner).
+- **Time-sensitive events count too.** Their turn counts toward the budget like any event turn,
+  and past it waits for the next day.
+- The governor (10.1) applies on top, to every event turn, the owner's jobs included. An event
+  turn is the first to wait.
 - A message from an event turn carries the "wrote first" mark.
+
+Recommended, open for the owner (16): keep the budget as a setting, default 200, with 0 for
+none. Reason: the governor paces
+event turns by usage, so a low count only adds friction. But the governor paces nothing at basis
+`none` (an API key with no `daily_usd`, 10.1). A high default keeps one brake there that normal
+use never meets. The user's own jobs are the user's instruction, so no count holds them back.
+
+Not built yet: A7 built the budget with default 20 and no exemption. Stage A10 (18) builds the
+new default, 200, 0 for none, and the owner's jobs.
 
 ### 9.4 What an event turn may do
 
-- It may read, search, and message the user. It writes to Logbook as a user turn does: a
-  `capcom` guide lands at once outside Safe (6.4), and every other write is a proposal.
-- It may not hand off, start a session or a group, set up a project, create a card, or fetch a
-  URL it did not see (5.3). gff-hab refuses those tool calls from the Capcom route while the current turn's
-  origin is `event`, with "ask the user first". Owner decision, 2026-11-06 (E21): the first build
-  ships event turns that read and message only. Stage A9 adds Capcom jobs (9.6), which may allow
-  named actions per job.
+Event turns follow the autonomy level, through the levelled setting `capcom.event_actions`
+(9.6).
+
+- **At every value** an event turn may read (panes included, 5.4), search, and message the user.
+  It writes to Logbook as a user turn does: a `capcom` guide lands at once outside Safe (6.4),
+  and every other write is a proposal.
+- **At `all` (Bypass)** an event turn may also hand off, start a session or a group, set up a
+  project, type into and start panes, and run session actions, with no grant from a job. Each
+  call still passes its own gates: `agent.drive_panes` on the target hab (5.4),
+  `confirm.start_elsewhere`, `confirm.group_plan`, and `capcom.event_actions_per_turn`. A card
+  (`card`) and a fetch of a URL the turn did not see (`fetch`) still need a job's word.
+- **Below `all`** an event turn may do those things only as the Capcom job that sent its round
+  message allows (9.6). gff-hab refuses any other such call from the Capcom route while the
+  current turn's origin is `event`, with "ask the user first".
 - A user message that joins an event turn mid-way makes it a user turn from that point.
 
-Reason: an event's text comes from outside (a mail, a web page a watcher read). The user has not
-asked for anything yet, so nothing acts on their behalf until they answer.
+Reason: an event's text comes from outside (a mail, a web page a watcher read, a pane's screen).
+Below Bypass, the user has not asked for anything yet, so nothing acts on their behalf until
+they answer or grant a job. At Bypass the owner chose less hands-on work over that check: Capcom
+acts on what it sees, and every action still shows as a card in the thread.
+
+Built: the refusals below `all` (9.7, 9.8). Not built yet: the value `all`, the word `drive`,
+and pane access and session actions from Capcom. Stage A10 (18) builds them.
 
 ### 9.5 Round messages
 
@@ -1122,12 +1263,12 @@ the service's side of that interface; rounds own the message's fields and the ru
 
   | Answer | When |
   |---|---|
-  | `accepted` | gff-hab appended a `round` item to the thread. Capcom looks at it in an event turn: batched (9.2), held by quiet hours and the daily turn budget (9.3), on the small model first |
+  | `accepted` | gff-hab appended a `round` item to the thread. Capcom looks at it in an event turn: batched (9.2), held by the daily turn budget unless a person owns its job (9.3), on the small model first |
   | `duplicate` | The thread already holds a `round` item with that channel message id. Nothing is added |
   | `declined`, with a reason word | Capcom will not look at it. Reasons are an open set; today only `off`: the user turned `capcom.events.round_messages` off |
 
-  Quiet hours, the daily turn budget, the governor's `wait` and a down engine never decline: the
-  message is accepted and waits. A hab that does not hold the mark refuses the message
+  The daily turn budget, the governor's `wait` and a down engine never decline: the message is
+  accepted and waits. Quiet hours hold only pushes (9.2). A hab that does not hold the mark refuses the message
   (`refused`, "Capcom moved to <label>", 14), as for any message to `capcom`.
 - **The actor id.** The service's actor id is the session id of its session record (2.1). The
   engine's Logbook ops carry it as the actor's session (3.3). Every notice gff-hab raises about
@@ -1163,7 +1304,8 @@ the service's side of that interface; rounds own the message's fields and the ru
 
 Owner decision, 2026-11-06 (E22): build Capcom to act on events, tunable by the user. Each
 configured job carries its own allowed actions, capped by the permission level, and a dashboard
-lists the jobs. The first build (A7) ships read and message only (9.4); this section is stage A9.
+lists the jobs. Below `all`, event turns read and message only (9.4) unless a job allows more; this section is
+stage A9, and the value `all` and the word `drive` are A10.
 
 **What a job is.** A Capcom job is a round in `capcom` mode (`rounds.md` 5.2). It already has
 what a job needs: triggers (a schedule, hab events, a watcher), a store, a runner on any hab,
@@ -1178,6 +1320,7 @@ it, `actions`: the action words this job's round messages may use.
 | `group` | The coordinator's group tools of 5.1 | `confirm.group_plan` (`groups.md` 3.2) |
 | `card` | A calendar or reminder card | The user's "Add" tap (8.5) |
 | `fetch` | A `WebFetch` of a URL the turn did not see | The approval card (5.3), instead of a refusal |
+| `drive` | `pane_type`, `pane_new` and `session_action` (5.4) | The target hab's `agent.drive_panes` |
 
 - **The set is closed.** An unknown word is refused at `round.create` and `round.update`
   (`invalid`). `logbook_write` and `file_record` need no word: an event turn writes to Logbook
@@ -1201,25 +1344,27 @@ it, `actions`: the action words this job's round messages may use.
   |---|---|---|---|---|
   | `off` | Every event turn reads and messages only, whatever the jobs say | | | |
   | `ask` | An allowed action raises a confirmation card for that one call; nothing runs before the tap. The card names the job | Yes | | |
-  | `allow` | An allowed action runs as it would in a user turn, under its own gates (table above) | | Yes | Yes |
+  | `allow` | An allowed action runs as it would in a user turn, under its own gates (table above) | | Yes | |
+  | `all` | Every event turn may use every word but `card` and `fetch`, with no grant, under each word's own gates. `card` and `fetch` behave as at `allow` | | | Yes |
 
   `off` is never a level's value; a user picks it by hand (Custom). `ask` uses the confirmation
   mechanics of `capcom.md` 6.1: first answer wins, the model told the outcome as a note. Its
   expiry is `capcom.event_action_max_age` (default 60 minutes, as `capcom.md` 6.1; 19.1).
-  These defaults are settled (owner, 2026-11-06; E24): a job still has no
-  actions until the user grants them.
+  These defaults are settled (E24). Below `all`, a job has no actions until the user grants
+  them.
 - **How it reaches the turn.** The round message carries `actions` (`rounds.md` 5.2). The home
   hab copies the words onto the `round` item. When an event turn takes items, the actions
   allowed in that turn are its `round` item's words, capped by `capcom.event_actions`. Built
   (review of A9): a job with words goes in a batch of its own, and a turn that took more than
-  one batch allows none, so two jobs' words never add up (9.8). An event turn with no `round` item (notices, round run ends, agent
-  reports) allows none. A user message that joins the turn makes it a user turn (9.4), and the
+  one batch allows none, so two jobs' words never add up (9.8). Below `all`, an event turn with no `round` item (notices, round run
+  ends, agent reports) allows none. A user message that joins the turn makes it a user turn (9.4), and the
   user-turn rules apply from then on.
 - **Guards.**
-  - At most `capcom.event_actions_per_turn` (3; 19.1) actions per event turn; the next call is
-    refused with "ask the user first".
+  - At most `capcom.event_actions_per_turn` (10; 19.1) actions per event turn, at every value;
+    the next call is refused with "ask the user first".
   - Each action shows in the thread as a card that names the job: "Capcom started a session for
-    round mail".
+    round mail". At `all`, an action with no job names the event it came from instead:
+    "Capcom compacted api-lead after a notice from build".
   - The daily turn budget (9.3) and the governor (10.1) apply as before.
   - The batch stays data (`rounds.md` 4.5). The manual tells Capcom that a job's prompt is the
     user's instruction and its events are not.
@@ -1235,6 +1380,22 @@ it, `actions`: the action words this job's round messages may use.
   run's outcome (`told`, `quiet`, `acted`), paused or not. A tap opens the round's page, where
   the user edits the actions as a set of switches. gff's board Rounds list gains the same filter
   (`m` toggles mode `capcom`).
+- **Standing instructions are Capcom jobs.** "Watch this build and keep that agent fresh" in a
+  user turn becomes a `capcom` round: Capcom creates it with the trigger and the prompt the
+  user's words give, as any agent may (`rounds.md` 12 Q1).
+  - **The job is the user's.** A `capcom` round the Capcom route creates in a user turn has no
+    `created_by`, as a person's round has: the user's message asked for it. It is protected as a
+    granted job is: an agent route may only remove its words, and any other edit, a pause or a
+    delete from an agent route is `denied`. So it runs outside the daily turn budget (9.3), and
+    no agent rewrites its prompt. An event turn never creates a round (9.8).
+  - At `all`, the job needs no words: its event turns act as 9.4 allows. The thread shows a
+    record card, "Capcom set up job <name>", which opens the round.
+  - Below `all`, when the instruction needs actions, Capcom asks for them with a grant card:
+    the job's prompt, its trigger and the words, with Grant and Not now. Grant is a person's
+    `round.update` at the revision the card shows (9.8), sent from the answering device as
+    `capcom.card.answer` acts (6.4). So only a person grants, in one tap.
+  - The manual tells Capcom to turn an instruction that should outlast the turn into a job,
+    not to keep it in the conversation.
 
 Decision: Capcom jobs are rounds in `capcom` mode with a per-round action list, not a second
 scheduler. Reasons:
@@ -1612,7 +1773,7 @@ Made by the stages named, not by this study.
 | `capcom.md` 6.2 | Review opens at "New conversation" or from the thread's pinned line (6.4) | A4 |
 | `mesh.md` 6.1, 6.2 | `capcom` is reserved and resolved by the Capcom belief; delivery to the service goes to the thread (2.4, 9.1) | A2 |
 | `app.md` 7.4, 7.2 | A Capcom approval expires after `capcom.approval_max_age` (default 10 minutes), whatever `approval.max_age` says; the "Allow this site" answer (5.3) | A2, A3 |
-| `app.md` 20.5 | `capcom.quiet_hours`, `capcom.events.notices`, `.rounds`, `.round_messages`, `.daily_turns`, `.batch_window`, `.batch_max` as hab-side settings on the home hab, with the ranges of 19.1; `capcom.approval_max_age` at A2. This spec does not edit `app.md` 20.x; the stages do | A7, A2 |
+| `app.md` 20.5 | `capcom.quiet_hours`, `capcom.events.notices`, `.rounds`, `.round_messages`, `.daily_turns`, `.batch_window`, `.batch_max` as hab-side settings on the home hab, with the ranges of 19.1; `capcom.approval_max_age` at A2. The stages edit `app.md` 20.x, except the A10 rows below, which this spec's A10 change wrote | A7, A2 |
 | `capcom.md` 12 | Part 14 stages added | A1 (this change links it) |
 | `app.md` 4.10 | Thread items, marks, Stop, no Terminal switch, communication notification | A3 |
 | `app.md` 20.4 | `capcom.share_location`, `capcom.share_calendar`, `capcom.calendar_days` (app preferences) | A5 |
@@ -1625,6 +1786,11 @@ Made by the stages named, not by this study.
 | `app.md` 20.3, 20.5 | The levelled setting `capcom.event_actions` (Safe `ask`, Balanced and Bypass `allow`; settled, E24), and `capcom.event_actions_per_turn` and `capcom.event_action_max_age` (19.1) | A9 |
 | `docs/examples/hab.toml` | `[capcom] auth`, `oauth_token_command` and `api_key_command`, with a placeholder command; no token or key value; each limit key of 19.2 with its default, added by the stage that reads it | A2, A4, A5, G |
 | `docs/testing.md` and the CLI help | `gff-hab capcom say|thread|stop|pause|resume`, the engine's tests, the Node dependency | A2, A8 |
+| `rounds.md` 5.2 | The round message's `by_person` field (9.3); the action word `drive` (9.6) | A10 |
+| `app.md` 20.3, 20.4 | `capcom.event_actions` gains `all` (Bypass); `capcom.events.daily_turns` 0 to 1000, default 200; `capcom.quiet_hours` takes `off`; `capcom.event_actions_per_turn` default 10 (written in this change) | A10 |
+| `docs/testing.md` | The Capcom route rows of reading and driving panes, and session actions | A10 |
+| `app.md` 21.5 | A "Drive panes and sessions" switch (`drive`); the grant card for a standing instruction (9.6) | A10 |
+| `harness-adapters.md` Agent kit | `gff-hab action` and the MCP tool `session_action` (`hab-logic-api.md` 3.13) | A10 |
 
 ---
 
@@ -1648,7 +1814,11 @@ Made by the stages named, not by this study.
 | Location sharing is off | `device_location` says so; Capcom asks the user where they are |
 | A question needs no location | No `device_location` call. A5 tests this |
 | WeatherKit or Maps is not set up, or fails | The tool says so; Capcom answers without it and names what is missing |
-| A web page tells Capcom to send a hand-off | Content read is data (`capcom.md` 4). In a user turn the hand-off card shows what was sent; in an event turn it is refused (9.4), unless the job that sent the round message allows `hand_off` and the level does (9.6); then it runs with a card that names the job |
+| A web page tells Capcom to send a hand-off | Content read is data (`capcom.md` 4). In a user turn the hand-off card shows what was sent; in an event turn below `all` it is refused (9.4), unless the job that sent the round message allows `hand_off` and the level does (9.6); then it runs with a card that names the job. At `all` it runs, with a card that names the event (5.5 accepts this) |
+| A pane's screen tells Capcom to run a command | Screen text is data (5.4). Below `agent.drive_panes = all` Capcom cannot type into a shell. At `all` a steered turn could; the card in the thread shows what was typed and where (5.5) |
+| Capcom types into a pane while a person types there | The send gate refuses it with `conflict`; Capcom tries again later (`hab-logic-api.md` 3.12) |
+| A session action on a harness the hab cannot compact or clear | `unavailable`, naming the harness; Capcom may `recreate` instead (`hab-logic-api.md` 3.13) |
+| A peer with an older hab gets Capcom's forward | The peer ignores the mark it does not know and answers under its peer door's rule |
 | A re-seed loses a fact | The fact is in Logbook if Capcom wrote it; the summary is visible behind the divider, so the user can see what was kept |
 | The thread file is damaged | gff-hab sets the damaged month file aside as `.bad-<unix seconds>`, raises one notice, and starts a new file; earlier months still load |
 | Node.js is removed after install | The engine job fails to start; the row shows error "Node.js not found", and `gff-hab install` names the fix |
@@ -1666,8 +1836,8 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 | E2 | The engine is its own init job, started by gff-hab on the home host | A gff-hab restart never cuts a turn; one engine per mark (3.2) |
 | E3 | The engine reaches gff-hab through a token route like a pane's | Its writes are an agent's, with Capcom's limits (3.3) |
 | E4 | The engine loads only its folder's project files, not the user's settings | The tool surface must be exactly 5.1 |
-| E5 | No shell, no file tools, no subagents; web search and fetch from the SDK | The study's rule, with the web tools Capcom's scenarios need |
-| E6 | A web fetch of an unseen URL needs an approval card | The one path private data could leave by (5.3) |
+| E5 | No shell, no file tools, no subagents in the engine; web search and fetch from the SDK. A shell only through a pane, under `agent.drive_panes` (5.1, 5.4) | The study's rule, with the web tools Capcom's scenarios need |
+| E6 | A web fetch of an unseen URL needs an approval card | The engine's own path private data could leave by (5.3); a shell pane is the other (5.5) |
 | E7 | gff-hab keeps the thread; SDK transcripts stay native | The thread spans SDK sessions and holds cards and marks (7.1) |
 | E8 | One thread per home host; "New conversation" is a divider | The user manages no conversation (7.5) |
 | E9 | The summary updates on quiet, re-seed and compaction | Cost: no extra model call per turn (6.1) |
@@ -1676,28 +1846,49 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 | E12 | Personal tools are served only on a Capcom route | A project agent has no reason to read the user's location |
 | E13 | Weather and places run on the hab with keys from a key command | Keys stay off the phone and out of config files, as push does |
 | E14 | Calendar and reminder cards return at once; the answer comes later as a note | A tap may come hours later; a turn must not wait |
-| E15 | Event turns batch over 2 minutes, start on the small model, cap at 20 a day; each number is a setting (19.1) | The study's guardrails (2.6) |
+| E15 | Event turns batch over 2 minutes and start on the small model; each number is a setting (19.1). The daily cap is 200, 0 for none, and the owner's jobs run outside it (9.3) | The study's guardrails (2.6), weighed against friction: the governor paces by usage |
 | E16 | Agent reports start a turn at once, but act only as an event turn may | The user is waiting on that work; the report's text comes from an agent, not the user |
 | E17 | Passive notices never reach Capcom | Their level already says nobody needs to look |
 | E18 | Old pane conversations stay readable, never resumed by Flightdeck | Decision 1 with no data loss |
 | E19 | The engine logs in with the user's subscription through the long-lived OAuth token `claude setup-token` makes (`CLAUDE_CODE_OAUTH_TOKEN`), from a key command (the installed hab's source) or gff-hab's environment, held in memory only and handed to the engine over its route; an API key stays an option (3.5, 10.2). Formerly Q1 | Owner, 2026-11-06: the owner researched the terms and holds that subscription use is fine; it runs on the plan the user already pays for |
 | E20 | Capcom's facts and preferences (`capcom` guides) land at once with a "Noted" line and Undo, in user and event turns alike; tasks and findings stay proposals; only at Safe does a guide wait as a proposal (6.4). Formerly Q2 | Owner, 2026-11-06. No review list for "I'm vegetarian"; Undo is one tap. Safe keeps its meaning (`app.md` 20.3): it is where the user asked to review every agent memory |
-| E24 | `capcom.event_actions` defaults: Safe `ask`, Balanced and Bypass `allow`; a job still has no actions until the user grants them (9.6). Settled | Owner, 2026-11-06 |
+| E24 | `capcom.event_actions` defaults: Safe `ask`, Balanced `allow`, Bypass `all`; below `all` a job has no actions until the user grants them (9.4, 9.6). Settled | Owner: event turns follow the autonomy level |
 | E25 | Every limit in this spec is a setting with its former fixed value as the default (20); only the ceilings in 20.2 stay fixed | Owner, 2026-11-06: "any cap should be" |
-| E21 | The first build's event turns read and message only (9.4). Formerly Q3 | Owner, 2026-11-06. Outside text (a mail, a page) cannot start work until a person allows it |
+| E21 | Below `capcom.event_actions = all`, event turns read and message only, except what a granted job allows (9.4). Formerly Q3 | Owner. Outside text (a mail, a page) cannot start work until a person allows it, except at Bypass, where the owner chose less hands-on work |
 | E22 | Capcom acts on events through Capcom jobs: rounds in `capcom` mode with a per-job `actions` list a person sets, capped by the levelled `capcom.event_actions`; the dashboard is the Rounds list filtered to `capcom` (9.6, stage A9). Formerly Q3 | Owner, 2026-11-06, asked for tunable acting with a per-job list and a dashboard, and to consider rounds. Rounds already hold every trigger, the store and the list; a second scheduler would duplicate them (9.6) |
 | E23 | Capcom answers each round message a second time, `told`, `quiet`, `acted` or `unseen`, after the turn that took it (9.5) | Owner, 2026-11-06 (`rounds.md` 12 W1): the round's history shows what Capcom did |
 | E26 | `gff-hab mcp` clears `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from its own environment at start, so the credential never reaches a program it runs. Formerly Q4 | Settled 2026-11-07. The process needs no credential; clearing it costs nothing |
 | E27 | `ListMcpResourcesTool` and `ReadMcpResourceTool` are on the surface while `flightdeck` is the only MCP server the SDK's `init` lists (5.1). Formerly Q5 | Settled 2026-11-07. They read only what that server offers; any other unexpected tool still fails the start check |
 | E28 | `gff-hab capcom pause` ends the engine after its turn; gff-hab does not start it again until `gff-hab capcom resume` (11) | Settled 2026-11-07: kept as built in A2. A stopped engine cannot write the session, so a terminal resume has one writer |
 | E29 | The Codex engine runs the CLI on a home of its own, without the user's global `AGENTS.md` or skills; the home links the user's threads and login (4.5) | Owner, 2026-11-11. It matches the Claude engine, which loads only its folder's project files (E4) |
+| E30 | Capcom reads every pane on every host, at every level; a hand-set `agent.read_panes = off` keeps it out of that hab (5.4) | Owner: Capcom is the single pane of glass. The `off` exception is recommended (16) |
+| E31 | Capcom types, starts panes and runs session actions under each target hab's `agent.drive_panes`, with every project as its scope (5.4) | Owner: the same setting as any agent. The scope is recommended (16): read literally, `agents` and `project` would give a Capcom with no project nothing |
+| E32 | At `agent.drive_panes = all`, Capcom's text into an agent's pane is a raw line, with no envelope; the other limits of `hab-logic-api.md` 3.12 stay. Other agents keep the envelope | Owner: Capcom may type as the owner can from the CLI. Keeping the other limits, and the raw line for Capcom only, is recommended (16) |
+| E33 | Named session actions `compact`, `clear`, `restart`, `close`, `recreate`, translated per harness by the hab (`hab-logic-api.md` 3.13) | Owner: Capcom keeps agents fresh. One verb per intent spares the model each harness's commands. Who else may run them is recommended (16) |
+| E34 | Quiet hours stay, and can be turned off (9.2). That they hold pushes, not turns, is recommended (16) | Owner: quiet hours are a notification preference |
+| E35 | Standing instructions are Capcom jobs (9.6). The grant card below `all`, and the job counting as the user's, are recommended (16) | Owner. Rounds already hold triggers and the store; the grant stays a person's act |
 
 ---
 
 ## 16. Open questions for the owner
 
-None open. The owner settled Q1 to Q3 on 2026-11-06; they are decisions E19
-to E22 in 15.
+The owner settled Q1 to Q3 on 2026-11-06; they are decisions E19 to E22 in 15.
+
+Recommended in 5.4, 5.5, 9 and `hab-logic-api.md` 3.13, open for the owner. Each states the
+recommendation; A10 builds it unless the owner picks otherwise.
+
+| # | Choice | Recommendation | Alternative |
+|---|---|---|---|
+| Q6 | What quiet hours hold | Pushes only; event turns run at any hour (9.2) | Keep holding event turns, add `off` |
+| Q7 | The daily turn budget | Keep it, default 200, 0 for none (9.3) | Remove it and rely on the governor, which paces nothing at basis `none` |
+| Q8 | Event actions per turn | Default 10, range 0 to 50 (9.6) | Keep 3 |
+| Q9 | Capcom's scope at `agents` and `project` | Every project (5.4) | Nothing at those values: Capcom types only at `all` |
+| Q10 | The raw line | Capcom only, at `all`, with the control-key, Enter-alone and gate rules kept (5.4) | Every agent at `all` |
+| Q11 | Event turns at `all` | Every action but `card` and `fetch` without a grant (9.4) | All words, `card` and `fetch` included |
+| Q12 | A job the user owns | `created_by` empty: a person made or granted it, or Capcom made it from a user turn (9.3, 9.6) | Only a person's own `round.create` |
+| Q13 | Who may run a session action | The Capcom route and the owner's door (`hab-logic-api.md` 3.13) | Every agent under the `pane.type` rule |
+| Q14 | `agent.read_panes = off` for Capcom | It keeps Capcom out of that hab (5.4) | Capcom reads at every value |
+| Q15 | The start-level setting | The harness permission mode a new session starts in, `agent.start_mode` (`harness-adapters.md`, Start mode) | The level the app's picker starts at for a new device or hab |
 
 Found in A2 and settled on 2026-11-07: Q4 (E26), Q5 (E27) and pause (E28).
 
@@ -1723,7 +1914,8 @@ A Codex engine (A6) needs the same check against `codex resume`.
 ## 18. Build stages
 
 Part 14. Order: A2 and G; then A3 and A4; then A5; then A7 and A8; then A9
-(after rounds stage 9 and rounds stage 7); A6 last.
+(after rounds stage 9 and rounds stage 7); then A10 (after `hab-logic-api.md` 3.13's session
+actions); A6 last.
 Each stage ends with a fresh-eyes review where marked core.
 
 | Stage | Builds | Acceptance tests |
@@ -1736,6 +1928,7 @@ Each stage ends with a fresh-eyes review where marked core.
 | A7: Capcom writes first | 9 | A round message answers `accepted` and adds one `round` item; the same message id again answers `duplicate`; with `capcom.events.round_messages` off it answers `declined` `off`; a round message in quiet hours is accepted and waits; `capcom-service` shows in the catalog only while this hab holds the mark. Fake clock: an event in quiet hours waits and runs in one batch at the end; an urgent one runs at once; ten events in 2 minutes make one turn; the 21st event turn of a day waits; after a gff-hab restart quiet hours use the saved time zone; an event turn's `hand_off` is refused (9.4, E21); a passive notice reaches nothing; a round message with `level` `time-sensitive` runs at once in quiet hours, and still counts toward the daily turn budget; with the budget spent, a time-sensitive event waits for the next day like any event, in quiet hours or not; `capcom.events.daily_turns`, `.batch_window` and `.batch_max` set to other values move each limit, and `settings.set` refuses a value outside its range with `invalid`; after the turn that took a round item, the runner gets one `outcome` status item: `told` when the turn wrote to the user, `quiet` when it did not, the same outcome for two items one turn took, `unseen` for an item left untaken by a mark move, and one outcome from a peer runner that was asleep, delivered at its wake. Live: a watcher event reaches the phone as one Capcom message marked "wrote first" |
 | A8: remove the pane Capcom | 12, 13 | `engine` defaults to `claude`; pane-era records are renamed `capcom-term-<n>`; `gff-hab capcom open` and the app's Capcom entry reach the service; pending context from a pane-era `capcom.json` reaches the first message; an old pane conversation reads in the chat view with no Resume; no test or doc describes the pane form; CI passes on Linux and macOS |
 | A9: Capcom jobs act on events | 9.6; `rounds.md` 3 and 5.2 `actions`; `capcom.event_actions`; the "Capcom jobs" filter in the app and gff | Fake model and a fake runner: a `capcom` round with no `actions` gets its `hand_off` refused as in A7; with `hand_off` allowed and `capcom.event_actions = allow`, the event turn's `hand_off` runs and shows a card naming the job, and the outcome is `acted`; under `ask` the same call raises one confirmation and nothing runs before the tap; under `off` it is refused; a word the job does not list is refused; a fourth action in one turn is refused, and with `capcom.event_actions_per_turn` at 1 the second is; at 0 none runs; the level picker writes `ask` at Safe and `allow` at Balanced and Bypass; an `ask` card expires at `capcom.event_action_max_age`; a notice-only event turn allows nothing; two round items in one turn allow the union of their words (changed at review: each job's batch goes alone, and a turn of two batches allows none, 9.8); `start_session` under `allow` still raises the `confirm.start_elsewhere` card when that is on; `round.create` with `actions` from a pane or the Capcom route is refused `denied`, and removing a word from a pane works; an agent creates a `capcom` round, a person grants `hand_off`, and the agent's later prompt edit, pause and delete are refused; a channel message to `capcom` from a pane that carries `actions` fields gets no action allowed; under `ask` the turn's outcome is `acted` at its end, before the tap; an unknown word is `invalid`; export then apply keeps `actions`. Swift over a fake hab: the Capcom jobs list shows only `capcom` rounds with their actions and last outcome, and the switches edit `actions`. gff: the board's filter shows only `capcom` rounds. Live: a mail watcher job with `hand_off` hands a mail's task to the agent on its project, with one card |
+| A10: pane access, session actions, event turns by level. Core | 5.4, 5.5, 9.2 to 9.4, the word `drive` and the value `all` of 9.6, standing instructions; `hab-logic-api.md` 3.11 to 3.13 for the Capcom route; `rounds.md` 5.2 `by_person` | Go over a fake model and two habs. Reading: the Capcom route reads, waits on and lists a pane at `agent.read_panes` `project` and `all`, and a peer's pane by `label/name` with the mark; a hand-set `off` refuses it; a forward with the mark from a peer that does not hold the Capcom mark reads under the peer door's rule. Typing: under `agents` Capcom types into another project's agent pane, enveloped, and is refused a shell; under `project` it types into a shell, and `pane_new` is refused; under `all` it types a raw line (`/compact` reaches the harness as typed) and starts a pane; under `off` nothing; ESC, Ctrl-C and Enter alone stay refused at `all`; the send gate refuses during a person's input; another agent's text at `all` stays enveloped. Session actions: each of `compact`, `clear`, `restart`, `close` and `recreate` on a Claude Code fixture pane, with its end seen; `compact` and `clear` on a harness without a translation answer `unavailable`; refused where Capcom may not type, and refused at another agent's door. Event turns: at `all` a notice-only event turn hands off and compacts with a card naming the event; `card` and `fetch` stay refused without a job's word; the eleventh action of one turn is refused; below `all` the A9 tests still pass and `drive` allows `pane_type`. Quiet hours: an event turn runs at 23:00 and its message pushes nothing; one push at 07:00 counts the waiting messages; a time-sensitive event pushes at once; `off` pushes at once. Budget: the 201st event turn waits; at 0 none waits; a person's job's batch neither counts nor waits; a job an agent made counts. Standing instructions: at `all` a user's instruction makes a `capcom` round with no words and a record card; at `allow` it raises a grant card whose Grant is a person's write at the shown revision, and a prompt edit between card and tap fails the grant with `conflict`. Settings: the level picker writes `all` at Bypass; a hab whose `capcom.event_actions` a client already wrote as `allow` keeps it until the user picks a level again (`app.md` 20.2, A new hab), and the Settings row shows "Differs". Live: Capcom keeps a real Claude Code session fresh overnight through a job |
 | A6: Codex SDK engine | 4 on the Codex SDK; `[capcom] engine = codex` | The A2 and A4 tests pass against both engines, with each capability the Codex engine lacks taking its fallback (4.1); switching engines keeps the thread and Logbook memory (the switch is a re-seed); the plain-terminal check with `codex resume` |
 
 ---
@@ -1760,14 +1953,14 @@ All on the home hab, no level unless the row says so.
 
 | Id | Default | Range | Section |
 |---|---|---|---|
-| `capcom.quiet_hours` | 22:00 to 07:00 | A start and an end time of day; the same time twice means no quiet hours | 9.2 |
+| `capcom.quiet_hours` | 22:00 to 07:00 | A start and an end time of day, or `off` (from A10); the same time twice is `off` | 9.2 |
 | `capcom.events.notices`, `.rounds`, `.round_messages` | on | bool | 9.1 |
-| `capcom.events.daily_turns` | 20 | 1 to 1,000 event turns a day | 9.3 |
+| `capcom.events.daily_turns` | 200 | 0 to 1,000 event turns a day; 0 is no cap. A7 built 20, with 1 to 1,000; A10 moves both | 9.3 |
 | `capcom.events.batch_window` | 2 minutes | 10 s to 1 hour | 9.2 |
 | `capcom.events.batch_max` | 20 events | 1 to 200 | 9.2 |
 | `capcom.approval_max_age` | 10 minutes | 1 minute to 24 hours; no 0 (5.3) | 5.3 |
-| `capcom.event_actions` | Levelled: Safe `ask`, Balanced and Bypass `allow`; `off` by hand only. Settled (E24) | `off`, `ask`, `allow` | 9.6 |
-| `capcom.event_actions_per_turn` | 3 | 0 to 20; 0 allows no action whatever the jobs say | 9.6 |
+| `capcom.event_actions` | Levelled: Safe `ask`, Balanced `allow`, Bypass `all`; `off` by hand only. Settled (E24) | `off`, `ask`, `allow`, `all` | 9.4, 9.6 |
+| `capcom.event_actions_per_turn` | 10 | 0 to 50; 0 allows no action whatever the jobs or the level say. A9 built 3, with 0 to 20; A10 moves both | 9.6 |
 | `capcom.event_action_max_age` | 60 minutes | 1 minute to 24 hours | 9.6 |
 
 One app preference (`app.md` 20.4), since the app decides what it sends:
@@ -1817,7 +2010,8 @@ Limits other specs own stay there and are not changed here: the outbox's 7 days 
 attachment expiry (`app.md` 4.4), the push budget (`app.md` 16.2), and the 60-minute expiry of
 `capcom.md` 6.1's confirmations for `start_session` and `set_up_project`.
 
-**Changes to other specs.** `app.md` 20.3 to 20.5 is not edited by this spec. Stage A7 adds the
+**Changes to other specs.** `app.md` 20.3 to 20.5 is edited by the stages, except the A10 values,
+which are written with this spec and marked "from A10" there. Stage A7 adds the
 rows of 19.1 for quiet hours, the event switches, the daily turn budget and the batch settings;
 A2 adds `capcom.approval_max_age`; A9 adds the three `capcom.event_action*` rows; A5 adds the
 `capcom.calendar_days` preference (13). Each stage that reads a key of 19.2 adds it to

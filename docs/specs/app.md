@@ -3875,7 +3875,8 @@ every key, so a change never makes a new key.
 - **What Bypass never touches.**
   - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
   - The harness's own bypass flag, such as `--dangerously-skip-permissions`. A level never sets
-    it; the user picks it per session, in the harness or its config.
+    it. The user picks it per session, in the harness or its config, or once for every new
+    session with the preference `agent.start_mode` (20.4; `harness-adapters.md`, Start mode).
   - The foreign worktree setup yes (20.1).
   - Unlock for an answer from a banner or a Live Activity (7.6): the device key signs only while
     the device is unlocked (`transport.md` 7.2).
@@ -3890,7 +3891,7 @@ every key, so a change never makes a new key.
 | `confirm.group_plan` | Confirm a group's plan before it starts | Agents | bool | `true` | `true` | `false` | Hab, every hab; the hab row is built (B2); B3 reads it on the home hab for each plan and amend; the app row is built (`groups.md` 5.9) | `groups.md` 3.2, 13 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
-| `capcom.event_actions` | Capcom jobs may act | Agents | `"off"`, `"ask"` or `"allow"`; `off` by hand only | `"ask"` | `"allow"` | `"allow"` | Hab, every hab; the Capcom home hab enforces it (A9) | `capcom-service.md` 9.6, 19.1 |
+| `capcom.event_actions` | Capcom may act on events | Agents | `"off"`, `"ask"`, `"allow"` or `"all"`; `off` by hand only | `"ask"` | `"allow"` | `"all"` | Hab, every hab; the Capcom home hab enforces it (A9; `all` from A10) | `capcom-service.md` 9.4, 9.6, 19.1 |
 | `agent.read_panes` | Agents may read panes | Agents | `"off"`, `"project"` or `"all"`; `off` by hand only | `"project"` | `"all"` | `"all"` | Hab, every hab; each hab enforces it for reads of its own panes | `hab-logic-api.md` 3.11 |
 | `agent.drive_panes` | Agents may type into and start panes | Agents | `"off"`, `"agents"`, `"project"` or `"all"`; `project` by hand only | `"off"` | `"agents"` | `"all"` | Hab, every hab; each hab enforces it for its own panes | `hab-logic-api.md` 3.12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
@@ -3912,17 +3913,23 @@ every key, so a change never makes a new key.
   through its pane's route or a peer link: `all` every pane on the hab; `project` its own pane and
   those of its own project, and nothing for a peer; `off` its own pane only. Under `project` and
   `off` an agent reads nothing on another hab either: its own hab forwards only under `all`. The
-  Capcom service reads no pane at any level for now, since pane text could carry instructions
-  into its event turns; whether it may is an open owner question (`hab-logic-api.md` 8, Q9). The
-  owner's own clients read every pane at every level (`hab-logic-api.md` 3.11).
+  Capcom service reads every pane on every host at every value but `off`
+  (`hab-logic-api.md` 3.11, 8 Q9; `capcom-service.md` 5.4). The owner's own clients read every
+  pane at every level (`hab-logic-api.md` 3.11).
 - **`agent.drive_panes`** decides which panes an agent may type into with `pane.type`, and
   whether it may start one with `pane.new`, through its pane's route or a peer link: `all` every
   pane but its own and a new pane anywhere; `project` the panes of its own project, shells
   included, and a new pane in it; `agents` only the panes of other agents in its own project, and
   no new pane; `off` nothing. An agent never types into its own pane, and nothing for a peer
-  below `all`. The levels are the conservative pick until the owner decides
-  (`hab-logic-api.md` 3.12, 8 Q10). `pane.list` follows `agent.read_panes`. The Capcom service
-  drives no pane at any level.
+  below `all`. The owner kept these levels (`hab-logic-api.md` 3.12, 8 Q10). `pane.list`
+  follows `agent.read_panes`. The Capcom service follows this setting too, with every project as
+  its scope, and sends a raw line under `all` (`hab-logic-api.md` 3.12; `capcom-service.md`
+  5.4). Whoever may type into a pane may also run a session action on it (`hab-logic-api.md`
+  3.13).
+- **`capcom.event_actions`** decides what an event turn may do (`capcom-service.md` 9.4, 9.6).
+  `off`: read and message only. `ask`: a granted job's action raises a card first. `allow`: a
+  granted job's actions run. `all`: every event turn may act with no grant, under each action's
+  own gates; calendar cards and unseen web pages still need a job's word.
 - **`voice.yes_allows`** off: only "allow", "approve", "allow it" and "approve it" answer Allow,
   and "yes" makes the app ask again. The deny words are the same at every level.
 - **`ssh.require_face_id`** is one app-level check over the generated key and every imported key
@@ -3947,6 +3954,7 @@ picker never changes them.
 | `mac.keep_connected` | Stay connected in the background | Connection | bool | Off | App (Mac) | 12.1 |
 | `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | integer seconds, 0 = off, else 1 to 120 | 0; the switch sets 30 | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
 | `logbook.habits.brief`, `logbook.habits.reminder`, `logbook.habits.closeout` | Brief at session start; remind to record; ask to record before stopping | Agents | bool | On | Hab, every hab; `[logbook.habits_off]` in the hab's config file turns one off per project | `logbook.md` 11.1, 11.4 |
+| `agent.start_mode` | New sessions start in | Agents | `"ask"`, `"edits"` or `"bypass"` | `"ask"` | Hab, every hab; each hab reads it at each harness start (not built) | `harness-adapters.md` (Start mode) |
 | `agent.context_nudge` | Remind agents about context, from | Agents | integer percent, 0 = off, else 1 to 99 | 0 | Hab, this hab only | `harness-adapters.md` (context nudge) |
 | `agent.context_nudge_step` | Remind again every | Agents | integer percent, 1 to 100 | 10 | Hab, this hab only | `harness-adapters.md` (context nudge) |
 | `agent.context_nudge_text` | Reminder text | Agents | text, 1 to 1000 characters; `{percent}` is the percentage | The built-in note | Hab, this hab only | `harness-adapters.md` (context nudge) |
@@ -3957,12 +3965,12 @@ picker never changes them.
 | `capcom.share_location` | Share location with Capcom | Capcom | bool | On; the first Capcom open asks for the system's location permission | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
 | `capcom.share_calendar` | Share calendar with Capcom, from the calendars picked | Capcom | bool, and a calendar list | On, every calendar | App; `device.context.put` to the home hab | `capcom-service.md` 8.1 |
 | `capcom.calendar_days` | Days of calendar to share | Capcom | integer 1 to 31 | 7 | App | `capcom-service.md` 8.1, 19.1 |
-| `capcom.quiet_hours` | Quiet hours | Capcom | text `HH:MM-HH:MM`, 24-hour clock, in the time zone a device last shared; the same time twice: none | `22:00-07:00` | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
+| `capcom.quiet_hours` | Quiet hours | Capcom | text `HH:MM-HH:MM`, 24-hour clock, in the time zone a device last shared; the same time twice: none. From A10: also `off`, and it holds Capcom's pushes, not its work | `22:00-07:00` | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.notices`, `capcom.events.rounds`, `capcom.events.round_messages` | Capcom looks at notices; at round run ends; at round messages | Capcom | bool | On | Hab, the home hab | `capcom-service.md` 9.1, 19.1 |
-| `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 1 to 1000 | 20 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
+| `capcom.events.daily_turns` | Capcom looks at events at most, a day | Capcom | integer event turns 1 to 1000; from A10, 0 to 1000 with 0 for no cap, and the user's own jobs do not count | 20; 200 from A10 | Hab, the home hab | `capcom-service.md` 9.3, 19.1 |
 | `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
-| `capcom.event_actions_per_turn` | Capcom job actions in one look, at most | Capcom | integer 0 to 20; 0 allows none | 3 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
+| `capcom.event_actions_per_turn` | Capcom actions in one look, at most | Capcom | integer 0 to 20, 0 to 50 from A10; 0 allows none | 3; 10 from A10 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |

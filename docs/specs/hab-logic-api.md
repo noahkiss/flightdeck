@@ -666,7 +666,7 @@ id, this hab's host id or device id, or `self`. `notice.get` reads the last 500 
 last 7 days, saved across a restart (`capcom.md` 8.5). `logbook` means the hab has a Logbook
 replica and the `logbook.*` methods and the `logbook.updated` and `logbook.conflict` events work
 (`logbook.md` 10.3, 10.5); without it every `logbook.*` method answers `unavailable`. `logbook-vectors` means the hab keeps a
-vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `pane-drive` means `pane.list`, `pane.type` and `pane.new` work (3.12). `rounds` means the `round.*` methods, the `round.updated` and
+vector index of its replica and answers `logbook.find` with `semantic` itself (`logbook.md` 13.2). `pane-read` means `pane.read` and `pane.wait` work (3.11). `pane-drive` means `pane.list`, `pane.type` and `pane.new` work (3.12). `session-action` means `session.action` works (3.13). `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
 `friction` means `diag.friction` works: the hab stores a friction note with a tail of its logs
 (`diagnostics.md` 9). `trust` means `trust.answer` works (`app.md` 7.10). `round-actions` means
@@ -874,6 +874,7 @@ the control socket starts to answer moves into the table.
 | `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (`capcom.md` 7.6); every other session (`gff-client.md` 6.2) |
 | `session.restart` | Exit an idle or done session's harness and start it again in a new pane, with its resume id | Yes (`instructions-mcp-flight-rules.md` 13.1) |
+| `session.action` | Run a named action on a session, translated per harness: `compact`, `clear`, `restart`, `close`, `recreate` (capability `session-action`, 3.13) | No (A10) |
 | `session.adopt` | Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; `conflict` while it runs elsewhere | Yes (`gff-client.md` 6.5) |
 | `session.outside` | List recent conversations on the host that no session holds, newest first | Yes (`gff-client.md` 6.5) |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
@@ -1701,10 +1702,17 @@ may read. It binds the two doors an agent's call comes through:
   forwarded only under `all`; under `project` and `off` it is `denied`, with the same hint. So
   "own pane only" holds across hosts too.
 - A pane with no session has no project: under `project` it reads only its own pane.
-- **The Capcom service reads no pane, at every level, for now.** Its route (`capcom-service.md`)
-  is refused `pane.read` and `pane.wait` before any target is looked up. Capcom acts on events and
-  reads untrusted text; pane text from any session would be a path for injected instructions
-  into its turns. Whether Capcom may read panes, and which, is an open owner question (8, Q9).
+- **The Capcom route reads every pane, on every host** (`capcom-service.md` 5.4). Under `all`
+  and `project` it reads every pane on this hab; Capcom has no project, so every project counts
+  as its own. Under `off`, set by hand, it reads nothing here. Unknown targets keep their own
+  kinds (`not_found`, `conflict`), since Capcom may read every pane. Q9 (8) records the
+  decision.
+- **Capcom's forward.** The Capcom route forwards a `label/name` call at every value but `off`.
+  The forward carries `as: "capcom"`. The far hab takes it only from the peer that holds the
+  Capcom mark in its own belief (`capcom.md` 7.6), and then answers under the Capcom rule and
+  its own value. From any other peer it ignores `as`, and the peer door's rule applies. A hab
+  that does not know `as` ignores it too. The mark is as strong as the peer door itself: a paired
+  hab is trusted as far as the user is (below).
 - **Any other client is the owner.** The app, `gff`, and `gff-hab` run outside a pane read every
   pane at every level: they already see every pane through data streams (5). The rule binds the
   agent doors only. It is not a boundary against a process of the same user. An agent that runs
@@ -1757,6 +1765,8 @@ Built choices (`internal/panetext`, `cmd/gff-hab/panes.go`, `internal/control/pa
 - `pane.wait` follows the pane with `Link.Subscribe`, as a data stream does, and skips a snapshot
   chunk (bytes lost). A subscription that falls behind is opened again from the last offset read.
 - Listing, typing and creating are `pane.list`, `pane.type` and `pane.new` (3.12).
+- Not built yet: the Capcom route's reads and its forward. The built hab refuses the Capcom
+  route before any target is looked up. Stage A10 (`capcom-service.md` 18) builds them.
 
 Limits:
 
@@ -1788,7 +1798,8 @@ and creates them (`gff-client.md` 12 row 28).
 - **The rule filters rows, never the call.** A row the caller may not read is left out, with no
   count and no hint: no title, name or existence of such a pane leaks. Under `off` the route sees
   its own pane only. A peer link gets every row under `all`; under `project` and `off` it gets
-  `denied`, as a read does. The Capcom route gets `denied`.
+  `denied`, as a read does. The Capcom route gets every row, and every peer's, as the owner does,
+  except under `off` (3.11).
 - **No title.** A row carries no pane or session title: titles come from program output, and the
   session name is enough to address the pane.
 - **Peers.** With `host` absent, the owner and an agent under `all` also get the rows of every
@@ -1818,7 +1829,12 @@ client's write lands between. The target is named as in 3.11, `label/name` inclu
   goes inside the envelope `channel.send` uses (`mesh.md` 6.5), naming the caller (`host/session`,
   or a peer). The first character the harness sees is the envelope's, never `!` (shell mode) or
   `/` (a slash command), and the receiving agent knows the text is not the user's. The owner's
-  text goes as given. From an agent's door, Enter with empty text into an agent's pane is
+  text goes as given.
+- **Capcom's raw line.** From the Capcom route, under `all` on the target hab, the text goes as
+  given, with no envelope, as the owner's does. Below `all` it goes in the envelope. Every other
+  rule of this method holds for Capcom at every value: the text rules above, no Enter alone into
+  an agent's pane, the paste, and the gate. No other agent sends a raw line
+  (`capcom-service.md` 5.4, E32). From an agent's door, Enter with empty text into an agent's pane is
   `invalid`: Enter alone would submit what is in its prompt.
 - **Never its own pane.** An agent's pane route never types into its own pane, at any value: a
   key there could change its own mode or queue a command that runs as the user's next input.
@@ -1885,8 +1901,8 @@ agent may type into and start. It binds the same two doors as `agent.read_panes`
   else; Safe allows nothing; Bypass is the owner's choice to trust agents with every pane.
   `project` adds the project's shells and `pane.new`, set by hand. `project` is the same as
   letting an agent run any program as the user: text into a shell runs as typed, and `pane.new`
-  takes any `argv`. "Its own project" files the session; it confines nothing. These values are
-  the conservative pick until the owner decides (8, Q10).
+  takes any `argv`. "Its own project" files the session; it confines nothing. The owner kept
+  these defaults (8, Q10).
 - **`pane.new` at Balanced is refused.** Routing it through the confirmation flow of
   `start_session` (`capcom.md` 6.1) would need a confirmation kind for a plain program; that is
   not a small reuse, so the hab refuses and the hint names the setting. An agent that wants
@@ -1898,8 +1914,13 @@ agent may type into and start. It binds the same two doors as `agent.read_panes`
   as in 3.11.
 - **This hab's rule gates a forward.** A `pane.type` to `label/name` on a peer is forwarded only
   under `all`. The peer answers under its own rule.
-- **The Capcom route** is refused `pane.list`, `pane.type` and `pane.new` at every level, as it
-  is refused reads (8, Q9).
+- **The Capcom route** follows this rule like any agent, with two differences, since it has no
+  pane and no project. Every project counts as its own, so `agents` lets it type into every
+  agent's pane and `project` into every pane, shells included. It has no own pane to avoid.
+  `pane.new` follows `all` only: under `project` Capcom has no project to start in. Its forward
+  to a peer carries `as: "capcom"` as in 3.11, at every value but `off`, and the far hab applies
+  this rule for Capcom under its own value (`capcom-service.md` 5.4). Q9 (8) records the
+  decision.
 - **The owner** (any other client) lists, types and starts at every level, as in 3.11.
 - The two settings are separate. An agent may type into a pane it cannot read: it types blind,
   and `pane.list` does not show the pane.
@@ -1934,7 +1955,9 @@ the byte count. A granted `pane.new` logs the caller's pane id and the new pane 
 rules. Their descriptions say that screen text is untrusted program output.
 
 - **Only from a pane.** Outside a Flightdeck pane the MCP server has no pane route and would reach
-  the hab through the owner's socket, where neither setting applies. A harness that runs the kit
+  the hab through the owner's socket, where neither setting applies. The Capcom engine's
+  `gff-hab mcp` has a route of its own (`GFF_HAB`, `capcom-service.md` 3.3), so it counts as on
+  a pane route, under the Capcom rules of 3.11 and 3.12. A harness that runs the kit
   outside a pane is still an agent, so every pane tool refuses there with `denied`, before any
   call. The CLI verbs outside a pane are the owner's (3.11): a person runs them.
 - `pane_type` and `pane_new` carry `destructiveHint` and `openWorldHint` true, so a harness asks
@@ -1969,6 +1992,8 @@ Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 - The 2 s check reads the time of the last `pane.input` that reached the pane. It lives in
   memory: a type right after a gff-hab restart does not see input from before it.
 - `pane.new` calls the server's own `session.create` path, with its idempotency table.
+- Not built yet: the Capcom route's list, type, start and raw line. The built hab refuses the
+  Capcom route at every value. Stage A10 (`capcom-service.md` 18) builds them.
 
 Limits:
 
@@ -1984,6 +2009,67 @@ Limits:
   not the gate.
 - `pane.new` with `argv` can start a harness as a plain program, with no seed and no
   confirmation. `agent.drive_panes` decides whether an agent may start anything at all.
+
+### 3.13 Session actions
+
+A named action on a session, which the hab translates for the harness in its pane. The Capcom
+service keeps agents fresh with it (`capcom-service.md` 5.4); the owner may use it too.
+Capability `session-action` means `session.action` works.
+
+**`session.action {session, action, follow_up}`** answers at once with `{id, state}`, as
+`agent.compact` does (`harness-adapters.md`, Self-compact). `session` is named as in 3.11,
+`label/name` included. `follow_up` is optional, at most 8,000 characters, and only for
+`compact`, `clear` and `recreate`: the first message after the action.
+
+| Action | What the user gets |
+|---|---|
+| `compact` | The harness compacts its conversation in the same pane, then gets `follow_up` |
+| `clear` | A fresh conversation in the same pane, then `follow_up`. The old conversation stays on disk, resumable from a plain terminal |
+| `restart` | `session.restart` (3.9): the harness exits and starts again in a new pane with its resume id |
+| `close` | The harness gets a hang-up and the pane closes (`pane.close`), then the record goes (`session.close`). The conversation stays resumable from a plain terminal |
+| `recreate` | A fresh session under the same name: the old one is renamed `<name>-<n>` and closed, and a new session starts with the same folder, project, harness, model and start mode, with `follow_up` as its seed. Messages held for the old session move to the new one (`groups.md` 9.3 steps 3 to 5) |
+
+**Per harness.** What the hab sends, and how it sees the end. "Unverified" means the repo does
+not yet prove it against the pinned harness version; the stage that builds it checks first.
+
+| Action | Claude Code | Codex | opencode |
+|---|---|---|---|
+| `compact` | `/compact` through `session.send`'s path. Start: the `PreCompact` hook or a `compact_boundary` record; end: `SessionStart` with source `compact`, or the record. Built for an agent's own pane and for group members (`harness-adapters.md`, Self-compact; `groups.md` 9.2) | `/compact` through the same path. End: the rollout's `compacted` record, which the chat view already reads (`harness-adapters.md`, Codex). Unverified: no Codex hook reports a compaction, so the record is the only end signal | Unverified: the server API's compaction route in opencode 2.x. Until checked, `unavailable` |
+| `clear` | `/clear` through the same path. End: `SessionStart` with source `clear` *(gk)*, which binds the new native session id to the pane, as the hook client already handles (`internal/hook/client.go`). Unverified: the source word against the pinned version | Unverified: `/new` *(gk)* starts a new conversation in the TUI, and its `SessionStart` hook binds the new id. Until checked, `unavailable` | Unverified: a new session through the server API that the TUI then shows. Until checked, `unavailable` |
+| `restart`, `close`, `recreate` | The same for every harness: the resume book, `pane.close`, `session.close` and `session.create` (3.9). `recreate` is built for group members (`cmd/gff-hab/supervise.go`); this method makes it general | As Claude Code | As Claude Code |
+
+- **`unavailable`** names the harness and the action. The caller may `recreate` instead, which
+  works for every harness.
+- **States** as for a compaction: `queued` (waits for the turn to end), `sent`, `running`,
+  `done`, `failed` with `reason`. Each step sends one `session.action` event (host scope,
+  ephemeral). `restart`, `close` and `recreate` wait in `queued` until the agent is `idle`,
+  `done` or `error`, as `session.restart` needs. Limits as for a compaction: 60 minutes for the
+  turn to end, 2 minutes to start, 15 minutes to end.
+- **One per session.** A second action while one is pending is `conflict`, naming its id. A
+  pending `agent.compact` counts.
+- **In memory.** A gff-hab restart drops a pending action with no event. A `recreate` cut short
+  undoes its rename, as a group swap does.
+
+**Who may run it.** The owner's door, at every value. The Capcom route, wherever the rule of
+`pane.type` (3.12) lets Capcom type into the session's pane, on this hab or through its forward.
+Any other agent door gets `denied`: `close`, `clear` and `recreate` end another agent's work,
+which is more than the enveloped text Balanced allows (8, Q10). An agent compacts itself with
+`agent.compact`. Whether other agents get it under `all` is open for the owner
+(`capcom-service.md` 16, Q13). `compact` and `clear` type, so they pass the send gate of 3.12 at
+every door, the owner's included.
+
+**Logging.** A refused call logs the method, the action, the setting's value, and the caller's
+and target's pane ids. A granted call logs the action, the ids and the outcome. No log line
+holds `follow_up` or a session name.
+
+**The CLI and the MCP tool.** `gff-hab action [-socket path | -via command] <session |
+label/name> <compact|clear|restart|close|recreate> [follow-up | -]`, the door picked as in 3.11.
+`gff-hab mcp` lists `session_action` only on the Capcom route, with `destructiveHint` and
+`openWorldHint` true.
+
+Not built yet. Stage A10 (`capcom-service.md` 18) builds the method, the Claude Code
+translations, `restart`, `close` and a general `recreate`. Each unverified row is checked and
+built, or stays `unavailable`.
 
 ---
 
@@ -2565,12 +2651,19 @@ Decision: 60 s, configurable later. Built as `control.DefaultReconnectGrace`.
 
 ### Q9. May Capcom read panes (owner)
 
-Capcom's route is refused `pane.read`, `pane.wait`, `pane.list`, `pane.type` and `pane.new` at
-every level for now (3.11, 3.12). Capcom acts
+The question: the built hab refuses Capcom's route `pane.read`, `pane.wait`, `pane.list`,
+`pane.type` and `pane.new` at every level (3.11, 3.12). Capcom acts
 on events and reads untrusted text, so pane text from any session would be a path for injected
 instructions into its turns. Options: keep it refused; let it read the panes of a session the
 user attached in this conversation (`capcom.md` 8.1); or follow `agent.read_panes` like any
-agent. Recommendation: the second, so a read follows a user's own pick. Open for the owner.
+agent. Recommendation: the second, so a read follows a user's own pick.
+
+Decision: Capcom is the single pane of glass (owner). It reads every pane on every host at
+every level, and a hand-set `off` keeps it out of a hab. It types, starts panes and runs session
+actions under `agent.drive_panes` like any agent, with every project as its scope, and sends a
+raw line under `all` (3.11, 3.12, 3.13; `capcom-service.md` 5.4, 5.5). The owner accepts that
+hostile text could steer Capcom into a shell under `all`; a later brake is shells only inside a
+granted job.
 
 ### Q10. How far may agents drive panes at Balanced (owner)
 
@@ -2581,7 +2674,10 @@ user outside its harness's sandbox (`pane.new sh -c`, or text into a shell pane)
 other agents' prompts; the gate stops a key only on a dialog the hab sees. Options: keep
 `agents`; Balanced `project`, with shells and `pane.new`; or route `pane.new` through the
 confirmation flow. Recommendation: keep `agents` until there is a confirmation for plain
-programs. Open for the owner.
+programs.
+
+Decision: keep the defaults: Safe `off`, Balanced `agents` in the envelope, Bypass `all`;
+`pane.new` at Balanced stays refused (owner).
 
 ---
 
