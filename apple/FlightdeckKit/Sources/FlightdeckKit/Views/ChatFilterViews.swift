@@ -47,7 +47,7 @@ struct ChatShowSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 520)
         #endif
