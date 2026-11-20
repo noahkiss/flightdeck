@@ -366,8 +366,8 @@ wait_until "gff-hab to answer" 30 api hab.ping
 [ -n "$id_a" ] || fail "build A's gff-hab reports no build"
 epoch=$(welcome_field epoch)
 if [ "$init" = launchd ]; then
-	dir_a=$(ls "$state/builds")
-	[ "$(registered_builds)" = "$dir_a" ] || fail "LaunchServices holds builds '$(registered_builds)', want build A's $dir_a"
+	reg_a=$(ls "$state/builds")
+	[ "$(registered_builds)" = "$reg_a" ] || fail "LaunchServices holds builds '$(registered_builds)', want build A's $reg_a"
 	say "install registered build A's bundles with LaunchServices"
 fi
 
@@ -422,9 +422,9 @@ if [ "$init" = launchd ]; then
 	# after the job goes.
 	wait_until "build A's directory to go" 30 build_count_is 1
 	[ -x "$state/current/GFF Hab.app/Contents/MacOS/gff-hab" ] || fail "current does not name build B's bundles"
-	dir_b=$(ls "$state/builds")
-	[ "$(registered_builds)" = "$dir_b" ] ||
-		fail "LaunchServices holds builds '$(registered_builds)' after build A went, want only build B's $dir_b"
+	reg_b=$(ls "$state/builds")
+	[ "$(registered_builds)" = "$reg_b" ] ||
+		fail "LaunchServices holds builds '$(registered_builds)' after build A went, want only build B's $reg_b"
 fi
 say "retire: holder $inst_a exited after its last program, and its job is gone"
 
