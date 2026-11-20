@@ -108,6 +108,14 @@ func readLines(t *testing.T, path string) []string {
 	return strings.Split(strings.TrimSpace(string(b)), "\n")
 }
 
+// waitLines waits until path holds n whole lines and returns them. The stand-in's `echo >>`
+// creates the file before it writes the line, so a file that exists may still be empty.
+func waitLines(t *testing.T, path string, n int, what string) []string {
+	t.Helper()
+	waitUntil(t, what, func() bool { b, _ := os.ReadFile(path); return strings.Count(string(b), "\n") == n })
+	return readLines(t, path)
+}
+
 // TestCapcomHost: with no home host, capcom.open says to assign one. After `gff-hab capcom
 // assign self` it starts the harness in a new hab-owned folder that holds the manual and the
 // settings registering `<gff-hab> mcp`, as a session of kind capcom with its folder in the
@@ -163,8 +171,7 @@ func TestCapcomHost(t *testing.T) {
 	}
 	wantSettings, _ := os.ReadFile(settings)
 	argvLog := filepath.Join(first.Dir, "argv.log")
-	waitUntil(t, "the harness started", func() bool { _, err := os.Stat(argvLog); return err == nil })
-	start := readLines(t, argvLog)
+	start := waitLines(t, argvLog, 1, "the harness started")
 	if len(start) != 1 || !strings.HasPrefix(start[0], "--session-id ") {
 		t.Fatalf("first start argv: %q", start)
 	}
@@ -216,7 +223,7 @@ func TestCapcomHost(t *testing.T) {
 		return s.State == api.SessionStateRunning && s.Pane == res.Pane
 	})
 	// Claude Code wrote no transcript yet (no message was sent): the same id starts again.
-	waitUntil(t, "the harness restarted", func() bool { return len(readLines(t, argvLog)) == 2 })
+	waitLines(t, argvLog, 2, "the harness restarted")
 	if got := readLines(t, argvLog)[1]; got != "--session-id "+id {
 		t.Fatalf("start again argv %q, want --session-id %s", got, id)
 	}
@@ -230,7 +237,7 @@ func TestCapcomHost(t *testing.T) {
 	if res, err = resume(t, c, first.Session); err != nil {
 		t.Fatalf("second session.resume: %v", err)
 	}
-	waitUntil(t, "the harness resumed", func() bool { return len(readLines(t, argvLog)) == 3 })
+	waitLines(t, argvLog, 3, "the harness resumed")
 	if got := readLines(t, argvLog)[2]; got != "--resume "+id {
 		t.Fatalf("resume argv %q, want --resume %s", got, id)
 	}
@@ -299,7 +306,7 @@ func TestCapcomHolderNotReached(t *testing.T) {
 	run(t, "capcom", "assign", "-socket", e.sock, "self")
 	first := mustOpen(t, c, false)
 	argvLog := filepath.Join(first.Dir, "argv.log")
-	waitUntil(t, "the harness started", func() bool { _, err := os.Stat(argvLog); return err == nil })
+	waitLines(t, argvLog, 1, "the harness started")
 
 	e.stopHab(false)
 	if err := e.holder.Process.Signal(syscall.SIGSTOP); err != nil {
@@ -346,7 +353,7 @@ func TestCapcomResumeAfterHolderLoss(t *testing.T) {
 	run(t, "capcom", "assign", "-socket", e.sock, "self")
 	first := mustOpen(t, c, false)
 	argvLog := filepath.Join(first.Dir, "argv.log")
-	waitUntil(t, "the harness started", func() bool { _, err := os.Stat(argvLog); return err == nil })
+	waitLines(t, argvLog, 1, "the harness started")
 
 	e.holder.Process.Kill()
 	<-e.holderDone
@@ -370,7 +377,7 @@ func TestCapcomResumeAfterHolderLoss(t *testing.T) {
 		t.Fatalf("open after the holder loss: %+v", opened)
 	}
 	waitSession(t, c, first.Session, "running again", func(s api.Session) bool { return s.State == api.SessionStateRunning && s.Pane == opened.Pane })
-	waitUntil(t, "the harness started again", func() bool { return len(readLines(t, argvLog)) == 2 })
+	waitLines(t, argvLog, 2, "the harness started again")
 
 	// And session.resume after the next exit.
 	writeFile(t, filepath.Join(first.Dir, "stop"), "")
@@ -378,7 +385,7 @@ func TestCapcomResumeAfterHolderLoss(t *testing.T) {
 	if _, err := resume(t, c, first.Session); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
-	waitUntil(t, "the harness started a third time", func() bool { return len(readLines(t, argvLog)) == 3 })
+	waitLines(t, argvLog, 3, "the harness started a third time")
 	writeFile(t, filepath.Join(first.Dir, "stop"), "")
 }
 
