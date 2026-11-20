@@ -120,7 +120,7 @@ func (c *conn) handleLogbook(m message) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxReadTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxReadTime)
 		defer cancel()
 		if c.peer != nil {
 			ctx = WithPeerCall(ctx)

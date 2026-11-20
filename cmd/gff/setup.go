@@ -20,6 +20,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/grants"
 	"github.com/noahkiss/flightdeck/internal/habconn"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // gff setup (macos-identity.md 7): check, and with no --check walk, the permission grants of
@@ -116,8 +117,9 @@ func setupMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}()
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, err := habconn.Connect(cctx, habconn.Config{
-		Transport: tr,
-		Client:    api.ClientInfo{Name: "gff", Version: build, Kind: api.ClientKindCli},
+		Transport:   tr,
+		Client:      api.ClientInfo{Name: "gff", Version: build, Kind: api.ClientKindCli},
+		TraceOrigin: trace.Gff,
 	})
 	cancel()
 	if err != nil {

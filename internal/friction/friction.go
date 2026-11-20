@@ -7,7 +7,6 @@
 package friction
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // The limits of diagnostics.md 9.2 and 11.
@@ -73,34 +74,6 @@ func CheckText(s string) (string, error) {
 	return s, nil
 }
 
-// crockford is Crockford's base32 alphabet (diagnostics.md 5.1).
-const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-// NewTrace returns a new trace: who made it (a the app, g gff, h gff-hab), then 11 random
-// Crockford base32 characters.
-func NewTrace(who byte) string {
-	var b [11]byte
-	rand.Read(b[:])
-	out := []byte{who}
-	for _, x := range b {
-		out = append(out, crockford[x&31])
-	}
-	return string(out)
-}
-
-// ValidTrace reports whether s has a trace's form: 12 Crockford characters, the first a, g or h.
-func ValidTrace(s string) bool {
-	if len(s) != 12 || !strings.ContainsRune("agh", rune(s[0])) {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		if !strings.ContainsRune(crockford, rune(s[i])) {
-			return false
-		}
-	}
-	return true
-}
-
 // fileName is <time>-<trace>.json, the time in UTC, so names sort by time.
 func fileName(n Note) string {
 	return n.T.UTC().Format("20060102T150405.000000Z") + "-" + n.Trace + ".json"
@@ -109,7 +82,7 @@ func fileName(n Note) string {
 // Write stores n under dir, cutting the oldest tail lines until the file fits MaxBytes, then
 // prunes the folder (Prune).
 func Write(dir string, n Note, now time.Time) error {
-	if !ValidTrace(n.Trace) {
+	if !trace.Valid(n.Trace) {
 		return fmt.Errorf("friction: bad trace %q", n.Trace)
 	}
 	b, err := encode(&n)
@@ -244,10 +217,7 @@ var ErrNotFound = errors.New("no friction note has that trace")
 
 // Find returns the note with trace t. Case does not matter.
 func Find(dir, t string) (Note, error) {
-	t = strings.ToUpper(t)
-	if len(t) > 0 {
-		t = strings.ToLower(t[:1]) + t[1:]
-	}
+	t = trace.Normalize(t)
 	ns, err := names(dir)
 	if err != nil {
 		return Note{}, err

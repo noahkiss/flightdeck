@@ -25,8 +25,25 @@ type message struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *wireError      `json:"error,omitempty"`
+	// Trace follows one action across processes (diagnostics.md 5.2): on a request and its
+	// response, never on a notification.
+	Trace wireTrace `json:"trace,omitempty"`
 
-	start time.Time // when the server read the request, for the failed-request line
+	start         time.Time // when the server read the request, for the failed-request line
+	traceReplaced bool      // the request's trace was malformed and the server made a new one
+}
+
+// wireTrace is the trace member. A value that is not a JSON string decodes as a malformed trace
+// ("\x00"), so the server replaces it rather than rejecting the request (diagnostics.md 5.2).
+type wireTrace string
+
+func (w *wireTrace) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) != nil {
+		s = "\x00"
+	}
+	*w = wireTrace(s)
+	return nil
 }
 
 type wireError struct {
@@ -40,6 +57,9 @@ type Error struct {
 	Code    int
 	Message string
 	Data    api.ErrorData
+	// Trace is the trace of the failed call's response (diagnostics.md 5.2), so a user can find
+	// its lines with gff-hab logs --trace. Empty on an error this process made.
+	Trace string
 
 	partial bool // the call may have taken effect in part; see Partial
 }
@@ -58,10 +78,14 @@ func Partial(e *Error) *Error {
 func (e *Error) IsPartial() bool { return e.partial }
 
 func (e *Error) Error() string {
+	s := fmt.Sprintf("%s (%s)", e.Message, e.Data.Kind)
 	if e.Data.Hint != "" && e.Data.Hint != e.Message {
-		return fmt.Sprintf("%s (%s): %s", e.Message, e.Data.Kind, e.Data.Hint)
+		s += ": " + e.Data.Hint
 	}
-	return fmt.Sprintf("%s (%s)", e.Message, e.Data.Kind)
+	if e.Trace != "" {
+		s += " (trace " + e.Trace + ")"
+	}
+	return s
 }
 
 // Notification is one notification from the server: event, heartbeat or closing.

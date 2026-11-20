@@ -12,6 +12,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/friction"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // TestFrictionNotes is diagnostics test 6 and the stage 1 acceptance for part (e): a note from
@@ -42,12 +43,17 @@ func TestFrictionNotes(t *testing.T) {
 		t.Fatalf("gff-hab friction: %v\n%s", err, out)
 	}
 	cliTrace := strings.Fields(string(out))[2]
+	if !trace.Valid(cliTrace) || cliTrace[0] != trace.Hab {
+		t.Fatalf("cli note trace %q: gff-hab friction sends none, so the hab's h trace", cliTrace)
+	}
+	// The app's note takes its request's trace.
+	appTrace := trace.New(trace.App)
 	var noted api.FrictionNoted
-	if err := c.Call(ctx, "diag.friction", api.FrictionParams{Text: "  " + appText + "\n", Session: res.Session, Pane: res.Pane}, &noted); err != nil {
+	if err := c.Call(trace.With(ctx, appTrace), "diag.friction", api.FrictionParams{Text: "  " + appText + "\n", Session: res.Session, Pane: res.Pane}, &noted); err != nil {
 		t.Fatal(err)
 	}
-	if !friction.ValidTrace(noted.Trace) || noted.Trace[0] != 'h' {
-		t.Fatalf("trace %q", noted.Trace)
+	if noted.Trace != appTrace {
+		t.Fatalf("trace %q, want the request's %s", noted.Trace, appTrace)
 	}
 
 	notes, bad, err := friction.List(filepath.Join(e.state, friction.Dir), time.Time{})

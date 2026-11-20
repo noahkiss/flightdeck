@@ -9,14 +9,15 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/friction"
 	"github.com/noahkiss/flightdeck/internal/logfile"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // frictionCapability says diag.friction works (diagnostics.md 9).
 const frictionCapability = "friction"
 
 // frictionNotes serves diag.friction: it stores the user's note with the merged log tail of
-// the last 10 minutes (9.2). The text goes into the note's file only; the line it logs names
-// the trace alone.
+// the last 10 minutes (9.2), under the request's trace. The text goes into the note's file only;
+// the line it logs names the trace alone.
 type frictionNotes struct {
 	state string
 	w     *logfile.Writer // flushed first, so the tail holds the lines written up to the note
@@ -26,12 +27,18 @@ type frictionNotes struct {
 
 func frictionDir(state string) string { return filepath.Join(state, friction.Dir) }
 
-func (f *frictionNotes) Note(_ context.Context, client api.ClientKind, p api.FrictionParams) (api.FrictionNoted, error) {
+func (f *frictionNotes) Note(ctx context.Context, client api.ClientKind, p api.FrictionParams) (api.FrictionNoted, error) {
 	now := f.now()
 	if f.w != nil {
 		f.w.FlushTimeout(exitFlush)
 	}
-	n := friction.Note{T: now.UTC(), Trace: friction.NewTrace('h'), Client: string(client), Session: p.Session,
+	// The note takes the request's trace, so the note and the request's lines share one id
+	// (diagnostics.md 9.2). The control server checked it; a call with none gets an h trace.
+	tr := trace.From(ctx)
+	if !trace.Valid(tr) {
+		tr = trace.New(trace.Hab)
+	}
+	n := friction.Note{T: now.UTC(), Trace: tr, Client: string(client), Session: p.Session,
 		Pane: p.Pane, Blocker: p.Blocker, Text: p.Text, Build: build, Version: version, Log: logTail(f.state, now)}
 	if err := friction.Write(frictionDir(f.state), n, now); err != nil {
 		return api.FrictionNoted{}, err

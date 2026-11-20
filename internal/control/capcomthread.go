@@ -73,7 +73,7 @@ func (c *conn) handleCapcomCard(m message) {
 	client := c.label
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, maxReadTime)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxReadTime)
 		defer cancel()
 		res, err := ct.CardAnswer(ctx, client, p)
 		seq := c.currentSeq()
@@ -146,7 +146,7 @@ func (c *conn) dispatchCapcomThread(m message, s api.Seq) (any, *Error) {
 	case "capcom.pause":
 		res, err = ct.Pause()
 	default:
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		res, err = ct.Resume(ctx)
 	}

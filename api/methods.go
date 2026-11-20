@@ -414,7 +414,8 @@ var Translators = map[int]Translator{}
 // (app.md 7.10). "round-actions" means the hab knows a capcom round's action words, so a client
 // shows its Capcom jobs (capcom-service.md 9.6). "teammates" means session.create takes
 // report_to (harness-adapters.md, Spawn); a spawner's hab checks it on a peer. "debug" means diag.debug works
-// (diagnostics.md 4.5).
+// (diagnostics.md 4.5). "trace" means the hab honours the request member trace: it checks it,
+// answers it and passes it to a peer hab (diagnostics.md 5.2).
 // "pane-read" means pane.read and pane.wait work (spec 3.11). "pane-drive" means pane.list,
 // pane.type and pane.new work (spec 3.12).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive"}
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context", "flight-rules", "session-restart", "friction", "pane-read", "trust", "round-actions", "teammates", "debug", "pane-drive", "trace"}

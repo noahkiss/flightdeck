@@ -23,6 +23,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/logfile"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // statusReport is what gff-hab status prints (diagnostics.md 4.8).
@@ -315,6 +316,7 @@ func logsCmd(args []string, out io.Writer) error {
 	until := fs.String("until", "", "only lines up to this long ago (30m) or this time (RFC 3339)")
 	proc := fs.String("proc", "", "only these process kinds, comma separated: "+strings.Join(logKinds, ", "))
 	grep := fs.String("grep", "", "only lines that hold this text")
+	traceID := fs.String("trace", "", "only the lines of one action: a trace id from a response or a log line")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
 		return errors.New("logs takes no arguments; see gff-hab logs -h")
@@ -341,6 +343,12 @@ func logsCmd(args []string, out io.Writer) error {
 		}
 	}
 	f.Grep = *grep
+	if *traceID != "" {
+		f.Trace = trace.Normalize(*traceID)
+		if !trace.Valid(f.Trace) {
+			return fmt.Errorf("-trace %q: want 12 Crockford base32 characters, the first a, g or h", *traceID)
+		}
+	}
 	print := func(e logfile.Entry) { fmt.Fprint(out, formatEntry(e)) }
 	if !*follow {
 		return logfile.Merge(logSources(dir), f, print)

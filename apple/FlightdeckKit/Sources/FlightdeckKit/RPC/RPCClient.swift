@@ -7,11 +7,15 @@ public struct RPCError: Error, Sendable, CustomStringConvertible {
     public var code: Int
     public var message: String
     public var data: ErrorData?
+    /// The failed call's trace (diagnostics.md 5.2): the one the hab answered, else the one the
+    /// app sent. `gff-hab logs --trace` finds the call's lines by it.
+    public var trace: String? = nil
 
     public var kind: ErrorKind? { data?.kind }
     public var description: String {
-        if let d = data { return "\(d.kind.rawValue): \(d.hint)" }
-        return "\(code): \(message)"
+        let s = data.map { "\($0.kind.rawValue): \($0.hint)" } ?? "\(code): \(message)"
+        guard let t = trace else { return s }
+        return s + " (trace \(t))"
     }
 }
 
@@ -107,7 +111,9 @@ public actor RPCClient {
         if let e = ended { throw e }
         let id = nextID
         nextID += 1
-        var data = try encoder.encode(Request(id: id, method: method.name, params: params))
+        // Each call is one user action, so it gets a new trace (diagnostics.md 5.2).
+        let sent = Trace.new()
+        var data = try encoder.encode(Request(id: id, trace: sent, method: method.name, params: params))
         data.append(0x0A)
         let line: Data = try await withCheckedThrowingContinuation { c in
             pending[id] = c
@@ -120,7 +126,11 @@ public actor RPCClient {
         }
         let resp = try decoder.decode(Response<R>.self, from: line)
         if let e = resp.error {
-            throw RPCError(code: e.code, message: e.message, data: e.data)
+            // The hab's answer, when it has a trace's form; a trace holds no content.
+            let tr = resp.trace.flatMap { Trace.isValid($0) ? $0 : nil } ?? sent
+            let err = RPCError(code: e.code, message: e.message, data: e.data, trace: tr)
+            Self.log.notice(Self.failedCall(method.name, err, trace: tr))
+            throw err
         }
         guard let r = resp.result else {
             throw ProtocolError("\(method.name): response has neither result nor error")
@@ -205,6 +215,7 @@ public actor RPCClient {
     private struct Request<P: Encodable>: Encodable {
         var jsonrpc = "2.0"
         var id: Int
+        var trace: String
         var method: String
         var params: P
     }
@@ -258,5 +269,11 @@ public actor RPCClient {
     private struct Response<R: Decodable>: Decodable {
         var result: R?
         var error: ErrorObject?
+        var trace: String?
+    }
+
+    /// The line for a failed call: the method, the error kind and the trace, all public.
+    static func failedCall(_ method: String, _ error: RPCError, trace tr: String) -> AppLogMessage {
+        "call failed: \(word: method), \(kind: error), trace \(id: tr)"
     }
 }

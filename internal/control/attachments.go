@@ -93,7 +93,7 @@ func (c *conn) handleAttachment(m message) {
 	go func() {
 		// A write runs to its end when the connection drops: the upload then waits for the
 		// next run from a new connection, or is dropped when idle.
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		res, err := c.runAttachment(ctx, m.Method, run)
 		c.mu.Lock()

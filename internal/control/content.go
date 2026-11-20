@@ -115,7 +115,7 @@ func (c *conn) handleContent(m message) {
 	c.contents++
 	c.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), c.s.cfg.ActionTimeout)
 		defer cancel()
 		res, err := run(ctx)
 		c.mu.Lock()

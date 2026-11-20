@@ -51,7 +51,8 @@
     "round-actions",
     "teammates",
     "debug",
-    "pane-drive"
+    "pane-drive",
+    "trace"
   ],
   "methods": [
     {

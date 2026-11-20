@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // TestStoreCaps: the folder keeps the newest Keep notes; a note older than TailAge loses its
@@ -16,7 +18,7 @@ func TestStoreCaps(t *testing.T) {
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-TailAge - time.Hour)
 	line := Line{T: old, Proc: "hab", Text: "a line"}
-	first := Note{T: old, Trace: NewTrace('h'), Client: "app", Text: "old note", Log: []Line{line}}
+	first := Note{T: old, Trace: trace.New(trace.Hab), Client: "app", Text: "old note", Log: []Line{line}}
 	if err := Write(dir, first, now); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +27,7 @@ func TestStoreCaps(t *testing.T) {
 		t.Fatalf("an old note after a write: %+v %v", n, err)
 	}
 	for i := range Keep {
-		if err := Write(dir, Note{T: now.Add(time.Duration(i) * time.Second), Trace: NewTrace('g'), Text: "n", Log: []Line{line}}, now); err != nil {
+		if err := Write(dir, Note{T: now.Add(time.Duration(i) * time.Second), Trace: trace.New(trace.Gff), Text: "n", Log: []Line{line}}, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -40,7 +42,7 @@ func TestStoreCaps(t *testing.T) {
 		t.Fatalf("a new note lost its tail: %+v", notes[0])
 	}
 
-	big := Note{T: now.Add(time.Hour), Trace: NewTrace('a'), Text: "big"}
+	big := Note{T: now.Add(time.Hour), Trace: trace.New(trace.App), Text: "big"}
 	for range 2000 {
 		big.Log = append(big.Log, Line{T: now, Proc: "hab", Text: strings.Repeat("x", 400)})
 	}
@@ -73,16 +75,6 @@ func TestCheckTextAndTrace(t *testing.T) {
 	}
 	if _, err := CheckText(strings.Repeat("é", MaxText)); err != nil {
 		t.Errorf("CheckText at the limit: %v", err)
-	}
-	for _, who := range []byte("agh") {
-		if tr := NewTrace(who); !ValidTrace(tr) || tr[0] != who {
-			t.Errorf("NewTrace(%c) = %q", who, tr)
-		}
-	}
-	for _, bad := range []string{"", "hABC", "x0123456789A", "h0123456789U", "h0123456789AB"} {
-		if ValidTrace(bad) {
-			t.Errorf("ValidTrace(%q)", bad)
-		}
 	}
 	if err := Write(t.TempDir(), Note{Trace: "../../x"}, time.Now()); err == nil {
 		t.Error("Write took a bad trace")

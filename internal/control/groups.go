@@ -196,7 +196,7 @@ func (c *conn) handleGroups(m message) {
 		if m.Method == "group.move" {
 			limit = maxMoveTime
 		}
-		ctx, cancel := context.WithTimeout(c.ctx, limit)
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), limit)
 		defer cancel()
 		if peer != nil {
 			// The service answers a peer's forward and never forwards it again; the lane and
