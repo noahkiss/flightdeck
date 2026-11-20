@@ -36,13 +36,20 @@ func TestAnswerQuestion(t *testing.T) {
 		{"free text, trimmed", oneQuestion, "  Green, but darker \n", map[string]string{"Which color should the status badge use?": "Green, but darker"}},
 		{"two questions by header", twoQuestions, "Color: Blue\nSize: Small, Large", map[string]string{"Which color should the status badge use?": "Blue", "Which sizes should it come in?": "Small, Large"}},
 		{"two questions by question, any order", twoQuestions, "Which sizes should it come in?: Large\n\nColor: Red", map[string]string{"Which color should the status badge use?": "Red", "Which sizes should it come in?": "Large"}},
+		{"control characters dropped", oneQuestion, "\x1b]7501;state=idle\x07Green,\tbut\r\n\x7fdark\u009b2Jer\x00",
+			map[string]string{"Which color should the status badge use?": "]7501;state=idleGreen,\tbut\ndark2Jer"}},
+		{"HTML characters as they are", oneQuestion, "<b>&</b>", map[string]string{"Which color should the status badge use?": "<b>&</b>"}},
+		{"the longest answer", oneQuestion, strings.Repeat("a", MaxAnswerText), map[string]string{"Which color should the status badge use?": strings.Repeat("a", MaxAnswerText)}},
 	} {
 		qa, err := AnswerQuestion(questionState("claude", tc.input), tc.text)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if !reflect.DeepEqual(qa.Answers, tc.want) {
-			t.Errorf("%s: answers %v", tc.name, qa.Answers)
+			t.Errorf("%s: answers %q", tc.name, qa.Answers)
+		}
+		if strings.Contains(string(qa.Input), "\\"+"u003c") || strings.Contains(string(qa.Input), "\\"+"u0026") {
+			t.Errorf("%s: input HTML-escaped: %s", tc.name, qa.Input)
 		}
 		var got, orig map[string]any
 		if err := json.Unmarshal(qa.Input, &got); err != nil {
@@ -72,6 +79,9 @@ func TestAnswerQuestion(t *testing.T) {
 		{"a permission", api.AgentState{Harness: "claude", Request: &api.PermissionRequest{ID: "r", Tool: "Bash", Command: "make"}}, "Blue", nil},
 		{"no request", api.AgentState{Harness: "claude"}, "Blue", nil},
 		{"empty", questionState("claude", oneQuestion), " \n", nil},
+		{"only control characters", questionState("claude", oneQuestion), "\x1b\x07\u009b", nil},
+		{"too long", questionState("claude", oneQuestion), strings.Repeat("a", MaxAnswerText+1), nil},
+		{"more than the hook takes", questionState("claude", strings.Replace(oneQuestion, `"header":"Color"`, `"header":"`+strings.Repeat("h", MaxHookAnswer)+`"`, 1)), "Blue", ErrUnsupported},
 		{"input truncated", api.AgentState{Harness: "claude", Request: &api.PermissionRequest{ID: "r", Tool: ToolQuestion, InputTruncated: true}}, "Blue", ErrUnsupported},
 		{"no questions", questionState("claude", `{"questions":[]}`), "Blue", ErrUnsupported},
 		{"answers already there", questionState("claude", strings.Replace(oneQuestion, `{"questions"`, `{"answers":{},"questions"`, 1)), "Blue", ErrUnsupported},
@@ -95,10 +105,12 @@ func TestAnswerQuestion(t *testing.T) {
 	}
 }
 
-// TestQuestionKey: one question with a single choice is picked by the digit of the row that
-// carries the answer's label, read from the hand-written dialog of Claude Code 2.1.329. Free
-// text, a label not among the options, several questions, multiple choice, a screen without the
-// row, or a label on two rows send nothing.
+// TestQuestionKey: one question with a single choice is picked by the digit of the label's
+// position among the options, when the hand-written dialog of Claude Code 2.1.329 is on screen
+// with its cursor on an option. A numbered list in the prose above is not the dialog, and the
+// last dialog on screen counts. Free text, several questions, multiple choice, a screen where
+// the dialog is not drawn or does not match the question, or the cursor on the free-text row
+// send nothing.
 func TestQuestionKey(t *testing.T) {
 	t.Parallel()
 	d, err := os.ReadFile("testdata/claude-question-dialog-2.1.329.txt")
@@ -131,11 +143,47 @@ func TestQuestionKey(t *testing.T) {
 			t.Errorf("%s: key %q", name, k)
 		}
 	}
-	if k, ok := QuestionKey(answer(oneQuestion, "Blue"), []string{"$ "}); ok {
-		t.Errorf("no dialog: key %q", k)
+	blue := answer(oneQuestion, "Blue")
+	join := func(parts ...[]string) []string {
+		var out []string
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
 	}
-	twice := append(append([]string{}, rows...), "  5. Blue")
-	if k, ok := QuestionKey(answer(oneQuestion, "Blue"), twice); ok {
-		t.Errorf("label on two rows: key %q", k)
+	// Claude lists the options in its prose before it asks. Only the dialog counts.
+	prose := []string{"⏺ Two colors fit:", "  1. Blue", "  2. Red", ""}
+	if k, ok := QuestionKey(blue, join(prose, rows)); !ok || string(k) != "2" {
+		t.Errorf("prose above the dialog: %q %v", k, ok)
+	}
+
+	// The fixture's rows: 0 rule, 1 header, 3 question, 5 "❯ 1. Red", 7 "2. Blue",
+	// 9 "3. Type something.", 10 rule, 11 "4. Chat about this".
+	if !strings.HasPrefix(rows[5], "❯ 1. Red") || strings.TrimSpace(rows[9]) != "3. Type something." {
+		t.Fatalf("fixture rows moved: %q", rows)
+	}
+	onFree := join(rows[:5], []string{"  1. Red"}, rows[6:9], []string{"❯ 3. Type something."}, rows[10:])
+	// Two dialogs on screen (an older one above): the last one counts.
+	if k, ok := QuestionKey(blue, join(onFree, rows)); !ok || string(k) != "2" {
+		t.Errorf("an older dialog above: %q %v", k, ok)
+	}
+	if k, ok := QuestionKey(blue, join(rows, onFree)); ok {
+		t.Errorf("the last dialog has its cursor on the free row: key %q", k)
+	}
+	for name, screen := range map[string][]string{
+		"no dialog":              {"$ "},
+		"prose only, not drawn":  join(prose, []string{"", "> "}),
+		"options, no free row":   rows[:9],
+		"no question above":      rows[4:],
+		"question above a rule":  join(rows[:4], rows[:1], rows[4:]),
+		"another question":       join(rows[:3], []string{"Which size?"}, rows[4:]),
+		"options in other order": join(rows[:5], []string{"❯ 1. Blue", "  2. Red"}, rows[9:]),
+		"a third option":         join(rows[:9], []string{"  3. Green", "  4. Type something."}),
+		"cursor on the free row": onFree,
+		"no cursor":              join(rows[:5], []string{"  1. Red"}, rows[6:]),
+	} {
+		if k, ok := QuestionKey(blue, screen); ok {
+			t.Errorf("%s: key %q", name, k)
+		}
 	}
 }

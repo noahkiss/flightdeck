@@ -99,7 +99,13 @@ func postQuery(ctx context.Context, addr string, env harness.Envelope, query str
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, nil
 	case resp.StatusCode == http.StatusOK && query != "":
-		return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		// The hab keeps an answer within MaxHookAnswer (harness-adapters.md, Question answers);
+		// a longer body is an error, not a cut one.
+		b, err := io.ReadAll(io.LimitReader(resp.Body, harness.MaxHookAnswer+1))
+		if err == nil && len(b) > harness.MaxHookAnswer {
+			err = fmt.Errorf("hab answer longer than %d bytes", harness.MaxHookAnswer)
+		}
+		return b, err
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return nil, fmt.Errorf("hab answered %s", resp.Status)
@@ -240,7 +246,7 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 		// Question answers).
 		out.HookSpecificOutput.Decision.UpdatedInput = a.UpdatedInput
 	}
-	b, err := json.Marshal(out)
+	b, err := harness.MarshalPlain(out)
 	if err != nil {
 		return nil, err
 	}

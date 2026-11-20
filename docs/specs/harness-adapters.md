@@ -1470,6 +1470,9 @@ Claude Code asks the owner a question with its `AskUserQuestion` tool. The tool'
   question whose header or text, followed by a colon, starts it; the longest name wins, and a
   name two questions share names neither. Every question needs exactly one line with an answer.
   Anything else, free text included, is `invalid`, and nothing is sent.
+- The text may hold at most 16 KiB; a longer one is `invalid`. The hab drops control
+  characters from it (C0 except newline and tab, DEL and C1): Claude echoes answers to its
+  terminal, where one could start an escape sequence.
 
 **How Claude Code takes it.** The tool's input has a field `answers`: an object from question
 text to answer text, which the dialog fills in when the owner answers in the terminal. A
@@ -1486,17 +1489,30 @@ and several questions all go this way (checked live against Claude Code 2.1.329)
 - Choice `answer` on a request that is not an `AskUserQuestion` is `invalid`. So is an empty
   text. A request whose input the hab does not hold (over 64 KiB, or not an object), or that
   already carries `answers`, is `unavailable`, with a hint to answer in the terminal.
+- Choice `allow` on an `AskUserQuestion` request is `invalid` ("answer it with answer"): an
+  allow carries no answers, so by keys it would pick the first option, and through the hook it
+  would run the tool unanswered. Choice `deny` stays valid.
 - **The waiting hook** (the owner's gate on, `hab.permission_wait`) takes
   `{"behavior":"allow","updatedInput":{...}}`, and `gff-hab hook -wait` prints it as Claude's
-  hook output. This path takes every answer the text rules allow.
+  hook output. This path takes every answer the text rules allow. The hook reads at most
+  256 KiB from the hab, and a longer body is an error, not a cut one. So the hab refuses as
+  `unavailable` an answered input that would not fit; with the 64 KiB input and 16 KiB text
+  limits this does not happen. Both ends write JSON without HTML escaping, so `<`, `>` and `&`
+  do not grow on the way.
 - **Keys, with no hook waiting.** Claude's dialog takes a digit as pick and submit at once for
-  one question with a single choice (checked live against 2.1.329). The dialog lists the
-  options, then "Type something." and "Chat about this". So the hab sends a digit only for one
-  question, single choice, whose answer is exactly one option's label. It reads the visible
-  rows and sends the number of the one row with that label. With no such row, or two, it
-  sends nothing. Free text, several questions or multiple choice by keys are `unavailable`,
-  with a hint to answer in the terminal (the app matches that phrase, `app.md` 4.11). Fixture,
-  written by hand: `claude-question-dialog-2.1.329.txt` in `internal/harness/testdata/`.
+  one question with a single choice (checked live against 2.1.329, with the cursor on an
+  option). The dialog lists the options, then "Type something." and "Chat about this". So the
+  hab sends a digit only for one question, single choice, whose answer is exactly one option's
+  label. The digit is that label's position among the request's options. The hab sends it only
+  when the visible rows prove the dialog is drawn: numbered rows 1 to n carry the options'
+  labels in order (description rows may sit between them), row n+1 reads "Type something.",
+  and the question's text shows above row 1, below any rule. The last such block on screen
+  counts, so a numbered list in Claude's prose above the dialog neither picks nor blocks. The
+  cursor (❯) must sit on an option row: on the "Type something." row a digit is typed as text.
+  Otherwise it sends nothing. Free text, several questions or multiple choice by keys are
+  `unavailable`, with a hint to answer in the terminal (the app matches that phrase, `app.md`
+  4.11). Fixture, written by hand: `claude-question-dialog-2.1.329.txt` in
+  `internal/harness/testdata/`.
 - An answer lets the tool run, so the read-back and the withdrawn banner treat it as an allow:
   success once the tool runs (`PostToolUse`, or Claude's OSC `working`).
 - **The wait window.** The hook waits only while the gate is on, for its 1 to 120 seconds, and

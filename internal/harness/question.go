@@ -1,10 +1,13 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/detect"
@@ -13,6 +16,13 @@ import (
 // ToolQuestion is Claude Code's question tool. Its permission request is answered with text,
 // not allowed or denied (harness-adapters.md, Question answers).
 const ToolQuestion = "AskUserQuestion"
+
+// MaxAnswerText bounds the text of a question's answer, in bytes; a longer one is refused.
+const MaxAnswerText = 16 << 10
+
+// MaxHookAnswer bounds the body a waiting hook takes from the hab, in bytes. The hook reads no
+// more, so the hab refuses an answer whose body would be longer.
+const MaxHookAnswer = 256 << 10
 
 // Question is one question of an AskUserQuestion request.
 type Question struct {
@@ -47,7 +57,10 @@ func AnswerQuestion(st api.AgentState, text string) (QuestionAnswer, error) {
 	if r == nil || r.Tool != ToolQuestion {
 		return QuestionAnswer{}, errors.New("the open request is a permission, not a question: answer it with allow or deny")
 	}
-	text = strings.TrimSpace(text)
+	if len(text) > MaxAnswerText {
+		return QuestionAnswer{}, fmt.Errorf("the answer is %d bytes; the most is %d", len(text), MaxAnswerText)
+	}
+	text = strings.TrimSpace(stripControls(text))
 	if text == "" {
 		return QuestionAnswer{}, errors.New("the answer is empty")
 	}
@@ -74,16 +87,46 @@ func AnswerQuestion(st api.AgentState, text string) (QuestionAnswer, error) {
 			return QuestionAnswer{}, err
 		}
 	}
-	b, err := json.Marshal(answers)
+	b, err := MarshalPlain(answers)
 	if err != nil {
 		return QuestionAnswer{}, err
 	}
 	fields["answers"] = b
-	in, err := json.Marshal(fields)
+	in, err := MarshalPlain(fields)
 	if err != nil {
 		return QuestionAnswer{}, err
 	}
+	// The hook body wraps the input: {"behavior":"allow","updatedInput":<input>}.
+	if n := len(in) + hookWrap; n > MaxHookAnswer {
+		return QuestionAnswer{}, fmt.Errorf("%w: the answered question is %d bytes, more than the hook takes (%d); answer it in the terminal", ErrUnsupported, n, MaxHookAnswer)
+	}
 	return QuestionAnswer{Input: in, Questions: qs, Answers: answers}, nil
+}
+
+// hookWrap is room for the hook body around a question's input.
+const hookWrap = 64
+
+// MarshalPlain is json.Marshal without HTML escaping: <, > and & stay one byte each, so a
+// body does not grow on its way to the hook. The result has no trailing newline.
+func MarshalPlain(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// stripControls drops the control characters of C0 (all but newline and tab), DEL and C1 from
+// an answer: Claude Code echoes answers to its terminal, where one could start an escape.
+func stripControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
 
 // lineAnswers reads one "<header or question>: <answer>" line per question. A line names the
@@ -128,36 +171,106 @@ func lineAnswers(qs []Question, text string) (map[string]string, error) {
 	return answers, nil
 }
 
-// QuestionKey returns the key that picks the answer in Claude Code's question dialog, read by
-// its label from the visible rows. The dialog takes a digit as pick and submit at once for one
-// question with a single choice (checked against Claude Code 2.1.329). So only that case goes by
-// keys, and only when the answer is one option's label, exactly, and one numbered row on screen
-// carries it. Free text, several questions or multiple choice report false: nothing is sent.
+// QuestionKey returns the key that picks the answer in Claude Code's question dialog. The dialog
+// takes a digit as pick and submit at once for one question with a single choice (checked
+// against Claude Code 2.1.329). So only that case goes by keys, and only when the answer is one
+// option's label, exactly. The digit is the label's position among the options. It is sent only
+// when the screen shows this question's dialog (questionDialog) with the cursor on an option
+// row: on the "Type something." row a digit is typed as text. Free text, several questions,
+// multiple choice, or no such dialog on screen report false: nothing is sent.
 func QuestionKey(a QuestionAnswer, rows []string) ([]byte, bool) {
 	if len(a.Questions) != 1 || a.Questions[0].MultiSelect {
 		return nil, false
 	}
 	q := a.Questions[0]
 	text := a.Answers[q.Question]
-	found := false
-	for _, o := range q.Options {
-		if strings.TrimSpace(o.Label) == text {
-			found = true
-		}
-	}
-	if !found {
-		return nil, false
-	}
-	var key []byte
-	for _, row := range rows {
-		m := optionLine.FindStringSubmatch(row)
-		if m == nil || strings.TrimSpace(m[2]) != text {
+	pick := -1
+	for i, o := range q.Options {
+		if strings.TrimSpace(o.Label) != text {
 			continue
 		}
-		if key != nil {
-			return nil, false
+		if pick >= 0 {
+			return nil, false // two options carry the label
 		}
-		key = []byte(m[1])
+		pick = i
 	}
-	return key, key != nil
+	if pick < 0 {
+		return nil, false
+	}
+	opts, ok := questionDialog(q, rows)
+	if !ok || !cursorOnOption(rows, opts) {
+		return nil, false
+	}
+	return []byte(strconv.Itoa(pick + 1)), true
+}
+
+// cursorOnOption reports whether the dialog's cursor (❯) is on one of its option rows.
+func cursorOnOption(rows []string, opts []int) bool {
+	for _, i := range opts {
+		if strings.Contains(rows[i], "❯") {
+			return true
+		}
+	}
+	return false
+}
+
+// questionDialog finds the last block on screen that is the question's dialog, and returns the
+// row index of each option. A block is numbered rows 1 to n that carry the options' labels in
+// order, with other rows (descriptions) between them; row n+1 reading "Type something."; and
+// the question's text above row 1, below any rule. A numbered list in Claude's prose above the
+// dialog is no such block, and a screen where the dialog is not drawn yet has none.
+func questionDialog(q Question, rows []string) ([]int, bool) {
+	n := len(q.Options)
+	if n == 0 || n+1 > 9 {
+		return nil, false // the dialog numbers its rows with one digit
+	}
+	free := strconv.Itoa(n + 1)
+	for end := len(rows) - 1; end >= 0; end-- {
+		m := optionLine.FindStringSubmatch(rows[end])
+		if m == nil || m[1] != free || strings.TrimSpace(m[2]) != "Type something." {
+			continue
+		}
+		opts := make([]int, n)
+		want := n
+		for i := end - 1; i >= 0 && want > 0; i-- {
+			m := optionLine.FindStringSubmatch(rows[i])
+			if m == nil {
+				continue // a description row
+			}
+			if m[1] != strconv.Itoa(want) || strings.TrimSpace(m[2]) != strings.TrimSpace(q.Options[want-1].Label) {
+				break
+			}
+			want--
+			opts[want] = i
+		}
+		if want == 0 && asksAbove(q.Question, rows[:opts[0]]) {
+			return opts, true
+		}
+	}
+	return nil, false
+}
+
+// asksAbove reports whether the rows above a dialog's first option, up to the nearest rule,
+// show the question's text. The dialog wraps a long question, so white space is ignored.
+func asksAbove(question string, rows []string) bool {
+	squash := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return -1
+			}
+			return r
+		}, s)
+	}
+	want := squash(question)
+	if want == "" {
+		return false
+	}
+	from := 0
+	for i := len(rows) - 1; i >= 0; i-- {
+		if strings.Contains(rows[i], "────") {
+			from = i + 1
+			break
+		}
+	}
+	return strings.Contains(squash(strings.Join(rows[from:], "")), want)
 }

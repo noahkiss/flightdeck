@@ -2138,8 +2138,9 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 - **Plans and questions** (`landscape.md` 4.4). A permission request for Claude's
   `ExitPlanMode` shows the plan, with "Keep planning" (deny) and "Approve plan" (allow). One for
   `AskUserQuestion` shows each question's options; the answer is `answer` with `text` set to the
-  chosen labels joined with ", " (several questions: one "<header>: <labels>" line each). The hab
-  refuses `answer` until the Claude adapter builds it; the sheet then shows the hab's hint.
+  chosen labels joined with ", " (several questions: one "<header>: <labels>" line each). When
+  the hab cannot take the answer (`harness-adapters.md`, Question answers), the sheet shows the
+  hab's hint.
 - **Live Activity.** `LiveActivityTracker` tracks the session the owner last sent a message to,
   or the one that last entered `blocked`, whichever came later. ActivityKit starts an activity
   only while the app is in front, so the tracker starts it when the scene turns inactive on its

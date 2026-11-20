@@ -40,16 +40,21 @@ func questionService(t *testing.T) (a *agentService, keys *keyLog, request strin
 }
 
 // TestQuestionAnswerKeys: with no hook waiting, choice answer with an option's label sends the
-// digit of the row that carries it, and returns once Claude goes on. Free text sends nothing,
-// answers unavailable with the words the app matches, and leaves the question open for another
-// answer.
+// digit of the row that carries it, and returns once Claude goes on. Choice allow is invalid.
+// Free text sends nothing, answers unavailable with the words the app matches, and leaves the
+// question open for another answer.
 func TestQuestionAnswerKeys(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	a, keys, request := questionService(t)
-	err := a.Answer(ctx, "c", api.ApprovalAnswerParams{Pane: "p", Request: request, Choice: api.ApprovalChoiceAnswer, Text: "Green, but darker"})
+	// An allow carries no answers: invalid, nothing sent, the question open for an answer.
+	err := a.Answer(ctx, "c", api.ApprovalAnswerParams{Pane: "p", Request: request, Choice: api.ApprovalChoiceAllow})
+	if errKind(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "answer it with answer") {
+		t.Fatalf("allow on a question: %v", err)
+	}
+	err = a.Answer(ctx, "c", api.ApprovalAnswerParams{Pane: "p", Request: request, Choice: api.ApprovalChoiceAnswer, Text: "Green, but darker"})
 	if errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "answer it in the terminal") {
 		t.Fatalf("free text by keys: %v", err)
 	}

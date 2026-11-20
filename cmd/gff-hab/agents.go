@@ -269,6 +269,12 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 	if err != nil {
 		return agentErr(err)
 	}
+	if p.Choice == api.ApprovalChoiceAllow && st.Request != nil && st.Request.Tool == harness.ToolQuestion {
+		// An allow carries no answers: by keys it would pick the first option, through the
+		// hook it would run the tool unanswered.
+		a.agents.EndAnswer(p.Pane, p.Request, false)
+		return control.Errorf(api.ErrorKindInvalid, "the open request is a question: answer it with answer, or deny it")
+	}
 	var qa harness.QuestionAnswer
 	if question {
 		if qa, err = harness.AnswerQuestion(st, p.Text); err != nil {
@@ -410,7 +416,7 @@ func (a *agentService) questionKeys(pane string, qa harness.QuestionAnswer) ([]b
 	if k, ok := harness.QuestionKey(qa, rows); ok {
 		return k, nil
 	}
-	return nil, control.Errorf(api.ErrorKindUnavailable, "pane %s: only the permission hook (hab.permission_wait) takes free text, several questions or multiple choice, and the dialog must show the option once to pick it by keys; answer it in the terminal", pane)
+	return nil, control.Errorf(api.ErrorKindUnavailable, "pane %s: only the permission hook (hab.permission_wait) takes free text, several questions or multiple choice, and picking an option by keys needs the question's dialog on screen with its cursor on an option; answer it in the terminal", pane)
 }
 
 // opencodeClient returns the client of the pane's opencode server when the pane runs opencode
@@ -596,7 +602,7 @@ func (a *agentService) holdPermission(approvers func(pane string) int) hook.Hold
 			if !ok {
 				return nil, nil
 			}
-			b, _ := json.Marshal(hookAnswer(d))
+			b, _ := harness.MarshalPlain(hookAnswer(d))
 			return b, written
 		}
 	}
