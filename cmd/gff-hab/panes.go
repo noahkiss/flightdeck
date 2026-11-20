@@ -109,6 +109,7 @@ type paneTarget struct {
 	pane    string
 	session api.Session
 	filed   bool
+	agent   bool // an agent runs in the pane; set for agent.drive_panes only
 }
 
 // ruleValue reads agent.read_panes: a word the settings service checked, else all (its
@@ -213,6 +214,11 @@ func (s *paneService) prepareBy(g paneGate, method string, c paneCaller, pane, s
 			return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, "")
 		}
 		return t, peer, bare, nil
+	}
+	if g == gateDrive && s.drv.agent != nil {
+		if a, ok := s.drv.agent(t.pane); ok && a.Revision > 0 && a.State != api.AgentStatusExited && a.State != api.AgentStatusNone {
+			t.agent = true
+		}
 	}
 	if !g.may(rule, c, s.callerProject(c), t) {
 		return paneTarget{}, nil, "", s.denyBy(g, method, c, rule, t.pane)

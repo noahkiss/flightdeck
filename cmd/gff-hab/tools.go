@@ -37,6 +37,9 @@ type kitTool struct {
 	Doc    string
 	Args   []toolArg
 	Action bool // an action tool: it asks the hab to change something
+	// Drives marks a tool that types into or starts a program: destructive and open-world, so a
+	// harness asks before each call.
+	Drives bool
 	// Shell is the manual's shell line when the tool has a command of its own; "" is
 	// `gff-hab read <tool>` or `gff-hab act <tool>`.
 	Shell string

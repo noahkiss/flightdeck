@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/panetext"
 )
 
@@ -26,6 +28,7 @@ const paneDriveCapability = "pane-drive"
 const (
 	paneTypeMax      = 64 << 10         // the most text one pane.type writes
 	paneTypeTime     = 10 * time.Second // the longest a pane.type waits for its writes
+	paneTypeMargin   = 5 * time.Second  // and a forwarded one, the far hab's wait plus this
 	paneListRows     = 1000             // the most rows from one host
 	paneListPeerTime = 5 * time.Second  // the longest a peer is asked for its rows
 	paneDrivePer     = 4                // pane.type or pane.list calls at once per caller
@@ -73,7 +76,11 @@ func (g paneGate) allowed(rule string, c paneCaller) string {
 		case c.door == doorPeer:
 			return "type into or start no pane from another hab"
 		case rule == readPanesProject:
-			return "type into and start its own project's panes only"
+			return "type into and start its own project's panes only, never its own pane"
+		case rule == drivePanesAgents:
+			return "type only into the panes of agents in its own project, never its own pane, and start no pane"
+		case rule == readPanesAll:
+			return "type into any pane but its own"
 		}
 		return "type into or start no pane"
 	}
@@ -96,22 +103,36 @@ func (s *paneService) ruleOf(g paneGate) string {
 	return s.rule()
 }
 
-// mayDrive is agent.drive_panes (hab-logic-api.md 3.12). The owner drives every pane. A peer
-// link drives every pane under all, else none. The Capcom route drives none. The pane route
-// drives every pane under all, the panes of its own session's project under project, and none
-// under off.
+// drivePanesAgents is the agent.drive_panes value between off and project (Balanced): an agent
+// types only into other agents' panes in its own project, and starts no pane.
+const drivePanesAgents = "agents"
+
+// mayDrive is agent.drive_panes for pane.type (hab-logic-api.md 3.12). The owner drives every
+// pane. The Capcom route drives none. The pane route never types into its own pane: a key there
+// could change its own mode. Beyond that it drives every pane under all; the panes of its own
+// session's project under project; only those of them that run an agent under agents; none
+// under off. A peer link drives every pane under all, else none.
 func mayDrive(rule string, c paneCaller, callerProject string, t paneTarget) bool {
 	switch {
 	case c.door == doorOwner:
 		return true
 	case c.isCapcom():
 		return false
+	case c.door == doorRoute && samePane(c.pane, t.pane):
+		return false
 	case rule == readPanesAll:
 		return true
 	case c.door == doorPeer:
 		return false
 	}
-	return rule == readPanesProject && callerProject != "" && t.filed && t.session.Project == callerProject
+	inProject := callerProject != "" && t.filed && t.session.Project == callerProject
+	switch rule {
+	case readPanesProject:
+		return inProject
+	case drivePanesAgents:
+		return inProject && t.agent
+	}
+	return false
 }
 
 // paneDrive is what pane.type and pane.new need beyond reading.
@@ -128,9 +149,29 @@ type paneDrive struct {
 	typeSlots, listSlots waitSlots
 }
 
-// paneTyper writes to a pane under the send gate (harness-adapters.md, Input delivery).
+// paneTyper writes to a pane under the send gate (harness-adapters.md, Input delivery) and
+// returns the bytes written.
 type paneTyper interface {
-	typeInto(ctx context.Context, pane string, recent func(pane string) bool, enter bool, writes ...[]byte) error
+	typeInto(ctx context.Context, pane string, w typeWrite) (int, error)
+}
+
+// typeWrite is one pane.type for the typer.
+type typeWrite struct {
+	text      string
+	enter     bool
+	agentDoor bool                   // the call came through an agent's door
+	recent    func(pane string) bool // a person typed into the pane just now
+}
+
+// agentText says whether text may come through an agent's door: no ESC, and no C0 control but
+// tab and LF, so the text can press no key but Enter by LF (hab-logic-api.md 3.12).
+func agentText(text string) bool {
+	for _, r := range text {
+		if (r < 0x20 && r != '\t' && r != '\n') || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return false
+		}
+	}
+	return true
 }
 
 // callerName names the caller in a log line: a pane id, "peer link" or "owner".
@@ -324,6 +365,8 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 		return api.PaneTyped{}, control.Errorf(api.ErrorKindInvalid, "text is %d bytes: at most %d", len(p.Text), paneTypeMax)
 	case p.Text == "" && !p.Enter:
 		return api.PaneTyped{}, control.Errorf(api.ErrorKindInvalid, "pane.type needs text, or enter")
+	case c.door != doorOwner && !agentText(p.Text):
+		return api.PaneTyped{}, control.Errorf(api.ErrorKindInvalid, "an agent's text may hold no control characters but tab and newline: no Esc, no CR; use enter for Enter")
 	}
 	t, peer, bare, err := s.prepareBy(gateDrive, "pane.type", c, p.Pane, p.Session)
 	if err != nil {
@@ -338,7 +381,9 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 		fwd := p
 		fwd.Session = bare
 		var r api.PaneTyped
-		if err := peer.Caller.Call(ctx, "pane.type", fwd, &r); err != nil {
+		fctx, cancel := context.WithTimeout(ctx, paneTypeTime+paneTypeMargin)
+		defer cancel()
+		if err := peer.Caller.Call(fctx, "pane.type", fwd, &r); err != nil {
 			return api.PaneTyped{}, peerErr(peer.Label, err)
 		}
 		r.Pane, r.Session = panetext.CleanControls(r.Pane), peer.Label+"/"+bare
@@ -347,20 +392,11 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 	if s.drv.typer == nil {
 		return api.PaneTyped{}, control.Errorf(api.ErrorKindUnavailable, "pane.type needs gff-hab serve with its holder link")
 	}
-	var writes [][]byte
-	n := 0
-	if p.Text != "" {
-		writes = append(writes, []byte(p.Text))
-		n += len(p.Text)
-	}
-	if p.Enter {
-		writes = append(writes, []byte{'\r'})
-		n++
-	}
 	recent := func(pane string) bool { return s.drv.typed != nil && s.drv.typed(pane, paneTypeQuiet) }
 	ctx, cancel := context.WithTimeout(ctx, paneTypeTime)
 	defer cancel()
-	if err := s.drv.typer.typeInto(ctx, t.pane, recent, p.Enter, writes...); err != nil {
+	n, err := s.drv.typer.typeInto(ctx, t.pane, typeWrite{text: p.Text, enter: p.Enter, agentDoor: c.door != doorOwner, recent: recent})
+	if err != nil {
 		return api.PaneTyped{}, err
 	}
 	s.logf("panes: pane.type: caller %s typed %d bytes into pane %s (%s %s)", c.name(), n, t.pane, gateDrive.setting(), s.ruleOf(gateDrive))
@@ -372,13 +408,15 @@ func (s *paneService) Type(ctx context.Context, c paneCaller, p api.PaneTypePara
 }
 
 // typeInto writes to the pane under the send gate (harness-adapters.md, Input delivery;
-// hab-logic-api.md 3.12): one send or type at a time per pane, no open permission request and
-// no blocked agent, and no client input within the quiet time. Each check runs under the
-// pane's claim, before any byte goes in. With enter into an agent's pane, the claim holds until
-// the turn starts, as a send's does.
-func (a *agentService) typeInto(ctx context.Context, pane string, recent func(string) bool, enter bool, writes ...[]byte) error {
+// hab-logic-api.md 3.12): one send or type at a time per pane, no open permission request and no
+// blocked agent, from an agent's door no agent that reports through no hook, and no client input
+// within the quiet time. Each check runs under the pane's claim, before any byte goes in. Text
+// into an agent's pane goes as one bracketed paste, so it presses no key. With Enter, or a
+// newline in the text, into an agent's pane, the claim holds until the turn starts, as a send's
+// does. A type is not the owner's key: it never marks an interrupt. It returns the bytes written.
+func (a *agentService) typeInto(ctx context.Context, pane string, w typeWrite) (int, error) {
 	if !a.claim(pane) {
-		return control.Errorf(api.ErrorKindConflict, "a message or another type to pane %s is in flight; try again in a few seconds", pane)
+		return 0, control.Errorf(api.ErrorKindConflict, "a message or another type to pane %s is in flight; try again in a few seconds", pane)
 	}
 	held := false
 	defer func() {
@@ -386,26 +424,40 @@ func (a *agentService) typeInto(ctx context.Context, pane string, recent func(st
 			a.unclaim(pane)
 		}
 	}()
-	if err := a.agents.CheckType(pane); err != nil {
-		return agentErr(err)
+	if err := a.agents.CheckType(pane, w.agentDoor); err != nil {
+		return 0, agentErr(err)
 	}
-	if recent != nil && recent(pane) {
-		return control.Errorf(api.ErrorKindConflict, "a client typed into pane %s in the last %v: a person comes first; try again when typing pauses", pane, paneTypeQuiet)
+	if w.recent != nil && w.recent(pane) {
+		return 0, control.Errorf(api.ErrorKindConflict, "a client typed into pane %s in the last %v: a person comes first; try again when typing pauses", pane, paneTypeQuiet)
+	}
+	st, ok := a.agents.Get(pane)
+	agent := ok && st.Revision > 0 && st.State != api.AgentStatusExited && st.State != api.AgentStatusNone
+	var writes [][]byte
+	switch {
+	case w.text == "":
+	case agent:
+		writes = append(writes, harness.PasteWrite(w.text))
+	default:
+		writes = append(writes, []byte(w.text))
+	}
+	if w.enter {
+		writes = append(writes, []byte{'\r'})
+	}
+	n := 0
+	for _, b := range writes {
+		n += len(b)
 	}
 	if taken, err := a.writeAll(ctx, pane, writes...); err != nil {
 		if taken == 0 {
-			return err
+			return 0, err
 		}
-		return control.Partial(control.Errorf(api.ErrorKindUnavailable, "pane %s took the text but not Enter (%v); look at the pane before typing again", pane, err))
+		return 0, control.Partial(control.Errorf(api.ErrorKindUnavailable, "pane %s took the text but not Enter (%v); look at the pane before typing again", pane, err))
 	}
-	for _, w := range writes {
-		a.agents.Interrupt(pane, w)
-	}
-	if st, ok := a.agents.Get(pane); enter && ok && st.Revision > 0 && st.State != api.AgentStatusExited && st.State != api.AgentStatusNone {
+	if agent && (w.enter || strings.ContainsAny(w.text, "\r\n")) {
 		held = true
 		go a.holdForTurn(pane)
 	}
-	return nil
+	return n, nil
 }
 
 var _ paneTyper = (*agentService)(nil)
@@ -422,6 +474,8 @@ func (s *paneService) New(ctx context.Context, c paneCaller, p api.PaneNewParams
 		return api.PaneStarted{}, s.denyBy(gateDrive, "pane.new", c, rule, "")
 	case c.door == doorOwner, rule == readPanesAll:
 	case c.door == doorPeer, rule != readPanesProject, project == "", p.Cwd != "":
+		// off and agents start nothing: an agent that wants another agent uses spawn, which
+		// asks the owner where the settings say so.
 		return api.PaneStarted{}, s.denyBy(gateDrive, "pane.new", c, rule, "")
 	default:
 		p.InProject = true // project: in its own project only
@@ -447,6 +501,12 @@ func (s *paneService) New(ctx context.Context, c paneCaller, p api.PaneNewParams
 	}
 	made, err := s.drv.create(ctx, cp)
 	if err != nil {
+		var ce *control.Error
+		if c.door == doorRoute && rule != readPanesAll && p.Name != "" && errors.As(err, &ce) && ce.Data.Kind != api.ErrorKindInvalid {
+			// A limited caller learns nothing of names it may not list: no project, no peer.
+			s.logf("panes: pane.new: caller %s: the name was refused (%s)", c.name(), ce.Data.Kind)
+			return api.PaneStarted{}, control.Errorf(api.ErrorKindConflict, "pane.new could not use that name; leave it out, and the hab picks one")
+		}
 		return api.PaneStarted{}, err
 	}
 	s.logf("panes: pane.new: caller %s started pane %s (%s %s)", c.name(), made.Pane, gateDrive.setting(), rule)

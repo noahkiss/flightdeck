@@ -331,7 +331,7 @@ func mcpToolsOf(tools []kitTool) []map[string]any {
 			"name":        t.Name,
 			"description": t.Doc,
 			"inputSchema": map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false},
-			"annotations": map[string]any{"readOnlyHint": !t.Action, "destructiveHint": false, "idempotentHint": !t.Action, "openWorldHint": false},
+			"annotations": map[string]any{"readOnlyHint": !t.Action, "destructiveHint": t.Drives, "idempotentHint": !t.Action, "openWorldHint": t.Drives},
 		})
 	}
 	return out

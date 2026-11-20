@@ -184,6 +184,8 @@ func newCmd(args []string, out io.Writer) error {
 	if err := c.Call(ctx, "pane.new", api.PaneNewParams{Argv: fs.Args(), Cwd: *cwd, InProject: *project, Name: *name}, &r); err != nil {
 		return cliErr(err)
 	}
+	clean := func(s string) string { return panetext.StripBidi(panetext.CleanControls(s)) }
+	r.Name, r.Session, r.Pane = clean(r.Name), clean(r.Session), clean(r.Pane)
 	if *asJSON {
 		b, err := json.Marshal(r)
 		if err != nil {

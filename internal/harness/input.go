@@ -68,13 +68,15 @@ func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 
 // CheckType says whether pane.type may write to the pane now (hab-logic-api.md 3.12): not while
 // its agent has an open permission request or is blocked, since a key could answer the dialog.
-// A pane with no agent state, or whose agent exited, takes the text: a shell has no dialog the
-// hab knows of. A working agent takes it too: its prompt queues it. It wraps ErrBusy.
-func (s *Store) CheckType(paneID string) error {
+// From an agent's door (agentDoor), also not into an agent that reported through no hook or
+// server: there the hab sees a dialog only through OSC 7501, which a program can forge. A pane
+// with no agent state, or whose agent exited, takes the text: a shell has no dialog the hab
+// knows of. A working agent takes it too: its prompt queues it. It wraps ErrBusy.
+func (s *Store) CheckType(paneID string, agentDoor bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.panes[paneID]
-	if p == nil || p.st.Revision == 0 || p.st.State == api.AgentStatusExited {
+	if p == nil || p.st.Revision == 0 || p.st.State == api.AgentStatusExited || p.st.State == api.AgentStatusNone {
 		return nil
 	}
 	if p.open != "" {
@@ -83,7 +85,23 @@ func (s *Store) CheckType(paneID string) error {
 	if p.st.State == api.AgentStatusBlocked {
 		return fmt.Errorf("%w: %s is blocked and waits for an answer; a typed key could give it", ErrBusy, p.st.Harness)
 	}
+	if agentDoor {
+		_, hook := p.lastT[api.StateSourceHook]
+		_, server := p.lastT[api.StateSourceServer]
+		if !hook && !server {
+			return fmt.Errorf("%w: %s in the pane reports through no hook, so the hab cannot see its dialogs; an agent may not type into it", ErrBusy, p.st.Harness)
+		}
+	}
 	return nil
+}
+
+// PasteWrite wraps text in bracketed paste markers, with every end marker in it removed, so the
+// text cannot end the paste early and press keys after it (hab-logic-api.md 3.12).
+func PasteWrite(text string) []byte {
+	for strings.Contains(text, pasteEnd) {
+		text = strings.ReplaceAll(text, pasteEnd, "")
+	}
+	return []byte(pasteStart + text + pasteEnd)
 }
 
 // CheckAnswer returns the pane's state when request is its open permission request. Only a hook

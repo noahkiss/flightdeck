@@ -73,8 +73,8 @@ const (
 	// Levelled: Safe project, Balanced and Bypass all; off is picked by hand.
 	AgentReadPanes = "agent.read_panes"
 	// AgentDrivePanes decides which panes an agent may type into with pane.type, and whether it
-	// may start one with pane.new (hab-logic-api.md 3.12): off, project or all. Levelled: Safe
-	// off, Balanced project, Bypass all, one step tighter than AgentReadPanes.
+	// may start one with pane.new (hab-logic-api.md 3.12): off, agents, project or all. Levelled: Safe
+	// off, Balanced agents, Bypass all; project is picked by hand.
 	AgentDrivePanes = "agent.drive_panes"
 )
 
@@ -129,7 +129,7 @@ var Defs = []Def{
 	{ID: GroupFreshTranscriptMB, Default: json.RawMessage(`4`), check: checkInt(1, 64), integer: true},
 	{ID: GroupHandoffAt, Default: json.RawMessage(`60`), check: checkInt(20, 95), integer: true},
 	{ID: AgentReadPanes, Default: json.RawMessage(`"all"`), check: checkWord("off", "project", "all")},
-	{ID: AgentDrivePanes, Default: json.RawMessage(`"project"`), check: checkWord("off", "project", "all")},
+	{ID: AgentDrivePanes, Default: json.RawMessage(`"agents"`), check: checkWord("off", "agents", "project", "all")},
 }
 
 func mustJSON(v any) json.RawMessage {

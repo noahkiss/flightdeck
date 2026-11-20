@@ -1397,7 +1397,7 @@ func serve(args []string) error {
 	typedAt := &inputTimes{} // client input times: pane.type's "a person comes first"
 	if lk != nil {
 		paneSvc = &paneService{lk: lk, store: store, rule: ruleValue(setSvc), links: channelPeers{pm}.Links,
-			drive: wordSetting(setSvc, settings.AgentDrivePanes, readPanesProject),
+			drive: wordSetting(setSvc, settings.AgentDrivePanes, drivePanesAgents),
 			self:  key.Fingerprint(), host: *hostID, logf: logger.Printf}
 		paneSvc.drv = paneDrive{agent: agents.Get, typed: typedAt.within,
 			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {

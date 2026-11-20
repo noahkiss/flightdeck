@@ -57,12 +57,11 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentReadPanes })
     }
 
-    /// agent.drive_panes: off at Safe, project at Balanced, all at Bypass, one step tighter
-    /// than reading; kept on every hab (hab-logic-api.md 3.12, app.md 20.3).
+    /// agent.drive_panes: off at Safe, agents at Balanced, all at Bypass; kept on every hab (hab-logic-api.md 3.12, app.md 20.3).
     func testAgentDrivePanesLevels() throws {
         let d = try XCTUnwrap(R.def(R.agentDrivePanes))
         XCTAssertEqual(d.levels?[.safe], .string("off"))
-        XCTAssertEqual(d.levels?[.balanced], .string("project"))
+        XCTAssertEqual(d.levels?[.balanced], .string("agents"))
         XCTAssertEqual(d.levels?[.bypass], .string("all"))
         XCTAssertEqual(d.store, .everyHab)
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentDrivePanes })

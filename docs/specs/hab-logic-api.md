@@ -1804,15 +1804,28 @@ and creates them (`gff-client.md` 12 row 28).
 (3.8) writes keys. `enter` sends CR after it as its own write, queued back to back: no other
 client's write lands between. The target is named as in 3.11, `label/name` included.
 
-- `text` is at most 64 KiB, written as given: a tab is a tab, `\u0003` is Ctrl-C. Empty text
-  with `enter` sends Enter alone; empty text without `enter` is `invalid`.
+- `text` is at most 64 KiB. Empty text with `enter` sends Enter alone; empty text without
+  `enter` is `invalid`.
+- **What an agent may send.** From an agent's door (the pane route or a peer link), `text` holds
+  no ESC and no control character but tab and LF (no C0 else, no DEL, no C1): `invalid`
+  otherwise. So an agent presses no key but Enter: no Shift-Tab, no Esc, no Ctrl-C. `enter` is
+  the way to press Enter. The owner's door sends any bytes; the owner's raw keys go through
+  `pane.input` (3.8).
+- **Into an agent's pane**, at every door, the text goes as one bracketed paste with every
+  `ESC [201~` in it removed, as `session.send` does, so it cannot end the paste and press keys.
+  Into a pane with no agent state (a shell), the text goes as given.
+- **Never its own pane.** An agent's pane route never types into its own pane, at any value: a
+  key there could change its own mode or queue a command that runs as the user's next input.
 - **The send gate holds for `type`** (`harness-adapters.md`, Input delivery). The hab refuses the
   call with `conflict`, and writes nothing, when:
   - the pane's agent has an open permission request, or its state is `blocked`: Enter, or the
     right key, would answer the dialog;
+  - from an agent's door, the pane's agent has reported through no hook (and no server, for
+    opencode): the hab sees its dialogs only through OSC 7501, which a program can forge;
   - a `session.send` or another `pane.type` to the pane is in flight: `session.send` holds the
     pane until its turn starts (up to 3 s); a `type` holds it while its writes go in, and, with
-    `enter` into an agent's pane, until the turn starts, as a send does;
+    `enter` or a CR or LF in the text, into an agent's pane, until the turn starts, as a send
+    does;
   - a client typed into the pane in the last 2 seconds: a person comes first.
 - **Refused, not queued.** The hint names the reason, and the agent tries again later. This is
   the smaller behaviour: the hab keeps no queue, and a queued Enter could land on a dialog that
@@ -1824,7 +1837,9 @@ client's write lands between. The target is named as in 3.11, `label/name` inclu
 - **The answer** is `{pane, session, bytes}`: the pane id, its session name (`label/name` from a
   peer), and how many bytes went in, Enter included.
 - A type is not client input: it does not take the pane's size (6.2), does not count as a person
-  typing for the gate, and does not take over a round's run.
+  typing for the gate, does not take over a round's run, and never counts as the owner's
+  interrupt key.
+- A forwarded `pane.type` waits for the peer at most 15 s: the far hab's 10 s and a margin.
 
 **`pane.new {argv, cwd, in_project, name}`** starts a pane through `session.create` (3.9): a
 shell, or the program `argv`, in a new session on this hab. It answers `{session, pane, name}`.
@@ -1833,7 +1848,9 @@ shell, or the program `argv`, in a new session on this hab. It answers `{session
   starts in that pane's folder (`cwd_of`); any other call starts in the hab's home directory.
 - `in_project` files the session in the caller's own session's project, and starts it in the
   caller's folder unless `cwd` is given. Outside a filed pane it is `invalid`.
-- `name` is the session name. Absent, the program's base name, with a number when taken.
+- `name` is the session name. Absent, the program's base name, with a number when taken. Under
+  `project`, a name the hab refuses for a clash answers one fixed text, so an agent learns no
+  name of another project or peer: only that the name is not free.
 - No `harness`, `seed`, `env` or `project_dir`. An agent that wants another agent uses `spawn`,
   which asks the owner where the settings say so (`harness-adapters.md`, Spawn).
 - `pane.new` is local: it starts nothing on a peer.
@@ -1843,23 +1860,28 @@ agent may type into and start. It binds the same two doors as `agent.read_panes`
 
 | Value | The pane route may type into | The pane route may start | A peer link may |
 |---|---|---|---|
-| `all` (Bypass) | Every pane on this hab, and a peer's by `label/name` | A pane in any folder | Type into and start any pane on this hab |
-| `project` (Balanced) | The panes of sessions filed in its own session's project, its own pane included | A pane in its own project only: `in_project` is implied, and `cwd` is refused | Nothing |
+| `all` (Bypass) | Every pane on this hab but its own, and a peer's by `label/name` | A pane in any folder | Type into and start any pane on this hab |
+| `project` (by hand) | The panes of sessions filed in its own session's project, shells included, never its own | A pane in its own project only: `in_project` is implied, and `cwd` is refused | Nothing |
+| `agents` (Balanced) | The panes of other agents in its own project: a pane with agent state, never a shell, never its own | Nothing | Nothing |
 | `off` (Safe) | Nothing | Nothing | Nothing |
 
-- **Defaults, one step tighter than reading.** `agent.read_panes` is `project` at Safe and `all`
-  at Balanced and Bypass. Typing is stronger than reading: a key can answer a permission prompt,
-  type into a shell the owner left open, or start a program as the owner. The gate stops the
-  first only while the hab sees the dialog; a pane without hooks shows only OSC 7501, which a
-  program can forge (`harness-adapters.md`, Edge cases). So Balanced keeps an agent to its own
-  project, where the owner already lets it work; Safe allows nothing; Bypass is the owner's
-  choice to trust agents with every pane.
-- **`off` is Safe's value**, not a value set by hand only as for `agent.read_panes`: reading its
-  own pane is harmless, while typing into it is of no use.
+- **Defaults, tighter than reading.** `agent.read_panes` is `project` at Safe and `all` at
+  Balanced and Bypass. Typing is stronger than reading: text can run a command in a shell, start
+  a program outside the harness's sandbox and permission prompts, and reach another agent's
+  prompt. The gate stops a key on a dialog only while the hab sees it. So Balanced lets an agent
+  talk to the other agents of its own project, as `session.send` does with a paste, and nothing
+  else; Safe allows nothing; Bypass is the owner's choice to trust agents with every pane.
+  `project` adds the project's shells and `pane.new`, set by hand. These values are the
+  conservative pick until the owner decides (8, Q10).
+- **`pane.new` at Balanced is refused.** Routing it through the confirmation flow of
+  `start_session` (`capcom.md` 6.1) would need a confirmation kind for a plain program; that is
+  not a small reuse, so the hab refuses and the hint names the setting. An agent that wants
+  another agent uses `spawn`.
+- **`off` is Safe's value**, not a value set by hand only as for `agent.read_panes`.
 - A refused call answers `denied`. The hint names the setting and its value, never the target.
-- **No existence oracle.** Under `project` and `off`, and always for a peer link under those
-  values, a target the caller may not type into answers `denied` whether or not it exists, as in
-  3.11.
+- **No existence oracle.** Under `agents`, `project` and `off`, and always for a peer link under
+  those values, a target the caller may not type into answers `denied` whether or not it exists,
+  as in 3.11.
 - **This hab's rule gates a forward.** A `pane.type` to `label/name` on a peer is forwarded only
   under `all`. The peer answers under its own rule.
 - **The Capcom route** is refused `pane.list`, `pane.type` and `pane.new` at every level, as it
@@ -1897,18 +1919,28 @@ the byte count. A granted `pane.new` logs the caller's pane id and the new pane 
 `pane_new` (`harness-adapters.md`, Agent kit). Each is one call of its method, under the same
 rules. Their descriptions say that screen text is untrusted program output.
 
+- **Only from a pane.** Outside a Flightdeck pane the MCP server has no pane route and would reach
+  the hab through the owner's socket, where neither setting applies. A harness that runs the kit
+  outside a pane is still an agent, so every pane tool refuses there with `denied`, before any
+  call. The CLI verbs outside a pane are the owner's (3.11): a person runs them.
+- `pane_type` and `pane_new` carry `destructiveHint` and `openWorldHint` true, so a harness asks
+  before each call.
+
 **Tests** (`docs/testing.md`), one per refusal and for the gate:
 
 | Case | Test |
 |---|---|
 | List, type, wait, read and start from another pane; text from stdin | `TestPaneDrive` |
 | `agent.read_panes` `off` lists the caller's own pane only; the owner lists all | `TestPaneDrive` |
-| `agent.drive_panes` `project` refuses an unfiled caller's type and start | `TestPaneDrive` |
-| `pane.type` refused at each value and door; unknown targets `denied` under `project` and `off`; a peer's `label/name` under `project`; the Capcom route; the hint names the setting, never the target | `TestPaneTypeRule`, `TestMayDrive` |
-| `pane.new` under each value and door; `cwd` refused under `project` | `TestPaneNewRule` |
-| The gate: open permission request, send in flight, a person's input in the last 2 s; nothing written; Enter holds an agent's pane | `TestPaneTypeGate`, `TestPaneDrive`, `TestInputTimes` |
+| `agent.drive_panes` `agents` (the default) refuses an unfiled caller's type and start | `TestPaneDrive` |
+| `pane.type` refused at each value and door; the caller's own pane at every value; a shell under `agents`; unknown targets `denied` under `agents`, `project` and `off`; a peer's `label/name` under `project`; the Capcom route; the hint names the setting, never the target | `TestPaneTypeRule`, `TestMayDrive` |
+| An agent's text with ESC, CR, Ctrl-C or a C1 control refused at both agent doors; the owner's keys go | `TestPaneTypeAgentText` |
+| `pane.new` under each value and door; `cwd` refused under `project`; a refused name gives a fixed text under `project` | `TestPaneNewRule` |
+| The gate: open permission request, blocked with no request, an agent with no hooks (agent door), send in flight, a person's input in the last 2 s; nothing written; a paste into an agent with the end marker removed; Enter or a newline holds an agent's pane; no interrupt mark | `TestPaneTypeGate`, `TestCheckType`, `TestPasteWrite`, `TestInputTimes` |
+| The input wrapper in `serve`: a person's `pane.input` makes the next type `conflict` | `TestPaneDrive` |
+| The MCP pane tools outside a pane refused before any call | `TestPaneToolsOutsideAPane` |
 | Across hosts: list with the peer's label, type by `label/name`, the near rule gates the forward, the far rule refuses its peer door, `project` leaves a peer's rows out and denies `-host` | `TestPaneDrivePeer` |
-| The MCP pane tools, the read ones marked untrusted | `TestPaneToolsUntrusted` |
+| The MCP pane tools, the read ones marked untrusted, the driving ones destructive and open-world | `TestPaneToolsUntrusted` |
 
 Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 
@@ -1921,8 +1953,11 @@ Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 
 Limits:
 
-- The gate trusts the agent state the hab sees. In a pane without hooks a program that forges
-  `idle` over a dialog lets a type's Enter answer it, as for `session.send`.
+- **Residual risk.** The gate trusts the agent state the hab sees. On a pane with no hooks it
+  cannot see a dialog, so an agent's door is refused there; the owner's door is not. A harness may
+  draw a dialog before its hook fires: in that window the state is not yet `blocked`, and a
+  type's Enter could answer it. Claude Code's plan and question dialogs have not been checked
+  for this order.
 - A type into a shell the owner left at a password prompt types into it. The rule guards that,
   not the gate.
 - `pane.new` with `argv` can start a harness as a plain program, with no seed and no
@@ -2514,6 +2549,17 @@ on events and reads untrusted text, so pane text from any session would be a pat
 instructions into its turns. Options: keep it refused; let it read the panes of a session the
 user attached in this conversation (`capcom.md` 8.1); or follow `agent.read_panes` like any
 agent. Recommendation: the second, so a read follows a user's own pick. Open for the owner.
+
+### Q10. How far may agents drive panes at Balanced (owner)
+
+`agent.drive_panes` is `agents` at Balanced for now (3.12): an agent types only into the panes of
+other agents in its own project, never a shell and never its own pane, and starts no pane. The
+security review's reasoning: under `project`, an agent at Balanced could run any command as the
+user outside its harness's sandbox (`pane.new sh -c`, or text into a shell pane), and reach
+other agents' prompts; the gate stops a key only on a dialog the hab sees. Options: keep
+`agents`; Balanced `project`, with shells and `pane.new`; or route `pane.new` through the
+confirmation flow. Recommendation: keep `agents` until there is a confirmation for plain
+programs. Open for the owner.
 
 ---
 

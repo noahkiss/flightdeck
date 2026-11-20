@@ -133,11 +133,11 @@ public enum SettingsRegistry {
         SettingDef(id: agentReadPanes, title: "Agents may read panes", area: .agents,
                    kind: .word([(word: "off", title: "Own pane only"), (word: "project", title: "Own project"), (word: "all", title: "All panes")]), store: .everyHab,
                    levels: [.safe: .string("project"), .balanced: .string("all"), .bypass: .string("all")]),
-        // Which panes an agent may type into and start (hab-logic-api.md 3.12): one step tighter
-        // than reading, since a typed key can answer a permission prompt. Each hab enforces it.
+        // Which panes an agent may type into and start (hab-logic-api.md 3.12): off at Safe, other
+        // agents' panes in its own project at Balanced, all at Bypass; project is picked by hand.
         SettingDef(id: agentDrivePanes, title: "Agents may type into and start panes", area: .agents,
-                   kind: .word([(word: "off", title: "Off"), (word: "project", title: "Own project"), (word: "all", title: "All panes")]), store: .everyHab,
-                   levels: [.safe: .string("off"), .balanced: .string("project"), .bypass: .string("all")]),
+                   kind: .word([(word: "off", title: "Off"), (word: "agents", title: "Agents in own project"), (word: "project", title: "Own project"), (word: "all", title: "All panes")]), store: .everyHab,
+                   levels: [.safe: .string("off"), .balanced: .string("agents"), .bypass: .string("all")]),
         SettingDef(id: voiceYesAllows, title: "\"Yes\" counts as Allow", area: .voice, kind: .bool, store: .app,
                    levels: [.safe: .bool(false), .balanced: .bool(true), .bypass: .bool(true)]),
         SettingDef(id: sshRequireFaceID, title: "Require Face ID for SSH keys", area: .security, kind: .bool, store: .app,
