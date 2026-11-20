@@ -15657,6 +15657,10 @@
               "type": "string"
             }
           },
+          "start_mode": {
+            "type": "string",
+            "description": "The start mode the hab started the harness in, from agent.start_mode: auto or bypass. Resume, restart and recreate keep it. Absent when the hab added no permission flag: ask, a plain program, a harness with no checked flag, or a start whose arguments named a mode."
+          },
           "state": {
             "$ref": "#/components/schemas/SessionState"
           },

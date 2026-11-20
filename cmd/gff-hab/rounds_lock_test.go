@@ -396,9 +396,9 @@ func testRoundFork(t *testing.T, app string) {
 	if ss, ok := runSessionOf(structureOf(t, c), tgt.Session); !ok || ss.Round != nil {
 		t.Errorf("the target after the fork: %+v", ss)
 	}
-	want := "--fake next --resume " + sid + " --fork-session"
+	want := "--permission-mode auto --fake next --resume " + sid + " --fork-session"
 	if app == "codex" {
-		want = "--no-daemon fork " + sid + " --fake next"
+		want = "--approve-for-me --no-daemon fork " + sid + " --fake next"
 	}
 	if got := argvOf(t, work, "next"); got != want {
 		t.Errorf("fork argv %q, want %q", got, want)

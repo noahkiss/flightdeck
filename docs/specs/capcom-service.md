@@ -1954,6 +1954,7 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), e
 | E33 | Named session actions `compact`, `clear`, `restart`, `close`, `recreate`, translated per harness by the hab (`hab-logic-api.md` 3.13) | Owner: Capcom keeps agents fresh. One verb per intent spares the model each harness's commands. Who else may run them is recommended (16) |
 | E34 | Quiet hours stay, and can be turned off (9.2). That they hold pushes, not turns, is recommended (16) | Owner: quiet hours are a notification preference |
 | E35 | Standing instructions are Capcom jobs (9.6). The grant card below `all`, and the job counting as the user's, are recommended (16) | Owner. Rounds already hold triggers and the store; the grant stays a person's act |
+| E36 | The level sets the start mode: `agent.start_mode` is levelled, Safe `ask`, Balanced `auto` (Claude Code `--permission-mode auto`), Bypass `bypass`. Formerly Q15 | Owner, 2026-11-20: the start setting and the autonomy level are the same thing |
 
 ---
 
@@ -1975,9 +1976,13 @@ recommendation; A10 builds it unless the owner picks otherwise.
 | Q12 | A job the user owns | `created_by` empty: a person made or granted it, or Capcom made it from a user turn (9.3, 9.6) | Only a person's own `round.create` |
 | Q13 | Who may run a session action | The Capcom route and the owner's door (`hab-logic-api.md` 3.13) | Every agent under the `pane.type` rule |
 | Q14 | `agent.read_panes = off` for Capcom | It keeps Capcom out of that hab (5.4) | Capcom reads at every value |
-| Q15 | The start-level setting | The harness permission mode a new session starts in, `agent.start_mode` (`harness-adapters.md`, Start mode) | The level the app's picker starts at for a new device or hab |
 
 Found in A2 and settled on 2026-11-07: Q4 (E26), Q5 (E27) and pause (E28).
+
+Decision on Q15 (owner, 2026-11-20): the start setting and the autonomy level are the same
+thing. `agent.start_mode` is levelled (Safe `ask`, Balanced `auto`, Bypass `bypass`), so the level
+sets the harness's own permission mode for each new session; a value in the hab's config and an
+explicit flag in the start's arguments still win (`harness-adapters.md`, Start mode). See E36.
 
 ---
 

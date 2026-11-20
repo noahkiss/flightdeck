@@ -87,6 +87,24 @@ type actions struct {
 	resumed func(session string)
 	// restart serves session.restart (restart.go). nil: unavailable.
 	restart *restarter
+	// startMode returns agent.start_mode now (harness-adapters.md, Start mode). nil: ask.
+	startMode func() string
+}
+
+// modeFor is the start mode a new session starts with: the recorded one ctx carries (a
+// recreate, a swap, an adopt), else agent.start_mode for a harness start. A Capcom session
+// (kind set) and a plain program start with none.
+func (a *actions) modeFor(ctx context.Context, p api.SessionCreateParams, kind string) string {
+	if kind != "" || p.Harness == "" {
+		return ""
+	}
+	if m, ok := recordedModeFrom(ctx); ok {
+		return m
+	}
+	if a.startMode == nil {
+		return ""
+	}
+	return a.startMode()
 }
 
 // isReserved reports whether name is kept for the Capcom service.
@@ -182,8 +200,8 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 			return "", "", err
 		}
 	}
-	asked := p // before prepare fills in the harness's start
-	p, l, err := a.prepare(p)
+	asked := p // before prepare fills in the harness's start and its start mode
+	p, l, mode, err := a.prepare(p, a.modeFor(ctx, p, kind))
 	if err != nil {
 		return "", "", err
 	}
@@ -248,7 +266,7 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 	}
 
 	pane := l.spawn.UUID.String()
-	spec := structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true, Kind: kind, Dir: dir}
+	spec := structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true, Kind: kind, Dir: dir, StartMode: mode}
 	if isRun {
 		spec.Round = &rs.ref
 	}
@@ -299,9 +317,14 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 
 // resumeSession starts an exited session's program again in a new pane, in the folder cwd
 // (session.resume). p gives the harness and argv; its name, project and cwd fields are not
-// read. The session keeps its id. If the spawn fails, the session is exited again.
+// read. The session keeps its id, and the start mode its record holds: never the current
+// setting. If the spawn fails, the session is exited again.
 func (a *actions) resumeSession(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error) {
-	p, l, err := a.prepare(p)
+	mode := ""
+	if ss, ok := a.store.Session(session); ok && p.Harness != "" {
+		mode = ss.StartMode
+	}
+	p, l, _, err := a.prepare(p, mode)
 	if err != nil {
 		return "", err
 	}
@@ -345,13 +368,20 @@ type launchPlan struct {
 	oc    bool // an opencode pane: register its server after the spawn
 }
 
-// prepare fills in the harness's start, the default argv and size, and the environment, and
-// checks them. The spawn's Cwd is left for the caller.
-func (a *actions) prepare(p api.SessionCreateParams) (api.SessionCreateParams, launchPlan, error) {
+// prepare fills in the harness's start with the start mode's flags, the default argv and size,
+// and the environment, and checks them. It returns the mode it added flags for, "" for none.
+// The spawn's Cwd is left for the caller.
+func (a *actions) prepare(p api.SessionCreateParams, mode string) (api.SessionCreateParams, launchPlan, string, error) {
+	added := ""
 	if p.Harness != "" {
 		var err error
 		if p, err = harnessStart(p); err != nil {
-			return p, launchPlan{}, err
+			return p, launchPlan{}, "", err
+		}
+		var why string
+		p.Argv, added, why = withStartMode(p.Harness, p.Argv, mode)
+		if why != "" && a.sp != nil && a.sp.logf != nil {
+			a.sp.logf("start mode: %s", why)
 		}
 	}
 	var paneID hp.UUID
@@ -359,7 +389,7 @@ func (a *actions) prepare(p api.SessionCreateParams) (api.SessionCreateParams, l
 	if p.Harness == detect.KindOpencode {
 		var err error
 		if paneID, p, err = a.opencodeStart(p); err != nil {
-			return p, launchPlan{}, err
+			return p, launchPlan{}, "", err
 		}
 		ocStarted = true
 	}
@@ -371,7 +401,7 @@ func (a *actions) prepare(p api.SessionCreateParams) (api.SessionCreateParams, l
 		rows = defaultRows
 	}
 	if cols < 1 || rows < 1 || cols > 0xffff || rows > 0xffff {
-		return p, launchPlan{}, control.Errorf(api.ErrorKindInvalid, "size %dx%d: cols and rows must be 1 to 65535", cols, rows)
+		return p, launchPlan{}, "", control.Errorf(api.ErrorKindInvalid, "size %dx%d: cols and rows must be 1 to 65535", cols, rows)
 	}
 	argv := p.Argv
 	if len(argv) == 0 {
@@ -382,16 +412,16 @@ func (a *actions) prepare(p api.SessionCreateParams) (api.SessionCreateParams, l
 		argv = []string{sh}
 	}
 	if argv[0] == "" {
-		return p, launchPlan{}, control.Errorf(api.ErrorKindInvalid, "argv[0] is empty")
+		return p, launchPlan{}, "", control.Errorf(api.ErrorKindInvalid, "argv[0] is empty")
 	}
 	env, err := mergeEnv(a.environ(), p.Env)
 	if err != nil {
-		return p, launchPlan{}, err
+		return p, launchPlan{}, "", err
 	}
 	if paneID == (hp.UUID{}) {
 		paneID = newUUID()
 	}
-	return p, launchPlan{spawn: hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Argv: argv, Env: env}, oc: ocStarted}, nil
+	return p, launchPlan{spawn: hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Argv: argv, Env: env}, oc: ocStarted}, added, nil
 }
 
 // launch spawns a filed session's pane. When the program never ran, undo runs and launch

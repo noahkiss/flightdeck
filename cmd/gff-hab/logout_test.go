@@ -118,7 +118,7 @@ func logoutCheckpoint(t *testing.T, holderLead, habLead time.Duration) {
 		t.Fatalf("resume: %v", err)
 	}
 	waitUntil(t, "claude started again", func() bool { return len(readLines(t, log)) == 2 })
-	if got := readLines(t, log)[1]; got != "claude --session-id second-id" {
+	if got := readLines(t, log)[1]; got != "claude --permission-mode auto --session-id second-id" {
 		t.Fatalf("resumed with %q, want the id from before the signal", got)
 	}
 }

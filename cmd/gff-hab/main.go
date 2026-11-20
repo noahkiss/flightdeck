@@ -760,6 +760,7 @@ func serve(args []string) error {
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	var sessionActs *actions
+	var setRef atomic.Pointer[settings.Service] // for closures made before the settings open
 	var findTranscript func(harness, native string) (string, error)
 	if lk != nil {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
@@ -806,6 +807,14 @@ func serve(args []string) error {
 				return c.Seed(session, from, text)
 			}
 			return "", errors.New("channels are not running yet")
+		}
+		// agent.start_mode, read at each harness start (harness-adapters.md, Start mode). Before
+		// the settings open, a start adds nothing.
+		sessionActs.startMode = func() string {
+			if v := setRef.Load(); v != nil {
+				return wordSetting(v, settings.AgentStartMode, startAsk)()
+			}
+			return startAsk
 		}
 		acts = sessionActs
 		root, err := worktreeRoot(*wtRoot, os.Getenv, home)
@@ -1113,7 +1122,6 @@ func serve(args []string) error {
 	var capcomEng *capcomEngine
 	var capcomEngRef atomic.Pointer[capcomEngine] // for closures made before it exists
 	var capcomThreadCtl control.CapcomThread
-	var setRef atomic.Pointer[settings.Service]
 	if sessionActs != nil {
 		exe, err := osExecutable()
 		if err != nil {

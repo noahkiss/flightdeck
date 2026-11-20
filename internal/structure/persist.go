@@ -86,6 +86,9 @@ type sessionRecord struct {
 	ContextPct *int   `json:"context_pct,omitempty"`
 	Compacts   int    `json:"compacts,omitempty"`
 	Replaced   string `json:"replaced,omitempty"`
+	// StartMode is the start mode the hab added flags for (harness-adapters.md, Start mode).
+	// Resume, restart and recreate start the session again with it.
+	StartMode string `json:"start_mode,omitempty"`
 	// Swap marks the old session of a fresh-session swap in progress (groups.md 9.5): a
 	// gff-hab that stops mid-swap finishes or undoes it at its next start. Not in the API.
 	Swap *SwapMark `json:"swap,omitempty"`

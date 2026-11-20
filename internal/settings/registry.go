@@ -76,6 +76,10 @@ const (
 	// may start one with pane.new (hab-logic-api.md 3.12): off, agents, project or all. Levelled: Safe
 	// off, Balanced agents, Bypass all; project is picked by hand.
 	AgentDrivePanes = "agent.drive_panes"
+	// AgentStartMode is the harness permission mode a new session starts in
+	// (harness-adapters.md, Start mode): ask, auto or bypass. Levelled: Safe ask, Balanced
+	// auto, Bypass bypass. Each hab reads it at each harness start.
+	AgentStartMode = "agent.start_mode"
 )
 
 // DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
@@ -130,6 +134,7 @@ var Defs = []Def{
 	{ID: GroupHandoffAt, Default: json.RawMessage(`60`), check: checkInt(20, 95), integer: true},
 	{ID: AgentReadPanes, Default: json.RawMessage(`"all"`), check: checkWord("off", "project", "all")},
 	{ID: AgentDrivePanes, Default: json.RawMessage(`"agents"`), check: checkWord("off", "agents", "project", "all")},
+	{ID: AgentStartMode, Default: json.RawMessage(`"auto"`), check: checkWord("ask", "auto", "bypass")},
 }
 
 func mustJSON(v any) json.RawMessage {

@@ -180,10 +180,10 @@ func TestResumeAfterHolderLoss(t *testing.T) {
 
 	hst.typ("\r")
 	hst.waitScreen("claude resumed in the same view", func(s string) bool {
-		return strings.Contains(s, "agent-up --resume "+native) && strings.Count(s, " agent · one") == 1 && !strings.Contains(s, "Enter resume")
+		return strings.Contains(s, "agent-up --permission-mode auto --resume "+native) && strings.Count(s, " agent · one") == 1 && !strings.Contains(s, "Enter resume")
 	})
 	b, _ := os.ReadFile(log)
-	if lines := strings.Split(strings.TrimSpace(string(b)), "\n"); len(lines) != 2 || lines[1] != "claude --resume "+native {
+	if lines := strings.Split(strings.TrimSpace(string(b)), "\n"); len(lines) != 2 || lines[1] != "claude --permission-mode auto --resume "+native {
 		t.Fatalf("claude starts %q", lines)
 	}
 }

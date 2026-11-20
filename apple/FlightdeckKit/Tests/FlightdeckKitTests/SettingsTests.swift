@@ -67,6 +67,21 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentDrivePanes })
     }
 
+    /// agent.start_mode: ask at Safe, auto at Balanced, bypass at Bypass; kept on every hab
+    /// (harness-adapters.md, Start mode; app.md 20.3). The session details name a mode other than ask.
+    func testAgentStartModeLevels() throws {
+        let d = try XCTUnwrap(R.def(R.agentStartMode))
+        XCTAssertEqual(d.levels?[.safe], .string("ask"))
+        XCTAssertEqual(d.levels?[.balanced], .string("auto"))
+        XCTAssertEqual(d.levels?[.bypass], .string("bypass"))
+        XCTAssertEqual(d.store, .everyHab)
+        XCTAssertTrue(R.levelledHabSide.contains { $0.id == R.agentStartMode })
+        XCTAssertNil(startModeLabel(nil))
+        XCTAssertNil(startModeLabel("ask"))
+        XCTAssertEqual(startModeLabel("auto"), "Auto mode")
+        XCTAssertEqual(startModeLabel("bypass"), "Bypass permissions")
+    }
+
     /// capcom.event_actions: ask at Safe, allow at Balanced, all at Bypass (from A10), and a level
     /// pick writes it (capcom-service.md 9.4, 9.6, app.md 20.3).
     @MainActor
