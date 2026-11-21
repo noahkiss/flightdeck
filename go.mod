@@ -7,7 +7,7 @@ toolchain go1.27.4
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
-	github.com/dlclark/regexp2/v2 v2.13.0
+	github.com/dlclark/regexp2/v2 v2.13.1
 	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
 	github.com/ebitengine/purego v0.11.3
 	go.mitchellh.com/libghostty v0.0.0-20261107144202-b13f277ddcb2
