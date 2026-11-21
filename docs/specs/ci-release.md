@@ -565,7 +565,7 @@ The speech helper (`gff-hab-speech`) is not in a release yet. `gff-hab install` 
 and its libopus link is dynamic (`voice.md`). It joins when that is settled.
 
 `capcom/` is the Capcom engine folder, the same bytes in every archive: `gff-hab-capcom.mjs`
-(the engine, bundled by esbuild), `package.json`, `package-lock.json`, and `NOTICE` with the
+(the engine, bundled by esbuild, with the release version written in), `package.json`, `package-lock.json`, and `NOTICE` with the
 notices of the packages in the bundle (7.8). `make capcom-pack` writes it into
 `<RELEASE_DIR>/capcom`. It holds no `node_modules`: the Claude Agent SDK and the Codex SDK carry a
 native binary per platform, and the Claude Agent SDK's licence grants no right to redistribute
@@ -652,8 +652,9 @@ in the libghostty rule. The release values:
    published final `v<x.y.z>` release other than the tag, empty before the first. Each failure
    says which check failed and what to do.
 2. **`engine`** (ubuntu, `needs: verify`, `contents: read`, no environment). `actions/setup-node`
-   with `capcom-engine/.node-version`, then `make capcom-pack` (`npm ci`, the build, and
-   `pack.mjs`, which writes the folder and its `NOTICE`), then the engine's `typecheck` and tests:
+   with `capcom-engine/.node-version`, then `make capcom-pack RELEASE_VERSION=<version>` (`npm
+   ci`, the build with the version written into the bundle, and `pack.mjs`, which writes the
+   folder and its `NOTICE`), then the engine's `typecheck` and tests:
    `verify` checks `ci.yml` runs only, so this is the release's gate on the engine. Uploads
    `capcom/` as the workflow artifact `capcom-engine`, which the build jobs download; the name is
    outside `publish`'s `release-*` pattern, so it is never a release asset. It runs npm install
@@ -662,8 +663,8 @@ in the libghostty rule. The release values:
    build (7.3), download `capcom-engine` into the archive folder as `capcom/`, pack the tarball
    and its `.sha256`, then smoke-test the unpacked tarball with
    `scripts/release-smoke.sh <dir> <version>`: `capcom/` holds the four engine files, no
-   `node_modules`, a manifest and a lockfile that name both SDKs, and a `NOTICE` with no entry
-   for either; each binary's `version` prints `<name> <version>`;
+   `node_modules`, a manifest and a lockfile that name both SDKs, a `NOTICE` with no entry for
+   either, and a bundle that `node --check` parses and that carries `<version>`; each binary's `version` prints `<name> <version>`;
    `go version -m` lists `-tags=ghostty` for `gff-hab` and `gff`; `ldd gff-hab` lists no
    libghostty; no glibc symbol version above 2.31 (`objdump -T`); `gff-hab-holder` is static; a
    holder and gff-hab start in a temporary directory and `gff-hab api call hab.hello` answers.
