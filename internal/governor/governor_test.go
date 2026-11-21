@@ -107,6 +107,10 @@ func setup(t *testing.T, state string) (*Governor, *clock, *accounts, *heard) {
 	return g, c, acc, h
 }
 
+// waits is a policy whose user turns wait at 120% of the share, as a group's may: the tests of
+// the wait itself use it. Capcom's DefaultPolicy has no wait step.
+var waits = Policy{DailyShare: 15, EventStop: 80, SmallAt: 100, WaitAt: 120}
+
 func capcom(p Policy) Consumer {
 	return Consumer{ID: "capcom", Policy: func() Policy { return p }, Account: func() string { return "acct" }}
 }
@@ -126,7 +130,7 @@ func check(t *testing.T, g *Governor, id string, pace, event Pace) Answer {
 func TestShareAccumulates(t *testing.T) {
 	g, c, acc, h := setup(t, "")
 	acc.week("acct", t0, 13)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	if got := h.take(); len(got) != 1 {
 		t.Fatalf("Config.OnChange heard %v for a new consumer, want its first answer", got)
 	}
@@ -164,7 +168,7 @@ func TestShareAccumulates(t *testing.T) {
 func TestStepsAndUntil(t *testing.T) {
 	g, _, acc, h := setup(t, "")
 	acc.week("acct", t0, 15)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	h.take()
 	check(t, g, "capcom", Small, Wait) // 100% of the share: the small model
 	acc.week("acct", t0, 18)
@@ -196,7 +200,7 @@ func TestStepsAndUntil(t *testing.T) {
 func TestWaitEndsOnItsOwn(t *testing.T) {
 	g, c, acc, h := setup(t, "")
 	acc.week("acct", t0, 18)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	h.take()
 	a := check(t, g, "capcom", Wait, Wait)
 	c.advance(a.Until.Sub(c.Now()))
@@ -209,7 +213,7 @@ func TestWaitEndsOnItsOwn(t *testing.T) {
 func TestResetWithNoReading(t *testing.T) {
 	g, c, acc, _ := setup(t, "")
 	acc.week("acct", t0, 100)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	check(t, g, "capcom", Wait, Wait)
 	c.advance(7 * 24 * time.Hour) // past the reset, no reading since
 	a := check(t, g, "capcom", Ok, Ok)
@@ -234,7 +238,7 @@ func TestPolicySteps(t *testing.T) {
 
 func TestUnpaced(t *testing.T) {
 	g, _, acc, _ := setup(t, "")
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	a := check(t, g, "capcom", Ok, Ok)
 	if a.Basis != BasisNone {
 		t.Fatalf("basis %s with no reading", a.Basis)
@@ -261,7 +265,7 @@ func TestUnpaced(t *testing.T) {
 
 func TestDailyUSD(t *testing.T) {
 	g, c, _, h := setup(t, "")
-	p := DefaultPolicy
+	p := waits
 	p.DailyUSD = 1
 	g.Register(capcom(p))
 	check(t, g, "capcom", Ok, Ok)
@@ -291,7 +295,7 @@ func TestDailyUSD(t *testing.T) {
 func TestCountersAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "governor.json")
 	g, c, _, _ := setup(t, path)
-	p := DefaultPolicy
+	p := waits
 	p.DailyUSD = 1
 	g.Register(capcom(p))
 	g.Spent("capcom", 5, 6, 1.1)
@@ -318,7 +322,7 @@ func TestGroupWaitsAndResumes(t *testing.T) {
 	g, _, acc, h := setup(t, "")
 	acc.week("acct", t0, 5)
 	acc.week("member", t0, 50)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	grp := Consumer{ID: "group:g1", Policy: func() Policy { return Policy{DailyShare: 20, EventStop: 100, SmallAt: 100, WaitAt: 100} },
 		Account: func() string { return "member" }}
 	if a := g.Register(grp); a.Pace != Wait || a.Until.IsZero() {
@@ -353,7 +357,7 @@ func TestOnChangeReentrant(t *testing.T) {
 		g.Spent(id, 1, 1, 0) // rechecks inside the callback
 	}})
 	defer g.Close()
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	acc.week("acct", t0, 0)
 	g.Recheck()
 	acc.week("acct", t0, 15)
@@ -376,7 +380,7 @@ func (c *clock) sleep(d time.Duration) {
 func TestSleepEndsWaitOnTime(t *testing.T) {
 	g, c, acc, _ := setup(t, "")
 	acc.week("acct", t0, 18)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	a := check(t, g, "capcom", Wait, Wait)
 	c.mu.Lock()
 	armed := c.at.Sub(c.now)
@@ -396,12 +400,12 @@ func TestWindowAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "governor.json")
 	g, c, acc, _ := setup(t, path)
 	acc.week("acct", t0, 18)
-	g.Register(capcom(DefaultPolicy))
+	g.Register(capcom(waits))
 	want := check(t, g, "capcom", Wait, Wait)
 	g.Close()
 
 	g2 := New(Config{Now: c.Now, After: c.After, Location: time.UTC, StatePath: path})
-	g2.Register(capcom(DefaultPolicy))
+	g2.Register(capcom(waits))
 	if a := check(t, g2, "capcom", Wait, Wait); !a.Until.Equal(want.Until) || a.Basis != BasisPlan {
 		t.Fatalf("after a restart: %+v, want until %v", a, want.Until)
 	}
@@ -410,7 +414,7 @@ func TestWindowAcrossRestart(t *testing.T) {
 	c.advance(24 * time.Hour) // day 1: allowance 30%, level 60
 	g3 := New(Config{Now: c.Now, After: c.After, Location: time.UTC, StatePath: path})
 	defer g3.Close()
-	g3.Register(capcom(DefaultPolicy))
+	g3.Register(capcom(waits))
 	if a := check(t, g3, "capcom", Ok, Ok); a.Basis != BasisPlan || a.Level != 60 {
 		t.Fatalf("a day later: %+v", a)
 	}
@@ -422,7 +426,7 @@ func TestSettingsReadOutsideLock(t *testing.T) {
 	acc.week("acct", t0, 18)
 	reads := 0
 	c := Consumer{ID: "capcom",
-		Policy:  func() Policy { g.Check("capcom"); reads++; return DefaultPolicy },
+		Policy:  func() Policy { g.Check("capcom"); reads++; return waits },
 		Account: func() string { g.Check("capcom"); return "acct" }}
 	done := make(chan struct{})
 	go func() {
@@ -437,5 +441,31 @@ func TestSettingsReadOutsideLock(t *testing.T) {
 	check(t, g, "capcom", Wait, Wait)
 	if reads != 1 {
 		t.Fatalf("Policy read %d times in one recheck", reads)
+	}
+}
+
+// Capcom's default policy never makes a user turn wait (capcom-service.md 10.1): far past the
+// share, user turns run on the small model while event turns wait. With the event step off,
+// event turns run too.
+func TestDefaultPolicyNeverWaitsUserTurns(t *testing.T) {
+	g, _, acc, _ := setup(t, "")
+	acc.week("acct", t0, 60) // day 1: share 15%, level 400%
+	g.Register(capcom(DefaultPolicy))
+	a := check(t, g, "capcom", Small, Wait)
+	if !a.Until.IsZero() || a.EventUntil.IsZero() {
+		t.Fatalf("until %v, event until %v: want no user wait and an event wait", a.Until, a.EventUntil)
+	}
+	off := DefaultPolicy
+	off.EventStop = 0
+	g.Register(capcom(off))
+	if a := check(t, g, "capcom", Small, Ok); !a.EventUntil.IsZero() {
+		t.Fatalf("event until %v with the event step off", a.EventUntil)
+	}
+	// Under the share the pace is ok.
+	acc.week("acct", t0, 5)
+	g.Recheck()
+	check(t, g, "capcom", Ok, Ok)
+	if DefaultPolicy.WaitAt != 0 {
+		t.Fatalf("DefaultPolicy.WaitAt %v, want 0: Capcom's messages never wait", DefaultPolicy.WaitAt)
 	}
 }

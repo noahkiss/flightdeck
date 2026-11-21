@@ -40,8 +40,9 @@ func notesWith(items []api.CapcomItem, prefix string) int {
 
 // Capcom paced by the usage governor end to end (capcom-service.md 10.1, 18 G), with the stub
 // engine and hand-written readings: unpaced with no reading, the pace before the first turn,
-// small and then wait as the engine's readings rise past the share, one "Pacing usage" note per
-// wait, the governor's state and today's tokens in the catalog, and a send-now message marked.
+// small as the engine's readings rise past the share and still small far past it (the owner's
+// messages never wait, and get no pacing note), the governor's state and today's tokens in the
+// catalog, and a send-now message marked.
 func TestCapcomServicePace(t *testing.T) {
 	t.Parallel()
 	e := newServiceEnv(t, "pace_daily_share = 10\n")
@@ -68,33 +69,31 @@ func TestCapcomServicePace(t *testing.T) {
 	// The window started a day and an hour ago: the share is 2 x 10% = 20%. 21% is 105% of it.
 	run(t, "capcom", "say", "-socket", e.sock, "usage 21")
 	waitUntil(t, "the small pace", func() bool { return strings.Contains(e.stubLog(), "pace small  wait 20") })
-	// 25% is 125%: user turns wait, until the third window day makes the share 30%.
+	// 25% is 125%, past the old wait step: user turns stay on the small model.
 	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
-	waitUntil(t, "the wait pace", func() bool { return strings.Contains(e.stubLog(), "pace wait 20") })
-	waitUntil(t, "the wait in the catalog", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
-	if g.Basis != "plan" || g.Pace != "wait" || g.EventPace != "wait" || g.UsedPct != 25 || g.SharePct != 20 || g.Until == "" {
-		t.Fatalf("governor at the wait: %+v", g)
+	waitUntil(t, "the reading in the catalog", func() bool { g, _ = governorOf(t, e); return g.UsedPct == 25 })
+	if g.Basis != "plan" || g.Pace != "small" || g.EventPace != "wait" || g.SharePct != 20 || g.Until != "" || g.EventUntil == "" {
+		t.Fatalf("governor at 125%%: %+v", g)
 	}
 	waitUntil(t, "today's tokens", func() bool {
 		g, _ = governorOf(t, e)
 		return g.InputTokens >= 200 && g.OutputTokens >= 20
 	})
 
-	// A message during the wait gets one note; a second message no second note.
+	// A message past the share runs: it reaches the engine, with no pacing note.
 	run(t, "capcom", "say", "-socket", e.sock, "hello")
-	run(t, "capcom", "say", "-socket", e.sock, "again")
-	waitUntil(t, "the pacing note", func() bool { return notesWith(threadText(t, c), "Pacing usage until ") == 1 })
-	if n := notesWith(threadText(t, c), "Pacing usage until "); n != 1 {
-		t.Fatalf("%d pacing notes, want 1", n)
-	}
+	waitUntil(t, "the message at the engine", func() bool { return strings.Contains(e.stubLog(), "hello") })
 
 	// Send now: the item reaches the engine marked.
 	if _, err := callJSON[api.Empty](t, c, "session.send", api.SessionSendParams{Session: st.Session, Text: "now please", Origin: api.SendOriginTyped, SendNow: true}); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the send-now mark", func() bool { return strings.Contains(e.stubLog(), "send_now ") })
-	if n := notesWith(threadText(t, c), "Pacing usage until "); n != 1 {
-		t.Fatalf("%d pacing notes after send now, want 1", n)
+	if n := notesWith(threadText(t, c), "Pacing usage"); n != 0 {
+		t.Fatalf("%d pacing notes, want none", n)
+	}
+	if strings.Contains(e.stubLog(), "pace wait") {
+		t.Fatalf("the engine heard a user wait:\n%s", e.stubLog())
 	}
 }
 
@@ -124,11 +123,11 @@ func TestCapcomCodexPace(t *testing.T) {
 	if g.Basis != "none" {
 		t.Fatalf("governor before a reading: %+v", g)
 	}
-	// Share 2 x 10% = 20%; 25% of the weekly window is 125%: user turns wait.
+	// Share 2 x 10% = 20%; 25% of the weekly window is 125%: user turns go to the small model.
 	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
-	waitUntil(t, "the wait", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
+	waitUntil(t, "the small model", func() bool { g, _ = governorOf(t, e); return g.Pace == "small" })
 	if g.Basis != "plan" || g.UsedPct != 25 || g.SharePct != 20 {
-		t.Fatalf("governor at the wait: %+v", g)
+		t.Fatalf("governor past the share: %+v", g)
 	}
 	var list api.UsageReadings
 	call(t, c, "usage.list", api.UsageListParams{}, &list)
@@ -161,7 +160,7 @@ func TestCapcomPaceEngineSwitch(t *testing.T) {
 	engine("claude")
 	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
 	var g api.GovernorConsumer
-	waitUntil(t, "the wait on claude", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" && g.UsedPct == 25 })
+	waitUntil(t, "the small model on claude", func() bool { g, _ = governorOf(t, e); return g.Pace == "small" && g.UsedPct == 25 })
 
 	// The switch, as the owner makes it: pause, edit the config, resume.
 	run(t, "capcom", "pause", "-socket", e.sock)
@@ -177,7 +176,7 @@ func TestCapcomPaceEngineSwitch(t *testing.T) {
 	waitUntil(t, "unpaced on the codex account", func() bool { g, _ = governorOf(t, e); return g.Basis == "none" && g.Pace == "ok" })
 
 	run(t, "capcom", "say", "-socket", e.sock, "usage 30")
-	waitUntil(t, "the wait on codex", func() bool { g, _ = governorOf(t, e); return g.Basis == "plan" && g.UsedPct == 30 })
+	waitUntil(t, "the reading on codex", func() bool { g, _ = governorOf(t, e); return g.Basis == "plan" && g.UsedPct == 30 })
 	var list api.UsageReadings
 	call(t, c, "usage.list", api.UsageListParams{}, &list)
 	got := map[string]int{}
@@ -193,10 +192,10 @@ func TestCapcomPaceEngineSwitch(t *testing.T) {
 	}
 }
 
-// The governor after a gff-hab restart and a pace_* edit (capcom-service.md 10.1): the last
-// weekly reading is kept in governor.json, so the wait holds with no new reading; a user message
-// rechecks with the config read again, so an edit that lifts the wait gives no pacing note; and
-// an edit alone reaches the engine once the file held for one check.
+// The governor after a gff-hab restart and a pace edit (capcom-service.md 10.1, 19.1): the last
+// weekly reading is kept in governor.json, so the pace holds with no new reading; a [capcom]
+// pace_daily_share edit reaches the engine once the file held for one check; and with the key
+// gone, settings.set moves the pace at once, with no restart: event pacing off, then the share.
 func TestCapcomPaceRestartAndEdit(t *testing.T) {
 	t.Parallel()
 	e := newServiceEnv(t, "pace_daily_share = 10\n")
@@ -208,7 +207,7 @@ func TestCapcomPaceRestartAndEdit(t *testing.T) {
 	})
 	run(t, "capcom", "say", "-socket", e.sock, "usage 25")
 	var g api.GovernorConsumer
-	waitUntil(t, "the wait", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
+	waitUntil(t, "the small model", func() bool { g, _ = governorOf(t, e); return g.Pace == "small" })
 
 	e.restart(false)
 	c := e.control()
@@ -217,25 +216,38 @@ func TestCapcomPaceRestartAndEdit(t *testing.T) {
 		g, ok = governorOf(t, e)
 		return ok
 	})
-	if g.Basis != "plan" || g.Pace != "wait" || g.UsedPct != 25 {
+	if g.Basis != "plan" || g.Pace != "small" || g.EventPace != "wait" || g.UsedPct != 25 {
 		t.Fatalf("governor after a restart, before a reading: %+v", g)
 	}
 
-	// Share 20%: day 1's allowance is 40%, 25% is 62%. The message itself rechecks.
-	write := func(share string) {
+	write := func(extra string) {
 		t.Helper()
-		if err := os.WriteFile(e.config, []byte("[capcom]\nengine = \"claude\"\nrestart_delay = \"1s\"\npace_daily_share = "+share+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(e.config, []byte("[capcom]\nengine = \"claude\"\nrestart_delay = \"1s\"\n"+extra), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("20")
-	run(t, "capcom", "say", "-socket", e.sock, "hello")
-	if n := notesWith(threadText(t, c), "Pacing usage until "); n != 0 {
-		t.Fatalf("%d pacing notes after an edit that lifts the wait", n)
-	}
-	waitUntil(t, "ok in the catalog", func() bool { g, _ = governorOf(t, e); return g.Pace == "ok" })
+	// Share 20%: day 1's allowance is 40%, 25% is 62%.
+	write("pace_daily_share = 20\n")
+	waitUntil(t, "ok from the edit", func() bool { g, _ = governorOf(t, e); return g.Pace == "ok" && g.EventPace == "ok" })
 
-	// Share 9%: 18%, 25% is 139%. No message: the config watch rechecks.
-	write("9")
-	waitUntil(t, "the wait again from the edit", func() bool { g, _ = governorOf(t, e); return g.Pace == "wait" })
+	// No pace key: the default share, 15% (30% today), puts 25% at 83%, past the event step.
+	write("")
+	waitUntil(t, "the default share", func() bool { g, _ = governorOf(t, e); return g.SharePct == 30 && g.EventPace == "wait" })
+	set := func(id, v string) {
+		t.Helper()
+		var cur api.SettingsResult
+		call(t, c, "settings.get", api.SettingsGetParams{IDs: []string{id}}, &cur)
+		if len(cur.Settings) != 1 || cur.Settings[0].Source == api.SettingSourceConfig {
+			t.Fatalf("%s: %+v", id, cur.Settings)
+		}
+		call(t, c, "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{{ID: id, Value: api.RawJSON(v), Revision: cur.Settings[0].Revision}}}, &cur)
+	}
+	// From the app: event pacing off, then a share of 9% (18% today, 25% is 139%).
+	set("capcom.pace.events", "false")
+	waitUntil(t, "event turns run", func() bool { g, _ = governorOf(t, e); return g.EventPace == "ok" })
+	set("capcom.pace.daily_share", "9")
+	waitUntil(t, "the small model from the app", func() bool { g, _ = governorOf(t, e); return g.Pace == "small" && g.SharePct == 18 })
+	if g.EventPace != "ok" || g.Until != "" {
+		t.Fatalf("governor after the app's edits: %+v", g)
+	}
 }

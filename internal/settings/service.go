@@ -218,9 +218,28 @@ func (s *Service) readLocks() (map[string]json.RawMessage, error) {
 		default:
 			var fc struct {
 				Settings map[string]any `toml:"settings"`
+				Capcom   map[string]any `toml:"capcom"`
 			}
 			if _, err := toml.Decode(string(b), &fc); err != nil {
 				return nil, fmt.Errorf("settings: %s: %w", p, err)
+			}
+			// The [capcom] pace_* keys lock their settings, unless [settings] names the id.
+			for _, lp := range legacyPace {
+				v, ok := fc.Capcom[lp.key]
+				if !ok {
+					continue
+				}
+				if _, set := fc.Settings[lp.id]; set {
+					s.cfg.Logf("settings: %s: [capcom] %s is ignored: [settings] %q sets it", p, lp.key, lp.id)
+					continue
+				}
+				d, _ := Lookup(lp.id)
+				lv, err := legacyPercent(d, v)
+				if err != nil {
+					s.cfg.Logf("settings: %s: [capcom] %s %v: %v; left out", p, lp.key, v, err)
+					continue
+				}
+				locks[lp.id] = lv
 			}
 			ids := make([]string, 0, len(fc.Settings))
 			for id := range fc.Settings {

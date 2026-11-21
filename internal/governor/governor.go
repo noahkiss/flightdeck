@@ -16,7 +16,8 @@
 //     counted.
 //
 // User turns go to the small model at small_at and wait at wait_at; event turns wait at
-// event_stop. A wait lasts until the first window day whose allowance takes the level under the
+// event_stop. A step at 0 is off. Capcom's policy has no wait_at: the owner's messages step down
+// to the small model at most and never wait (capcom-service.md 10.1). A wait lasts until the first window day whose allowance takes the level under the
 // step, else until the window resets; under the dollar cap, until the next local midnight.
 //
 // The governor keeps each account's last weekly window in its state file, so a restart paces from
@@ -71,14 +72,14 @@ const Window = "7d"
 // Policy is one consumer's pacing settings. Shares and steps are percentages.
 type Policy struct {
 	DailyShare float64 // percent of the weekly window a day, cumulative
-	EventStop  float64 // percent of the share: event turns wait
-	SmallAt    float64 // percent of the share: user turns go to the small model
-	WaitAt     float64 // percent of the share: user turns wait
+	EventStop  float64 // percent of the share: event turns wait; 0: never
+	SmallAt    float64 // percent of the share: user turns go to the small model; 0: never
+	WaitAt     float64 // percent of the share: user turns wait; 0: never
 	DailyUSD   float64 // above 0: pace by result cost against this cap a day, not by the window
 }
 
-// DefaultPolicy is Capcom's default (capcom-service.md 19.2).
-var DefaultPolicy = Policy{DailyShare: 15, EventStop: 80, SmallAt: 100, WaitAt: 120}
+// DefaultPolicy is Capcom's default (capcom-service.md 19.1): user turns never wait.
+var DefaultPolicy = Policy{DailyShare: 15, EventStop: 80, SmallAt: 100}
 
 // Consumer is one user of the plan's usage: capcom, or group:<id>.
 type Consumer struct {
@@ -521,16 +522,17 @@ func (g *Governor) answer(id string, p Policy, key string, now time.Time) (a Ans
 	return a, next, moved
 }
 
-// steps turns a level (percent of the share) into the user and event paces.
+// steps turns a level (percent of the share) into the user and event paces. A step at 0 or
+// below is off.
 func steps(level float64, p Policy) (user, event Pace) {
 	user, event = Ok, Ok
 	switch {
-	case level >= p.WaitAt:
+	case p.WaitAt > 0 && level >= p.WaitAt:
 		user = Wait
-	case level >= p.SmallAt:
+	case p.SmallAt > 0 && level >= p.SmallAt:
 		user = Small
 	}
-	if level >= p.EventStop {
+	if p.EventStop > 0 && level >= p.EventStop {
 		event = Wait
 	}
 	return user, event

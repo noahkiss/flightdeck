@@ -1288,6 +1288,11 @@ func serve(args []string) error {
 		},
 		Apply: func(id string, v json.RawMessage) {
 			applySetting(gate, id, v)
+			if strings.HasPrefix(id, settings.CapcomPacePrefix) {
+				// Capcom's pace (capcom-service.md 10.1) at once, with no restart. The recheck
+				// reads the settings, so it runs outside this call, which holds their lock.
+				go gov.Recheck()
+			}
 			if id == settings.PermissionWait {
 				logger.Printf("settings: %s = %s", id, v)
 			}
@@ -1304,6 +1309,8 @@ func serve(args []string) error {
 	}
 	defer setSvc.Close()
 	setRef.Store(setSvc)
+	// Capcom's pace from the settings, not their defaults.
+	gov.Recheck()
 	agents.SetMaxAge(approvalMaxAge(setSvc.Value)) // remote answers expire (app.md 7.4)
 	tl.SetInConfig(settingsInConfig(setSvc))
 	caps = append(caps, settings.Capability)

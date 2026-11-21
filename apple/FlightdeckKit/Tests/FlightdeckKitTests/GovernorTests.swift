@@ -67,15 +67,15 @@ final class GovernorTests: XCTestCase {
 
         let cases: [(GovernorConsumer, String?)] = [
             (plan("ok"), nil),
-            (plan("small"), "Small model · 40% of the week used, share 30%"),
+            (plan("small"), "Small model for your messages · 40% of the week used, share 30%"),
+            (plan("small", event: "wait", eventUntil: today),
+             "Small model for your messages; Capcom's own turns wait until 15:04 · 40% of the week used, share 30%"),
+            (plan("ok", event: "wait", eventUntil: tomorrow), "Capcom's own turns wait until Thu 09:30 · 40% of the week used, share 30%"),
+            // An older hab's Capcom, whose user turns still wait.
             (plan("wait", event: "wait", until: today, eventUntil: today), "Pacing usage until 15:04 · 40% of the week used, share 30%"),
-            (plan("wait", event: "wait", until: tomorrow, eventUntil: tomorrow), "Pacing usage until Thu 09:30 · 40% of the week used, share 30%"),
-            (plan("ok", event: "wait", eventUntil: today), "Event turns wait until 15:04 · 40% of the week used, share 30%"),
             (usd("ok"), nil),
-            (usd("small"), "Small model · $6.12 of $5.00 today"),
-            (usd("wait", event: "wait", until: "2026-11-19T00:00:00Z", eventUntil: "2026-11-19T00:00:00Z"),
-             "Pacing usage until Thu 00:00 · $6.12 of $5.00 today"),
-            (usd("ok", event: "wait", eventUntil: today), "Event turns wait until 15:04 · $6.12 of $5.00 today"),
+            (usd("small"), "Small model for your messages · $6.12 of $5.00 today"),
+            (usd("ok", event: "wait", eventUntil: today), "Capcom's own turns wait until 15:04 · $6.12 of $5.00 today"),
             (GovernorConsumer(basis: "none", eventPace: "ok", id: "capcom", inputTokens: 11_000, outputTokens: 1_300, pace: "ok"),
              "Unpaced: 12.3k tokens today"),
         ]
@@ -94,14 +94,16 @@ final class GovernorTests: XCTestCase {
     func testUsageSheetRowsByHabAndConsumer() async throws {
         let a = await serviceHab("bench", governor: CatalogGovernor(consumers: [
             plan("small"), plan("ok", id: "group:g1"), plan("wait", until: today, id: "group:g2"),
+            plan("small", event: "wait", eventUntil: today, id: "group:g3"),
         ]))
         let f = await fleet([a])
         let r = rows(f)
-        XCTAssertEqual(r.map(\.consumer), ["capcom", "group:g2"], "a consumer at ok has no row")
-        XCTAssertEqual(r.map(\.title), ["Capcom", "group:g2"])
+        XCTAssertEqual(r.map(\.consumer), ["capcom", "group:g2", "group:g3"], "a consumer at ok has no row")
+        XCTAssertEqual(r.map(\.title), ["Capcom", "group:g2", "group:g3"])
         XCTAssertEqual(r.first?.habLabel, "bench")
-        XCTAssertEqual(r.last?.text, "Pacing usage until 15:04 · 40% of the week used, share 30%")
-        XCTAssertEqual(line(f), "Small model · 40% of the week used, share 30%", "the Capcom screen shows the capcom consumer only")
+        XCTAssertEqual(r[1].text, "Pacing usage until 15:04 · 40% of the week used, share 30%", "a group's wait")
+        XCTAssertEqual(r[2].text, "Small model; event turns wait until 15:04 · 40% of the week used, share 30%")
+        XCTAssertEqual(line(f), "Small model for your messages · 40% of the week used, share 30%", "the Capcom screen shows the capcom consumer only")
         await f.setActive(false)
     }
 

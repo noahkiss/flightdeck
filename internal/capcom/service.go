@@ -106,22 +106,9 @@ type ServiceConfig struct {
 	OAuthCommand  []string // an argv that prints the OAuth token
 	APIKeyCommand []string // an argv that prints an API key
 	Limits        Limits
-	Pace          Pace // the usage governor's inputs (10.1)
 	// Personal is the personal tools' keys (8, 19.2).
 	Personal Personal
 }
-
-// Pace is Capcom's four pacing numbers, in percent (capcom-service.md 10.1, 19.2): the daily
-// share of the plan's weekly window, and the three steps against that share.
-type Pace struct {
-	DailyShare float64 // pace_daily_share
-	EventStop  float64 // pace_event_stop: event turns wait
-	SmallAt    float64 // pace_small_at: user turns go to the small model
-	WaitAt     float64 // pace_wait_at: user turns wait
-}
-
-// DefaultPace is 19.2's defaults.
-var DefaultPace = Pace{DailyShare: 15, EventStop: 80, SmallAt: 100, WaitAt: 120}
 
 // Personal is the [capcom] keys of the personal tools (8): location_stale and the
 // [capcom.weather], [capcom.maps] and [capcom.places] tables. Keys come from key commands; the
@@ -157,7 +144,7 @@ type intRange struct {
 // unknown key is a problem and is ignored. A file that does not parse is an error, with the
 // defaults.
 func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
-	c := ServiceConfig{Auth: AuthOAuthToken, Limits: DefaultLimits, Pace: DefaultPace, Personal: DefaultPersonal}
+	c := ServiceConfig{Auth: AuthOAuthToken, Limits: DefaultLimits, Personal: DefaultPersonal}
 	if path == "" {
 		return c, nil, nil
 	}
@@ -355,7 +342,11 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 		"summary_max_chars": true, "summary_input_chars": true, "summary_quiet": true, "reseed_at": true, "reseed_quiet": true,
 		"reseed_quiet_at": true, "reseed_early_at": true, "seed_messages": true, "seed_messages_chars": true, "seed_logbook_bytes": true, "precompact_timeout": true,
 		"pace_daily_share": true, "pace_event_stop": true, "pace_small_at": true, "pace_wait_at": true}
-	c.Pace = readPace(sec, bad)
+	// The pace_* keys lock Capcom's pace settings (internal/settings, 19.1), which check them.
+	// pace_wait_at is no longer used: the owner's messages never wait (10.1).
+	if _, ok := sec["pace_wait_at"]; ok {
+		bad("pace_wait_at: no longer used: Capcom's messages never wait for usage, they go to the small model at most; ignored")
+	}
 	for _, k := range laterKeys {
 		known[k] = true
 	}
@@ -370,48 +361,6 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 		bad("unknown key %q; ignored", k)
 	}
 	return c, problems, nil
-}
-
-// readPace reads the four pace_* keys (19.2): each a percentage, as a number (15) or a string
-// ("15%"). A value outside its range is a problem and its default runs. The three steps must
-// rise in order, event_stop then small_at then wait_at (equal is allowed); a set out of order
-// is one problem, and all three defaults run.
-func readPace(sec map[string]any, bad func(string, ...any)) Pace {
-	p := DefaultPace
-	pct := func(key string, dst *float64, min, max float64) {
-		v, ok := sec[key]
-		if !ok {
-			return
-		}
-		x := math.NaN()
-		switch n := v.(type) {
-		case int64:
-			x = float64(n)
-		case float64:
-			x = n
-		case string:
-			if t, cut := strings.CutSuffix(strings.TrimSpace(n), "%"); cut {
-				if f, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
-					x = f
-				}
-			}
-		}
-		if !(x >= min && x <= max) {
-			bad("%s %v: want a percentage from %g to %g, such as %g or \"%g%%\"; using %g", key, v, min, max, *dst, *dst, *dst)
-			return
-		}
-		*dst = x
-	}
-	pct("pace_daily_share", &p.DailyShare, 1, 100)
-	pct("pace_event_stop", &p.EventStop, 10, 500)
-	pct("pace_small_at", &p.SmallAt, 10, 500)
-	pct("pace_wait_at", &p.WaitAt, 10, 500)
-	if !(p.EventStop <= p.SmallAt && p.SmallAt <= p.WaitAt) {
-		bad("pace_event_stop %g, pace_small_at %g, pace_wait_at %g: want them in that order, each at or above the one before; using %g, %g and %g",
-			p.EventStop, p.SmallAt, p.WaitAt, DefaultPace.EventStop, DefaultPace.SmallAt, DefaultPace.WaitAt)
-		p.EventStop, p.SmallAt, p.WaitAt = DefaultPace.EventStop, DefaultPace.SmallAt, DefaultPace.WaitAt
-	}
-	return p
 }
 
 // loadPersonal reads the personal tools' keys (8, 19.2). Each bad value is a problem and its

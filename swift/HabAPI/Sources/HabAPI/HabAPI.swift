@@ -4195,7 +4195,7 @@ public struct GovernorConsumer: Codable, Sendable, Hashable {
     public var inputTokens: Int?
     /// Today's output tokens.
     public var outputTokens: Int?
-    /// The next user turn's pace: ok, small (the small model) or wait. An open set.
+    /// The next user turn's pace: ok, small (the small model) or wait. Capcom's user turns never wait on a current hab: they go to the small model at most. A group's may wait. An open set.
     public var pace: String
     /// plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100.
     public var sharePct: Int?

@@ -109,6 +109,10 @@ public enum SettingsRegistry {
     public static let capcomEventActions = "capcom.event_actions"
     public static let capcomEventActionsPerTurn = "capcom.event_actions_per_turn"
     public static let capcomEventActionMaxAge = "capcom.event_action_max_age"
+    public static let capcomPaceDailyShare = "capcom.pace.daily_share"
+    public static let capcomPaceSmallAt = "capcom.pace.small_at"
+    public static let capcomPaceEvents = "capcom.pace.events"
+    public static let capcomPaceEventStop = "capcom.pace.event_stop"
     public static let agentReadPanes = "agent.read_panes"
     public static let agentDrivePanes = "agent.drive_panes"
     public static let agentStartMode = "agent.start_mode"
@@ -176,6 +180,16 @@ public enum SettingsRegistry {
                    kind: .integer(0...50, unit: ""), store: .everyHab),
         SettingDef(id: capcomEventActionMaxAge, title: "A Capcom job's ask card expires after", area: .agents,
                    kind: .integer(1...1440, unit: "min"), store: .everyHab),
+        // Capcom's pacing (capcom-service.md 10.1, 19.1): the Capcom home hab reads them at once;
+        // every hab keeps them. The owner's messages never wait: past the small-model step they
+        // run on the small model. A [capcom] pace_* key in hab.toml locks its row.
+        SettingDef(id: capcomPaceDailyShare, title: "Capcom's daily share of the weekly limit", area: .usage,
+                   kind: .integer(1...100, unit: "%"), store: .everyHab),
+        SettingDef(id: capcomPaceSmallAt, title: "Your messages to Capcom use the small model from", area: .usage,
+                   kind: .integer(10...500, unit: "% of share"), store: .everyHab),
+        SettingDef(id: capcomPaceEvents, title: "Hold Capcom's own turns when over its share", area: .usage, kind: .bool, store: .everyHab),
+        SettingDef(id: capcomPaceEventStop, title: "Hold Capcom's own turns from", area: .usage,
+                   kind: .integer(10...500, unit: "% of share"), store: .everyHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareLocationID, title: "Share location with Capcom", area: .agents, kind: .page, store: .app),
         SettingDef(id: CapcomPrefs.shareCalendarID, title: "Share calendar with Capcom", area: .agents, kind: .page, store: .app),

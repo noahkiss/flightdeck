@@ -80,18 +80,29 @@ func governorText(k api.GovernorConsumer, now time.Time) string {
 	case "none":
 		return fmt.Sprintf("%s unpaced: %s tokens today", k.ID, tokens(k.InputTokens+k.OutputTokens))
 	}
-	var pace string
+	// The app's words (GovernorText.pace): Capcom's own name the owner's messages and its own
+	// turns; the owner's messages never wait, so only a group's or an older hab's user turns do.
+	capcom := k.ID == "capcom"
+	var parts []string
 	switch {
 	case k.Pace == "wait":
-		pace = "waits" + untilWord(k.Until, now)
+		parts = append(parts, "waits"+untilWord(k.Until, now))
+	case k.Pace == "small" && capcom:
+		parts = append(parts, "small model for your messages")
 	case k.Pace == "small":
-		pace = "small model"
-	case k.EventPace == "wait":
-		pace = "event turns wait" + untilWord(k.EventUntil, now)
-	default:
+		parts = append(parts, "small model")
+	}
+	if k.EventPace == "wait" && k.Pace != "wait" {
+		if capcom {
+			parts = append(parts, "own turns wait"+untilWord(k.EventUntil, now))
+		} else {
+			parts = append(parts, "event turns wait"+untilWord(k.EventUntil, now))
+		}
+	}
+	if len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s %s · %s", k.ID, pace, use)
+	return fmt.Sprintf("%s %s · %s", k.ID, strings.Join(parts, "; "), use)
 }
 
 func untilWord(at string, now time.Time) string {

@@ -1070,15 +1070,16 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
 - **Usage pacing.** While the home's catalog lists the `capcom` consumer of the usage
   governor at a pace other than `ok`, or unpaced, a line sits above the thread (over the
   composer on the Capcom tab):
-  "Pacing usage until 15:04 · 40% of the week used, share 30%", "Small model · $6.12 of $5.00
-  today", "Event turns wait until Thu 09:30 · …", or "Unpaced: 12.3k tokens today". A time on
+  "Small model for your messages · 40% of the week used, share 30%", "Capcom's own turns wait
+  until Thu 09:30 · $6.12 of $5.00 today", both joined by "; ", or "Unpaced: 12.3k tokens
+  today". The owner's messages never wait (`capcom-service.md` 10.1), so no line says they are
+  paused; only an older hab's wait reads "Pacing usage until 15:04 · …". A time on
   another day carries its weekday. A tap opens the usage sheet (14.2). A catalog with no
-  `governor` section shows nothing. The words are gff's "Usage pacing" lines, except
-  that a wait reads as the thread's note does (`capcom-service.md` 10.1). Code: `Usage/Governor.swift`, `CapcomCenter.governorLine`.
+  `governor` section shows nothing. The words are gff's "Usage pacing" lines. Code: `Usage/Governor.swift`, `CapcomCenter.governorLine`.
   Tests: `GovernorTests`.
 - **Send now.** On the Capcom thread the send button's long-press menu (right click on the Mac)
-  offers "Send now": `session.send` with `send_now: true`, which runs that message on the small
-  model even while the governor makes user turns wait. Other sessions never send the flag.
+  offers "Send now": `session.send` with `send_now: true`. Only an older hab that still makes
+  user turns wait acts on it (`capcom-service.md` 10.1). Other sessions never send the flag.
 - **New conversation.** A toolbar button ("New conversation", the compose symbol) on every
   Capcom session (8.8). The draft now lives in the session view, so the button carries it.
   From a Capcom view, that view shows the new one in its place. From a Capcom session's board
@@ -4024,6 +4025,10 @@ picker never changes them.
 | `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.event_actions_per_turn` | Capcom actions in one look, at most | Capcom | integer 0 to 50; 0 allows none | 10 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
+| `capcom.pace.daily_share` | Capcom's daily share of the weekly limit | Usage | integer 1 to 100, percent; steps of 5 | 15 | Hab, every hab; the home hab reads it at once | `capcom-service.md` 10.1, 19.1 |
+| `capcom.pace.small_at` | Your messages to Capcom use the small model from | Usage | integer 10 to 500, percent of the share; steps of 5 | 100 | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
+| `capcom.pace.events` | Hold Capcom's own turns when over its share | Usage | bool | on | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
+| `capcom.pace.event_stop` | Hold Capcom's own turns from | Usage | integer 10 to 500, percent of the share; steps of 5 | 80 | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
 | `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |

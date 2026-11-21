@@ -10109,7 +10109,7 @@
           },
           "pace": {
             "type": "string",
-            "description": "The next user turn's pace: ok, small (the small model) or wait. An open set."
+            "description": "The next user turn's pace: ok, small (the small model) or wait. Capcom's user turns never wait on a current hab: they go to the small model at most. A group's may wait. An open set."
           },
           "share_pct": {
             "type": "integer",

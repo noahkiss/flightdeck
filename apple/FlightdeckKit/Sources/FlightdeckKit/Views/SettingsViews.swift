@@ -283,6 +283,9 @@ struct ValueControl: View {
                 }
             } else if current < 0 {
                 Text(def.title)
+            } else if unit.hasPrefix("%") {
+                // A percentage (capcom-service.md 19.1): steps of 5 over a wide range.
+                Stepper("\(def.title): \(current)\(unit)", value: Binding(get: { current }, set: { set(.int($0)) }), in: range, step: 5)
             } else {
                 Stepper("\(def.title): \(current)", value: Binding(get: { current }, set: { set(.int($0)) }), in: range)
             }
