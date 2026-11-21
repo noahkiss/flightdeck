@@ -102,6 +102,30 @@ extension EnvironmentValues {
     @Entry var chatAboveComposer: AnyView? = nil
 }
 
+/// The way out of the keyboard on a phone (app.md 4.2), as in Messages: dragging the
+/// messages down takes the keyboard with the finger. The thread bounces even when it is too
+/// short to scroll, so the drag works on an empty or short thread too. With the keyboard gone
+/// the tab bar shows again.
+struct DismissesKeyboard: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .scrollBounceBehavior(.always, axes: .vertical)
+            .scrollDismissesKeyboard(.interactively)
+        #else
+        content
+        #endif
+    }
+}
+
+#if os(iOS) && DEBUG
+/// Debug builds: ends editing in whichever field holds the keyboard.
+@MainActor
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+}
+#endif
+
 /// The header line: harness and host, with the state.
 public struct ChatHeader: View {
     let context: ChatContext
@@ -307,6 +331,7 @@ struct ChatTranscript: View {
             .defaultScrollAnchor(.bottom)
             .modifier(BottomOnResize())
             .overlay { placeholder }
+            .modifier(DismissesKeyboard())
             .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
                 switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
                 case .none: break
@@ -329,12 +354,17 @@ struct ChatTranscript: View {
             switch model.load {
             case .loading:
                 ProgressView()
+                    .allowsHitTesting(false)
             case .waiting, .unavailable, .failed, .ready:
                 if let s = ChatEmptyState.of(model.load, context: model.context) {
+                    // Only the buttons take touches: a drag anywhere else reaches the messages,
+                    // so it can put the keyboard away (4.2).
                     ContentUnavailableView {
                         Label(s.title, systemImage: s.symbol)
+                            .allowsHitTesting(false)
                     } description: {
                         Text(s.line)
+                            .allowsHitTesting(false)
                     } actions: {
                         if s.retry {
                             Button("Try again") { Task { await model.loadTail() } }
@@ -778,6 +808,21 @@ struct ComposerView: View {
         }
         .padding(10)
         .onChange(of: focusRequest) { _, _ in focused = true }
+        #if DEBUG
+        // Debug builds only: `-FlightdeckFocusComposer YES` raises the keyboard at launch, so
+        // the keyboard's way out can be screenshotted (app.md 4.2).
+        .task {
+            guard UserDefaults.standard.bool(forKey: "FlightdeckFocusComposer") else { return }
+            try? await Task.sleep(for: .seconds(2))
+            focused = true
+            // `-FlightdeckThenHideKeyboard YES`: later, put the keyboard away again.
+            guard UserDefaults.standard.bool(forKey: "FlightdeckThenHideKeyboard") else { return }
+            try? await Task.sleep(for: .seconds(4))
+            #if os(iOS)
+            hideKeyboard()
+            #endif
+        }
+        #endif
         .onChange(of: dictation?.liveText) { _, live in
             guard let live, dictation?.phase == .listening,
                   let text = dictationDraft.draft(heard: live, session: dictationSession) else { return }

@@ -72,6 +72,8 @@ public struct BoardScreen: View {
     /// The Capcom view is open (app.md 4.10); it and `opened` never both hold.
     @State private var capcomShown = false
     @State private var showConnections = false
+    /// The New session form, while it is open (app.md 3.10).
+    @State private var newSession: NewSessionDraft?
     /// Debug builds: the Capcom jobs list opened at launch.
     @State private var capcomJobsShown = false
     #if os(iOS)
@@ -217,11 +219,16 @@ public struct BoardScreen: View {
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
         .modifier(SendFileSheetHost(center: fleet?.files, board: board))
         .modifier(CapcomHost(center: fleet?.capcom, board: board, opened: $opened))
+        .modifier(BoardNewSession(fleet: fleet, draft: $newSession) { row in
+            board.open(row)
+            opened = row
+        })
         // One detail at a time: a session or the Capcom view.
         .onChange(of: opened) { _, r in
             guard r != nil else { return }
             capcomShown = false
             fleet?.rounds.sessionOpened()
+            fleet?.newSessions.opened()
         }
         .onChange(of: capcomShown) { _, on in if on { opened = nil } }
         // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
@@ -288,6 +295,30 @@ public struct BoardScreen: View {
         #if os(macOS)
         .frame(minWidth: fleet != nil && (opened != nil || capcomShown) ? 960 : 680, minHeight: 420)
         #endif
+    }
+}
+
+/// The board's New session control and form (app.md 3.10), with a fleet: a plus in the
+/// window's toolbar on the Mac, and the started session opened once the board lists it.
+struct BoardNewSession: ViewModifier {
+    let fleet: Fleet?
+    @Binding var draft: NewSessionDraft?
+    let open: (BoardRow) -> Void
+
+    func body(content: Content) -> some View {
+        if let fleet {
+            content
+                #if os(macOS)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        NewSessionButton(center: fleet.newSessions, draft: $draft)
+                    }
+                }
+                #endif
+                .modifier(NewSessionHost(center: fleet.newSessions, board: fleet.board, draft: $draft, open: open))
+        } else {
+            content
+        }
     }
 }
 

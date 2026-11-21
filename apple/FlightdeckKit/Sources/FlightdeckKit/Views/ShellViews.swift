@@ -15,6 +15,8 @@ struct AppShell: View {
     let fleet: Fleet
     @State private var tab: ShellTab = .sessions
     @State private var opened: BoardRow?
+    /// The New session form, while it is open (app.md 3.10).
+    @State private var newSession: NewSessionDraft?
     /// Debug builds: the Capcom jobs list opened at launch.
     @State private var capcomJobsShown = false
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -26,11 +28,17 @@ struct AppShell: View {
             .modifier(ApprovalSheetHost(center: fleet.approvals, openChat: openChat))
             .modifier(SendFileSheetHost(center: fleet.files, board: board))
             .modifier(CapcomHost(center: fleet.capcom, board: board, opened: $opened))
+            // A started session opens once the board lists it (app.md 3.10).
+            .modifier(NewSessionHost(center: fleet.newSessions, board: board, draft: $newSession) { row in
+                board.open(row)
+                opened = row
+            })
             .usageSheet(fleet.usage, governor: fleet.capcom)
             .onChange(of: opened) { _, r in
                 guard r != nil else { return }
                 tab = .sessions
                 fleet.rounds.sessionOpened()
+                fleet.newSessions.opened()
             }
             // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
             .onChange(of: fleet.rounds.openRequest) { _, t in
@@ -51,7 +59,7 @@ struct AppShell: View {
                 if let row = board.rows.first(where: { $0.target == t }) { opened = row }
             }
             #if DEBUG
-            .modifier(ShellLaunchArguments(fleet: fleet, tab: $tab, opened: $opened, capcomJobsShown: $capcomJobsShown))
+            .modifier(ShellLaunchArguments(fleet: fleet, tab: $tab, opened: $opened, capcomJobsShown: $capcomJobsShown, newSession: $newSession))
             #endif
     }
 
@@ -80,7 +88,7 @@ struct AppShell: View {
     }
 
     private var sessions: some View {
-        SessionsTab(fleet: fleet, opened: $opened, footer: !Self.hasAccessory) { tab = .settings }
+        SessionsTab(fleet: fleet, opened: $opened, newSession: $newSession, footer: !Self.hasAccessory) { tab = .settings }
     }
 
     private static var hasAccessory: Bool {
@@ -135,12 +143,13 @@ struct AppShell: View {
 /// Debug builds only: launch arguments that open a screen with no taps, so a build can be
 /// checked and screenshotted headlessly. `-FlightdeckTab capcom|rounds|settings`,
 /// `-FlightdeckOpenCapcom YES`, `-FlightdeckOpenSession <session>`, `-FlightdeckOpenCapcomJobs YES`,
-/// `-FlightdeckShow review|group|hab`.
+/// `-FlightdeckShow review|group|hab`, `-FlightdeckNewSession YES` (the New session form).
 struct ShellLaunchArguments: ViewModifier {
     let fleet: Fleet
     @Binding var tab: ShellTab
     @Binding var opened: BoardRow?
     @Binding var capcomJobsShown: Bool
+    @Binding var newSession: NewSessionDraft?
     /// `-FlightdeckShow review|group|hab` opens that screen in a sheet.
     @State private var shown: String?
 
@@ -162,6 +171,17 @@ struct ShellLaunchArguments: ViewModifier {
                 for _ in 0..<300 {
                     if let row = fleet.board.rows.first(where: { $0.target.session == id }) {
                         opened = row
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            .task {
+                guard UserDefaults.standard.bool(forKey: "FlightdeckNewSession") else { return }
+                // Up to 30 s for a hab to come online.
+                for _ in 0..<300 {
+                    if let d = fleet.newSessions.draft() {
+                        newSession = d
                         return
                     }
                     try? await Task.sleep(for: .milliseconds(100))
@@ -205,6 +225,7 @@ struct ShellLaunchArguments: ViewModifier {
 struct SessionsTab: View {
     let fleet: Fleet
     @Binding var opened: BoardRow?
+    @Binding var newSession: NewSessionDraft?
     /// Before iOS 26.1 the usage strip sits under the list (app.md 3.7).
     let footer: Bool
     let openSettings: () -> Void
@@ -240,13 +261,16 @@ struct SessionsTab: View {
     private var list: some View { list(selectable: false) }
 
     private func list(selectable: Bool) -> some View {
-        SessionsListView(fleet: fleet, opened: $opened, selectable: selectable)
+        SessionsListView(fleet: fleet, opened: $opened, selectable: selectable, newSession: $newSession)
             .modifier(OptionalUsageFooter(usage: footer ? fleet.usage : nil))
             .navigationTitle("Sessions")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HostsMenu(board: fleet.board, openSettings: openSettings)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    NewSessionButton(center: fleet.newSessions, draft: $newSession)
                 }
             }
             .navigationDestination(for: GroupSummary.self) { g in
@@ -316,6 +340,8 @@ struct SessionsListView: View {
     @Binding var opened: BoardRow?
     /// iPad: the open session's row shows selected, and a tap on a row selects it.
     var selectable = false
+    /// The New session form, for the empty list's action.
+    @Binding var newSession: NewSessionDraft?
 
     private var board: Board { fleet.board }
 
@@ -360,8 +386,14 @@ struct SessionsListView: View {
             }
             .overlay {
                 if sections.isEmpty {
-                    ContentUnavailableView("No sessions", systemImage: "rectangle.stack",
-                                           description: Text("Sessions on your computers show here."))
+                    ContentUnavailableView {
+                        Label("No sessions", systemImage: "rectangle.stack")
+                    } description: {
+                        Text("Sessions on your computers show here.")
+                    } actions: {
+                        Button("New session") { newSession = fleet.newSessions.draft() }
+                            .disabled(fleet.newSessions.habs.isEmpty)
+                    }
                 }
             }
         }
@@ -724,6 +756,8 @@ struct ConfirmReviewSheet: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
                 }
             }
+            // The card's seed and fields take the keyboard; a drag on the card puts it away.
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Review")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
