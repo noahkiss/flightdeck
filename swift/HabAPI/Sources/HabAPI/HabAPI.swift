@@ -4195,7 +4195,7 @@ public struct GovernorConsumer: Codable, Sendable, Hashable {
     public var inputTokens: Int?
     /// Today's output tokens.
     public var outputTokens: Int?
-    /// The next user turn's pace: ok, small (the small model) or wait. An open set.
+    /// The next user turn's pace: ok, small (the small model) or wait. Capcom's user turns never wait on a current hab: they go to the small model at most. A group's may wait. An open set.
     public var pace: String
     /// plan: the consumer's share of the window so far, in whole percent: the daily share times the days begun, at most 100.
     public var sharePct: Int?
@@ -9759,7 +9759,7 @@ public struct SessionSendParams: Codable, Sendable, Hashable {
     /// A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing.
     public var idempotencyKey: String?
     public var origin: SendOrigin
-    /// The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it.
+    /// The Capcom service session only: run this message now on the small model, with the messages waiting before it, where an older hab's usage governor makes user turns wait; a current hab never holds a user turn, so it changes nothing there. Other sessions ignore it.
     public var sendNow: Bool?
     public var session: String
     public var text: String

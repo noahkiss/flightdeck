@@ -886,7 +886,7 @@ struct ComposerView: View {
             .accessibilityLabel(mode == .answer ? "Send answer" : "Send")
             .contextMenu {
                 // The Capcom thread only (capcom-service.md 10.1): run it on the small model
-                // even while the usage governor makes user turns wait.
+                // where an older hab's usage governor still makes user turns wait.
                 if model.context.isCapcomService {
                     Button("Send now", systemImage: "bolt") { send(now: true) }
                 }

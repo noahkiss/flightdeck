@@ -201,7 +201,7 @@ struct SettingRow: View {
         case .everyHab:
             let row = center.row(def.id)
             ValueControl(def: def, value: row.value) { v in Task { await center.setEveryHab(def.id, v) } }
-                .disabled(row.unavailable || (!row.lockedOn.isEmpty && row.lockedOn.count == holdingCount))
+                .disabled(row.unavailable || (!row.lockedOn.isEmpty && row.lockedOn.count == holdingCount) || offByParent)
         case .oneHab:
             Text(def.title)
             ForEach(center.habs.filter { $0.hasSettings && $0.settings[def.id] != nil }, id: \.habID) { h in
@@ -210,6 +210,12 @@ struct SettingRow: View {
                     .disabled(s.isLocked)
             }
         }
+    }
+
+    /// A row that does nothing while the switch it depends on is off: the event step while event
+    /// pacing is off (capcom-service.md 19.1).
+    private var offByParent: Bool {
+        def.id == SettingsRegistry.capcomPaceEventStop && center.row(SettingsRegistry.capcomPaceEvents).value == .bool(false)
     }
 
     private var holdingCount: Int {
@@ -283,6 +289,11 @@ struct ValueControl: View {
                 }
             } else if current < 0 {
                 Text(def.title)
+            } else if unit.hasPrefix("%") {
+                // A percentage (capcom-service.md 19.1): a percent of the share in steps of 5 over
+                // its wide range; a plain percent in steps of 1.
+                Stepper("\(def.title): \(current)\(unit)", value: Binding(get: { current }, set: { set(.int($0)) }), in: range,
+                        step: unit == "%" ? 1 : 5)
             } else {
                 Stepper("\(def.title): \(current)", value: Binding(get: { current }, set: { set(.int($0)) }), in: range)
             }

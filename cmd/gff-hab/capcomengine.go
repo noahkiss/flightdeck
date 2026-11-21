@@ -282,7 +282,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 				e.message(it, session)
 			}
 		}
-		e.pace.waiting(it)
+		e.pace.userMessage(it)
 	})
 	e.link = capcomengine.NewLink(capcomengine.LinkConfig{
 		Thread: th, Record: rec,
@@ -308,7 +308,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		Events:      q,
 	})
 	e.pace = &capcomPacer{gov: s.governor, usage: s.usage, host: s.host, dir: capcomengine.EngineDir(dir),
-		config: config, configPath: s.configPath, link: e.link, thread: th, now: time.Now, logf: s.logf}
+		config: config, setting: e.settingValue, configPath: s.configPath, link: e.link, now: time.Now, logf: s.logf}
 	job := s.job
 	if job == nil {
 		job = capcomengine.ProcessJob{PidFile: filepath.Join(dir, capcomengine.PidFile), Match: engineCommand}

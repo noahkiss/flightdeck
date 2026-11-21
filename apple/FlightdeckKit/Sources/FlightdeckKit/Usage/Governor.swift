@@ -4,14 +4,22 @@ import HabAPI
 /// The usage governor's words (capcom-service.md 10.1), from a catalog's `governor` section.
 /// They match gff's "Usage pacing" lines on the status board.
 public enum GovernorText {
-    /// The pace phrase, or nil when the consumer runs at `ok` on a reading: "Pacing usage
-    /// until 15:04", "small model", "event turns wait until 15:04", or "unpaced".
+    /// The pace phrase, or nil when the consumer runs at `ok` on a reading. Capcom's own: "small
+    /// model for your messages", "Capcom's own turns wait until 15:04", or both joined by "; ".
+    /// The owner's messages never wait on a current hab, so no Capcom phrase says they are
+    /// paused. Another consumer's: "small model", "event turns wait until 15:04". A wait of
+    /// user turns (a group's, or an older hab's Capcom): "Pacing usage until 15:04". With no
+    /// reading: "unpaced".
     public static func pace(_ k: GovernorConsumer, now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String? {
         if k.basis == "none" { return "unpaced" }
         if k.pace == "wait" { return "Pacing usage" + until(k.until, now: now, calendar: calendar, locale: locale) }
-        if k.pace == "small" { return "small model" }
-        if k.eventPace == "wait" { return "event turns wait" + until(k.eventUntil, now: now, calendar: calendar, locale: locale) }
-        return nil
+        let capcom = k.id == "capcom"
+        var parts: [String] = []
+        if k.pace == "small" { parts.append(capcom ? "small model for your messages" : "small model") }
+        if k.eventPace == "wait" {
+            parts.append((capcom ? "Capcom's own turns wait" : "event turns wait") + until(k.eventUntil, now: now, calendar: calendar, locale: locale))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 
     /// What the pace reads: "40% of the week used, share 30%", "$1.20 of $5.00 today", or
@@ -30,8 +38,8 @@ public enum GovernorText {
     }
 
     /// One consumer's line, or nil when it runs at `ok` on a reading: the pace, then the use.
-    /// "Pacing usage until 15:04 · 40% of the week used, share 30%", "Small model · $5.10 of
-    /// $5.00 today", "Unpaced: 12.3k tokens today".
+    /// "Small model for your messages · 40% of the week used, share 30%", "Capcom's own turns
+    /// wait until 15:04 · $5.10 of $5.00 today", "Unpaced: 12.3k tokens today".
     public static func line(_ k: GovernorConsumer, now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String? {
         guard let p = pace(k, now: now, calendar: calendar, locale: locale) else { return nil }
         let head = p.prefix(1).uppercased() + p.dropFirst()

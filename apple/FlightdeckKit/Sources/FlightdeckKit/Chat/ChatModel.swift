@@ -106,7 +106,7 @@ public struct Outgoing: Identifiable, Equatable, Sendable {
     /// The attachments the hab already stored, in order: a retry uploads only the rest.
     public var uploaded: [UploadedAttachment] = []
     /// "Send now" on the Capcom thread (capcom-service.md 10.1): the hab runs it on the small
-    /// model even while the usage governor makes user turns wait.
+    /// model. Only an older hab, whose usage governor still makes user turns wait, acts on it.
     public var sendNow = false
     /// Bytes of the attachment uploading now that the hab holds.
     public var uploadedBytes = 0

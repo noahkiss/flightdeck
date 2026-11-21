@@ -44,7 +44,7 @@ type CatalogGovernor struct {
 type GovernorConsumer struct {
 	ID           string `json:"id" doc:"capcom, or group:<id>."`
 	Basis        string `json:"basis" doc:"plan: the plan's weekly window; usd: today's result cost against the daily dollar cap; none: unpaced, with no reading, its tokens counted. An open set."`
-	Pace         string `json:"pace" doc:"The next user turn's pace: ok, small (the small model) or wait. An open set."`
+	Pace         string `json:"pace" doc:"The next user turn's pace: ok, small (the small model) or wait. Capcom's user turns never wait on a current hab: they go to the small model at most. A group's may wait. An open set."`
 	EventPace    string `json:"event_pace" doc:"The next event turn's pace: ok or wait. An open set."`
 	Until        string `json:"until,omitempty" doc:"RFC 3339 UTC time a wait of user turns ends."`
 	EventUntil   string `json:"event_until,omitempty" doc:"RFC 3339 UTC time a wait of event turns ends."`

@@ -1,8 +1,9 @@
 package main
 
 // Capcom as a consumer of the usage governor (capcom-service.md 10.1): its policy from the
-// [capcom] pace_* keys, its readings from the engine's usage events under its own account key,
-// the pace sent to the engine before each turn, and the "Pacing usage" note.
+// capcom.pace.* settings (19.1), its readings from the engine's usage events under its own
+// account key, and the pace sent to the engine before each turn. The owner's messages never
+// wait: the policy has no wait step.
 
 import (
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
 	"github.com/noahkiss/flightdeck/internal/governor"
+	"github.com/noahkiss/flightdeck/internal/settings"
 	habusage "github.com/noahkiss/flightdeck/internal/usage"
 )
 
@@ -29,12 +31,14 @@ type capcomPacer struct {
 	// usage.Key(host, <engine>, dir), so a Codex engine's plan windows are a Codex account.
 	host, dir string
 	config    func() capcom.ServiceConfig
-	// configPath is the hab's config file: a pace_* edit rechecks once it held for one poll.
-	// "": no watch.
+	// setting reads a hab-side setting, its default before the settings service runs: the
+	// capcom.pace.* numbers, read at each recheck.
+	setting func(id string) json.RawMessage
+	// configPath is the hab's config file: an edit of the engine, the auth or daily_usd
+	// rechecks once it held for one poll. "": no watch.
 	configPath string
 	poll       time.Duration // the config file check; 0: 2 s
 	link       *capcomengine.Link
-	thread     *capcomthread.Store
 	now        func() time.Time
 	logf       func(string, ...any)
 
@@ -42,10 +46,10 @@ type capcomPacer struct {
 	mu     sync.Mutex
 	on     bool
 	ans    governor.Answer
-	noted  time.Time // the wait the last note named; zero: none since the wait began
 	drifts map[string]bool
-	// The settings from the last config read: the governor asks for them at each recheck,
-	// and the config file is read only at start, on a change and on a user message.
+	// The config from the last read: the governor asks for it at each recheck, and the config
+	// file is read only at start, on a change and on a user message. Only DailyUSD is set: the
+	// rest of the policy comes from the settings.
 	pol   governor.Policy
 	acct  string
 	done  chan struct{} // closed by stop: ends the config watch
@@ -67,13 +71,13 @@ func stampFile(path string) fileStamp {
 	return fileStamp{size: fi.Size(), mod: fi.ModTime(), ok: true}
 }
 
-// refresh reads the config once: Capcom's policy, the pace_* keys and under an API key the
-// daily dollar cap; and its account, its own under the OAuth token (an API key has no plan
-// window). It reports whether either changed.
+// refresh reads the config once: under an API key the daily dollar cap, and Capcom's account,
+// its own under the OAuth token (an API key has no plan window). It reports whether either
+// changed.
 func (p *capcomPacer) refresh() bool {
 	st := stampFile(p.configPath)
 	cfg := p.config()
-	pol := governor.Policy{DailyShare: cfg.Pace.DailyShare, EventStop: cfg.Pace.EventStop, SmallAt: cfg.Pace.SmallAt, WaitAt: cfg.Pace.WaitAt}
+	var pol governor.Policy
 	acct := p.key(cfg.Engine)
 	if cfg.Auth == capcom.AuthAPIKey {
 		pol.DailyUSD = cfg.Limits.DailyUSD
@@ -87,11 +91,33 @@ func (p *capcomPacer) refresh() bool {
 	return changed
 }
 
-// policy is Capcom's policy as of the last config read.
+// policy is Capcom's policy: the capcom.pace.* settings now, and the dollar cap as of the last
+// config read. It has no wait step: the owner's messages never wait (10.1). With event pacing
+// off, the event step is 0, which the governor reads as off.
 func (p *capcomPacer) policy() governor.Policy {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.pol
+	pol := p.pol
+	p.mu.Unlock()
+	num := func(id string) float64 {
+		var n float64
+		if p.setting == nil || json.Unmarshal(p.setting(id), &n) != nil || n <= 0 {
+			d, _ := settings.Lookup(id)
+			json.Unmarshal(d.Default, &n)
+		}
+		return n
+	}
+	pol.DailyShare = num(settings.CapcomPaceDailyShare)
+	pol.SmallAt = num(settings.CapcomPaceSmallAt)
+	pol.EventStop = num(settings.CapcomPaceEventStop)
+	events := true
+	if p.setting != nil {
+		json.Unmarshal(p.setting(settings.CapcomPaceEvents), &events)
+	}
+	if !events {
+		pol.EventStop = 0
+	}
+	pol.WaitAt = 0
+	return pol
 }
 
 // account is the account whose weekly window paces Capcom, as of the last config read.
@@ -101,8 +127,9 @@ func (p *capcomPacer) account() string {
 	return p.acct
 }
 
-// watch rechecks once the config file changed and then held for one poll, so a pace_* edit
-// applies at once, also during a wait, and a file in the middle of a write is not read.
+// watch rechecks once the config file changed and then held for one poll, so an edit of the
+// engine, the auth or daily_usd applies at once, and a file in the middle of a write is not
+// read. A pace_* edit reaches the governor through the settings service.
 func (p *capcomPacer) watch(done chan struct{}) {
 	d := p.poll
 	if d <= 0 {
@@ -189,9 +216,6 @@ func (p *capcomPacer) changed(governor.Answer) {
 		p.mu.Unlock()
 		return
 	}
-	if a.Pace != governor.Wait || !a.Until.Equal(p.ans.Until) {
-		p.noted = time.Time{}
-	}
 	p.ans = a
 	p.mu.Unlock()
 	p.link.SetPace(string(a.Pace), paceTime(a.Until), string(a.EventPace), paceTime(a.EventUntil))
@@ -254,10 +278,9 @@ func (p *capcomPacer) turn(origin string, input, output int64, usd float64) {
 	}
 }
 
-// waiting rechecks when a user message arrives, with the config read again, so the message
-// meets the pace of now. Then it adds the "Pacing usage until <time>" note while user turns
-// wait: once per wait, not once per message. A send-now message gets none: it runs.
-func (p *capcomPacer) waiting(it capcomthread.Item) {
+// userMessage rechecks when a user message arrives, with the config read again, so the message
+// meets the pace of now. The message never waits: at most it runs on the small model.
+func (p *capcomPacer) userMessage(it capcomthread.Item) {
 	if it.Kind != capcomthread.KindMessage || it.Author.Kind != capcomthread.AuthorUser || !it.Read.IsZero() {
 		return
 	}
@@ -268,41 +291,4 @@ func (p *capcomPacer) waiting(it capcomthread.Item) {
 		p.refresh()
 		p.gov.Recheck()
 	}
-	if it.SendNow {
-		return
-	}
-	p.mu.Lock()
-	a := p.ans
-	note := p.on && a.Pace == governor.Wait && !a.Until.IsZero() && !p.noted.Equal(a.Until)
-	if note {
-		p.noted = a.Until
-	}
-	p.mu.Unlock()
-	if !note {
-		return
-	}
-	loc := time.Local
-	if it.TZ != "" {
-		if l, err := time.LoadLocation(it.TZ); err == nil {
-			loc = l
-		}
-	}
-	if _, _, err := p.thread.Add(capcomthread.Item{Kind: capcomthread.KindNote, Author: capcomthread.Author{Kind: capcomthread.AuthorFlightdeck},
-		Text: "Pacing usage until " + untilText(a.Until.In(loc), p.now().In(loc))}); err != nil {
-		p.logf("capcom: the pacing note: %v", err)
-	}
-}
-
-// untilText names a time: the clock time today, else the weekday and clock time within a week,
-// else the date.
-func untilText(t, now time.Time) string {
-	y1, m1, d1 := t.Date()
-	y2, m2, d2 := now.Date()
-	switch {
-	case y1 == y2 && m1 == m2 && d1 == d2:
-		return t.Format("15:04")
-	case t.Sub(now) < 6*24*time.Hour:
-		return t.Format("Mon 15:04")
-	}
-	return t.Format("2 Jan 15:04")
 }

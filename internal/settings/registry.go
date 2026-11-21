@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -58,6 +60,17 @@ const (
 	CapcomEventActions        = "capcom.event_actions"
 	CapcomEventActionsPerTurn = "capcom.event_actions_per_turn"
 	CapcomEventActionMaxAge   = "capcom.event_action_max_age"
+	// Capcom's pacing (capcom-service.md 10.1, 19.1): its daily share of the plan's weekly
+	// window in percent; the level, in percent of that share, at which the owner's messages go
+	// to the small model; whether event turns are paced at all; and the level at which they
+	// wait. The owner's messages never wait. The [capcom] pace_* keys of the config file lock
+	// the first three ids as a [settings] entry does (legacyPace).
+	CapcomPaceDailyShare = "capcom.pace.daily_share"
+	CapcomPaceSmallAt    = "capcom.pace.small_at"
+	CapcomPaceEvents     = "capcom.pace.events"
+	CapcomPaceEventStop  = "capcom.pace.event_stop"
+	// CapcomPacePrefix starts each of Capcom's pace ids.
+	CapcomPacePrefix = "capcom.pace."
 	// Agent groups' caps (groups.md 15.3), each on every hab.
 	GroupConfirmMaxAge = "group.confirm_max_age" // minutes
 	GroupMaxLeads      = "group.max_leads"
@@ -124,6 +137,10 @@ var Defs = []Def{
 	{ID: CapcomEventActions, Default: json.RawMessage(`"allow"`), check: checkWord("off", "ask", "allow", "all")},
 	{ID: CapcomEventActionsPerTurn, Default: json.RawMessage(`10`), check: checkInt(0, 50), integer: true},
 	{ID: CapcomEventActionMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
+	{ID: CapcomPaceDailyShare, Default: json.RawMessage(`15`), check: checkInt(1, 100), integer: true},
+	{ID: CapcomPaceSmallAt, Default: json.RawMessage(`100`), check: checkInt(10, 500), integer: true},
+	{ID: CapcomPaceEvents, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: CapcomPaceEventStop, Default: json.RawMessage(`80`), check: checkInt(10, 500), integer: true},
 	{ID: GroupConfirmMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: GroupMaxLeads, Default: json.RawMessage(`3`), check: checkInt(1, 10), integer: true},
 	{ID: GroupMaxWorkers, Default: json.RawMessage(`2`), check: checkInt(0, 5), integer: true},
@@ -215,6 +232,41 @@ func checkWord(words ...string) func(any) (json.RawMessage, error) {
 		}
 		return json.Marshal(s)
 	}
+}
+
+// legacyPace maps the [capcom] pace_* keys of the config file to the settings they lock
+// (capcom-service.md 19.1). pace_wait_at has no setting: the owner's messages never wait, and
+// the capcom package logs it as no longer used.
+var legacyPace = []struct{ key, id string }{
+	{"pace_daily_share", CapcomPaceDailyShare},
+	{"pace_event_stop", CapcomPaceEventStop},
+	{"pace_small_at", CapcomPaceSmallAt},
+}
+
+// legacyPercent reads a [capcom] pace_* value as its setting's value: a number (15, 12.5) or a
+// string ("15%"), rounded to the nearest whole percent, then checked against the setting's range.
+func legacyPercent(d Def, v any) (json.RawMessage, error) {
+	x := math.NaN()
+	switch n := v.(type) {
+	case int64:
+		x = float64(n)
+	case float64:
+		x = n
+	case string:
+		if t, cut := strings.CutSuffix(strings.TrimSpace(n), "%"); cut {
+			if f, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
+				x = f
+			}
+		}
+	}
+	if math.IsNaN(x) || math.IsInf(x, 0) {
+		return nil, fmt.Errorf("want a percentage, such as 15 or \"15%%\"")
+	}
+	out, err := d.Check(json.RawMessage(strconv.FormatInt(int64(math.Round(x)), 10)))
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // QuietOff is the quiet hours value that turns them off (capcom-service.md 9.2).

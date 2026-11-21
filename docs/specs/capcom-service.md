@@ -356,7 +356,7 @@ From gff-hab to the engine:
 | `interrupt` | Stop the current turn |
 | `reseed` | Re-seed now, with a reason (`new`, `limit`, `quiet`, `restart_failed`) |
 | `context` | The context manager's material (6): the summary at hand, the thread items since it, and for a re-seed the seed's parts. The answer to `context.request`, or a quiet summary update on its own (6.1) |
-| `pace` | The governor's answer for the next turn: `ok`, `small` or `wait` with a time (10.1) |
+| `pace` | The governor's answer for the next turn: `ok` or `small` for a user turn, `ok` or `wait` with a time for an event turn (10.1). The engine still honours a user `wait`; gff-hab no longer sends it |
 | `approval.answer` | The answer to an `approval.request` |
 | `shutdown` | Finish the turn, then exit |
 
@@ -900,7 +900,7 @@ stays native").
 | `round` | A quiet line "Round <name>: 3 events", tap for the prompt and the events, shown as data from outside | A round message (9.5) |
 | `event` | A quiet line with the notice's title (added in A7, 9.7) | A notice on the home hab (9.1) |
 | `card` | Hand-off record, confirmation, approval, calendar or reminder card, proposal line, a group card that opens the group's card (`groups.md` 12.1) | The hab's cards (`capcom.md` 6.3, `app.md` 4.8, 7.9), 8.5 and `group_create` |
-| `note` | A one-line Flightdeck note: "Noted: …", "Pacing usage until 14:00", "Capcom restarted" | gff-hab |
+| `note` | A one-line Flightdeck note: "Noted: …", "Capcom restarted" | gff-hab |
 | `divider` | A thin rule with "Earlier messages summarised" or "New conversation"; tap shows the summary | 6.2, 6.3, 7.5 |
 
 ### 7.3 Typing, delivered and read
@@ -1307,7 +1307,7 @@ the service's side of that interface; rounds own the message's fields and the ru
   | `duplicate` | The thread already holds a `round` item with that channel message id. Nothing is added |
   | `declined`, with a reason word | Capcom will not look at it. Reasons are an open set; today only `off`: the user turned `capcom.events.round_messages` off |
 
-  The daily turn budget, the governor's `wait` and a down engine never decline: the message is
+  The daily turn budget, the governor's event `wait` and a down engine never decline: the message is
   accepted and waits. Quiet hours hold only pushes (9.2). A hab that does not hold the mark refuses the message
   (`refused`, "Capcom moved to <label>", 14), as for any message to `capcom`.
 - **The actor id.** The service's actor id is the session id of its session record (2.1). The
@@ -1664,14 +1664,16 @@ The usage governor (stage G) owns the pacing rules. This spec fixes Capcom's sid
 
 - Capcom is one consumer of the governor, `capcom`, as each group is `group:<id>`
   (`groups.md` 10).
-- Before each turn the engine has a `pace` from gff-hab: `ok` (main model), `small` (the small
-  model), or `wait` until a time.
+- Before each turn the engine has a `pace` from gff-hab: `ok` (main model) or `small` (the
+  small model) for a user turn; `ok` or `wait` until a time for an event turn.
+- **The owner's messages never wait** (owner decision, 2026-11-21). A user turn's pace is at
+  most `small`. Reason: the share is measured against the whole account's weekly window, so the
+  owner's own coding can use it up; a message that then waits most of a day reads as broken.
+  Only event turns, which Capcom starts on its own, wait.
 - Defaults the governor applies to Capcom: a daily share of the weekly window, about 15% a day,
-  cumulative (`swarm-study.md` 2.6). Event turns stop at 80% of the share; user turns go to the
-  small model at 100% and wait at 120%. Each of the four numbers is a `[capcom]` key (19.2).
-- At `wait`, gff-hab adds a note, "Pacing usage until <time>", and the message waits. No model
-  call is made for it. "Send now" in the send button's long-press menu runs that one message
-  on the small model anyway.
+  cumulative (`swarm-study.md` 2.6). Event turns wait at 80% of the share; user turns go to the
+  small model at 100%. Each number, and a switch that turns event pacing off, is a hab-side
+  setting the app edits (`capcom.pace.*`, 19.1).
 - Readings: under the OAuth token (10.2), the SDK's rate-limit events as the engine's usage reading, with
   the harness `claude` and its own account key (`app.md` 14.1). On the Codex engine under the
   login, the rollout's rate limits, with the harness `codex`. Under an API key, the result
@@ -1685,15 +1687,17 @@ The usage governor (stage G) owns the pacing rules. This spec fixes Capcom's sid
 first consumer.
 
 - **The share.** The plan basis reads the consumer's account's weekly window (`7d`, with a
-  start). On day d of the window (0 the first day) the share is `pace_daily_share` × (d + 1), at
+  start). On day d of the window (0 the first day) the share is `capcom.pace.daily_share` × (d + 1), at
   most 100%. The use is the window's used percentage: the whole account's, since a reading names
   no consumer. The level is the use as a percentage of the share. User turns go to the small
-  model at `pace_small_at` and wait at `pace_wait_at`; event turns wait at `pace_event_stop`.
+  model at `capcom.pace.small_at` and never wait; event turns wait at `capcom.pace.event_stop`,
+  unless `capcom.pace.events` is off. The governor reads a step at 0 as off; Capcom's policy has
+  no user wait step, and a group's may (`groups.md` 10).
 - **Until.** A wait lasts until the start of the first later window day whose share takes the
   level under the step, else until the window resets. A window whose reset passed with no reading
   since counts as 0% used. The governor rechecks at each reading, each turn's end, each user
-  message, a `pace_*` edit (once the config file held for one 2 s check), the next window day and
-  local midnight. Its timer runs at most 5 minutes and each fire compares wall time, so a sleep
+  message, a change of a `capcom.pace.*` setting (from the app at once; from the config file
+  once it held for one 2 s check), the next window day and local midnight. Its timer runs at most 5 minutes and each fire compares wall time, so a sleep
   ends no wait late. The pace settings are read once per recheck, with no lock held.
 - **Readings.** The engine's `usage` messages are the SDK's `rate_limit_info`: `unifiedWindows`
   (a window per key, `utilization` a fraction, `resetsAt` Unix seconds) and the top-level window
@@ -1716,9 +1720,10 @@ first consumer.
   Capcom is unpaced until the new engine's first reading. A model family with its own limit id adds windows named
   after it (`<limit> 7d`), which the governor does not read.
 - **The dollar cap.** Under `auth = "api_key"` with `daily_usd` set, the level is today's
-  reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and a wait lasts
-  until local midnight. With the default steps user turns wait at 120% of `daily_usd`, and the
-  turn that crosses it can add up to `max_turn_usd`: set `pace_wait_at = 100` for a hard cap.
+  reported cost (the turns' `cost_usd`, by the hab's local day) against the cap, and an event
+  wait lasts until local midnight. `daily_usd` is not a hard cap for the owner's messages: past
+  `capcom.pace.small_at` they run on the small model, and only `max_turn_usd` bounds each turn.
+  Event turns stop at `capcom.pace.event_stop` of the cap.
   Today's tokens and cost are kept in `<state>/governor.json`, so a
   restart keeps them.
 - **Unpaced.** With no weekly window (no reading yet, or an API key with no `daily_usd`) Capcom
@@ -1727,25 +1732,30 @@ first consumer.
   engine keeps the newest `pace`; with none, every turn runs. Before a new turn: at `ok` the main
   model, at `small` the small model. Claude takes `small_model`, else the alias `haiku`, through
   the SDK's `setModel`. Codex takes `small_model`, else the main model, by resuming the same
-  thread on it. At `wait` the items stay with the engine, untaken, until a new
-  `pace`. Event batches (round messages go in them since A7, 9.7) and agent reports wait at the event
+  thread on it. At a user `wait` (an older gff-hab; a current one never sends it) the items stay
+  with the engine, untaken, until a new `pace`. Event batches (round messages go in them since A7, 9.7) and agent reports wait at the event
   step, since no user typed them; the item's kind still gives the turn's origin. An item that
   waits at the event step does not hold a user message after it: the user turn takes both. Input
   that arrives during a running turn joins it, except while user turns wait: then only an item
   with a send-now item at or after it, or an event-step item while event turns run, joins.
-- **The note.** The first user message during a wait gets the note "Pacing usage until
-  <time>" in the thread, once per wait. The note is not model input.
-- **Send now.** `session.send` with `send_now: true` (the long-press menu in the app) marks the item. While user turns wait, a marked item runs at once on the small
-  model, with the items waiting before it. Items queued after the last marked item wait for the
-  next pace.
+- **No note.** gff-hab adds no pacing note to the thread: a user message is never held. The
+  app's line above the thread says when Capcom is on the small model or holds its own turns.
+- **Send now.** `session.send` with `send_now: true` (the long-press menu in the app) marks the
+  item. It matters only against an older gff-hab that still makes user turns wait: there a
+  marked item runs at once on the small model, with the items waiting before it. A current
+  gff-hab never holds a user turn, so the mark changes nothing. The menu item stays: the app
+  may reach an older hab, the catalog does not say whether a hab can hold a user turn, and on a
+  current hab the message simply runs as any other does.
 - **The catalog.** The `governor` section lists each consumer: basis, the two paces with their
   ends, the use and the share (`plan`), the spend and the cap in cents (`usd`), and today's
   tokens. gff's status board shows each consumer that is not at `ok`, or is unpaced, under
   "Usage pacing".
 - **The app.** The Capcom screen shows the `capcom` consumer's line above the thread, and the
-  usage sheet a "Usage pacing" section: "Pacing usage until <time>" (the note's words),
-  "small model", "event turns wait", "unpaced", then the use in gff's words (`app.md` 4.10,
-  14.2). The send
+  usage sheet a "Usage pacing" section: "Small model for your messages", "Capcom's own turns
+  wait until <time>", both joined by "; ", or "Unpaced", then the use in gff's words (`app.md`
+  4.10, 14.2). No Capcom line says the owner's message is paused. A group's wait, or an older
+  hab's, reads "Pacing usage until <time>". The Settings page edits the `capcom.pace.*` rows
+  under Usage (19.1). The send
   button's long-press menu on the thread sends with `send_now: true`. A catalog with no
   `governor` section shows nothing.
 - **Groups.** A group registers as its own consumer, `group:<id>`, with its policy, its account
@@ -2048,7 +2058,7 @@ Each stage ends with a fresh-eyes review where marked core.
 | Stage | Builds | Acceptance tests |
 |---|---|---|
 | A2: engine and hab half. Core | 3, 4, 5, 7.1 to 7.4 hab side, 7.7, 11; the session record kind `capcom` with no pane; `[capcom] engine` (`claude`); the engine job in `gff-hab install` on macOS and Linux; Node.js check | With a fake model endpoint: two messages sent during a turn are taken in order and each marked read; Stop ends the turn and the next message runs; a `start_session` raises a confirmation and starts nothing before the answer; a dispatched session's `channel_send` to `capcom` starts a turn; a built-in tool outside 5.1 is never offered to the model; a `WebFetch` of an unseen URL raises an approval card and a seen one does not; a gff-hab restart mid-turn loses no reply; an engine kill mid-turn resumes the SDK session and resends untaken items; a tool call on the engine route records the Capcom session as the actor and files a proposal; personal tools are refused on a pane route; the start check refuses an SDK whose `init` lists a tool outside 5.1; a crash after an input was handed but before its echo resumes with that input taken once; five crashes in 10 minutes stop the restarts and `capcom resume` clears them; a gff-hab start adopts a running engine; each engine start gets a new token and the old one is refused; the OAuth token from `oauth_token_command` and from `CLAUDE_CODE_OAUTH_TOKEN` in gff-hab's environment each reach the bundled binary as `CLAUDE_CODE_OAUTH_TOKEN`, the command first, through `hello` and not the job's environment file; a planted value appears in no file under the state directory, the unit or plist `gff-hab install` writes, a log, a session record, a thread item, a notice or the catalog; an `oauth_token` key in the config file is refused naming the command key; an installed hab with only the environment variable gives the one line; `auth = "api_key"` passes `ANTHROPIC_API_KEY` instead; no token leaves the engine stopped with the row's "no Claude token" line; a refused token runs the command again once after 5 minutes; a second refusal stops the engine with one notice, and `capcom resume` reads the source again; losing the mark lets the turn finish, renames the record `capcom-earlier-1`, and a bare `capcom` from a peer reaches the new home; an install mid-turn interrupts nothing; Node.js missing and an unknown `engine` word each give one clear line; with `engine` unset the pane Capcom runs as before (12.4); `max_turns`, `restart_delay`, `crash_limit` and `crash_window`, `route_backoff_max`, `command_timeout` and `token_retry` each change the behaviour they name, and a value outside its range is logged once and the default runs; `capcom.approval_max_age` set to 2 minutes expires a card at 2 minutes, and `settings.set` refuses 0 with `invalid`. Live: `claude --resume <id>` in a plain terminal opens an engine session after `gff-hab capcom pause` (11; if not, report for 17). Live: study scenario 4 on two hosts |
-| G: usage governor. Core | 10.1 (Capcom's side; the governor itself per its task) | Fake clock and hand-written readings: the share accumulates; at the cap a user turn goes to the small model, then waits with a note; event turns stop first; with no reading Capcom is listed unpaced; the `pace_*` keys move each step, and a set out of order runs the three defaults with one log line |
+| G: usage governor. Core | 10.1 (Capcom's side; the governor itself per its task) | Fake clock and hand-written readings: the share accumulates; at the cap a user turn goes to the small model and never waits, with no note; event turns stop first, and not at all with `capcom.pace.events` off; with no reading Capcom is listed unpaced; each `capcom.pace.*` setting moves its step at once, from `settings.set` or a `[capcom] pace_*` key; `pace_wait_at` is logged as no longer used |
 | A3: the thread in the app and gff | 7.2 to 7.6 app side, 7.7 gff | Swift tests over a fake hab: typing, delivered, read, a folded tool line, a divider with the summary it opened with, an image sent and shown, Stop, "Earlier threads" from another host, the pinned proposals line. Live on a device: a reply from the communication notification while the app is closed reaches the engine and the answer shows. Study scenario 3 (a flyer photo) answered with its details |
 | A4: context and memory | 6 | Fake model: a thread past 60% re-seeds once at the turn end, never mid-turn, and waits for an open approval card; a fact stated before the re-seed is answered after it; a forced compaction updates the summary first and adds one divider; "New conversation" adds one divider and an empty summary; a preference becomes a `capcom` guide that lands at once with a "Noted" line, and its Undo deletes it; under `logbook.approval = agents` the same preference is a proposal and Undo rejects it; a guide with a project, or without the `capcom` tag, stays a proposal; a `capcom` guide from an event turn lands at once with a "Noted" line outside Safe, and is a proposal with "Noted, waiting for review" at Safe; Undo after the record was edited elsewhere deletes the edited record and says so; a task stays a proposal; the seed stays under its caps, with the defaults and with `seed_messages`, `seed_messages_chars`, `seed_logbook_bytes`, `reseed_at` and `summary_max_chars` set lower in the config; a value outside its range is logged and the default runs |
 | A5: personal tools | 8 | Study scenario 1 on a device: one location read, weather and places calls, ranked picks naming the preference, an Add card that writes one event. Tests: a question with no place in it reads no location; with no Google key `source: google` is refused and Apple answers; a weather reply carries the attribution; no calendar write without a tap; the device-context store is empty after a gff-hab restart and writes no file but the time zone; a tool line names the place and never coordinates; `[capcom.weather] cache` set to 0 makes every call reach the endpoint (a fake WeatherKit); `capcom.calendar_days` set to 3 sends 3 days |
@@ -2089,6 +2099,22 @@ All on the home hab, no level unless the row says so.
 | `capcom.event_actions` | Levelled: Safe `ask`, Balanced `allow`, Bypass `all`; `off` by hand only. Settled (E24) | `off`, `ask`, `allow`, `all` | 9.4, 9.6 |
 | `capcom.event_actions_per_turn` | 10 | 0 to 50; 0 allows no action whatever the jobs or the level say | 9.6 |
 | `capcom.event_action_max_age` | 60 minutes | 1 minute to 24 hours | 9.6 |
+| `capcom.pace.daily_share` | 15% of the weekly window a day | 1% to 100%, whole percent | 10.1 |
+| `capcom.pace.small_at` | 100% of the share | 10% to 500%, whole percent: the owner's messages go to the small model | 10.1 |
+| `capcom.pace.events` | on | bool; off: event turns never wait for usage | 10.1 |
+| `capcom.pace.event_stop` | 80% of the share | 10% to 500%, whole percent: event turns wait | 10.1 |
+
+**The pace rows and the config file.** The four `capcom.pace.*` rows resolve as every hab-side
+setting does (`app.md` 20.5): a value in the config file locks the row (source `config`, the app's
+write refused with `locked`), else the app's write, else the default. A lock comes from
+`[settings]` (`"capcom.pace.daily_share" = 15`) or from the older `[capcom]` keys
+`pace_daily_share`, `pace_small_at` and `pace_event_stop`. Those take a number (`15`, `12.5`) or a
+string (`"15%"`), rounded to the nearest whole percent; a value outside the row's range is logged
+and locks nothing. When `[settings]` names the same id, it wins and the `[capcom]` key is logged
+as ignored. `pace_wait_at` is no longer used: an old file that sets it loads, and gff-hab logs it
+once. The steps need no order: each one acts on its own. A change applies at once, with no
+restart. Capcom acts on the values of the hab that holds the mark; every hab keeps them, so a
+move keeps them.
 
 One app preference (`app.md` 20.4), since the app decides what it sends:
 `capcom.calendar_days`, default 7, 1 to 31 days (8.1).
@@ -2118,12 +2144,15 @@ One app preference (`app.md` 20.4), since the app decides what it sends:
 | `command_timeout` | 30 s | 1 s to 5 minutes; for `oauth_token_command` and `api_key_command` | 10.2 |
 | `token_retry` | 5 minutes | 30 s to 24 hours | 10.2 |
 | `wake_retry` | 10 s | 1 s to 5 minutes; one retry | 14 |
-| `pace_daily_share` | 15% of the weekly window a day | 1% to 100% | 10.1 |
-| `pace_event_stop`, `pace_small_at`, `pace_wait_at` | 80%, 100%, 120% of the share | 10% to 500% each, in that order (equal allowed); a set out of order is logged and all three defaults run | 10.1 |
+| `pace_daily_share`, `pace_small_at`, `pace_event_stop` | none | Each locks its `capcom.pace.*` setting (19.1) | 10.1 |
+| `pace_wait_at` | none | No longer used: logged once and ignored. The owner's messages never wait | 10.1 |
 
-The four `pace_*` keys are Capcom's inputs to the usage governor (stage G), which
-reads them at each recheck; its rules are in 10.1. Each takes a number (`15`) or a string
-(`"15%"`).
+**Upgrade note (the owner's messages never wait).** A hab that set `pace_wait_at` paced the
+owner's messages to a stop; under `auth = "api_key"`, `pace_wait_at = 100` with `daily_usd` was a
+hard daily cap. After the upgrade neither holds: the owner's messages are no longer capped by
+usage. Past `capcom.pace.small_at` they run on the small model, and `max_turn_usd` bounds each
+turn. gff-hab logs this once for a file that still sets `pace_wait_at`. The next release notes
+carry this line under "Breaking or needs action".
 
 ### 19.3 Fixed values kept
 

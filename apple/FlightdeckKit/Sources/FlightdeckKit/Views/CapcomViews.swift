@@ -330,7 +330,7 @@ struct CapcomScreen: View {
 }
 
 /// The usage governor's line above the Capcom thread (capcom-service.md 10.1), while Capcom is
-/// not at `ok`: "Pacing usage until 15:04 · 40% of the week used, share 30%". Nothing shows
+/// not at `ok`: "Small model for your messages · 40% of the week used, share 30%". Nothing shows
 /// when the home's catalog has no governor section. A tap opens the usage sheet.
 struct CapcomPacingLine: View {
     let center: CapcomCenter

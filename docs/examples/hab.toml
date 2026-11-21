@@ -117,13 +117,9 @@ harness = "claude"
 # seed_messages_chars = 8000  # 0 to 64,000 characters for those messages; the oldest go first
 # seed_logbook_bytes = 8192   # 0 to 65,536 bytes of Logbook in a seed
 # precompact_timeout = "30s"  # 5s to 5m for the summary before a compaction or a re-seed
-# The usage governor (capcom-service.md 10.1): Capcom's share of your plan's weekly window a
-# day, cumulative, and three steps against that share. Under auth = "api_key", daily_usd above
-# is the share instead. The steps must rise in this order, else all three defaults run.
-# pace_daily_share = 15       # 1 to 100 percent of the weekly window a day
-# pace_event_stop = 80        # 10 to 500 percent of the share: event turns wait
-# pace_small_at = 100         # user turns go to small_model
-# pace_wait_at = 120          # user turns wait, with a note in the thread
+# The usage governor's numbers (capcom-service.md 10.1) are hab-side settings the app edits:
+# capcom.pace.* in [settings] below. The older keys pace_daily_share, pace_small_at and
+# pace_event_stop here still lock them; pace_wait_at is no longer used (your messages never wait).
 # The personal tools (docs/specs/capcom-service.md 8):
 # location_stale = "30m"      # 1m to 24h; Capcom says how old a fix past this is
 # Weather and places use keys from your Apple Developer account, printed by a command (an argv,
@@ -178,6 +174,14 @@ harness = "claude"
 # "capcom.event_actions" = "allow"
 # "capcom.event_actions_per_turn" = 10
 # "capcom.event_action_max_age" = 60
+# Capcom's usage pacing (docs/specs/capcom-service.md 10.1, 19.1): its share of your plan's weekly
+# window a day, cumulative, 1 to 100 percent; your messages go to small_model past this percent of
+# the share, 10 to 500, and never wait; whether Capcom's own (event) turns are paced; and the
+# percent of the share at which they wait, 10 to 500. Under auth = "api_key", daily_usd is the share.
+# "capcom.pace.daily_share" = 15
+# "capcom.pace.small_at" = 100
+# "capcom.pace.events" = true
+# "capcom.pace.event_stop" = 80
 # The permission mode a new agent session starts in (docs/specs/harness-adapters.md, Start mode):
 # "ask" adds no flag, "auto" or "bypass" add the harness's own flag. A flag in the start's own
 # arguments wins.

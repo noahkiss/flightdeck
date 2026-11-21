@@ -17,9 +17,11 @@ func TestGovernorText(t *testing.T) {
 	}{
 		{api.GovernorConsumer{ID: "capcom", Basis: "plan", Pace: "ok", EventPace: "ok", UsedPct: 5, SharePct: 30}, ""},
 		{api.GovernorConsumer{ID: "capcom", Basis: "plan", Pace: "ok", EventPace: "wait", EventUntil: "2026-11-07T15:00:00Z", UsedPct: 26, SharePct: 30},
-			"capcom event turns wait until 15:00 · 26% of the week used, share 30%"},
+			"capcom own turns wait until 15:00 · 26% of the week used, share 30%"},
 		{api.GovernorConsumer{ID: "capcom", Basis: "plan", Pace: "small", EventPace: "wait", UsedPct: 31, SharePct: 30},
-			"capcom small model · 31% of the week used, share 30%"},
+			"capcom small model for your messages; own turns wait · 31% of the week used, share 30%"},
+		{api.GovernorConsumer{ID: "group:g2", Basis: "plan", Pace: "small", EventPace: "wait", EventUntil: "2026-11-07T15:00:00Z", UsedPct: 31, SharePct: 30},
+			"group:g2 small model; event turns wait until 15:00 · 31% of the week used, share 30%"},
 		{api.GovernorConsumer{ID: "group:g1", Basis: "plan", Pace: "wait", EventPace: "wait", Until: "2026-11-09T09:00:00Z", UsedPct: 40, SharePct: 30},
 			"group:g1 waits until Mon 09:00 · 40% of the week used, share 30%"},
 		{api.GovernorConsumer{ID: "capcom", Basis: "usd", Pace: "wait", EventPace: "wait", Until: "2026-11-08T00:00:00Z", SpentCents: 125, CapCents: 100},
@@ -54,7 +56,7 @@ func TestBoardGovernor(t *testing.T) {
 	startWorkspaceSpecs(t, hst, hosts.Spec{Label: "one", Endpoints: sock(a.Sock)})
 	hst.typ(cmdKey + "g")
 	hst.waitScreen("the pacing line", func(s string) bool {
-		return strings.Contains(s, " Usage pacing") && strings.Contains(s, "capcom small model · 31% of the week used, share 30%")
+		return strings.Contains(s, " Usage pacing") && strings.Contains(s, "capcom small model for your messages; own turns wait · 31% of the week used, share 30%")
 	})
 	a.Stop()
 	hst.waitScreen("the line gone", func(s string) bool { return !strings.Contains(s, " Usage pacing") })
