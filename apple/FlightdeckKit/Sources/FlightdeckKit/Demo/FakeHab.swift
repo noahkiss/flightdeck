@@ -1518,6 +1518,9 @@ public actor FakeHab {
         sessionCreates.append(p)
         if let k = p.idempotencyKey, let r = createdByKey[k] { return r }
         var project: Project?
+        if p.project != nil && p.projectDir != nil {
+            throw Failure(kind: .invalid, hint: "give project or project_dir, not both")
+        }
         if let id = p.project {
             guard let found = projects[id] else { throw Failure(kind: .notFound, hint: "no project \(id)") }
             project = found
@@ -1534,7 +1537,7 @@ public actor FakeHab {
             }
         }
         if let h = p.harness, !catalogHarnesses.isEmpty, !catalogHarnesses.contains(where: { $0.name == h }) {
-            throw Failure(kind: .invalid, hint: "\(h) is not installed on this host")
+            throw Failure(kind: .unavailable, hint: "no adapter or program for harness \(h)")
         }
         let base = p.name ?? p.harness ?? "zsh"
         var name = base

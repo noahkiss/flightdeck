@@ -107,7 +107,9 @@ struct NewSessionSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
+                    // Off while Start runs: the session it starts opens when the call answers.
                     Button("Cancel", action: close)
+                        .disabled(starting)
                         .keyboardShortcut(.cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -115,7 +117,7 @@ struct NewSessionSheet: View {
                         ProgressView()
                     } else {
                         Button("Start") { Task { await start() } }
-                            .disabled(center.habs.isEmpty)
+                            .disabled(center.habs.isEmpty || center.loading.contains(draft.habID))
                     }
                 }
             }
@@ -123,10 +125,6 @@ struct NewSessionSheet: View {
         #if os(macOS)
         .frame(minWidth: 440, minHeight: 340)
         #endif
-        // A changed form is a new start: a retry of the old one must not return its session.
-        .onChange(of: [draft.habID, "\(draft.place)", draft.folder ?? "", draft.typedFolder, draft.harness ?? ""]) { _, _ in
-            draft.key = UUID().uuidString
-        }
         .task(id: draft.habID) {
             error = nil
             await center.load(habID: draft.habID)
@@ -170,6 +168,7 @@ struct NewSessionSheet: View {
         starting = true
         defer { starting = false }
         do {
+            draft.prepareStart()
             try await center.start(draft)
             close()
         } catch {

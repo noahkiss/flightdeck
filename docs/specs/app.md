@@ -449,8 +449,9 @@ Code: `Board/NewSession.swift` (the choices, the draft and `NewSessionCenter`),
   `project` for a structure project with no folder known (the hab starts in its most recently
   used folder), neither for None; `harness` for an agent, none for Shell. The hab picks the
   name. One idempotency key per form goes to a hab whose welcome lists `idempotency-keys`, so a
-  retried Start starts one session; a change to any field makes a new key, so a changed form
-  starts its own. Start shows a spinner while the call runs.
+  retried Start starts one session; a field changed since the last Start makes a new key, so a
+  changed form starts its own. Start is off while the form reads the hab's catalog, and shows a
+  spinner while the call runs.
 - **After Start.** The sheet closes and the new session opens, as a tap on its row opens it,
   once the board lists its row, within a minute; a row that comes later, or after the owner
   opened another session, opens nothing. A refusal stays on the form in the hab's words, as a
@@ -464,6 +465,7 @@ Code: `Board/NewSession.swift` (the choices, the draft and `NewSessionCenter`),
 | The hab goes offline with the form open | Start answers with the call's failure, on the form |
 | A typed folder that is not a repository | The hab refuses; its words show on the form |
 | The new session's row comes before or after the answer | It opens either way: the app waits for the row |
+| Cancel while Start runs | Cancel is off until the call answers, so the owner never cancels a session that then opens |
 
 Design call: the spec named a floating button, but the Sessions tab's bar already holds the
 hosts menu and the system places a plus there for the same job (New round on the Rounds tab),
@@ -510,7 +512,12 @@ tab bar minimising on scroll, settings split by area).
 - **Chat conventions (iPhone), as in Messages.** Dragging the messages down takes the keyboard
   with the finger and puts it away (`scrollDismissesKeyboard(.interactively)`); a tap on the
   messages does not. The thread bounces even when it is too short to scroll, so the drag also
-  works on an empty or short thread, where the empty state's blank space lets it through. The thread opens at the newest message and stays there while the
+  works on an empty or short thread. Only the empty state's buttons take touches; a drag on
+  its words reaches the thread.
+  Not built: the composer does not ride the keyboard during the drag. It stays above the
+  keyboard's starting height and drops when the drag ends; in Messages it follows the
+  finger. That needs the composer pinned to the keyboard's layout guide, which waits for the
+  iOS message list's rewrite. The thread opens at the newest message and stays there while the
   keyboard or a growing composer resizes it. The composer grows with its text up to eight
   lines, then scrolls. A pushed session goes back with the back button or an edge swipe.
   These hold in a session's chat and in the Capcom thread. With the keyboard gone the tab bar

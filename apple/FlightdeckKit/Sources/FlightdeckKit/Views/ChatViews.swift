@@ -108,9 +108,13 @@ extension EnvironmentValues {
 /// the tab bar shows again.
 struct DismissesKeyboard: ViewModifier {
     func body(content: Content) -> some View {
+        #if os(iOS)
         content
             .scrollBounceBehavior(.always, axes: .vertical)
             .scrollDismissesKeyboard(.interactively)
+        #else
+        content
+        #endif
     }
 }
 
@@ -350,12 +354,17 @@ struct ChatTranscript: View {
             switch model.load {
             case .loading:
                 ProgressView()
+                    .allowsHitTesting(false)
             case .waiting, .unavailable, .failed, .ready:
                 if let s = ChatEmptyState.of(model.load, context: model.context) {
+                    // Only the buttons take touches: a drag anywhere else reaches the messages,
+                    // so it can put the keyboard away (4.2).
                     ContentUnavailableView {
                         Label(s.title, systemImage: s.symbol)
+                            .allowsHitTesting(false)
                     } description: {
                         Text(s.line)
+                            .allowsHitTesting(false)
                     } actions: {
                         if s.retry {
                             Button("Try again") { Task { await model.loadTail() } }

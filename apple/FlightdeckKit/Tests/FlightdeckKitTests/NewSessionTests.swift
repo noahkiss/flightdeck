@@ -111,6 +111,28 @@ final class NewSessionTests: XCTestCase {
         XCTAssertNil(d.harness, "the shell stays")
     }
 
+    func testKeyRenewsOnlyWhenTheFormChanged() {
+        var d = NewSessionDraft(habID: "bench", key: "k1")
+        d.prepareStart()
+        XCTAssertEqual(d.key, "k1", "the first Start uses the form's key")
+        d.prepareStart()
+        XCTAssertEqual(d.key, "k1", "an unchanged retry keeps the key, so the hab starts one session")
+        d.harness = "codex"
+        d.prepareStart()
+        let k2 = d.key
+        XCTAssertNotEqual(k2, "k1", "a changed field makes a new key")
+        d.prepareStart()
+        XCTAssertEqual(d.key, k2)
+        d.harness = nil
+        d.prepareStart()
+        XCTAssertNotEqual(d.key, k2, "the shell is a change too")
+        let k3 = d.key
+        d.place = .folder
+        d.typedFolder = "/work/c"
+        d.prepareStart()
+        XCTAssertNotEqual(d.key, k3)
+    }
+
     // MARK: - Over the fake hab
 
     func testStartOpensTheNewSession() async throws {
@@ -160,6 +182,14 @@ final class NewSessionTests: XCTestCase {
         XCTAssertNil(center.pendingRow(in: f.board.rows))
         center.now = { Date() }
         center.opened()
+
+        // The fake hab answers as the real one: a harness it lacks is unavailable.
+        do {
+            try await center.start(NewSessionDraft(habID: "bench", key: "h").with { $0.harness = "opencode" })
+            XCTFail("a harness the host lacks starts nothing")
+        } catch let e as NewSessionError {
+            XCTAssertTrue(e.description.contains("opencode"), e.description)
+        }
 
         // A refusal comes back as a sentence for the form.
         do {

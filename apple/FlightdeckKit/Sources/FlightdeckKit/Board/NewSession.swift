@@ -97,13 +97,27 @@ public struct NewSessionDraft: Equatable, Sendable {
     public var typedFolder = ""
     /// The harness to start; nil starts the hab's shell.
     public var harness: String? = "claude"
-    /// One key per form, so a retried Start starts one session (hab-logic-api.md 3.9). The
-    /// form makes a new one when a field changes, so a changed form starts its own session.
-    public var key: String
+    /// One key per start, so a retried Start starts one session (hab-logic-api.md 3.9).
+    /// `prepareStart` makes a new one when a field changed since the last Start, so a changed
+    /// form starts its own session.
+    public private(set) var key: String
+    /// The fields the key was last used for; nil before the first Start.
+    private var keyedFields: [String]?
 
     public init(habID: String, key: String = UUID().uuidString) {
         self.habID = habID
         self.key = key
+    }
+
+    private var fields: [String] {
+        [habID, "\(place)", folder ?? "", typedFolder, harness ?? "\u{0}"]
+    }
+
+    /// Call before each Start: keeps the key for an unchanged retry, makes a new one when a
+    /// field changed since the last Start.
+    public mutating func prepareStart() {
+        if let k = keyedFields, k != fields { key = UUID().uuidString }
+        keyedFields = fields
     }
 
     /// The draft for a hab with these choices: its first harness, and the place kept when the
