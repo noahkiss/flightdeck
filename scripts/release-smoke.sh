@@ -9,15 +9,16 @@
 #   - LICENSE and NOTICE sit in <dir> and, on macOS, in each bundle's Contents/Resources, and
 #     NOTICE has an entry for libghostty, Ghostty and golang.org/x/sys
 #   - capcom/ holds the Capcom engine: gff-hab-capcom.mjs, package.json, package-lock.json and
-#     NOTICE, with the SDKs in the manifest and lockfile and in no NOTICE entry (never bundled)
+#     NOTICE, with the SDKs in the manifest and lockfile and in no NOTICE entry (never bundled);
+#     the bundle parses (node --check) and carries <version>
 #   - each binary's `version` prints "<name> <version>"
 #   - gff-hab and gff carry the ghostty build tag (go version -m), so they parse with libghostty
 #   - Linux: gff-hab links no libghostty and needs no glibc newer than 2.31; gff-hab-holder is
 #     static. macOS: gff-hab and gff link only system libraries and name macOS 13.0 as the minimum
 #   - a holder and gff-hab start in a temporary folder and `gff-hab api call hab.hello` answers
 #
-# Needs go on PATH (for go version -m). Runs the binaries; touches nothing outside its own
-# temporary folder, and stops only the two processes it started.
+# Needs go (for go version -m) and node (for node --check) on PATH. Runs the binaries;
+# touches nothing outside its own temporary folder, and stops only the two processes it started.
 set -euo pipefail
 
 say() { printf 'release-smoke: %s\n' "$*"; }
@@ -71,6 +72,9 @@ for p in @anthropic-ai/claude-agent-sdk @openai/codex-sdk; do
 	grep -q "\"node_modules/$p\"" "$eng/package-lock.json" || fail "$eng/package-lock.json does not pin $p"
 	! grep -qx "$p" "$eng/NOTICE" || fail "$eng/NOTICE has an entry for $p: the SDK is bundled"
 done
+command -v node >/dev/null || fail "no node on PATH for node --check"
+node --check "$eng/gff-hab-capcom.mjs" || fail "$eng/gff-hab-capcom.mjs does not parse"
+grep -qF "\"$want\"" "$eng/gff-hab-capcom.mjs" || fail "$eng/gff-hab-capcom.mjs does not carry version $want"
 say "the Capcom engine folder is in place"
 
 # 1. The version each binary reports.
