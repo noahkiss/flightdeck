@@ -107,6 +107,26 @@ final class GovernorTests: XCTestCase {
         await f.setActive(false)
     }
 
+    /// Capcom's four pace rows (capcom-service.md 19.1): preferences on every hab, under Usage,
+    /// with the hab's ranges.
+    func testPaceSettingsRows() throws {
+        let R = SettingsRegistry.self
+        let rows: [(String, SettingKind)] = [
+            (R.capcomPaceDailyShare, .integer(1...100, unit: "%")),
+            (R.capcomPaceSmallAt, .integer(10...500, unit: "% of share")),
+            (R.capcomPaceEvents, .bool),
+            (R.capcomPaceEventStop, .integer(10...500, unit: "% of share")),
+        ]
+        for (id, kind) in rows {
+            let d = try XCTUnwrap(R.def(id), id)
+            XCTAssertEqual(d.kind, kind, id)
+            XCTAssertEqual(d.store, .everyHab, id)
+            XCTAssertEqual(d.area, .usage, id)
+            XCTAssertFalse(d.isLevelled, id)
+            XCTAssertTrue(d.built, id)
+        }
+    }
+
     func testHabWithoutGovernorSectionShowsNothing() async throws {
         let a = await serviceHab("bench", governor: nil)
         let f = await fleet([a])

@@ -195,7 +195,8 @@ func TestCapcomPaceEngineSwitch(t *testing.T) {
 // The governor after a gff-hab restart and a pace edit (capcom-service.md 10.1, 19.1): the last
 // weekly reading is kept in governor.json, so the pace holds with no new reading; a [capcom]
 // pace_daily_share edit reaches the engine once the file held for one check; and with the key
-// gone, settings.set moves the pace at once, with no restart: event pacing off, then the share.
+// gone, settings.set moves the pace at once, with no restart: event pacing off, then the share;
+// and those values hold across a second restart.
 func TestCapcomPaceRestartAndEdit(t *testing.T) {
 	t.Parallel()
 	e := newServiceEnv(t, "pace_daily_share = 10\n")
@@ -249,5 +250,16 @@ func TestCapcomPaceRestartAndEdit(t *testing.T) {
 	waitUntil(t, "the small model from the app", func() bool { g, _ = governorOf(t, e); return g.Pace == "small" && g.SharePct == 18 })
 	if g.EventPace != "ok" || g.Until != "" {
 		t.Fatalf("governor after the app's edits: %+v", g)
+	}
+
+	// The app's values outlive a gff-hab restart: the governor paces by them, not the defaults.
+	e.restart(false)
+	waitUntil(t, "capcom in the catalog after the second restart", func() bool {
+		var ok bool
+		g, ok = governorOf(t, e)
+		return ok && g.Basis == "plan" && g.SharePct == 18
+	})
+	if g.Pace != "small" || g.SharePct != 18 || g.EventPace != "ok" {
+		t.Fatalf("governor after a restart with the app's values: %+v", g)
 	}
 }

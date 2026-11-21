@@ -141,6 +141,10 @@ type Config struct {
 type Governor struct {
 	cfg Config
 
+	// recheckMu orders rechecks: each holds it from the settings read to the commit, so a
+	// recheck that read older settings never commits after one that read newer ones. Taken
+	// before mu, and never while mu is held.
+	recheckMu sync.Mutex
 	mu        sync.Mutex
 	consumers map[string]Consumer
 	answers   map[string]Answer
@@ -331,11 +335,14 @@ func (g *Governor) Spent(id string, input, output int64, usd float64) {
 	}
 }
 
-// Recheck computes every answer again: call it when a reading or a policy changed. Each
+// Recheck computes every answer again: call it when a reading or a policy changed. Rechecks
+// run one at a time, so the last to start commits last. Each
 // changed answer goes to OnChange; the next recheck is set for the next time an answer can
 // change on its own (a window day, a reset, a local midnight).
 func (g *Governor) Recheck() {
-	// Each consumer's settings are read once, with no lock held: they may read a file.
+	// Each consumer's settings are read once, with no lock but recheckMu held: they may read a
+	// file. recheckMu is released before OnChange runs, which may recheck.
+	g.recheckMu.Lock()
 	g.mu.Lock()
 	cs := make([]Consumer, 0, len(g.consumers))
 	for _, c := range g.consumers {
@@ -360,6 +367,7 @@ func (g *Governor) Recheck() {
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
+		g.recheckMu.Unlock()
 		return
 	}
 	// Wall time: a fire after a sleep compares the clock, not the time the timer counted.
@@ -404,6 +412,7 @@ func (g *Governor) Recheck() {
 		d = maxRecheck
 	}
 	g.stop = g.cfg.After(d, g.Recheck)
+	g.recheckMu.Unlock()
 	g.deliverLocked()
 }
 

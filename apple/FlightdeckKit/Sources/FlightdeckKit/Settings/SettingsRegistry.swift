@@ -188,6 +188,7 @@ public enum SettingsRegistry {
         SettingDef(id: capcomPaceSmallAt, title: "Your messages to Capcom use the small model from", area: .usage,
                    kind: .integer(10...500, unit: "% of share"), store: .everyHab),
         SettingDef(id: capcomPaceEvents, title: "Hold Capcom's own turns when over its share", area: .usage, kind: .bool, store: .everyHab),
+        // Turned off while capcomPaceEvents is off.
         SettingDef(id: capcomPaceEventStop, title: "Hold Capcom's own turns from", area: .usage,
                    kind: .integer(10...500, unit: "% of share"), store: .everyHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),

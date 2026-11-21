@@ -4025,10 +4025,10 @@ picker never changes them.
 | `capcom.events.batch_window` | Gather events for | Capcom | integer seconds 10 to 3600 | 120 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.events.batch_max` | Events in one look, at most | Capcom | integer 1 to 200 | 20 | Hab, the home hab | `capcom-service.md` 9.2, 19.1 |
 | `capcom.event_actions_per_turn` | Capcom actions in one look, at most | Capcom | integer 0 to 50; 0 allows none | 10 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
-| `capcom.pace.daily_share` | Capcom's daily share of the weekly limit | Usage | integer 1 to 100, percent; steps of 5 | 15 | Hab, every hab; the home hab reads it at once | `capcom-service.md` 10.1, 19.1 |
+| `capcom.pace.daily_share` | Capcom's daily share of the weekly limit | Usage | integer 1 to 100, percent; steps of 1 | 15 | Hab, every hab; the home hab reads it at once | `capcom-service.md` 10.1, 19.1 |
 | `capcom.pace.small_at` | Your messages to Capcom use the small model from | Usage | integer 10 to 500, percent of the share; steps of 5 | 100 | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
 | `capcom.pace.events` | Hold Capcom's own turns when over its share | Usage | bool | on | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
-| `capcom.pace.event_stop` | Hold Capcom's own turns from | Usage | integer 10 to 500, percent of the share; steps of 5 | 80 | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
+| `capcom.pace.event_stop` | Hold Capcom's own turns from | Usage | integer 10 to 500, percent of the share; steps of 5; turned off while `capcom.pace.events` is off | 80 | Hab, every hab | `capcom-service.md` 10.1, 19.1 |
 | `capcom.event_action_max_age` | A Capcom job's ask card expires after | Capcom | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `capcom-service.md` 9.6, 19.1 |
 | `group.confirm_max_age` | A plan's confirmation expires after | Agents | integer minutes 1 to 1440 | 60 | Hab, every hab; the home hab reads it | `groups.md` 3.2 |
 | `group.max_leads` | Leads at once | Agents | integer 1 to 10 | 3 | Hab, every hab; the home hab reads it | `groups.md` 4.3 |

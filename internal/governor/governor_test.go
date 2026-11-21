@@ -465,7 +465,52 @@ func TestDefaultPolicyNeverWaitsUserTurns(t *testing.T) {
 	acc.week("acct", t0, 5)
 	g.Recheck()
 	check(t, g, "capcom", Ok, Ok)
-	if DefaultPolicy.WaitAt != 0 {
-		t.Fatalf("DefaultPolicy.WaitAt %v, want 0: Capcom's messages never wait", DefaultPolicy.WaitAt)
+}
+
+// Two rechecks at once (capcom-service.md 10.1): one that read the old policy and is slow to
+// commit does not commit after one that started later and read the new one. A setting changed
+// twice in quick succession ends on its last value.
+func TestRechecksCommitInOrder(t *testing.T) {
+	g, _, acc, _ := setup(t, "")
+	acc.week("acct", t0, 20) // day 1: share 15%, level 133%
+	var mu sync.Mutex
+	pol := DefaultPolicy
+	var hold, entered, release chan struct{}
+	g.Register(Consumer{ID: "capcom", Account: func() string { return "acct" }, Policy: func() Policy {
+		mu.Lock()
+		p, h := pol, hold
+		hold = nil
+		mu.Unlock()
+		if h != nil {
+			close(entered)
+			<-release
+		}
+		return p
+	}})
+	check(t, g, "capcom", Small, Wait)
+
+	// The first recheck reads the old policy, then stalls before its commit.
+	mu.Lock()
+	hold, entered, release = make(chan struct{}), make(chan struct{}), make(chan struct{})
+	mu.Unlock()
+	first := make(chan struct{})
+	go func() { g.Recheck(); close(first) }()
+	<-entered
+	// The policy changes: a share of 40% puts the level at 50%, ok. A second recheck starts.
+	mu.Lock()
+	pol.DailyShare = 40
+	mu.Unlock()
+	second := make(chan struct{})
+	go func() { g.Recheck(); close(second) }()
+	select {
+	case <-second:
+		// Without ordering it commits now; the stalled first would then commit the old policy.
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-first
+	<-second
+	if a := check(t, g, "capcom", Ok, Ok); a.SharePct != 40 {
+		t.Fatalf("share %v after both rechecks, want the newer policy's 40", a.SharePct)
 	}
 }

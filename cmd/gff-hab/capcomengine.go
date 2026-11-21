@@ -282,7 +282,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 				e.message(it, session)
 			}
 		}
-		e.pace.waiting(it)
+		e.pace.userMessage(it)
 	})
 	e.link = capcomengine.NewLink(capcomengine.LinkConfig{
 		Thread: th, Record: rec,

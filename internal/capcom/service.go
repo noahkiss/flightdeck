@@ -345,7 +345,7 @@ func LoadServiceConfig(path string) (ServiceConfig, []string, error) {
 	// The pace_* keys lock Capcom's pace settings (internal/settings, 19.1), which check them.
 	// pace_wait_at is no longer used: the owner's messages never wait (10.1).
 	if _, ok := sec["pace_wait_at"]; ok {
-		bad("pace_wait_at: no longer used: Capcom's messages never wait for usage, they go to the small model at most; ignored")
+		bad("pace_wait_at: no longer used, ignored: your messages to Capcom never wait for usage and are no longer capped by it; past capcom.pace.small_at they run on the small model, and max_turn_usd bounds each turn")
 	}
 	for _, k := range laterKeys {
 		known[k] = true

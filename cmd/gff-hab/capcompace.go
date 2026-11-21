@@ -278,9 +278,9 @@ func (p *capcomPacer) turn(origin string, input, output int64, usd float64) {
 	}
 }
 
-// waiting rechecks when a user message arrives, with the config read again, so the message
+// userMessage rechecks when a user message arrives, with the config read again, so the message
 // meets the pace of now. The message never waits: at most it runs on the small model.
-func (p *capcomPacer) waiting(it capcomthread.Item) {
+func (p *capcomPacer) userMessage(it capcomthread.Item) {
 	if it.Kind != capcomthread.KindMessage || it.Author.Kind != capcomthread.AuthorUser || !it.Read.IsZero() {
 		return
 	}

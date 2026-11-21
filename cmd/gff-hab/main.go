@@ -1288,9 +1288,11 @@ func serve(args []string) error {
 		},
 		Apply: func(id string, v json.RawMessage) {
 			applySetting(gate, id, v)
-			if strings.HasPrefix(id, settings.CapcomPacePrefix) {
+			if strings.HasPrefix(id, settings.CapcomPacePrefix) && setRef.Load() != nil {
 				// Capcom's pace (capcom-service.md 10.1) at once, with no restart. The recheck
-				// reads the settings, so it runs outside this call, which holds their lock.
+				// reads the settings, so it runs outside this call, which holds their lock;
+				// rechecks run in order, so the last change wins. At Open the service is not
+				// stored yet: the recheck after the store reads its values.
 				go gov.Recheck()
 			}
 			if id == settings.PermissionWait {

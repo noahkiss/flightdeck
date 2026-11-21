@@ -1743,7 +1743,9 @@ first consumer.
 - **Send now.** `session.send` with `send_now: true` (the long-press menu in the app) marks the
   item. It matters only against an older gff-hab that still makes user turns wait: there a
   marked item runs at once on the small model, with the items waiting before it. A current
-  gff-hab never holds a user turn, so the mark changes nothing.
+  gff-hab never holds a user turn, so the mark changes nothing. The menu item stays: the app
+  may reach an older hab, the catalog does not say whether a hab can hold a user turn, and on a
+  current hab the message simply runs as any other does.
 - **The catalog.** The `governor` section lists each consumer: basis, the two paces with their
   ends, the use and the share (`plan`), the spend and the cap in cents (`usd`), and today's
   tokens. gff's status board shows each consumer that is not at `ok`, or is unpaced, under
@@ -2144,6 +2146,13 @@ One app preference (`app.md` 20.4), since the app decides what it sends:
 | `wake_retry` | 10 s | 1 s to 5 minutes; one retry | 14 |
 | `pace_daily_share`, `pace_small_at`, `pace_event_stop` | none | Each locks its `capcom.pace.*` setting (19.1) | 10.1 |
 | `pace_wait_at` | none | No longer used: logged once and ignored. The owner's messages never wait | 10.1 |
+
+**Upgrade note (the owner's messages never wait).** A hab that set `pace_wait_at` paced the
+owner's messages to a stop; under `auth = "api_key"`, `pace_wait_at = 100` with `daily_usd` was a
+hard daily cap. After the upgrade neither holds: the owner's messages are no longer capped by
+usage. Past `capcom.pace.small_at` they run on the small model, and `max_turn_usd` bounds each
+turn. gff-hab logs this once for a file that still sets `pace_wait_at`. The next release notes
+carry this line under "Breaking or needs action".
 
 ### 19.3 Fixed values kept
 
