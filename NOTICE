@@ -188,7 +188,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
 github.com/dlclark/regexp2/v2
-Version: v2.13.0
+Version: v2.13.1
 Source: https://pkg.go.dev/github.com/dlclark/regexp2/v2
 Licence: see the text below
 In: gff-hab
