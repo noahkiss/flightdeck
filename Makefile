@@ -277,11 +277,12 @@ release-build: libghostty
 	cp LICENSE NOTICE $(RELEASE_DIR)/
 
 # Pack the Capcom engine folder into RELEASE_DIR/capcom (docs/specs/ci-release.md 7.2): the bundle,
-# package.json, package-lock.json and the notices of the bundled packages. Needs Node.js and npm;
+# package.json, package-lock.json and the notices of the bundled packages. The bundle reports
+# RELEASE_VERSION as its version, as gff-hab does. Needs Node.js and npm;
 # release.yml runs it once and copies the folder into every archive. The SDKs are not packed:
 # gff-hab install runs npm ci in its copy (capcom-service.md 3.1).
 capcom-pack:
-	cd capcom-engine && npm ci && npm run build && npm run release-pack -- "$(abspath $(RELEASE_DIR))/capcom"
+	cd capcom-engine && npm ci && GFF_ENGINE_VERSION=$(RELEASE_VERSION) npm run build && npm run release-pack -- "$(abspath $(RELEASE_DIR))/capcom"
 
 # Record the current schema as the released schema of its revision. Run at release time only.
 release-schema:

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/internal/service"
@@ -51,6 +52,13 @@ func TestEngineLookup(t *testing.T) {
 			want := ""
 			if tc.engine != "" {
 				want = putEngine(t, filepath.Join(root, tc.engine), false)
+				if filepath.Base(tc.engine) == "capcom" {
+					// A release's capcom/ runs once npm ci put its SDKs there.
+					if got := engineFile(exe, state); got != "" {
+						t.Fatalf("found %s: a capcom/ with no node_modules", got)
+					}
+					os.MkdirAll(filepath.Join(root, tc.engine, "node_modules"), 0o755)
+				}
 			} else {
 				// What gff-hab install leaves: an engine directory and the current link.
 				putEngine(t, filepath.Join(service.EnginesDir(state), "0123456789abcdef"), true)
@@ -71,15 +79,43 @@ func TestEngineLookup(t *testing.T) {
 		})
 	}
 
-	// An engine beside gff-hab wins over the installed one: a hab run from a release or a
-	// checkout runs the engine that came with it.
+	// An engine beside gff-hab that can run wins over the installed one: a hab run from a
+	// release or a checkout runs the engine that came with it. One with no SDKs does not.
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	putEngine(t, filepath.Join(service.EnginesDir(state), "0123456789abcdef"), true)
 	os.Symlink("0123456789abcdef", service.EngineCurrent(state))
 	beside := putEngine(t, filepath.Join(root, "rel", "capcom"), true)
+	if got := engineFile(filepath.Join(root, "rel", "gff-hab"), state); got != service.InstalledEngine(state) {
+		t.Errorf("engineFile = %q, want the installed one over a capcom/ with no SDKs", got)
+	}
+	os.MkdirAll(filepath.Join(root, "rel", "capcom", "node_modules"), 0o755)
 	if got := engineFile(filepath.Join(root, "rel", "gff-hab"), state); got != beside {
 		t.Errorf("engineFile = %q, want the one beside gff-hab, %q", got, beside)
+	}
+}
+
+// TestEngineVersionMismatch (capcom-service.md 3.1): a release gff-hab warns about an engine of
+// another version; a dev gff-hab runs any engine quietly.
+func TestEngineVersionMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		hab, engine string
+		warn        bool
+	}{
+		{"0.4.0", "0.4.0", false},
+		{"0.4.0", "0.3.0", true},
+		{"0.4.0", "dev", true},
+		{"0.4.0", "", true},
+		{"dev", "0.3.0", false},
+		{"", "0.3.0", false},
+	} {
+		msg := engineVersionMismatch(tc.hab, tc.engine)
+		if (msg != "") != tc.warn {
+			t.Errorf("hab %q engine %q: %q", tc.hab, tc.engine, msg)
+		}
+		if tc.warn && !strings.Contains(msg, "run gff-hab install") {
+			t.Errorf("hab %q engine %q: no fix in %q", tc.hab, tc.engine, msg)
+		}
 	}
 }
 

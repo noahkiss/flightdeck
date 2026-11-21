@@ -252,7 +252,9 @@ jobs:
           package-manager-cache: false
 
       - name: Pack
-        run: make capcom-pack RELEASE_DIR=build/release
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: make capcom-pack RELEASE_VERSION="$VERSION" RELEASE_DIR=build/release
 
       - name: Typecheck and test
         working-directory: capcom-engine
