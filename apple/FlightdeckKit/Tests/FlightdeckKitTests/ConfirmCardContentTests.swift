@@ -72,7 +72,7 @@ final class ConfirmCardContentTests: XCTestCase {
             .init("Runner", "boxb"),
             .init("Name", "nightly-notes"),
             .init("Mode", "fresh"),
-            .init("Trigger", "every 1h"),
+            .init("Trigger", "Every hour"),
             .init("Project", "tide-tables"),
             .init("Harness", harnessName("claude")),
             .init("Model", "opus"),
@@ -86,7 +86,7 @@ final class ConfirmCardContentTests: XCTestCase {
             .init("Runner", "boxb"),
             .init("Name", "nightly-notes"),
             .init("Mode", "fresh"),
-            .init("Trigger", "every 1h"),
+            .init("Trigger", "Every hour"),
             .init("Project", "git@example.com:tide/tide-tables.git", mono: true),
             .init("Command", "make nightly", mono: true),
         ])
@@ -95,7 +95,16 @@ final class ConfirmCardContentTests: XCTestCase {
     func testRoundTriggerFromCron() {
         var r = Self.round(trigger: nil)
         r.round.trigger = RoundTrigger(cron: "0 9 * * 1-5", kind: .cron, zone: "Europe/Berlin")
-        XCTAssertEqual(ConfirmCardContent.trigger(r), "cron 0 9 * * 1-5 in Europe/Berlin")
+        let utc = TimeZone(identifier: "UTC")!
+        let gb = Locale(identifier: "en_GB")
+        let winter = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01
+        XCTAssertEqual(ConfirmCardContent.trigger(r, now: winter, timeZone: utc, locale: gb), "Weekdays 09:00 Europe/Berlin",
+                       "a common schedule in the app's words, over the hab's")
+        r.round.trigger = RoundTrigger(cron: "0 9 1-7 * 1", kind: .cron, zone: "Europe/Berlin")
+        XCTAssertEqual(ConfirmCardContent.trigger(r), "cron 0 9 1-7 * 1 in Europe/Berlin", "an uncommon one stays the expression")
+        r.trigger = "cron 0 9 1-7 * 1 in Europe/Berlin (hab)"
+        XCTAssertEqual(ConfirmCardContent.trigger(r), "cron 0 9 1-7 * 1 in Europe/Berlin (hab)", "the hab's words for it come first")
+        r.trigger = nil
         r.round.trigger = RoundTrigger(kind: .manual)
         XCTAssertEqual(ConfirmCardContent.trigger(r), "by hand")
     }

@@ -83,11 +83,11 @@ extension CapcomCenter {
         }
     }
 
-    /// The Capcom tab's subtitle (app.md 4.10): where Capcom runs and what it does, or the
-    /// entry's state while it cannot open. "Runs on workbench · answers and routes anything".
+    /// The Capcom tab's subtitle (app.md 4.10): where Capcom runs, "Runs on workbench", or the
+    /// entry's state while it cannot open. Short, so a phone's bar does not cut it.
     public func tabSubtitle(_ e: CapcomEntry) -> String {
         switch e {
-        case .ready(let id): return "Runs on \(habs.label(id)) · answers and routes anything"
+        case .ready(let id): return "Runs on \(habs.label(id))"
         default: return entryText(e)
         }
     }

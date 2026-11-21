@@ -88,15 +88,17 @@ public enum ConfirmCardContent {
         return out
     }
 
-    /// The trigger in plain words: the hab's, else the app's own wording of the spec.
-    static func trigger(_ r: ConfirmRound) -> String {
-        if let t = nonEmpty(r.trigger) { return t }
+    /// The trigger in plain words: a common schedule in the app's words ("Mondays 07:00"),
+    /// else the hab's, else the app's own wording of the spec.
+    static func trigger(_ r: ConfirmRound, now: Date = Date(), timeZone: TimeZone = .current, locale: Locale = .current) -> String {
         let t = r.round.trigger
-        if let e = nonEmpty(t.every) {
-            return nonEmpty(t.zone).map { "every \(e) in \($0)" } ?? "every \(e)"
+        let cron = nonEmpty(t.cron) ?? nonEmpty(t.every).flatMap { e in RoundText.presets.first { $0.name == e }?.cron }
+        if t.kind == .cron, let cron, CronWords.words(cron, locale: locale) != nil {
+            return RoundText.trigger(t, now: now, timeZone: timeZone, locale: locale)
         }
+        if let s = nonEmpty(r.trigger) { return s }
         if t.kind == .event, let e = nonEmpty(t.event) { return "on \(e)" }
-        return RoundText.trigger(t)
+        return RoundText.trigger(t, now: now, timeZone: timeZone, locale: locale)
     }
 
     // MARK: - Group

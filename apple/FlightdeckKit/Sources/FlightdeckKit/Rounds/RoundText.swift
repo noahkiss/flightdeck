@@ -17,16 +17,25 @@ public enum RoundText {
         return presets.first { $0.cron == c }?.name
     }
 
-    /// The trigger in plain words, as the hab's catalog writes it: "every 1h", "every 1d in
-    /// Europe/Berlin", "cron 0 9 * * 1-5 in Europe/Berlin", "once at <time>", "by hand".
+    /// The trigger in plain words: a common cron shape as words ("Daily 07:00", "Mondays 07:00",
+    /// "Every 5 minutes"), with the round's zone after it when its clock differs from the
+    /// viewer's ("Mondays 07:00 UTC"); any other cron as the expression ("cron 0 9 1-7 * 1 in
+    /// Europe/Berlin"); "once at <time>"; "by hand" (app.md 21.2).
     public static func trigger(_ t: RoundTrigger, now: Date = Date(), timeZone: TimeZone = .current, locale: Locale = .current) -> String {
         switch t.kind {
         case .cron:
-            let cron = t.cron ?? ""
             let zone = t.zone.flatMap { $0.isEmpty ? nil : $0 }
-            if let p = preset(cron: cron) {
-                if p.hasSuffix("m") || zone == nil { return "every \(p)" }
-                return "every \(p) in \(zone!)"
+            // A create carries a preset in `every`; a stored round has the cron it compiled to.
+            var cron = t.cron ?? ""
+            if cron.isEmpty, let e = t.every, !e.isEmpty {
+                guard let c = presets.first(where: { $0.name == e })?.cron else {
+                    return zone.map { "every \(e) in \($0)" } ?? "every \(e)"
+                }
+                cron = c
+            }
+            if let w = CronWords.words(cron, locale: locale) {
+                guard let zone, w.clock(differsIn: zone, from: timeZone, at: now) else { return w.text }
+                return "\(w.text) \(zone)"
             }
             return zone.map { "cron \(cron) in \($0)" } ?? "cron \(cron)"
         case .once:

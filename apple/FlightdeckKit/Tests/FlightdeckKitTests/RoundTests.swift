@@ -434,14 +434,53 @@ final class RoundTests: XCTestCase {
 
     // MARK: - Words and the form
 
+    func testCronWords() {
+        let gb = Locale(identifier: "en_GB")
+        func w(_ cron: String, _ locale: Locale = Locale(identifier: "en_GB")) -> String? { CronWords.words(cron, locale: locale)?.text }
+        XCTAssertEqual(w("0 7 * * *"), "Daily 07:00")
+        XCTAssertEqual(w("30 7 * * 0-6"), "Daily 07:30", "every day of the week is daily")
+        XCTAssertEqual(w("0 7 * * 1"), "Mondays 07:00")
+        XCTAssertEqual(w("0 7 * * MON"), "Mondays 07:00", "a day name in any case")
+        XCTAssertEqual(w("0 16 * * 5"), "Fridays 16:00")
+        XCTAssertEqual(w("0 10 * * 7"), "Sundays 10:00", "7 is Sunday")
+        XCTAssertEqual(w("0 9 * * 1-5"), "Weekdays 09:00")
+        XCTAssertEqual(w("0 9 * * sat,sun"), "Weekends 09:00")
+        XCTAssertEqual(w("0 9 * * 0,3,1"), "Mon, Wed, Sun 09:00", "a list reads Monday first")
+        XCTAssertEqual(w("0 9,17 * * *"), "Daily 09:00 and 17:00")
+        XCTAssertEqual(w("15 6,12,18 * * *"), "Daily 06:15, 12:15 and 18:15")
+        XCTAssertEqual(w("0 8 1 * *"), "Monthly on the 1st 08:00")
+        XCTAssertEqual(w("0 8 22 * *"), "Monthly on the 22nd 08:00")
+        XCTAssertEqual(w("0 8 13 * *"), "Monthly on the 13th 08:00")
+        XCTAssertEqual(w("* * * * *"), "Every minute")
+        XCTAssertEqual(w("*/15 * * * *"), "Every 15 minutes")
+        XCTAssertEqual(w("0 * * * *"), "Every hour")
+        XCTAssertEqual(w("20 * * * *"), "Every hour at :20")
+        XCTAssertEqual(w("0 */6 * * *"), "Every 6 hours")
+        let us = w("0 7 * * 1", Locale(identifier: "en_US")) ?? ""
+        XCTAssertTrue(us.hasPrefix("Mondays 7:00") && us.hasSuffix("AM"), "the locale's clock: \(us)")
+        for raw in ["0 9 1-7 * 1", "0 9 * 1 *", "0 9 * * 1/2", "*/5 9 * * *", "0 9", "0 1,2,3,4,5 * * *", "0 25 * * *", "0 9 * * 8", "@daily"] {
+            XCTAssertNil(CronWords.words(raw, locale: gb), "\(raw) has no words")
+        }
+    }
+
     func testTriggerAndSlotWords() throws {
         let utc = TimeZone(identifier: "UTC")!
         let locale = Locale(identifier: "en_GB")
-        XCTAssertEqual(RoundText.trigger(RoundTrigger(cron: "0 * * * *", kind: .cron, zone: "Europe/Berlin")), "every 1h in Europe/Berlin")
-        XCTAssertEqual(RoundText.trigger(RoundTrigger(cron: "*/5 * * * *", kind: .cron, zone: "Europe/Berlin")), "every 5m")
-        XCTAssertEqual(RoundText.trigger(RoundTrigger(cron: "0 9 * * 1-5", kind: .cron, zone: "UTC")), "cron 0 9 * * 1-5 in UTC")
-        XCTAssertEqual(RoundText.trigger(RoundTrigger(kind: .manual)), "by hand")
         let now = try XCTUnwrap(RoundText.parse("2026-11-02T08:00:00Z"))
+        func words(_ cron: String, _ zone: String?) -> String {
+            RoundText.trigger(RoundTrigger(cron: cron, kind: .cron, zone: zone), now: now, timeZone: utc, locale: locale)
+        }
+        XCTAssertEqual(words("0 * * * *", "Europe/Berlin"), "Every hour", "a whole-hour offset moves no hourly run")
+        XCTAssertEqual(words("0 * * * *", "Asia/Kolkata"), "Every hour Asia/Kolkata", "a half-hour offset does")
+        XCTAssertEqual(words("*/5 * * * *", "Europe/Berlin"), "Every 5 minutes")
+        XCTAssertEqual(words("0 9 * * 1-5", "UTC"), "Weekdays 09:00", "the viewer's own zone is not named")
+        XCTAssertEqual(words("0 7 * * 1", "Europe/Berlin"), "Mondays 07:00 Europe/Berlin", "another clock names the zone")
+        XCTAssertEqual(words("0 9 1-7 * 1", "UTC"), "cron 0 9 1-7 * 1 in UTC", "an uncommon shape stays the expression")
+        XCTAssertEqual(words("0 9 1-7 * 1", nil), "cron 0 9 1-7 * 1")
+        XCTAssertEqual(RoundText.trigger(RoundTrigger(every: "1d", kind: .cron, zone: "UTC"), now: now, timeZone: utc, locale: locale),
+                       "Daily 00:00", "a create's preset reads as the cron it compiles to")
+        XCTAssertEqual(RoundText.trigger(RoundTrigger(every: "7m", kind: .cron)), "every 7m", "an unknown preset stays as written")
+        XCTAssertEqual(RoundText.trigger(RoundTrigger(kind: .manual)), "by hand")
         let once = RoundTrigger(at: "2026-11-05T09:00:00Z", kind: .once)
         // The day's punctuation comes from the platform's locale data ("Thu 5 Nov", "Thu, 5 Nov").
         let onceText = RoundText.trigger(once, now: now, timeZone: utc, locale: locale)

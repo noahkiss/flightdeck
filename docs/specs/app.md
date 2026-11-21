@@ -1038,8 +1038,9 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
 - **The Capcom tab (iPhone).** The tab's root is the Capcom view under a "Capcom" title: large
   while the view shows a state, inline over the thread, since the chat opens scrolled to its
-  end. The subtitle says where Capcom runs: "Runs on <hab> · answers and routes anything",
-  else the entry row's words for the state; a narrow bar cuts it short. The compose button
+  end. The subtitle says where Capcom runs, "Runs on <hab>", else the entry row's words for
+  the state. Design call: the approved design's "· answers and routes anything" does not fit a
+  phone's bar, which cut it short, so the subtitle keeps the fact and drops the slogan. The compose button
   (New conversation) sits in the bar; a pane Capcom's terminal is "Show terminal" in the More
   menu, not a switch in the title's place. The usage pacing line sits over the composer as
   plain text. The subtitle needs iOS 26; before it the title shows alone. Design call: the tab
@@ -4279,7 +4280,7 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   what starts them: "On a schedule" (cron and once), "When something happens" (event and
   watch), then "By hand". An empty section does not show. A section whose rows are all Capcom
   jobs says "Capcom handles these" beside its header, or under it when both do not fit. Each row: the name; the prompt's first
-  line (else the command); then the trigger, the project's name and the hab ("<hab>
+  line (else the command); then the trigger in words (below), the project's name and the hab ("<hab>
   (offline)" when it is), led by "Paused" or "Completed". On the right: the last run's state
   and how long ago it ended ("Succeeded", "3 days ago"), else "Next" and the next run; a paused
   round shows Unpause there instead (off while its hab is offline; a refusal shows under the
@@ -4289,6 +4290,19 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   design puts the hab in the row, not one section per hab, and splits by trigger; "By hand"
   keeps "On a schedule" true. The design's "Passed" and "Resume" stay "Succeeded" and
   "Unpause": they are the round page's words, and a round's mode can be `resume`.
+- **Schedules in words.** A cron trigger of a common shape reads as words, everywhere the app
+  shows a trigger (the Rounds tab, the Mac's list, the round page, Capcom jobs, the round
+  confirmation card): "Daily 07:00", "Mondays 07:00", "Weekdays 09:00", "Weekends 09:00",
+  "Mon, Wed, Fri 09:00", "Daily 09:00 and 17:00", "Monthly on the 1st 08:00", "Every 5
+  minutes", "Every hour", "Every 6 hours". A preset in a create (`every 1d`) reads as the cron
+  it compiles to. The clock is the round's, in the viewer's locale; the round's zone follows
+  when its clock differs from the viewer's now ("Mondays 07:00 UTC"), and never for minute
+  steps. Any other shape (steps or ranges in the day of month, months, more than four hours)
+  stays the expression: "cron 0 9 1-7 * 1 in Europe/Berlin". On the confirmation card the
+  app's words win over the hab's for a common shape, so a card and the list agree. Design
+  call: the approved design writes "Every day 02:00"; "Daily" is shorter in a row that also
+  carries the project and the hab. Code: `Rounds/CronWords.swift`. Tests:
+  `RoundTests.testCronWords`, `RoundTests.testTriggerAndSlotWords`.
 - **What a job may do.** "Acts alone", "Asks first" or "Tells you", from the job's words and the
   Capcom home's `capcom.event_actions` (`capcom-service.md` 9.4, 9.6): `all` acts alone for
   every job; `ask` asks first for a job with words; `off`, or no words below `all`, tells you.
@@ -4297,8 +4311,8 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   count `card` and `fetch`, which need a word at every value. Code: `CapcomJobReach`.
 - **The Mac's rounds list.** On the Mac the board below the session sections: a "Rounds"
   section holds the "Show run sessions" switch and New round, then one section per hab, "Rounds on <hab>" ("· offline"
-  when it is). Each row: the name, the mode, the trigger in the catalog's words ("every 1h",
-  "every 1d in Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
+  when it is). Each row: the name, the mode, the trigger in words ("Every hour", "Daily 00:00
+  Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
   on the right the mark (Paused, Completed) or the last run's state.
 - **Order.** Rounds that will run, soonest next slot first; then rounds with no next slot (by
   hand); then paused; then completed. The name breaks ties, then the hab's label on the tab.
