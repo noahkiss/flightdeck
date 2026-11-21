@@ -19,6 +19,20 @@ public struct ChatView: View {
     @Environment(\.sendFiles) private var sendFiles
     /// A line over the composer, such as the Capcom tab's pacing line.
     @Environment(\.chatAboveComposer) private var aboveComposer
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+
+    /// The chat column's widest on iPad (app.md 11); a phone and the Mac use the full width.
+    static let readableMax: CGFloat = 820
+
+    private var readableWidth: CGFloat? {
+        #if os(iOS)
+        return sizeClass == .regular ? Self.readableMax : nil
+        #else
+        return nil
+        #endif
+    }
 
     public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0, draft: Binding<String>? = nil) {
         self.model = model
@@ -49,6 +63,9 @@ public struct ChatView: View {
             Divider()
             ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
         }
+        // A readable column on a wide iPad: messages and composer stay under 820 pt, centred.
+        .frame(maxWidth: readableWidth)
+        .frame(maxWidth: .infinity)
         .onAppear {
             model.start()
             // A file sent here from another app waits in the composer (app.md 4.4).
@@ -110,8 +127,14 @@ public struct ChatHeader: View {
         }
     }
 
-    private var subtitle: String {
-        var parts = [harnessName(context.harness), context.hostLabel]
+    private var subtitle: String { Self.line(context) }
+
+    /// "Claude Code · workbench · opus", with "offline" when it is; `round` leads with
+    /// "Round <name>" for a bar that has no badge.
+    static func line(_ context: ChatContext, round: Bool = false) -> String {
+        var parts: [String] = []
+        if round, let r = context.round { parts.append("Round \(r)") }
+        parts += [harnessName(context.harness), context.hostLabel]
         if let m = context.model { parts.append(m) }
         if let s = startModeLabel(context.startMode) { parts.append(s) }
         if !context.online { parts.append("offline") }
