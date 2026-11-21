@@ -201,7 +201,8 @@ hab, through its route (3.3), and to the model provider.
   --omit=dev --include=optional --ignore-scripts --fetch-retries=1 --fetch-timeout=60000`
   there, which downloads the locked SDKs with their native binaries (several hundred MB). When
   `capcom/` holds a `node_modules/` already, install copies that instead. Install says every 30
-  seconds that `npm ci` still runs, and stops it after 10 minutes. Before it renames the
+  seconds that `npm ci` still runs. The engine step, `npm ci` or the copy, stops after 10
+  minutes, and the notice names the limit. Before it renames the
   directory into place, install checks that the SDKs' platform packages for this system are
   there (`claude-agent-sdk-<os>-<arch>` and `codex-<os>-<arch>`); a user's `omit=optional` would
   drop them. A directory another install renamed into place first counts as this one's.
@@ -215,7 +216,8 @@ hab, through its route (3.3), and to the model provider.
 - **A failed engine keeps the previous one.** When install sets up no new engine (`npm ci`
   fails or times out, a platform package is missing, Node.js is missing or too old, or no
   `capcom/` is there), it leaves `current` on the engine installed before, on purpose: a
-  working older engine beats none. The install does not fail. One line names the cause, cut
+  working older engine beats none. Without Node.js no engine runs, and the line says the
+  service will not start until Node.js is installed. The install does not fail. One line names the cause, cut
   to npm's last 8 lines, and what runs: "install keeps the previous engine <8 hex digits>", or
   "no engine is installed, so the Capcom service will not start". The next install that
   succeeds moves `current`.

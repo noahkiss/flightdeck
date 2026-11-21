@@ -74,7 +74,12 @@ for p in @anthropic-ai/claude-agent-sdk @openai/codex-sdk; do
 done
 command -v node >/dev/null || fail "no node on PATH for node --check"
 node --check "$eng/gff-hab-capcom.mjs" || fail "$eng/gff-hab-capcom.mjs does not parse"
-grep -qF "\"$want\"" "$eng/gff-hab-capcom.mjs" || fail "$eng/gff-hab-capcom.mjs does not carry version $want"
+# The engine's version as build.mjs's define writes it: esbuild folds src/version.ts to
+# `var ENGINE_VERSION = true ? "<version>" : "dev";`. The bundle cannot run here (no SDKs).
+got=$(node -e '
+const m = require("fs").readFileSync(process.argv[1], "utf8").match(/\bENGINE_VERSION = (?:true \? )?"([^"]*)"/);
+console.log(m ? m[1] : "");' "$eng/gff-hab-capcom.mjs")
+[ "$got" = "$want" ] || fail "$eng/gff-hab-capcom.mjs carries engine version '${got:-none}', want '$want'"
 say "the Capcom engine folder is in place"
 
 # 1. The version each binary reports.

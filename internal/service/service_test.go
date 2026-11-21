@@ -254,7 +254,7 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 		return nil, nil
 	case "ditto":
 		f.dittos++
-		return nil, copyTree(args[0], args[1])
+		return nil, copyTree(context.Background(), args[0], args[1])
 	case "codesign":
 		item := args[len(args)-1]
 		if args[0] == "-d" {

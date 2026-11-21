@@ -35,7 +35,8 @@ const EngineFile = "gff-hab-capcom.mjs"
 // engineFiles are the files of an engine folder that install copies and hashes.
 var engineFiles = []string{EngineFile, "package.json", "package-lock.json"}
 
-// engineTimeout bounds the engine step of an install: npm ci and the copy. A var for tests. A
+// engineTimeout bounds the engine step of an install: npm ci, or the copy of a node_modules
+// the source holds. A var for tests. A
 // temporary engine directory younger than twice this is another install's, and stays.
 var engineTimeout = 10 * time.Minute
 
@@ -249,7 +250,10 @@ func buildEngine(ctx context.Context, run Runner, out io.Writer, o EngineOptions
 		}
 	}
 	if fi, err := os.Stat(filepath.Join(o.Source, "node_modules")); err == nil && fi.IsDir() {
-		if err := copyTree(filepath.Join(o.Source, "node_modules"), filepath.Join(tmp, "node_modules")); err != nil {
+		if err := copyTree(ctx, filepath.Join(o.Source, "node_modules"), filepath.Join(tmp, "node_modules")); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("copying node_modules did not finish within the %s limit", limit())
+			}
 			return err
 		}
 	} else {
@@ -257,7 +261,7 @@ func buildEngine(ctx context.Context, run Runner, out io.Writer, o EngineOptions
 		if npm == "" {
 			npm = "npm"
 		}
-		fmt.Fprintf(out, "installing the Capcom engine's SDKs with npm ci (a download of several hundred MB, at most %s)\n", engineTimeout)
+		fmt.Fprintf(out, "installing the Capcom engine's SDKs with npm ci (a download of several hundred MB, at most %s)\n", limit())
 		if err := runNPM(ctx, run, out, npm, tmp); err != nil {
 			return err
 		}
@@ -305,7 +309,7 @@ func runNPM(ctx context.Context, run Runner, out io.Writer, npm, dir string) err
 		return nil
 	}
 	if ctx.Err() != nil {
-		return fmt.Errorf("npm ci did not finish within %s", engineTimeout)
+		return fmt.Errorf("npm ci did not finish within the %s limit", limit())
 	}
 	if len(b) > 0 {
 		var ee interface{ ExitCode() int }
@@ -335,11 +339,25 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 	return out.Close()
 }
 
-// copyTree copies the tree src to dst: directories and regular files with their mode bits, and
-// links as links.
-func copyTree(src, dst string) error {
+// limit is engineTimeout in words, for a notice: "10 minutes".
+func limit() string {
+	if engineTimeout >= time.Minute && engineTimeout%time.Minute == 0 {
+		if m := int(engineTimeout / time.Minute); m != 1 {
+			return fmt.Sprintf("%d minutes", m)
+		}
+		return "1 minute"
+	}
+	return engineTimeout.String()
+}
+
+// copyTree copies the tree src to dst, until ctx ends: directories and regular files with their
+// mode bits, and links as links.
+func copyTree(ctx context.Context, src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		rel, err := filepath.Rel(src, p)

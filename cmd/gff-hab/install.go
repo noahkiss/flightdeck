@@ -363,7 +363,11 @@ func capcomEngineFor(state, hab string, out io.Writer) *service.EngineOptions {
 	// line says which engine that is, or that there is none.
 	switch {
 	case nerr != nil:
-		fmt.Fprintf(out, "capcom: the new engine was not installed: %v; %s\n", nerr, service.EngineKept(state))
+		msg := fmt.Sprintf("capcom: the new engine was not installed: %v; the Capcom service will not start until Node.js is installed", nerr)
+		if e := service.InstalledEngine(state); e != "" {
+			msg += "; install keeps the previous engine " + service.EngineHash(e)
+		}
+		fmt.Fprintln(out, msg)
 	case src != "":
 		eng = &service.EngineOptions{Source: src, NPM: npmFor(node)}
 	default:

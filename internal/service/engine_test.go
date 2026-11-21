@@ -235,8 +235,8 @@ func TestEngineFolder(t *testing.T) {
 	}
 }
 
-// TestEngineNPM: npm ci stops at engineTimeout with a line that says so, install says while it
-// runs that it still runs, and an engine directory another install wrote first counts as this
+// TestEngineNPM: npm ci and the node_modules copy stop at engineTimeout with a line that names
+// the limit, install says while npm ci runs that it still runs, and an engine directory another install wrote first counts as this
 // one's (capcom-service.md 3.1).
 func TestEngineNPM(t *testing.T) {
 	defer func(d, p time.Duration) { engineTimeout, engineProgress = d, p }(engineTimeout, engineProgress)
@@ -273,6 +273,20 @@ func TestEngineNPM(t *testing.T) {
 	}
 	if err := buildEngine(context.Background(), race, &out, EngineOptions{Source: src}, EnginesDir(state), "0123456789abcdef", dst); err != nil {
 		t.Errorf("an engine another install wrote first: %v", err)
+	}
+
+	// The copy of a node_modules the source holds stops with the context too.
+	writeEngine(t, filepath.Join(root, "withmods"), "b", true)
+	done, stop := context.WithCancel(context.Background())
+	stop()
+	if err := copyTree(done, filepath.Join(root, "withmods", "node_modules"), filepath.Join(root, "copy")); !errors.Is(err, context.Canceled) {
+		t.Errorf("copyTree after the context ended: %v", err)
+	}
+
+	// The notices name the limit in words.
+	engineTimeout = 10 * time.Minute
+	if got := limit(); got != "10 minutes" {
+		t.Errorf("limit() = %q, want 10 minutes", got)
 	}
 
 	if got := EngineKept(filepath.Join(root, "none")); got != "no engine is installed, so the Capcom service will not start" {
