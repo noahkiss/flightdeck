@@ -45,7 +45,9 @@ public struct TerminalScreen: View {
                 TerminalSizeControl(model: model)
             }
             .padding(.horizontal, 4)
-            .background(Self.background)
+            // Not under the bar or the iPad sidebar: the dark would show through their glass
+            // and hide the title in light mode.
+            .background(Self.background, ignoresSafeAreaEdges: .bottom)
             #endif
             terminal
             #if os(iOS)
@@ -129,7 +131,7 @@ public struct TerminalScreen: View {
                     model.containerChanged(size)
                 }
         }
-        .background(Self.background)
+        .background(Self.background, ignoresSafeAreaEdges: .bottom)
         .overlay(alignment: .center) { statusOverlay }
         .overlay(alignment: .bottom) { inputNotice }
         .overlay(alignment: .top) { noticeView }

@@ -357,9 +357,26 @@ The root is a stock tab view with four tabs, in this order:
   strip is its bottom accessory (3.7). A session opens pushed in the Sessions tab's stack, with
   the tab bar hidden, so the chat keeps its composer room.
 - **iPad.** The same four tabs in the sidebar-adaptable style: a tab bar at the top that the owner
-  can turn into a sidebar. Design call: it is the system's own control for one structure at two
-  widths, so iPad and iPhone share it. Inside the Sessions tab, a regular-width window keeps the
-  board and session split (3.3, 11); a compact one uses the phone layout.
+  can turn into a sidebar (the system shows the sidebar in a wide landscape window). Design call:
+  it is the system's own control for one structure at two widths, so iPad and iPhone share it.
+  In a regular-width window each tab uses the system's own parts, with no chrome of its own:
+  - **Sessions:** a split view. The list is the sidebar column, the open session the detail
+    column, "Choose a session" while none is open. The open session's row shows selected, also
+    when the session opened from elsewhere (a notification, a round, a group, a sent file).
+  - **The session:** the detail column's system bar: the session's title, a subtitle of round,
+    harness, hab and model (iOS 26), and the controls as toolbar items: Chat | Terminal (when
+    not side by side), New conversation (Capcom), Voice, Show files; Console, Show in chat and
+    Note friction in its More menu. Chat and terminal sit side by side while the column is at
+    least 900 pt wide; narrower (portrait, or a sidebar open) the switch shows one at a time.
+    The chat column stays under 820 pt wide, centred, so lines stay readable on a 13" screen.
+  - **Capcom:** the phone's Capcom tab (4.10) as it is: the "Capcom" title with its subtitle
+    in the system bar, the conversation in the readable column.
+  - **Rounds:** a split view: the list in the sidebar column with the chosen round selected,
+    its page in the detail column, "Choose a round" until one is chosen.
+  - **Settings:** a split view: the Settings list in the sidebar column, each page (a
+    computer, Notifications, Voice, Usage warnings, Help) in the detail column, as the system's
+    Settings app does.
+  A compact width (Slide Over, a narrow window) uses the phone layout in every tab.
 - **Mac.** The window keeps the board and session split with the connections column. The Mac's own
   chrome (a Settings window, a sidebar) is a later stage.
 - **Deployment.** The app targets iOS 17. `Tab` items, the sidebar-adaptable style, the bottom
@@ -1036,10 +1053,11 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   Capcom has no project to watch in a terminal; the terminal is there for a first-start trust
   prompt (`capcom.md` 7.5). Every session with kind `capcom` gets this style, opened from its
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
-- **The Capcom tab (iPhone).** The tab's root is the Capcom view under a "Capcom" title: large
+- **The Capcom tab (iPhone and iPad).** The tab's root is the Capcom view under a "Capcom" title: large
   while the view shows a state, inline over the thread, since the chat opens scrolled to its
-  end. The subtitle says where Capcom runs: "Runs on <hab> · answers and routes anything",
-  else the entry row's words for the state; a narrow bar cuts it short. The compose button
+  end. The subtitle says where Capcom runs, "Runs on <hab>", else the entry row's words for
+  the state. Design call: the approved design's "· answers and routes anything" does not fit a
+  phone's bar, which cut it short, so the subtitle keeps the fact and drops the slogan. The compose button
   (New conversation) sits in the bar; a pane Capcom's terminal is "Show terminal" in the More
   menu, not a switch in the title's place. The usage pacing line sits over the composer as
   plain text. The subtitle needs iOS 26; before it the title shows alone. Design call: the tab
@@ -1159,7 +1177,7 @@ owner chooses to show, answers from the chat, and the empty and error states. Co
 
 **Show in chat.** The owner chooses which kinds of content the chat shows (owner requirement).
 
-- "Show in chat" in the chat's More menu (iPhone) or the session header (iPad, Mac) opens a
+- "Show in chat" in the chat's More menu (iPhone, iPad) or the session header (Mac) opens a
   sheet with one switch per kind. Scope: "Every session" (the default) or "Only this one". The
   footer says: "Replies, questions, approvals and errors always show. Hidden steps fold into one
   line you can open."
@@ -1459,9 +1477,8 @@ VoiceOver reads it:
 | Redraw | "Redrawn" when the hab answers |
 | The hab refuses | Plain words, from the error kind: "Another device has this terminal and kept its size." (`applied: false`), "This view only watches the terminal, so it can't change its size." (`invalid` for an observer), "This terminal is gone." (`not_found`), "Not connected. Try again when the hab is back." (the connection is down or the call timed out), "The hab refused the size." otherwise |
 
-**iPad.** The session split's terminal column fits by the same rule to its own width, so a
-divider at 50/50 on a 13-inch iPad in landscape gives about 85 columns at 13 pt. Moving the
-divider refits the pane while this client owns it.
+**iPad.** The session's terminal fits by the same rule to its own width: half the detail column
+while chat and terminal sit side by side, the whole column when the switch shows one (3.8).
 
 ### 5.5 The key bar
 
@@ -2713,8 +2730,8 @@ The hab sends one structure. Each device presents it its own way. No layout reac
 
 | | iPhone | iPad | Mac |
 |---|---|---|---|
-| Home | Four tabs (3.8); Sessions is the status board | The same four tabs, sidebar-adaptable; the Sessions tab splits board and session | Board plus session; connections column |
-| Session | Chat first; a switch flips to terminal | Chat and terminal side by side, about 50/50 | Chat and terminal side by side, about 50/50 |
+| Home | Four tabs (3.8); Sessions is the status board | The same four tabs, sidebar-adaptable; Sessions, Rounds and Settings are split views (3.8) | Board plus session; connections column |
+| Session | Chat first; a switch flips to terminal | Chat and terminal side by side, about 50/50, in a column 900 pt or wider; else the phone's switch | Chat and terminal side by side, about 50/50 |
 | Console | A sheet over the session | A drawer under the terminal | A drawer under the terminal |
 | Divider | — | Draggable; snaps to 50/50, chat only, terminal only | Same as iPad |
 | Keyboard | System keyboard plus keyboard bar | Hardware keyboard, bar when no hardware keyboard | Hardware keyboard |
@@ -2731,8 +2748,9 @@ Rules:
   never push the switch off; its microphone stays in the bar. Beside the switch the
   phone's bar holds one control and the More menu: Voice in the chat, the pane's microphone in
   the terminal. New conversation, Note friction, and Voice in the terminal, go in the More menu
-  (owner report 2026-11-02: four controls covered the switch). iPad and Mac keep their header as
-  it is, with Note friction as one more icon there.
+  (owner report 2026-11-02: four controls covered the switch). On iPad the controls are the
+  system bar's toolbar items (3.8); the Mac keeps its header, with Note friction as one more
+  icon there.
 - **Note friction** (`diagnostics.md` 9.1) shows when the session's hab lists `friction`. It
   opens a sheet sized to its content: a multi-line field, a Blocker switch (the work could not
   be done in Flightdeck), Cancel and Send. ⌥⌘F opens it with a hardware keyboard. After Send the
@@ -4185,6 +4203,9 @@ On iPhone and iPad, Settings is a tab (3.8) with four groups:
 - **Help and diagnostics:** "Show setting keys", SSH keys and habs, and Acknowledgements. The
   footer says that Capcom and round settings live on their tabs.
 
+On iPad the four groups are the sidebar column of a split view and each page opens in the detail
+column (3.8).
+
 The full page ("All settings" on iOS, the Settings sheet on the Mac):
 
 - **One page, grouped by area:** Agents (with the Capcom host picker, 4.10), Approvals,
@@ -4279,7 +4300,7 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   what starts them: "On a schedule" (cron and once), "When something happens" (event and
   watch), then "By hand". An empty section does not show. A section whose rows are all Capcom
   jobs says "Capcom handles these" beside its header, or under it when both do not fit. Each row: the name; the prompt's first
-  line (else the command); then the trigger, the project's name and the hab ("<hab>
+  line (else the command); then the trigger in words (below), the project's name and the hab ("<hab>
   (offline)" when it is), led by "Paused" or "Completed". On the right: the last run's state
   and how long ago it ended ("Succeeded", "3 days ago"), else "Next" and the next run; a paused
   round shows Unpause there instead (off while its hab is offline; a refusal shows under the
@@ -4289,6 +4310,19 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   design puts the hab in the row, not one section per hab, and splits by trigger; "By hand"
   keeps "On a schedule" true. The design's "Passed" and "Resume" stay "Succeeded" and
   "Unpause": they are the round page's words, and a round's mode can be `resume`.
+- **Schedules in words.** A cron trigger of a common shape reads as words, everywhere the app
+  shows a trigger (the Rounds tab, the Mac's list, the round page, Capcom jobs, the round
+  confirmation card): "Daily 07:00", "Mondays 07:00", "Weekdays 09:00", "Weekends 09:00",
+  "Mon, Wed, Fri 09:00", "Daily 09:00 and 17:00", "Monthly on the 1st 08:00", "Every 5
+  minutes", "Every hour", "Every 6 hours". A preset in a create (`every 1d`) reads as the cron
+  it compiles to. The clock is the round's, in the viewer's locale; the round's zone follows
+  when its clock differs from the viewer's now ("Mondays 07:00 UTC"), and never for minute
+  steps. Any other shape (steps or ranges in the day of month, months, more than four hours)
+  stays the expression: "cron 0 9 1-7 * 1 in Europe/Berlin". On the confirmation card the
+  app's words win over the hab's for a common shape, so a card and the list agree. Design
+  call: the approved design writes "Every day 02:00"; "Daily" is shorter in a row that also
+  carries the project and the hab. Code: `Rounds/CronWords.swift`. Tests:
+  `RoundTests.testCronWords`, `RoundTests.testTriggerAndSlotWords`.
 - **What a job may do.** "Acts alone", "Asks first" or "Tells you", from the job's words and the
   Capcom home's `capcom.event_actions` (`capcom-service.md` 9.4, 9.6): `all` acts alone for
   every job; `ask` asks first for a job with words; `off`, or no words below `all`, tells you.
@@ -4297,8 +4331,8 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
   count `card` and `fetch`, which need a word at every value. Code: `CapcomJobReach`.
 - **The Mac's rounds list.** On the Mac the board below the session sections: a "Rounds"
   section holds the "Show run sessions" switch and New round, then one section per hab, "Rounds on <hab>" ("· offline"
-  when it is). Each row: the name, the mode, the trigger in the catalog's words ("every 1h",
-  "every 1d in Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
+  when it is). Each row: the name, the mode, the trigger in words ("Every hour", "Daily 00:00
+  Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
   on the right the mark (Paused, Completed) or the last run's state.
 - **Order.** Rounds that will run, soonest next slot first; then rounds with no next slot (by
   hand); then paused; then completed. The name breaks ties, then the hab's label on the tab.
@@ -4312,8 +4346,9 @@ the badge), `RoundsTab` in `Views/ShellViews.swift` (the Rounds tab), `Demo/Fake
 - **Filter.** "Show run sessions" is on by default and kept in the app's defaults. Off hides
   run sessions from the board, except in "Needs you". Design call: a hidden approval would
   stall the run; the filter is for clutter, not for things the owner must answer.
-- **Navigation.** A round row pushes its page in the list's own navigation stack, on every
-  device; a run session opens in the session pane as any board row does.
+- **Navigation.** A round row pushes its page in the list's own navigation stack on iPhone and
+  Mac; on iPad the page fills the split view's detail column (3.8). A run session opens in the
+  session pane as any board row does.
 
 ### 21.3 The round page and the actions
 

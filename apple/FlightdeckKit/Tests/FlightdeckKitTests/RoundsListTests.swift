@@ -83,7 +83,7 @@ final class RoundsListTests: XCTestCase {
         let rows = Dictionary(uniqueKeysWithValues: s[0].rows.map { ($0.title, $0) })
         let passed = try XCTUnwrap(rows["passed"])
         XCTAssertEqual(passed.summary, "Do the thing.", "the prompt's first line")
-        XCTAssertEqual(passed.meta, "every 1d in UTC · tide-tables · workbench")
+        XCTAssertEqual(passed.meta, "Daily 00:00 · tide-tables · workbench")
         XCTAssertEqual(passed.status, "Succeeded")
         XCTAssertEqual(passed.statusState, .succeeded)
         XCTAssertEqual(passed.when, "3 days ago")
@@ -101,7 +101,7 @@ final class RoundsListTests: XCTestCase {
 
         let asleep = try XCTUnwrap(rows["asleep"])
         XCTAssertTrue(asleep.paused)
-        XCTAssertEqual(asleep.meta, "Paused · every 1d in UTC · tide-tables · workbench")
+        XCTAssertEqual(asleep.meta, "Paused · Daily 00:00 · tide-tables · workbench")
         XCTAssertNil(asleep.status, "a paused row shows Unpause, not its last run")
     }
 
@@ -201,7 +201,7 @@ final class RoundsListTests: XCTestCase {
         await DemoFleet.populate(f, script: false)
         await f.setActive(true)
         await eventually("ready") { f.capcom.entry == .ready(habID: "demo-workbench") }
-        XCTAssertEqual(f.capcom.tabSubtitle(f.capcom.entry), "Runs on workbench · answers and routes anything")
+        XCTAssertEqual(f.capcom.tabSubtitle(f.capcom.entry), "Runs on workbench")
         XCTAssertEqual(f.capcom.tabSubtitle(.unassigned), "No Capcom host assigned")
         XCTAssertEqual(f.capcom.tabSubtitle(.offline(habID: "demo-workbench")), "workbench · offline")
         await f.setActive(false)

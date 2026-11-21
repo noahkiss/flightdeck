@@ -4,17 +4,34 @@ import SwiftUI
 import UIKit
 
 /// The Settings tab (app.md 20.7): Computers with pairing, how much agents may do alone, this
-/// device's settings, and help and diagnostics.
+/// device's settings, and help and diagnostics. A regular width shows the list as a split
+/// view's sidebar, and each page in the detail column, as the system's Settings does.
 struct SettingsTab: View {
     let fleet: Fleet
     @State private var pairing = false
     @Environment(\.sshSetup) private var ssh
     @Environment(\.voiceKit) private var voice
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var board: Board { fleet.board }
 
     var body: some View {
-        NavigationStack {
+        if sizeClass == .compact {
+            NavigationStack { root }
+        } else {
+            NavigationSplitView {
+                root
+                    .navigationSplitViewColumnWidth(min: 340, ideal: 400, max: 460)
+            } detail: {
+                NavigationStack {
+                    ContentUnavailableView("Choose a setting", systemImage: "slider.horizontal.3",
+                                           description: Text("Pick a computer or a page from the list."))
+                }
+            }
+        }
+    }
+
+    private var root: some View {
             Form {
                 computers
                 if let settings = fleet.settings { LevelGroup(center: settings, board: board, push: fleet.push, usage: fleet.usage) }
@@ -36,7 +53,6 @@ struct SettingsTab: View {
                     }
                 }
             }
-        }
     }
 
     private var computers: some View {

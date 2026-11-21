@@ -91,6 +91,8 @@ public struct SessionView: View {
     @Environment(\.capcomView) private var capcomView
     /// Set when this session is the Capcom tab's root (app.md 4.10): its subtitle.
     @Environment(\.capcomTab) private var capcomTab
+    /// The session column's width (iPad): it decides side by side or the switch.
+    @State private var width: CGFloat = 1200
 
     enum Mode: String, CaseIterable, Identifiable {
         case chat = "Chat"
@@ -200,6 +202,9 @@ public struct SessionView: View {
                         .presentationDetents([.medium, .large])
                 }
             } else {
+                #if os(iOS)
+                regular
+                #else
                 VStack(spacing: 0) {
                     HStack {
                         ChatHeader(context: model.context)
@@ -276,6 +281,7 @@ public struct SessionView: View {
                         }
                     }
                 }
+                #endif
             }
         }
         #if os(iOS)
@@ -298,6 +304,77 @@ public struct SessionView: View {
             focusComposer += 1
         }
     }
+
+    #if os(iOS)
+    /// The narrowest session column that keeps chat and terminal side by side on iPad; below
+    /// it the Chat and Terminal switch joins the bar's controls (app.md 11).
+    static let sideBySideMin: CGFloat = 900
+
+    /// Chat and terminal side by side: a session with a pane, in a wide enough column.
+    private var sideBySide: Bool {
+        !model.context.isCapcom && width - (showFiles ? 321 : 0) >= Self.sideBySideMin
+    }
+
+    /// iPad (app.md 3.8, 11): the session in the system bar of its column, with the title,
+    /// a subtitle of harness, hab and model, and the controls as toolbar items.
+    private var regular: some View {
+        HStack(spacing: 0) {
+            if sideBySide {
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                            .frame(width: geo.size.width / 2)
+                        Divider()
+                        terminal.make(model.target)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            } else {
+                switch model.context.isCapcomService ? .chat : mode {
+                case .chat: ChatView(model: model, openTerminal: model.context.isCapcomService ? nil : { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                case .terminal: terminal.make(model.target)
+                }
+            }
+            if showFiles {
+                Divider()
+                ContentPanel(model: model.content)
+                    .frame(width: 320)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .navigationTitle(model.context.title)
+        .modifier(TabSubtitle(text: ChatHeader.line(model.context, round: true)))
+        .toolbar {
+            // The switch sits with the controls, so the bar keeps the session's title.
+            if !sideBySide, !model.context.isCapcomService {
+                ToolbarItem(placement: .primaryAction) {
+                    Picker("View", selection: $mode) {
+                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                if model.context.isCapcom { newConversationButton }
+                VoiceButton(model: model, shown: $voiceShown)
+                Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
+                    withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
+                }
+            }
+            if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
+                ToolbarItem(placement: .secondaryAction) { consoleButton }
+            }
+            if model.show != nil, !model.context.isCapcomService {
+                ToolbarItem(placement: .secondaryAction) { ChatShowButton(shown: $chatShowShown) }
+            }
+            if model.context.takesFriction {
+                ToolbarItem(placement: .secondaryAction) { frictionButton }
+            }
+        }
+    }
+    #endif
 
     /// "New conversation" (capcom.md 8.2): the chips that can move and the draft go to a fresh
     /// Capcom session, which opens in this one's place.

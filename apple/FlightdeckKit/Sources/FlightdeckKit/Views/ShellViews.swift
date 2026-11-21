@@ -200,7 +200,8 @@ struct ShellLaunchArguments: ViewModifier {
 // MARK: - Sessions
 
 /// The Sessions tab (app.md 3.8): the list, the hosts menu, and the opened session. A compact
-/// width pushes the session; a regular one shows it beside the list.
+/// width pushes the session; a regular one shows it in a split view's detail column, with the
+/// open row selected in the list.
 struct SessionsTab: View {
     let fleet: Fleet
     @Binding var opened: BoardRow?
@@ -218,28 +219,28 @@ struct SessionsTab: View {
                             .toolbar(.hidden, for: .tabBar)
                     }
             }
-        } else if let row = opened {
-            BoardSessionSplit {
-                NavigationStack { list }
-            } session: {
-                // A stack of its own, so the session's header sits under the iPad's top tab bar.
-                NavigationStack {
-                    session(row, compact: false)
-                        .navigationBarTitleDisplayMode(.inline)
-                }
-            }
         } else {
-            BoardSessionSplit {
-                NavigationStack { list }
-            } session: {
-                ContentUnavailableView("Choose a session", systemImage: "rectangle.stack",
-                                       description: Text("Pick a row to open its chat and terminal."))
+            NavigationSplitView {
+                list(selectable: true)
+                    .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 420)
+            } detail: {
+                NavigationStack {
+                    if let row = opened {
+                        session(row, compact: false)
+                            .navigationBarTitleDisplayMode(.inline)
+                    } else {
+                        ContentUnavailableView("Choose a session", systemImage: "rectangle.stack",
+                                               description: Text("Pick a row to open its chat and terminal."))
+                    }
+                }
             }
         }
     }
 
-    private var list: some View {
-        SessionsListView(fleet: fleet, opened: $opened)
+    private var list: some View { list(selectable: false) }
+
+    private func list(selectable: Bool) -> some View {
+        SessionsListView(fleet: fleet, opened: $opened, selectable: selectable)
             .modifier(OptionalUsageFooter(usage: footer ? fleet.usage : nil))
             .navigationTitle("Sessions")
             .navigationBarTitleDisplayMode(.large)
@@ -313,6 +314,8 @@ struct HostsMenu: View {
 struct SessionsListView: View {
     let fleet: Fleet
     @Binding var opened: BoardRow?
+    /// iPad: the open session's row shows selected, and a tap on a row selects it.
+    var selectable = false
 
     private var board: Board { fleet.board }
 
@@ -332,7 +335,7 @@ struct SessionsListView: View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
             let sections = sections
             ScrollViewReader { proxy in
-            List {
+            List(selection: selectable ? selection : nil) {
                 ForEach(board.habs.filter(\.needsUpdate)) { h in
                     Label("\(h.label): \(h.updateText)", systemImage: "exclamationmark.triangle")
                 }
@@ -369,21 +372,50 @@ struct SessionsListView: View {
         opened = row
     }
 
+    /// The selected row is the open session; selecting a row opens it.
+    private var selection: Binding<String?> {
+        Binding(get: { opened?.id }, set: { id in
+            guard let id, let row = board.rows.first(where: { $0.id == id }) else { return }
+            open(row)
+        })
+    }
+
     @ViewBuilder
     private func item(_ item: SessionItem, now: Date) -> some View {
         switch item {
         case .permission(let row):
             PermissionRow(row: row, approvals: fleet.approvals, now: now) { open(row) }
+                .modifier(OpenRowMark(id: row.id, open: selectable && opened?.id == row.id))
         case .question(let row):
             ActionRow(row: row, now: now, action: "Answer", open: { open(row) }, act: { open(row) })
+                .modifier(OpenRowMark(id: row.id, open: selectable && opened?.id == row.id))
         case .confirm(let card):
             if let center = fleet.confirms { ConfirmRow(center: center, card: card, now: now) }
         case .group(let g):
             NavigationLink(value: g) { GroupRow(group: g, now: now) }
         case .session(let row):
-            Button { open(row) } label: { SessionRow(row: row, now: now) }
-                .buttonStyle(.plain)
+            if selectable {
+                SessionRow(row: row, now: now).tag(row.id)
+            } else {
+                Button { open(row) } label: { SessionRow(row: row, now: now) }
+                    .buttonStyle(.plain)
+            }
         }
+    }
+}
+
+/// The open session's mark on a row with its own buttons (iPad): a light accent wash, not the
+/// list's selection, which would sit the buttons on the accent colour. The row's own tag keeps
+/// it out of the selection: the ForEach would tag it with the session id, which the list
+/// then draws selected (white text on the light wash).
+struct OpenRowMark: ViewModifier {
+    let id: String
+    let open: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .tag("mark/" + id)
+            .listRowBackground(open ? Color.accentColor.opacity(0.18) : nil)
     }
 }
 
@@ -832,18 +864,14 @@ struct UsageAccessoryItem: View {
 
 // MARK: - Capcom and Rounds
 
-/// The Capcom tab: the existing Capcom view as a tab root (app.md 3.8).
+/// The Capcom tab: the Capcom view as a tab root (app.md 3.8, 4.10). iPhone and iPad share
+/// it: a "Capcom" title in the system bar, the conversation full width.
 struct CapcomTab: View {
     let fleet: Fleet
-    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
-        if sizeClass == .compact {
-            NavigationStack {
-                CapcomScreen(fleet: fleet, compact: true, close: nil, tab: true)
-            }
-        } else {
-            CapcomScreen(fleet: fleet, compact: false, close: nil)
+        NavigationStack {
+            CapcomScreen(fleet: fleet, compact: true, close: nil, tab: true)
         }
     }
 }
@@ -853,6 +881,9 @@ struct CapcomTab: View {
 struct RoundsTab: View {
     let fleet: Fleet
     @State private var creating: RoundDraft?
+    /// iPad: the round shown in the detail column, by hab and round id.
+    @State private var selected: RoundRow?
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var center: RoundCenter { fleet.rounds }
 
@@ -864,17 +895,57 @@ struct RoundsTab: View {
         }
     }
 
+    /// A compact width pushes a round's page; a regular one shows it in a split view's detail
+    /// column, with its row selected (app.md 21.2).
     var body: some View {
-        NavigationStack {
+        if sizeClass == .compact {
+            NavigationStack {
+                list(selectable: false)
+                    .navigationDestination(for: RoundRow.self) { row in
+                        RoundPage(center: center, habID: row.habID, roundID: row.round.id)
+                    }
+            }
+        } else {
+            NavigationSplitView {
+                list(selectable: true)
+                    .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 480)
+            } detail: {
+                NavigationStack {
+                    if let r = selected {
+                        RoundPage(center: center, habID: r.habID, roundID: r.round.id)
+                            .id(r.id)
+                    } else {
+                        ContentUnavailableView("Choose a round", systemImage: "clock.arrow.circlepath",
+                                               description: Text("Pick a round to see its runs."))
+                    }
+                }
+            }
+        }
+    }
+
+    /// The selected row by id: a round's revision changes its value, not its id.
+    private func selection(_ sections: [RoundsListSection]) -> Binding<String?> {
+        Binding(get: { selected?.id }, set: { id in
+            guard let id else { return }
+            selected = sections.lazy.flatMap(\.rows).first { $0.row.id == id }?.row
+        })
+    }
+
+    private func list(selectable: Bool) -> some View {
             TimelineView(.periodic(from: .now, by: 30)) { ctx in
                 let sections = center.listSections(home: home, now: ctx.date)
                 ScrollViewReader { proxy in
-                List {
+                List(selection: selectable ? selection(sections) : nil) {
                     ForEach(sections) { s in
                         Section {
                             ForEach(s.rows) { row in
-                                NavigationLink(value: row.row) {
-                                    RoundsListRowView(row: row, center: center)
+                                if selectable {
+                                    RoundsListRowView(row: row, center: center, onAccent: selected?.id == row.row.id)
+                                        .tag(row.row.id)
+                                } else {
+                                    NavigationLink(value: row.row) {
+                                        RoundsListRowView(row: row, center: center)
+                                    }
                                 }
                             }
                         } header: {
@@ -907,9 +978,6 @@ struct RoundsTab: View {
                 #endif
                 }
             }
-            .navigationDestination(for: RoundRow.self) { row in
-                RoundPage(center: center, habID: row.habID, roundID: row.round.id)
-            }
             .navigationTitle("Rounds")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -927,7 +995,6 @@ struct RoundsTab: View {
             .sheet(item: $creating) { d in
                 RoundFormSheet(center: center, draft: d) { creating = nil }
             }
-        }
     }
 
     @ViewBuilder
@@ -958,6 +1025,8 @@ struct RoundsTab: View {
 struct RoundsListRowView: View {
     let row: RoundsListRow
     let center: RoundCenter
+    /// The selected row (iPad) sits on the accent: tints and grey text give way to white there.
+    var onAccent = false
 
     var body: some View {
         AdaptiveRow {
@@ -972,7 +1041,7 @@ struct RoundsListRowView: View {
                 }
                 Text(row.meta)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(onAccent ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(.secondary))
                 // Unpause's refusal, in the hab's words (21.3).
                 if let e = center.errors[row.id] {
                     Text(e)
@@ -993,6 +1062,7 @@ struct RoundsListRowView: View {
             Button("Unpause") { Task { await center.setPaused(row.row, false) } }
                 .font(.subheadline.weight(.semibold))
                 .buttonStyle(.borderless)
+                .tint(onAccent ? Color.white : nil)
                 .disabled(!row.online || center.busy.contains(row.id))
         } else if row.completed {
             EmptyView()
@@ -1001,18 +1071,18 @@ struct RoundsListRowView: View {
                 .font(.footnote.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(reachColor(reach).opacity(0.2)))
-                .foregroundStyle(.primary)
+                .background(Capsule().fill((onAccent ? Color.white : reachColor(reach)).opacity(0.2)))
+                .foregroundStyle(onAccent ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
                 .fixedSize()
         } else if let status = row.status {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(status)
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(row.statusState.map(stateColor) ?? .secondary)
+                    .foregroundStyle(onAccent ? .white : row.statusState.map(stateColor) ?? .secondary)
                 if let w = row.when {
                     Text(w)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(onAccent ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(.secondary))
                 }
             }
             .multilineTextAlignment(.trailing)
