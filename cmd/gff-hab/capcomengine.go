@@ -107,6 +107,35 @@ type capcomEngine struct {
 	stateMu sync.Mutex // orders syncState's applies
 	stateT  int64      // the last applied update's clock (ms)
 	shown   bool       // an agent state was applied for the route since the last exit
+
+	warnedVersion atomic.Value // string: the engine version last logged as not gff-hab's
+}
+
+// checkVersion logs once per engine version when the engine's ready names a version other
+// than gff-hab's (capcom-service.md 3.1): an install that could not set up this release's
+// engine kept the previous one.
+func (e *capcomEngine) checkVersion(logf func(string, ...any)) {
+	v := e.link.Status().Version
+	msg := engineVersionMismatch(version, v)
+	if msg == "" || logf == nil {
+		return
+	}
+	if old, _ := e.warnedVersion.Swap(v).(string); old == v {
+		return
+	}
+	logf("%s", msg)
+}
+
+// engineVersionMismatch is the warning for an engine of version engine under gff-hab of
+// version hab, or "" when they match. A gff-hab built outside a release (dev) runs any engine.
+func engineVersionMismatch(hab, engine string) string {
+	if hab == "" || hab == "dev" || engine == hab {
+		return ""
+	}
+	if engine == "" {
+		engine = "unknown"
+	}
+	return fmt.Sprintf("capcom: warning: the engine is version %s, gff-hab is %s; run gff-hab install to install this release's engine", engine, hab)
 }
 
 // capcomEngineSetup is what newCapcomEngine needs from serve.
@@ -264,7 +293,7 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		OnError: func(kind, text string, exiting bool) {
 			e.sup.EngineError(kind, text, exiting)
 		},
-		OnReady:     func() { e.sup.Ready() },
+		OnReady:     func() { e.sup.Ready(); e.checkVersion(s.logf) },
 		OnTurnEnded: func(result string) { e.sup.TurnEnded(result) },
 		OnTurnUsage: func(origin string, in, out int64, usd float64) { e.pace.turn(origin, in, out, usd) },
 		OnUsage:     func(engine string, r json.RawMessage) { e.pace.reading(engine, r) },
@@ -288,9 +317,9 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		Dir: dir, Job: job,
 		Link: e.link, Record: rec, Config: config, Getenv: os.Getenv, Installed: s.installed,
 		RouteAddr:  func(token string) string { return hook.Addr(s.hookSocket, token) },
-		EngineArgv: engineArgv(s.exe),
+		EngineArgv: engineArgv(s.exe, s.state),
 		BaseEnv:    engineBaseEnv,
-		Build:      func() string { return engineBuild(s.exe) },
+		Build:      func() string { return engineBuild(s.exe, s.state) },
 		Prepare: func(dir string) error {
 			return capcom.WriteServiceFolder(dir, s.exe, s.svc.readScope())
 		},
@@ -315,27 +344,15 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 	return e, nil
 }
 
-// engineArgv finds Node.js and the engine: $GFF_HAB_CAPCOM_ENGINE, else beside gff-hab
-// (libexec/capcom/ of a release, capcom-engine/dist/ of a checkout's build). A file that ends in
-// .mjs or .js runs with node; any other runs as it is (a test's stub engine).
-func engineArgv(exe string) func() ([]string, error) {
+// engineArgv finds Node.js and the engine (capcom-service.md 3.1): $GFF_HAB_CAPCOM_ENGINE, else
+// an engine folder beside gff-hab (engineFolders) that can run (engineRuns), else the engine
+// gff-hab install put in the state directory. A file that ends in .mjs or .js runs with node; any other runs as it is (a
+// test's stub engine).
+func engineArgv(exe, state string) func() ([]string, error) {
 	return func() ([]string, error) {
-		file := os.Getenv("GFF_HAB_CAPCOM_ENGINE")
+		file := engineFile(exe, state)
 		if file == "" {
-			base := filepath.Dir(exe)
-			for _, c := range []string{
-				filepath.Join(base, "..", "libexec", "capcom", "gff-hab-capcom.mjs"),
-				filepath.Join(base, "capcom", "gff-hab-capcom.mjs"),
-				filepath.Join(base, "capcom-engine", "dist", "gff-hab-capcom.mjs"),
-			} {
-				if _, err := os.Stat(c); err == nil {
-					file = c
-					break
-				}
-			}
-		}
-		if file == "" {
-			return nil, errors.New("the Capcom engine (gff-hab-capcom.mjs) is not beside gff-hab; set $GFF_HAB_CAPCOM_ENGINE")
+			return nil, errors.New("no Capcom engine is installed: run gff-hab install with [capcom] engine set, or set $GFF_HAB_CAPCOM_ENGINE")
 		}
 		if !strings.HasSuffix(file, ".mjs") && !strings.HasSuffix(file, ".js") {
 			return []string{file}, nil
@@ -346,6 +363,66 @@ func engineArgv(exe string) func() ([]string, error) {
 		}
 		return []string{node, file}, nil
 	}
+}
+
+// engineFile is the engine engineArgv runs, or "" when there is none.
+func engineFile(exe, state string) string {
+	if f := os.Getenv("GFF_HAB_CAPCOM_ENGINE"); f != "" {
+		return f
+	}
+	for _, d := range engineFolders(exe) {
+		if c := filepath.Join(d, service.EngineFile); fileExists(c) && engineRuns(d) {
+			return c
+		}
+	}
+	if state != "" {
+		return service.InstalledEngine(state)
+	}
+	return ""
+}
+
+// engineFolders are the folders an engine may sit in beside gff-hab, in order: libexec/capcom/
+// beside bin/ (the Homebrew formula on Linux), capcom/ beside gff-hab (the Linux archive),
+// capcom/ beside the GFF Hab.app that gff-hab is in (the darwin archive, and the formula on
+// macOS), and capcom-engine/dist/ of a checkout's build.
+func engineFolders(exe string) []string {
+	base := filepath.Dir(exe)
+	out := []string{filepath.Join(base, "..", "libexec", "capcom"), filepath.Join(base, "capcom")}
+	if root, err := service.BundleRoot(exe); err == nil {
+		out = append(out, filepath.Join(filepath.Dir(root), "capcom"))
+	}
+	return append(out, filepath.Join(base, "capcom-engine", "dist"))
+}
+
+// engineRuns reports whether the engine folder d beside gff-hab can run: it holds its SDKs
+// (node_modules), or it is a checkout's capcom-engine/dist, whose SDKs sit in the folder above.
+// A release's capcom/ holds none until npm ci runs there, so gff-hab passes it over for the
+// installed engine.
+func engineRuns(d string) bool {
+	if fi, err := os.Stat(filepath.Join(d, "node_modules")); err == nil && fi.IsDir() {
+		return true
+	}
+	return filepath.Base(d) == "dist" && filepath.Base(filepath.Dir(d)) == "capcom-engine"
+}
+
+// engineSource is the engine folder gff-hab install copies: the first folder, of
+// $GFF_HAB_CAPCOM_ENGINE's and engineFolders, that holds the engine and its npm manifest; else "".
+func engineSource(hab string) string {
+	var dirs []string
+	if f := os.Getenv("GFF_HAB_CAPCOM_ENGINE"); f != "" {
+		dirs = append(dirs, filepath.Dir(f))
+	}
+	for _, d := range append(dirs, engineFolders(hab)...) {
+		if service.EngineFolder(d) {
+			return filepath.Clean(d)
+		}
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // nodeFloor is the SDK's Node.js floor (its engines field).
@@ -406,8 +483,8 @@ func engineBaseEnv() []string {
 }
 
 // engineBuild names the engine build: its file and the file's size and time.
-func engineBuild(exe string) string {
-	argv, err := engineArgv(exe)()
+func engineBuild(exe, state string) string {
+	argv, err := engineArgv(exe, state)()
 	if err != nil || len(argv) == 0 {
 		return ""
 	}

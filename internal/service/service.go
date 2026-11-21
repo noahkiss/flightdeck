@@ -400,6 +400,12 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 		}
 	}
 	if m != nil {
+		// Every installed Capcom engine goes, with its SDKs; the engine link is in m.Files.
+		engines, err := engineDirs(c.StateDir)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, engines...)
 		out = append(out, c.manifestPath())
 		for i := len(m.Dirs) - 1; i >= 0; i-- {
 			out = append(out, m.Dirs[i])
@@ -485,6 +491,10 @@ type Options struct {
 	Out io.Writer
 	// Confirm asks before uninstall ends programs; it returns true to go on. Nil means yes.
 	Confirm func(question string) bool
+	// Engine is the Capcom engine Install copies, before it (re)starts the logic job. Nil means
+	// none. A failure is printed to Out and does not fail the install; the installed engine, if
+	// any, stays current.
+	Engine *EngineOptions
 }
 
 func (o *Options) defaults() {
@@ -581,6 +591,13 @@ func Install(ctx context.Context, c Config, o Options) error {
 		}
 	} else if err := installBinaries(c, o, m); err != nil {
 		return err
+	}
+	if o.Engine != nil {
+		// A failed engine leaves current where it was, on purpose (capcom-service.md 3.1): the
+		// previous engine runs until an install succeeds.
+		if err := installEngine(ctx, c, m, o.Run, o.Out, *o.Engine); err != nil {
+			fmt.Fprintf(o.Out, "capcom: the new engine was not installed; %s: %v\n", EngineKept(c.StateDir), err)
+		}
 	}
 	// Both init systems write each job's output to a file in the log directory (launchd's
 	// StandardErrorPath, systemd's append:); the directory must exist first.
@@ -812,13 +829,20 @@ func removeFiles(c Config, m *manifest) error {
 			dirs[d] = true
 		}
 	}
+	// Build and engine directories are removed whole.
 	builds := map[string]bool{}
-	if c.Init == Launchd && m != nil {
-		bs, err := buildDirs(c)
+	if m != nil {
+		var bs []string
+		if c.Init == Launchd {
+			if bs, err = buildDirs(c); err != nil {
+				return err
+			}
+		}
+		es, err := engineDirs(c.StateDir)
 		if err != nil {
 			return err
 		}
-		for _, b := range bs {
+		for _, b := range append(bs, es...) {
 			builds[b] = true
 		}
 	}

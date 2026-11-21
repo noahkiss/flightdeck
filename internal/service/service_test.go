@@ -254,7 +254,7 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 		return nil, nil
 	case "ditto":
 		f.dittos++
-		return nil, copyTree(args[0], args[1])
+		return nil, copyTree(context.Background(), args[0], args[1])
 	case "codesign":
 		item := args[len(args)-1]
 		if args[0] == "-d" {
@@ -365,29 +365,6 @@ func tree(t *testing.T, root string) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-// copyTree copies a directory tree, as ditto does for a bundle.
-func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, p)
-		out := filepath.Join(dst, rel)
-		fi, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return os.MkdirAll(out, fi.Mode().Perm())
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(out, b, fi.Mode().Perm())
-	})
 }
 
 // writeBundle writes a helper bundle as scripts/macos-bundle.sh lays it out: an Info.plist and

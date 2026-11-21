@@ -176,8 +176,11 @@ func install(args []string, stdout io.Writer) error {
 	if err := grantsNotice(&c, stdout); err != nil {
 		return err
 	}
-	capcomInstallNotice(hab, stdout)
+	engine := capcomEngineFor(c.StateDir, hab, stdout)
 	if *dry {
+		if engine != nil {
+			fmt.Fprintf(stdout, "# would install the Capcom engine from %s into %s\n", engine.Source, service.EnginesDir(c.StateDir))
+		}
 		if c.Init == service.Launchd {
 			// The plists name the build directory and bundle ids, which come from the bundles.
 			if _, _, err := service.ResolveBundles(&c, hab, holderSrc); err != nil {
@@ -200,7 +203,7 @@ func install(args []string, stdout io.Writer) error {
 		}
 	}
 	return service.Install(context.Background(), c, service.Options{
-		HabSource: hab, HolderSource: holderSrc, ClientSource: client, Out: stdout,
+		HabSource: hab, HolderSource: holderSrc, ClientSource: client, Out: stdout, Engine: engine,
 	})
 }
 
@@ -339,20 +342,36 @@ func isTerminal(f *os.File) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// capcomInstallNotice says, in one line each, what keeps the Capcom service from running on the
-// installed hab (capcom-service.md 3.1, 10.2): Node.js missing or too old, or no credential
-// command, since install never copies CLAUDE_CODE_OAUTH_TOKEN into the job.
-func capcomInstallNotice(hab string, out io.Writer) {
+// capcomEngineFor picks the Capcom engine install copies (capcom-service.md 3.1, 10.2): the
+// engine folder beside hab, when [capcom] engine is set. It says, in one line each, what keeps
+// a new engine from being installed (Node.js missing or too old, no engine folder) with the
+// engine that stays installed, or no credential command, since install never copies CLAUDE_CODE_OAUTH_TOKEN into the
+// job. With [capcom] engine unset it returns nil and says nothing.
+func capcomEngineFor(state, hab string, out io.Writer) *service.EngineOptions {
 	cpath, err := habConfigPath("")
 	if err != nil {
-		return
+		return nil
 	}
 	cfg, _, err := capcom.LoadServiceConfig(cpath)
 	if err != nil || cfg.Engine == capcom.EngineNone {
-		return
+		return nil
 	}
-	if _, err := engineArgv(hab)(); err != nil {
-		fmt.Fprintf(out, "capcom: the service will not start: %v\n", err)
+	var eng *service.EngineOptions
+	node, nerr := nodePath()
+	src := engineSource(hab)
+	// No new engine leaves the installed one current, on purpose (capcom-service.md 3.1); the
+	// line says which engine that is, or that there is none.
+	switch {
+	case nerr != nil:
+		msg := fmt.Sprintf("capcom: the new engine was not installed: %v; the Capcom service will not start until Node.js is installed", nerr)
+		if e := service.InstalledEngine(state); e != "" {
+			msg += "; install keeps the previous engine " + service.EngineHash(e)
+		}
+		fmt.Fprintln(out, msg)
+	case src != "":
+		eng = &service.EngineOptions{Source: src, NPM: npmFor(node)}
+	default:
+		fmt.Fprintf(out, "capcom: no Capcom engine (capcom/) beside %s to install; %s\n", hab, service.EngineKept(state))
 	}
 	switch {
 	case cfg.Auth == capcom.AuthAPIKey && len(cfg.APIKeyCommand) == 0:
@@ -360,4 +379,13 @@ func capcomInstallNotice(hab string, out io.Writer) {
 	case cfg.Auth != capcom.AuthAPIKey && len(cfg.OAuthCommand) == 0:
 		fmt.Fprintln(out, "capcom: set [capcom] oauth_token_command: an installed hab reads the token from it, and install never copies CLAUDE_CODE_OAUTH_TOKEN into the job")
 	}
+	return eng
+}
+
+// npmFor is the npm that came with node: beside it, else npm on PATH.
+func npmFor(node string) string {
+	if p := filepath.Join(filepath.Dir(node), "npm"); fileExists(p) {
+		return p
+	}
+	return "npm"
 }

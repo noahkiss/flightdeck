@@ -1,7 +1,8 @@
 # Release the Go binaries (docs/specs/ci-release.md 7): gff, gff-hab and gff-hab-holder for
 # linux amd64, linux arm64 and darwin arm64, each built on a native runner with a baseline
-# libghostty, smoke-tested where it was built, packed with its .sha256, then published as one
-# GitHub release with SHA256SUMS, and the gff formula bumped in the tap.
+# libghostty, joined by the Capcom engine folder (built once, in its own job), smoke-tested where
+# it was built, packed with its .sha256, then published as one GitHub release with SHA256SUMS, and
+# the gff formula bumped in the tap.
 #
 # A push of v<x.y.z> or v<x.y.z>-rc.<n> starts it. To run it again, dispatch it on the tag:
 #   gh workflow run release.yml --ref v<x.y.z> -f tag=v<x.y.z>
@@ -228,9 +229,51 @@ jobs:
           echo "::error::ci.yml run $id on $TAG failed. Fix it on main and tag again, or rerun it (gh workflow run ci.yml --ref $TAG) and then dispatch the release (gh workflow run release.yml --ref $TAG -f tag=$TAG)."
           exit 1
 
+  # The Capcom engine folder, built once so every archive carries the same bytes (7.2). It runs
+  # npm install scripts, so it has no secrets and no `release` environment. The engine's own
+  # tests run here too: verify checks ci.yml only, not capcom-engine.yml.
+  engine:
+    name: Capcom engine
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: capcom-engine/.node-version
+          package-manager-cache: false
+
+      - name: Pack
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: make capcom-pack RELEASE_VERSION="$VERSION" RELEASE_DIR=build/release
+
+      - name: Typecheck and test
+        working-directory: capcom-engine
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: capcom-engine
+          path: build/release/capcom/
+          if-no-files-found: error
+          retention-days: 1
+
   linux:
     name: linux ${{ matrix.arch }}
-    needs: verify
+    needs: [verify, engine]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -282,11 +325,18 @@ jobs:
           BUILD: ${{ needs.verify.outputs.build }}
         run: make release-build GHOSTTY_ZIGFLAGS="$ZIGFLAGS" RELEASE_VERSION="$VERSION" RELEASE_BUILD="$BUILD" RELEASE_DIR=build/release
 
+      - name: Download the Capcom engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: capcom-engine
+          path: build/release/capcom
+
       - name: Pack
         run: |
           set -euo pipefail
           mkdir -p "dist" "$RUNNER_TEMP/$ASSET"
           cp build/release/gff build/release/gff-hab build/release/gff-hab-holder LICENSE NOTICE "$RUNNER_TEMP/$ASSET/"
+          cp -R build/release/capcom "$RUNNER_TEMP/$ASSET/"
           tar -C "$RUNNER_TEMP" -czf "dist/$ASSET.tar.gz" "$ASSET"
           (cd dist && sha256sum "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256")
           cat "dist/$ASSET.tar.gz.sha256"
@@ -334,7 +384,7 @@ jobs:
 
   darwin:
     name: darwin arm64
-    needs: verify
+    needs: [verify, engine]
     runs-on: macos-26
     environment: release
     timeout-minutes: 45
@@ -464,12 +514,19 @@ jobs:
           export GFF_BUNDLE_PREFIX GFF_SIGN_KEYCHAIN=$KEYCHAIN GFF_NOTARY_KEYCHAIN=$KEYCHAIN
           scripts/macos-bundle.sh -bin-dir build/release -version "$BUNDLE_VERSION" -build "$BUILD" -o "$RUNNER_TEMP/bundle"
 
+      - name: Download the Capcom engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: capcom-engine
+          path: build/release/capcom
+
       - name: Pack
         run: |
           set -euo pipefail
           mkdir -p dist "$RUNNER_TEMP/$ASSET"
           ditto "$RUNNER_TEMP/bundle/gff-macos" "$RUNNER_TEMP/$ASSET"
           cp LICENSE NOTICE "$RUNNER_TEMP/$ASSET/"
+          cp -R build/release/capcom "$RUNNER_TEMP/$ASSET/"
           COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$RUNNER_TEMP" -czf "dist/$ASSET.tar.gz" "$ASSET"
           (cd dist && shasum -a 256 "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256")
           cat "dist/$ASSET.tar.gz.sha256"
