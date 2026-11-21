@@ -10,6 +10,8 @@ github.com/dlclark/regexp2/v2 v2.11.0 h1:z5uRPHav+eTVpoffDSuUP2KPS4f1ONZaPDK73S8
 github.com/dlclark/regexp2/v2 v2.11.0/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
 github.com/dlclark/regexp2/v2 v2.13.0 h1:sGPfGE1Bx7H3F9vcCdLrKUFvnau7DGiQZxHPQ6rMMs4=
 github.com/dlclark/regexp2/v2 v2.13.0/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
+github.com/dlclark/regexp2/v2 v2.13.1 h1:fKrNTrQmgpsM3vLIJXzJn8iCIdwSelX+l2G1EPBmTX0=
+github.com/dlclark/regexp2/v2 v2.13.1/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
 github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c h1:UaENlR4asLCILzrmI/aGbG1OmRJLsYYpEMCfsaM1YVM=
 github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c/go.mod h1:L1yoLBco9M3b2Gdh1UZHg+BIePeAdV1bwknaLLxAgoc=
 github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6 h1:DDvmsz4B72jV6qMPeMl53tCcyvSTe7Te7cci7PPDf8M=
