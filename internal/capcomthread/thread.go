@@ -102,8 +102,8 @@ type Item struct {
 	Data bool `json:"data,omitempty"`
 	// Read is when the engine took the message (input.taken, 7.3). Zero: not read yet.
 	Read time.Time `json:"read,omitzero"`
-	// SendNow marks a user message sent with "Send now": it runs on the small model while the
-	// usage governor makes user turns wait (capcom-service.md 10.1).
+	// SendNow marks a user message sent with "Send now": on an older gff-hab whose usage
+	// governor makes user turns wait, it runs on the small model (capcom-service.md 10.1).
 	SendNow bool `json:"send_now,omitempty"`
 	// Attribution is the data sources' marks a Capcom message shows (8.3).
 	Attribution []Attribution `json:"attribution,omitempty"`

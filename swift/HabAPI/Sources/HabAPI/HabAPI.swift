@@ -9759,7 +9759,7 @@ public struct SessionSendParams: Codable, Sendable, Hashable {
     /// A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing.
     public var idempotencyKey: String?
     public var origin: SendOrigin
-    /// The Capcom service session only: run this message now on the small model, with the messages waiting before it, even while the usage governor makes user turns wait. Other sessions ignore it.
+    /// The Capcom service session only: run this message now on the small model, with the messages waiting before it, where an older hab's usage governor makes user turns wait; a current hab never holds a user turn, so it changes nothing there. Other sessions ignore it.
     public var sendNow: Bool?
     public var session: String
     public var text: String
