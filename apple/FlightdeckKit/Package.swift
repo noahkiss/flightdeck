@@ -23,7 +23,7 @@ let package = Package(
         // libghostty as a prebuilt XCFramework (GhosttyTerminal: views, input,
         // an in-memory backend). The version scheme is <major.minor>.<yyyymmdd>,
         // so pin it exactly and review the binary checksum on every bump.
-        // 2.2.2026111302 is commit 41694d16, Ghostty cf5519b22f91.
+        // 2.2.2026111701 is commit b9694b50, Ghostty 5ebe501a6342.
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "2.2.2026111701"),
         // The in-app SSH carrier (transport.md 4.8). swift-nio-ssh is pre-1.0,
         // so pin it exactly; swift-nio follows semver.
