@@ -270,7 +270,7 @@ On iPad and Mac the board has a second column beside the list.
 - **Connections.** A list of paired habs: label, `user@endpoint`, and a dot for online or offline.
   A count of online habs heads the list. Tap opens the hab: its projects, its endpoints, its
   device list, and "Pair a device".
-- **New session.** A floating button starts a session: pick a hab, a project and a harness.
+- **New session.** A button starts a session: pick a hab, a project and a harness (3.10).
 - On iPhone and iPad the board is the Sessions tab (3.8). Connections become Computers, the first
   group of the Settings tab, with a page per hab and "Pair another computer". The Mac keeps the
   connections column.
@@ -355,7 +355,13 @@ The root is a stock tab view with four tabs, in this order:
 
 - **iPhone.** The tab bar floats at the bottom and shrinks while a list scrolls down. The usage
   strip is its bottom accessory (3.7). A session opens pushed in the Sessions tab's stack, with
-  the tab bar hidden, so the chat keeps its composer room.
+  the tab bar hidden, so the chat keeps its composer room; the bar's back button returns to the
+  list.
+- **Always a way out.** Every screen has a way back to the rest of the app: a tab root has the
+  tab bar, a pushed screen has its back button, and a sheet has Done, Close or Cancel (iOS
+  also lets the owner swipe it down). The keyboard covers the tab bar, so every view that
+  takes the keyboard also lets it go (4.2). Owner report 2026-11-21 (app 0.2.0): the Capcom
+  tab's keyboard could not be dismissed, which hid the tab bar and left no way out.
 - **iPad.** The same four tabs in the sidebar-adaptable style: a tab bar at the top that the owner
   can turn into a sidebar (the system shows the sidebar in a wide landscape window). Design call:
   it is the system's own control for one structure at two widths, so iPad and iPhone share it.
@@ -385,8 +391,8 @@ The root is a stock tab view with four tabs, in this order:
   Sessions list's footer.
 - **The Sessions tab.** A large title, "Sessions", that collapses on scroll. The toolbar holds a
   hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its
-  state and opens Computers. The app has no start-session flow (3.3's floating button is not
-  built), so the toolbar shows no start control; it joins the toolbar when that flow exists. The
+  state and opens Computers. Beside it, New session (a plus) opens the New session form (3.10);
+  the empty list's "No sessions" offers New session too. The
   Capcom row and the Groups and Rounds sections are gone from this list (3.1). The standing Capcom
   session shows here only while it needs you; otherwise it lives on its tab.
 - **Colour.** Amber means "needs you" and nothing else: the Needs you header and its rows' marks.
@@ -414,6 +420,56 @@ The root is a stock tab view with four tabs, in this order:
 - **Launch frame.** The launch screen uses the grouped background colour in light and dark, and
   the first frame draws the shell at once, so no blank white frame shows.
 - **The Mac** has a local hab by default (10.5), so it never shows first run.
+
+### 3.10 New session
+
+Code: `Board/NewSession.swift` (the choices, the draft and `NewSessionCenter`),
+`Views/NewSessionViews.swift` (the control and the form). Tests: `NewSessionTests`.
+
+- **Where.** iPhone and iPad: New session (a plus) in the Sessions tab's bar, and a New
+  session button on the empty list (3.8). Mac: New session in the board window's toolbar. It is
+  off while no hab is online.
+- **The form.** A sheet titled "New session" with Cancel and Start:
+  - **Computer:** the online habs, in the app's order. The first is chosen.
+  - **Project:** None (the hab's home folder, unfiled), each project of the hab, and Other
+    folder. A project with more than one working folder (worktrees) adds a Folder picker,
+    which shows each folder's last two path parts; its first folder is chosen. Other folder
+    takes a typed full path, which must start with `/`. A line under the section says where
+    the session starts: "Starts in /path.", the home folder, or the project's last folder.
+  - **Agent:** each supported harness (Claude Code, Codex, opencode) the hab found on its host,
+    then Shell. The first is chosen. With no harness found, the line under it says a shell
+    starts.
+- **Projects** come from two places. The hab's structure holds the projects that have
+  sessions; its catalog (`catalog.get`, capability `catalog`) holds every project on the host's
+  project roots, with its folders (`mesh.md` 5). The form reads the catalog when it opens
+  and when the computer changes. A catalog project and a structure project are one when they
+  share a remote, else a root commit. A hab without the catalog, or a failed read, leaves the
+  structure's projects and every supported harness; the hab refuses a missing harness.
+- **The call.** Start sends `session.create`: `project_dir` for a chosen or typed folder,
+  `project` for a structure project with no folder known (the hab starts in its most recently
+  used folder), neither for None; `harness` for an agent, none for Shell. The hab picks the
+  name. One idempotency key per form goes to a hab whose welcome lists `idempotency-keys`, so a
+  retried Start starts one session; a change to any field makes a new key, so a changed form
+  starts its own. Start shows a spinner while the call runs.
+- **After Start.** The sheet closes and the new session opens, as a tap on its row opens it,
+  once the board lists its row, within a minute; a row that comes later, or after the owner
+  opened another session, opens nothing. A refusal stays on the form in the hab's words, as a
+  sentence, with the field name left off ("/path is not inside a git repository.").
+- **Changing the computer** keeps the agent when the new hab offers it, else takes its first.
+  The project goes back to None unless the new hab lists the same project id.
+
+| Case | Behaviour |
+|---|---|
+| No hab online | New session is off; the empty list's button too |
+| The hab goes offline with the form open | Start answers with the call's failure, on the form |
+| A typed folder that is not a repository | The hab refuses; its words show on the form |
+| The new session's row comes before or after the answer | It opens either way: the app waits for the row |
+
+Design call: the spec named a floating button, but the Sessions tab's bar already holds the
+hosts menu and the system places a plus there for the same job (New round on the Rounds tab),
+so New session is a bar control. Design call: `gff` asks for a host, a folder and a command
+(`gff-client.md` 6.1); the app offers harnesses by name and the shell, not a free command,
+since a phone keyboard is a poor place to type one.
 
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
@@ -449,7 +505,16 @@ tab bar minimising on scroll, settings split by area).
 
 ### 4.2 The composer
 
-- The full system keyboard, with autocorrect. Multi-line text stays one message.
+- The full system keyboard, with autocorrect. Multi-line text stays one message, so Return
+  writes a new line and never puts the keyboard away.
+- **Chat conventions (iPhone), as in Messages.** Dragging the messages down takes the keyboard
+  with the finger and puts it away (`scrollDismissesKeyboard(.interactively)`); a tap on the
+  messages does not. The thread bounces even when it is too short to scroll, so the drag also
+  works on an empty or short thread, where the empty state's blank space lets it through. The thread opens at the newest message and stays there while the
+  keyboard or a growing composer resizes it. The composer grows with its text up to eight
+  lines, then scrolls. A pushed session goes back with the back button or an edge swipe.
+  These hold in a session's chat and in the Capcom thread. With the keyboard gone the tab bar
+  (Capcom tab) or the back button (a pushed session) is in reach again (3.8).
 - **Controls:** an attach button (4.4), a microphone for dictation (13.4) that becomes Send once
   the draft holds something, and Stop while the agent works (4.11).
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
@@ -3591,6 +3656,8 @@ stage that fills it.
 | `notice.raise {title, body?, level?, session?}` | Raise a notice from a hab event or a local script; event `notice.raised` |
 | capability `push` | The hab has push config that works |
 | `session.focus {session, active}` | Report focus: marks `done` seen, and feeds hold-while-watched (8.3) |
+| `session.create {project?, project_dir?, harness?, idempotency_key?}` | New session (3.10). The console uses it too (6.3) |
+| `catalog.get {}` | The New session form's project folders and harnesses (3.10); the Capcom home (4.10). Capability `catalog` |
 | `approval.answer {pane, request, choice, text?}` | Answer a pending request by id; refuses a closed id with `conflict` |
 | `trust.answer {pane, choice}` | Answer a harness's folder trust prompt (`trust` or `exit`) from the screen it shows; refuses with `conflict` when the dialog is gone (7.10). Capability `trust` |
 | `session.interrupt {session}` | Stop the current turn through the adapter (the chat view's Stop button) |

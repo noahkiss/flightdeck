@@ -84,6 +84,7 @@ public enum DemoFleet {
         await addCapcom(hab)
         await addCapcomJobs(hab)
         await addRounds(workbench: hab)
+        await addProjects(hab)
         await hab.setCapability(FrictionNote.capability, true)
         return hab
     }
@@ -178,6 +179,23 @@ public enum DemoFleet {
                                 name: "claude-3fa9c2", project: "tide-tables",
                                 seed: "Run the full test suite on this host and report which tests fail."),
             state: .open))
+    }
+
+    /// workbench's catalog: its projects' folders and its harnesses, for the New session form
+    /// (app.md 3.10). The paths are invented.
+    static func addProjects(_ hab: FakeHab) async {
+        await hab.setCapability(NewSessionCenter.catalogCapability, true)
+        await hab.setCapability(NewSessionCenter.keysCapability, true)
+        func project(_ name: String, _ folders: [String]) -> CatalogProject {
+            CatalogProject(folders: folders.map { CatalogFolder(branch: "main", path: $0) }, name: name,
+                           remote: "https://example.com/demo/\(name).git")
+        }
+        await hab.setCatalog(harnesses: [CatalogTool(name: "claude"), CatalogTool(name: "codex")], projects: [
+            project("tide-tables", ["/srv/demo/src/tide-tables", "/srv/demo/src/tide-tables-wt/fix-parser"]),
+            project("seed-catalog", ["/srv/demo/src/seed-catalog"]),
+            project("paper-lantern", ["/srv/demo/src/paper-lantern"]),
+            project("orbit-notes", ["/srv/demo/src/orbit-notes"]),
+        ])
     }
 
     /// Capcom runs on workbench (capcom.md 7): the standing conversation, with one notice

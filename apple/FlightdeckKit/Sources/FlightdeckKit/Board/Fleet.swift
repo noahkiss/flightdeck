@@ -52,6 +52,10 @@ public final class Fleet {
             self?.board.habs.first { $0.id == id }?.state.welcome?.capabilities.contains(CapcomChip.capability) ?? false
         }))
 
+    /// New session: the form's choices and the start (app.md 3.10).
+    public private(set) lazy var newSessions = NewSessionCenter(
+        board: board,
+        connection: { [weak self] id in self?.connections.first { $0.id == id } })
     /// Rounds on every hab (rounds.md 10, app.md 21).
     public private(set) lazy var rounds = RoundCenter(
         board: board, defaults: roundDefaults,

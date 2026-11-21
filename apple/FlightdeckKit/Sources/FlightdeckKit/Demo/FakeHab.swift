@@ -267,6 +267,18 @@ public actor FakeHab {
     /// The catalog's usage governor section (capcom-service.md 10.1); nil for none.
     public private(set) var governor: CatalogGovernor?
     public func setGovernor(_ g: CatalogGovernor?) { governor = g }
+    /// The catalog's harnesses and projects, which the New session form offers (app.md 3.10).
+    public private(set) var catalogHarnesses: [CatalogTool] = []
+    public private(set) var catalogProjects: [CatalogProject] = []
+    public func setCatalog(harnesses: [CatalogTool], projects: [CatalogProject]) {
+        catalogHarnesses = harnesses
+        catalogProjects = projects
+    }
+    /// Every `session.create` received, oldest first.
+    public private(set) var sessionCreates: [SessionCreateParams] = []
+    /// The ids a repeated idempotency key gets back.
+    private var createdByKey: [String: SessionCreated] = [:]
+    private var nextCreated = 1
     /// The catalog's always-on mark (mesh.md 8).
     public private(set) var alwaysOn = false
     public func setAlwaysOn(_ on: Bool) { alwaysOn = on }
@@ -1478,10 +1490,73 @@ public actor FakeHab {
             let n = transcribes.count - 1
             let text = speechTexts.isEmpty ? "a clip of \(p.audio.count) bytes" : speechTexts[min(n, speechTexts.count - 1)]
             await reply(c, id: id, result: SpeechTranscript(audioMs: 0, decodeMs: 0, seq: c.seq, text: text))
+        case HabMethods.sessionCreate.name:
+            guard let p = try? params.decode(SessionCreateParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad session.create params")
+                break
+            }
+            do {
+                var r = try await sessionCreate(p)
+                r.seq = c.seq
+                await reply(c, id: id, result: r)
+            } catch let f as Failure {
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+            } catch {
+                await fail(c, id: id, kind: .invalid, hint: "\(error)")
+            }
         default:
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }
         return true
+    }
+
+    /// `session.create` by the real hab's rules for what the app sends (hab-logic-api.md 3.9):
+    /// a project by id or by a folder of a catalog project, a harness from the catalog or the
+    /// shell, a name made unique, and one start per idempotency key. The new session's pane,
+    /// session and agent events go out before the answer.
+    private func sessionCreate(_ p: SessionCreateParams) async throws -> SessionCreated {
+        sessionCreates.append(p)
+        if let k = p.idempotencyKey, let r = createdByKey[k] { return r }
+        var project: Project?
+        if let id = p.project {
+            guard let found = projects[id] else { throw Failure(kind: .notFound, hint: "no project \(id)") }
+            project = found
+        } else if let dir = p.projectDir {
+            guard dir.hasPrefix("/") else { throw Failure(kind: .invalid, hint: "project_dir must be absolute") }
+            guard let cp = catalogProjects.first(where: { c in c.folders.contains { dir == $0.path || dir.hasPrefix($0.path + "/") } }) else {
+                throw Failure(kind: .invalid, hint: "project_dir \(dir) is not inside a git repository")
+            }
+            project = projects.values.first { cp.remote != nil && $0.remote == cp.remote }
+            if project == nil {
+                let made = Project(id: "p-new\(nextCreated)", name: cp.name, remote: cp.remote, revision: 0, rootCommit: cp.rootCommit, sessions: [])
+                await put(made)
+                project = projects[made.id]
+            }
+        }
+        if let h = p.harness, !catalogHarnesses.isEmpty, !catalogHarnesses.contains(where: { $0.name == h }) {
+            throw Failure(kind: .invalid, hint: "\(h) is not installed on this host")
+        }
+        let base = p.name ?? p.harness ?? "zsh"
+        var name = base
+        var n = 2
+        while sessions.values.contains(where: { $0.name == name }) {
+            name = "\(base)-\(n)"
+            n += 1
+        }
+        let sid = "s-new\(nextCreated)"
+        let pid = "%new\(nextCreated)"
+        nextCreated += 1
+        if p.idempotencyKey != nil { createdByKey[p.idempotencyKey!] = SessionCreated(pane: pid, seq: 0, session: sid) }
+        await put(Fixture.pane(pid, session: sid))
+        await put(Session(id: sid, name: name, pane: pid, project: project?.id, revision: 0, state: .running))
+        if let id = project?.id, var pr = projects[id] {
+            pr.sessions.append(sid)
+            await put(pr)
+        }
+        if let h = p.harness {
+            await put(Fixture.agent(pane: pid, harness: h, state: .idle, revision: 0, session: sid))
+        }
+        return SessionCreated(pane: pid, seq: 0, session: sid)
     }
 
     /// The Capcom entry calls, by the real hab's rules (capcom.md 8.4): refs resolve at once,
@@ -1613,7 +1688,7 @@ public actor FakeHab {
             }
         }
         return Catalog(actions: [], agents: [], alwaysOn: alwaysOn ? true : nil, at: Fixture.stamp(Date()), capabilities: [], capcom: cap, deviceId: deviceID,
-                       generation: catalogGeneration, governor: governor, harnesses: [], host: hostID, peers: [], projects: [], services: [],
+                       generation: catalogGeneration, governor: governor, harnesses: catalogHarnesses, host: hostID, peers: [], projects: catalogProjects, services: [],
                        system: CatalogSystem(arch: "arm64", cores: 8, os: "darwin"), toolchains: [], watches: [])
     }
 

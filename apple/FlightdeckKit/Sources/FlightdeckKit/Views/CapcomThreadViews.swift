@@ -53,7 +53,10 @@ struct CapcomThreadView: View {
                 .padding(12)
             }
             .defaultScrollAnchor(.bottom)
-            .overlay { placeholder }
+            // The newest message stays in view when the keyboard or the composer resizes the thread.
+            .modifier(BottomOnResize())
+            .overlay { placeholder.allowsHitTesting(false) }
+            .modifier(DismissesKeyboard())
             .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
                 switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
                 case .none: break
