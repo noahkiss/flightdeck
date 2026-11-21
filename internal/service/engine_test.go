@@ -3,12 +3,25 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
+
+// putPlatform writes the SDKs' platform packages of this system under dir, as npm ci does.
+func putPlatform(t *testing.T, dir string) {
+	t.Helper()
+	for _, p := range PlatformPackages(runtime.GOOS, runtime.GOARCH) {
+		if err := os.MkdirAll(filepath.Join(dir, p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 // writeEngine writes an engine folder as a release's capcom/ holds it; tag goes into the engine
 // file, so two tags are two engines. With modules it also holds node_modules, as the Homebrew
@@ -27,13 +40,15 @@ func writeEngine(t *testing.T, dir, tag string, modules bool) {
 		if err := os.Symlink("../sdk/cli", filepath.Join(dir, "node_modules", ".bin", "cli")); err != nil {
 			t.Fatal(err)
 		}
+		putPlatform(t, dir)
 	}
 }
 
 // TestInstallEngine (capcom-service.md 3.1): install copies the engine folder into a directory
 // named by its hash, with its SDKs (copied when the source has node_modules, else from npm ci),
 // points current at it, keeps the previous engine for an engine still running, removes older
-// ones, survives an engine that fails to install, and uninstall leaves none of it.
+// ones, keeps the previous engine current when a new one fails to install, and uninstall
+// leaves none of it.
 func TestInstallEngine(t *testing.T) {
 	for _, in := range []Init{Systemd, Launchd} {
 		t.Run(string(in), func(t *testing.T) {
@@ -48,10 +63,23 @@ func TestInstallEngine(t *testing.T) {
 			before := tree(t, root)
 			f := newFakeInit(t, c)
 			var npm []string
+			var npmFail error // the next npm ci fails with this and a page of output
+			platform := true  // npm ci installs the platform packages
 			run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if name == "/opt/node/bin/npm" {
 					npm = append(npm, strings.Join(args, " "))
+					if npmFail != nil {
+						var page []string
+						for i := range 40 {
+							page = append(page, "npm error line "+string(rune('a'+i%26)))
+						}
+						page = append(page, "npm error last line")
+						return []byte(strings.Join(page, "\n")), npmFail
+					}
 					// npm ci --prefix <dir>: the SDKs land in <dir>/node_modules.
+					if platform {
+						putPlatform(t, args[2])
+					}
 					return nil, os.MkdirAll(filepath.Join(args[2], "node_modules", "sdk"), 0o755)
 				}
 				return f.run(ctx, name, args...)
@@ -113,7 +141,8 @@ func TestInstallEngine(t *testing.T) {
 				t.Fatal("a changed engine kept its directory")
 			}
 			if len(npm) != 1 || !strings.HasPrefix(npm[0], "ci --prefix "+EnginesDir(c.StateDir)+"/.tmp-") ||
-				!strings.Contains(npm[0], "--omit=dev") || !strings.Contains(npm[0], "--ignore-scripts") {
+				!strings.Contains(npm[0], "--omit=dev") || !strings.Contains(npm[0], "--ignore-scripts") ||
+				!strings.Contains(npm[0], "--include=optional") || !strings.Contains(npm[0], "--fetch-retries=1") {
 				t.Errorf("npm runs: %v", npm)
 			}
 			if _, err := os.Stat(filepath.Join(b, "node_modules", "sdk")); err != nil {
@@ -133,12 +162,46 @@ func TestInstallEngine(t *testing.T) {
 				t.Errorf("the previous engine is gone: %v", err)
 			}
 
-			// An engine that does not install is a line, not a failed install.
+			// An engine that does not install is a line, not a failed install, and the previous
+			// engine stays current, named in the line (3.1).
+			cur := current()
+			kept := "install keeps the previous engine " + filepath.Base(cur)[:8]
+			failed := func(why string, wantInOut ...string) {
+				t.Helper()
+				var out bytes.Buffer
+				install(&out)
+				if !strings.Contains(out.String(), "capcom: the new engine was not installed; "+kept) {
+					t.Errorf("%s: no notice naming the kept engine:\n%s", why, out.String())
+				}
+				for _, w := range wantInOut {
+					if !strings.Contains(out.String(), w) {
+						t.Errorf("%s: no %q in:\n%s", why, w, out.String())
+					}
+				}
+				if got := current(); got != cur {
+					t.Errorf("%s: current moved to %s, want the previous %s", why, got, cur)
+				}
+				if dirs, _ := engineDirs(c.StateDir); len(dirs) != 2 {
+					t.Errorf("%s: engine directories %v, want the current and the previous", why, dirs)
+				}
+			}
+			writeEngine(t, src, "d", false)
+			npmFail = errors.New("exit status 1")
+			failed("npm ci failed", "npm error last line")
+			npmFail = nil
+			platform = false
+			failed("no platform package", "npm installed no claude-agent-sdk-")
+			platform = true
 			os.Remove(filepath.Join(src, "package-lock.json"))
+			failed("not an engine folder")
+			// The notice holds npm's last lines, not its whole output.
 			var out bytes.Buffer
+			writeEngine(t, src, "d", false)
+			npmFail = errors.New("exit status 1")
 			install(&out)
-			if !strings.Contains(out.String(), "capcom: the engine was not installed") {
-				t.Errorf("no notice of the failed engine:\n%s", out.String())
+			npmFail = nil
+			if strings.Contains(out.String(), "npm error line a") {
+				t.Errorf("the notice holds npm's whole output:\n%s", out.String())
 			}
 
 			if err := Uninstall(context.Background(), c, Options{Run: run}); err != nil {
@@ -169,5 +232,50 @@ func TestEngineFolder(t *testing.T) {
 	}
 	if InstalledEngine(d) != "" {
 		t.Error("InstalledEngine found an engine where none is installed")
+	}
+}
+
+// TestEngineNPM: npm ci stops at engineTimeout with a line that says so, install says while it
+// runs that it still runs, and an engine directory another install wrote first counts as this
+// one's (capcom-service.md 3.1).
+func TestEngineNPM(t *testing.T) {
+	defer func(d, p time.Duration) { engineTimeout, engineProgress = d, p }(engineTimeout, engineProgress)
+	engineTimeout, engineProgress = 300*time.Millisecond, 50*time.Millisecond
+	root := t.TempDir()
+	src := filepath.Join(root, "capcom")
+	writeEngine(t, src, "a", false)
+	hang := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		<-ctx.Done()
+		return []byte("npm http fetch GET attempt 1 failed"), errors.New("signal: killed")
+	}
+	state := filepath.Join(root, "state")
+	os.MkdirAll(EnginesDir(state), 0o700)
+	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout)
+	defer cancel()
+	var out bytes.Buffer
+	err := buildEngine(ctx, hang, &out, EngineOptions{Source: src}, EnginesDir(state), "0123456789abcdef",
+		filepath.Join(EnginesDir(state), "0123456789abcdef"))
+	if err == nil || !strings.Contains(err.Error(), "did not finish within") {
+		t.Errorf("a hung npm ci: %v", err)
+	}
+	if !strings.Contains(out.String(), "npm ci still running") {
+		t.Errorf("no progress line:\n%s", out.String())
+	}
+	if dirs, _ := engineDirs(state); len(dirs) != 0 {
+		t.Errorf("a hung npm ci left %v", dirs)
+	}
+
+	// Another install renamed the same engine into place while this one ran.
+	dst := filepath.Join(EnginesDir(state), "0123456789abcdef")
+	race := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		putPlatform(t, args[2])
+		return nil, os.MkdirAll(filepath.Join(dst, "node_modules"), 0o755)
+	}
+	if err := buildEngine(context.Background(), race, &out, EngineOptions{Source: src}, EnginesDir(state), "0123456789abcdef", dst); err != nil {
+		t.Errorf("an engine another install wrote first: %v", err)
+	}
+
+	if got := EngineKept(filepath.Join(root, "none")); got != "no engine is installed, so the Capcom service will not start" {
+		t.Errorf("EngineKept with none: %q", got)
 	}
 }

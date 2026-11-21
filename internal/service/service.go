@@ -492,7 +492,8 @@ type Options struct {
 	// Confirm asks before uninstall ends programs; it returns true to go on. Nil means yes.
 	Confirm func(question string) bool
 	// Engine is the Capcom engine Install copies, before it (re)starts the logic job. Nil means
-	// none. A failure is printed to Out and does not fail the install.
+	// none. A failure is printed to Out and does not fail the install; the installed engine, if
+	// any, stays current.
 	Engine *EngineOptions
 }
 
@@ -592,8 +593,10 @@ func Install(ctx context.Context, c Config, o Options) error {
 		return err
 	}
 	if o.Engine != nil {
+		// A failed engine leaves current where it was, on purpose (capcom-service.md 3.1): the
+		// previous engine runs until an install succeeds.
 		if err := installEngine(ctx, c, m, o.Run, o.Out, *o.Engine); err != nil {
-			fmt.Fprintf(o.Out, "capcom: the engine was not installed, so the Capcom service will not start: %v\n", err)
+			fmt.Fprintf(o.Out, "capcom: the new engine was not installed; %s: %v\n", EngineKept(c.StateDir), err)
 		}
 	}
 	// Both init systems write each job's output to a file in the log directory (launchd's
