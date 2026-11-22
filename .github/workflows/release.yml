@@ -299,7 +299,7 @@ jobs:
           persist-credentials: false
 
       - name: Install zig
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           cache_save: false
 
@@ -400,7 +400,7 @@ jobs:
           persist-credentials: false
 
       - name: Install zig
-        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           cache_save: false
 
@@ -425,7 +425,7 @@ jobs:
         run: make release-build RELEASE_VERSION="$VERSION" RELEASE_BUILD="$BUILD" RELEASE_DIR=build/release
 
       - name: Set up fastlane
-        uses: ruby/setup-ruby@20eb24b0d509e2b9ed9b6d42ddfeb992915e0564 # v1.341.0
+        uses: ruby/setup-ruby@f9c4492e86def3e644ab32a0ef185eda5b0c20d0 # v1.342.0
         with:
           ruby-version: '4.0'
           working-directory: .github/fastlane
