@@ -1557,7 +1557,12 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
   bottom. Within 48 pt counts as at the bottom. No marker row.
 - **Following is sticky.** Only the owner's own scroll (phase interacting or decelerating) past
   48 pt stops it. Content that grows, and insets that change, never stop it: once no finger moves
-  the thread and nothing animates, a following thread goes back to the bottom. So the drag that
+  the thread and nothing animates, a following thread goes back to the bottom. A change of the
+  bottom inset (the keyboard, a request card) scrolls a following thread to its end too: the
+  size-change anchor does not see the inset, and in the simulator the rows stayed under a newly
+  shown request card while the geometry read "at the bottom". For the same reason a scroll to
+  the end runs once more after the layout pass, and once 250 ms after the thread opens, while it
+  follows: the lazy rows measure only when laid out. So the drag that
   takes the keyboard away never meets a scroll, and a tall tool card that lands at once is
   followed.
 - **New rows while reading** count up on the jump button ("3 new messages"; an arrow alone with

@@ -59,6 +59,14 @@ public struct ChatFollow: Equatable, Sendable {
         }
     }
 
+    /// The bars over the thread changed height (the keyboard, a request card, a taller draft).
+    /// They sit in the bottom inset, which the size-change anchor does not see, and the geometry
+    /// can read "at the bottom" while the rows sit under the new bar: a following thread scrolls
+    /// to its end, unless a finger moves it.
+    public func insetChanged(motion: Motion) -> Action {
+        following && motion != .user ? .toBottom : .none
+    }
+
     /// The rows changed: `old` and `new` are the row ids before and after, in order.
     public mutating func rowsChanged(from old: [String], to new: [String]) -> Action {
         guard let oldLast = old.last else {
@@ -102,10 +110,11 @@ public struct ChatFollow: Equatable, Sendable {
     }
 
     /// How far the visible bottom is above the end of the content, the bottom inset included.
-    public static func distance(contentHeight: CGFloat, offsetY: CGFloat, containerHeight: CGFloat, topInset: CGFloat, bottomInset: CGFloat) -> CGFloat {
-        // Rows that fit the visible area are always at the bottom, wherever they rest.
-        if contentHeight + topInset + bottomInset <= containerHeight { return 0 }
-        return contentHeight + bottomInset - containerHeight - offsetY
+    /// `visibleMaxY` is the scroll geometry's visible rectangle's bottom, in content coordinates:
+    /// it reaches under the bars, so at the bottom it equals the content's end plus the bottom
+    /// inset. Rows that fit the screen rest above that line and read 0.
+    public static func distance(contentHeight: CGFloat, visibleMaxY: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        max(0, contentHeight + bottomInset - visibleMaxY)
     }
 }
 

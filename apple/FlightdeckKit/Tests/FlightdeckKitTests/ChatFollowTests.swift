@@ -45,8 +45,13 @@ final class ChatFollowTests: XCTestCase {
         XCTAssertEqual(f.scrolled(distance: -30, motion: .user), .none)
         XCTAssertTrue(f.following)
 
+        // A request card or the keyboard changes the bottom inset: back to the end, never mid-drag.
+        XCTAssertEqual(f.insetChanged(motion: .idle), .toBottom)
+        XCTAssertEqual(f.insetChanged(motion: .user), .none)
+
         XCTAssertEqual(f.scrolled(distance: ChatFollow.tolerance + 1, motion: .user), .none)
         XCTAssertFalse(f.following)
+        XCTAssertEqual(f.insetChanged(motion: .idle), .none, "reading: the bars do not pull the owner down")
         XCTAssertEqual(f.scrolled(distance: 600, motion: .idle), .none, "reading: content growth does not pull the owner down")
         XCTAssertEqual(f.scrolled(distance: 10, motion: .user), .none)
         XCTAssertTrue(f.following, "back at the bottom by hand")
@@ -69,12 +74,12 @@ final class ChatFollowTests: XCTestCase {
 
     /// The distance counts the bars over the thread, which sit in its bottom inset.
     func testDistanceCountsTheInsets() {
-        // 1000 pt of rows in a 600 pt view, under an 80 pt composer: the bottom offset is 480.
-        XCTAssertEqual(ChatFollow.distance(contentHeight: 1000, offsetY: 480, containerHeight: 600, topInset: 0, bottomInset: 80), 0)
-        XCTAssertEqual(ChatFollow.distance(contentHeight: 1000, offsetY: 400, containerHeight: 600, topInset: 0, bottomInset: 80), 80)
-        // A short thread is at the bottom wherever it rests: anchored low or high.
-        XCTAssertEqual(ChatFollow.distance(contentHeight: 100, offsetY: -50, containerHeight: 600, topInset: 50, bottomInset: 80), 0)
-        XCTAssertEqual(ChatFollow.distance(contentHeight: 100, offsetY: -420, containerHeight: 600, topInset: 50, bottomInset: 80), 0)
+        // Read from the simulator: a long thread at rest at its bottom, under a 371 pt bar
+        // (a request card and the composer), and the same thread 200 pt up.
+        XCTAssertEqual(ChatFollow.distance(contentHeight: 1236, visibleMaxY: 1607, bottomInset: 371), 0)
+        XCTAssertEqual(ChatFollow.distance(contentHeight: 1236, visibleMaxY: 1407, bottomInset: 371), 200)
+        // A short thread rests above the line: at the bottom.
+        XCTAssertEqual(ChatFollow.distance(contentHeight: 410, visibleMaxY: 621, bottomInset: 136), 0)
     }
 
     @MainActor

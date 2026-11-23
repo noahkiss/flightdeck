@@ -27,6 +27,7 @@ struct ChatScroll<Content: View>: View {
     /// over the thread and keeps the jump button on, so a screenshot shows what the geometry reads.
     private static var showFollow: Bool { UserDefaults.standard.bool(forKey: "FlightdeckShowFollow") }
     @State private var shownDistance: CGFloat = 0
+    @State private var shownGeometry = ""
     #endif
 
     var body: some View {
@@ -55,16 +56,26 @@ struct ChatScroll<Content: View>: View {
         // The bars over the thread (composer, keyboard, request card) sit in its insets, so the
         // distance counts them; a following thread goes back to the bottom when they change,
         // but never while a finger moves it (the drag that takes the keyboard away).
+        #if DEBUG
+        .onScrollGeometryChange(for: String.self) { g in
+            guard Self.showFollow else { return "" }
+            return "content \(Int(g.contentSize.height)) offset \(Int(g.contentOffset.y)) container \(Int(g.containerSize.height)) "
+                + "insets \(Int(g.contentInsets.top))/\(Int(g.contentInsets.bottom)) visible \(Int(g.visibleRect.minY))-\(Int(g.visibleRect.maxY)) bounds \(Int(g.bounds.height))"
+        } action: { _, t in shownGeometry = t }
+        #endif
         .onScrollGeometryChange(for: CGFloat.self) { g in
-            ChatFollow.distance(contentHeight: g.contentSize.height, offsetY: g.contentOffset.y,
-                                containerHeight: g.containerSize.height,
-                                topInset: g.contentInsets.top, bottomInset: g.contentInsets.bottom).rounded()
+            ChatFollow.distance(contentHeight: g.contentSize.height, visibleMaxY: g.visibleRect.maxY,
+                                bottomInset: g.contentInsets.bottom).rounded()
         } action: { _, d in
             last.value = d
             #if DEBUG
             if Self.showFollow { shownDistance = d }
             #endif
             update { $0.scrolled(distance: d, motion: motion) }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom.rounded() } action: { old, new in
+            guard old != new else { return }
+            update { $0.insetChanged(motion: motion) }
         }
         .onChange(of: rowIDs, initial: true) { old, new in
             if !dividerDecided, !new.isEmpty {
@@ -84,7 +95,7 @@ struct ChatScroll<Content: View>: View {
         #if DEBUG
         .overlay(alignment: .top) {
             if Self.showFollow {
-                Text("distance \(Int(shownDistance)) · \(follow.following ? "following" : "reading") · unread \(follow.unread)")
+                Text("distance \(Int(shownDistance)) · \(follow.following ? "following" : "reading") · unread \(follow.unread)\n\(shownGeometry)")
                     .font(.caption.monospaced())
                     .padding(6)
                     .background(.yellow.opacity(0.8), in: Capsule())
@@ -101,6 +112,11 @@ struct ChatScroll<Content: View>: View {
             }
         }
         .animation(.smooth(duration: 0.2), value: follow.showsJump)
+        // The first rows and the bars settle over a few frames after the thread opens.
+        .task {
+            try? await Task.sleep(for: .milliseconds(250))
+            if follow.following { position.scrollTo(edge: .bottom) }
+        }
         .onDisappear {
             if follow.following { ChatReadMarks.shared.saw(rowIDs.last, in: readKey) }
         }
@@ -120,6 +136,12 @@ struct ChatScroll<Content: View>: View {
                 withAnimation(.smooth(duration: 0.3)) { position.scrollTo(edge: .bottom) }
             } else {
                 position.scrollTo(edge: .bottom)
+                // Once more after this layout pass: the lazy rows measure only when laid out,
+                // and a scroll issued before that can leave the newest rows under the bars.
+                Task { @MainActor in
+                    await Task.yield()
+                    if follow.following { position.scrollTo(edge: .bottom) }
+                }
             }
         case .keep(let id):
             position.scrollTo(id: id, anchor: .top)
