@@ -67,10 +67,8 @@ struct AppShell: View {
     private var content: some View {
         if FirstRun.shows(habs: board.habs.count, demo: fleet.isDemo) {
             FirstRunView(fleet: fleet)
-        } else if #available(iOS 26.1, *) {
-            modernTabs
         } else {
-            legacyTabs
+            tabs
         }
     }
 
@@ -88,16 +86,10 @@ struct AppShell: View {
     }
 
     private var sessions: some View {
-        SessionsTab(fleet: fleet, opened: $opened, newSession: $newSession, footer: !Self.hasAccessory) { tab = .settings }
+        SessionsTab(fleet: fleet, opened: $opened, newSession: $newSession) { tab = .settings }
     }
 
-    private static var hasAccessory: Bool {
-        if #available(iOS 26.1, *) { return true }
-        return false
-    }
-
-    @available(iOS 26.1, *)
-    private var modernTabs: some View {
+    private var tabs: some View {
         TabView(selection: $tab) {
             Tab("Sessions", systemImage: "rectangle.stack", value: ShellTab.sessions) {
                 sessions
@@ -117,24 +109,6 @@ struct AppShell: View {
         .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory(isEnabled: !(fleet.usage?.book.accounts.isEmpty ?? true)) {
             if let usage = fleet.usage { UsageAccessory(book: usage.book) }
-        }
-    }
-
-    private var legacyTabs: some View {
-        TabView(selection: $tab) {
-            sessions
-                .tabItem { Label("Sessions", systemImage: "rectangle.stack") }
-                .badge(board.needsYouCount)
-                .tag(ShellTab.sessions)
-            CapcomTab(fleet: fleet)
-                .tabItem { Label("Capcom", systemImage: "dot.radiowaves.left.and.right") }
-                .tag(ShellTab.capcom)
-            RoundsTab(fleet: fleet)
-                .tabItem { Label("Rounds", systemImage: "clock.arrow.circlepath") }
-                .tag(ShellTab.rounds)
-            SettingsTab(fleet: fleet)
-                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
-                .tag(ShellTab.settings)
         }
     }
 }
@@ -226,8 +200,6 @@ struct SessionsTab: View {
     let fleet: Fleet
     @Binding var opened: BoardRow?
     @Binding var newSession: NewSessionDraft?
-    /// Before iOS 26.1 the usage strip sits under the list (app.md 3.7).
-    let footer: Bool
     let openSettings: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -262,7 +234,6 @@ struct SessionsTab: View {
 
     private func list(selectable: Bool) -> some View {
         SessionsListView(fleet: fleet, opened: $opened, selectable: selectable, newSession: $newSession)
-            .modifier(OptionalUsageFooter(usage: footer ? fleet.usage : nil))
             .navigationTitle("Sessions")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -287,14 +258,6 @@ struct SessionsTab: View {
                 Task { await fleet.activities?.opened(row.target) }
             }
             .onDisappear { fleet.focus.hide(row.target) }
-    }
-}
-
-struct OptionalUsageFooter: ViewModifier {
-    let usage: UsageCenter?
-
-    func body(content: Content) -> some View {
-        if let usage { content.usageFooter(usage) } else { content }
     }
 }
 

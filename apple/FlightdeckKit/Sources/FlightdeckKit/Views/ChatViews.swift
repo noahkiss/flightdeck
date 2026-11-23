@@ -329,7 +329,8 @@ struct ChatTranscript: View {
                 .padding(12)
             }
             .defaultScrollAnchor(.bottom)
-            .modifier(BottomOnResize())
+            // The request card or answer line above the composer never hides the newest rows.
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .overlay { placeholder }
             .modifier(DismissesKeyboard())
             .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in

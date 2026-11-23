@@ -344,7 +344,7 @@ public struct SessionView: View {
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .navigationTitle(model.context.title)
-        .modifier(TabSubtitle(text: ChatHeader.line(model.context, round: true)))
+        .navigationSubtitle(ChatHeader.line(model.context, round: true))
         .toolbar {
             // The switch sits with the controls, so the bar keeps the session's title.
             if !sideBySide, !model.context.isCapcomService {
@@ -427,12 +427,12 @@ public struct SessionView: View {
     }
 }
 
-/// The navigation subtitle where the system has one (iOS 26), else nothing.
+/// The navigation subtitle when there is one; nil leaves the title alone.
 struct TabSubtitle: ViewModifier {
     let text: String?
 
     func body(content: Content) -> some View {
-        if let text, #available(iOS 26, macOS 26, *) {
+        if let text {
             content.navigationSubtitle(text)
         } else {
             content

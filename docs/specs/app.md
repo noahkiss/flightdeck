@@ -337,9 +337,8 @@ On iPad and Mac, inside a session, a sidebar lists every session grouped by proj
 One bar per harness account in use: harness name, a bar for its tightest window, and the used
 percentage. Tap opens the usage sheet (14).
 
-- **iOS 26.1 and later:** the strip is the tab bar's bottom accessory (3.8), on every tab. It hides
+- **iPhone and iPad:** the strip is the tab bar's bottom accessory (3.8), on every tab. It hides
   while no account has a reading.
-- **Before iOS 26.1:** the strip sits under the Sessions list as a footer.
 - **Mac:** the footer under the board list.
 
 ### 3.8 The app shell (iPhone and iPad)
@@ -385,10 +384,9 @@ The root is a stock tab view with four tabs, in this order:
   A compact width (Slide Over, a narrow window) uses the phone layout in every tab.
 - **Mac.** The window keeps the board and session split with the connections column. The Mac's own
   chrome (a Settings window, a sidebar) is a later stage.
-- **Deployment.** The app targets iOS 17. `Tab` items, the sidebar-adaptable style, the bottom
-  accessory and the minimise-on-scroll behaviour sit behind an iOS 26.1 availability check. Before
-  iOS 26.1 the app shows the same four tabs with `tabItem` labels and the usage strip as the
-  Sessions list's footer.
+- **Deployment.** The app targets iOS 26.1, iPadOS 26.1 and macOS 26.0 at minimum (`Tab` items,
+  the sidebar-adaptable style, the bottom accessory and the minimise-on-scroll behaviour need
+  26.1). The code has no fallback for an earlier version.
 - **The Sessions tab.** A large title, "Sessions", that collapses on scroll. The toolbar holds a
   hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its
   state and opens Computers. Beside it, New session (a plus) opens the New session form (3.10);
@@ -1132,7 +1130,7 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   phone's bar, which cut it short, so the subtitle keeps the fact and drops the slogan. The compose button
   (New conversation) sits in the bar; a pane Capcom's terminal is "Show terminal" in the More
   menu, not a switch in the title's place. The usage pacing line sits over the composer as
-  plain text. The subtitle needs iOS 26; before it the title shows alone. Design call: the tab
+  plain text. Design call: the tab
   is Capcom's home, so its title names it, as the approved design does. The design's "New
   topic" stays "New conversation": the hab writes that label on its divider
   (`capcom-service.md` 7.5), and one concept keeps one word. Code: `CapcomCenter.tabSubtitle`,
@@ -3017,7 +3015,7 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   from the system encoder. Granules come from each packet's TOC byte, not a fixed 20 ms. When the hab does not list `opus` in `formats`, or the encoder
   fails, the app sends 16-bit PCM at 16 kHz. A clip over 1 MiB as PCM goes to the next engine.
 - **Apple's engine is the live words.** SpeechAnalyzer runs for the whole of voice mode and
-  shows words as heard (iOS and macOS 26 and later). As the last engine, its text for the turn
+  shows words as heard. As the last engine, its text for the turn
   is those live words, so it costs no second pass. A turn's live words are the results that
   finished since it began, plus the result in progress; a result that finished up to 0.6 s
   before the turn began is part of it, since its words started the turn. A revision of the
