@@ -45,8 +45,6 @@ struct UsageFooter: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                 }
-                .background(.bar)
-                .overlay(alignment: .top) { Divider() }
             }
         }
     }
@@ -338,9 +336,9 @@ struct UsageWarningSettings: View {
 }
 
 extension View {
-    /// The usage footer under the board (app.md 3.7).
+    /// The usage footer under the board (app.md 3.7): a bar the list scrolls under.
     func usageFooter(_ center: UsageCenter?) -> some View {
-        safeAreaInset(edge: .bottom, spacing: 0) {
+        safeAreaBar(edge: .bottom, spacing: 0) {
             if let center { UsageFooter(book: center.book) }
         }
     }

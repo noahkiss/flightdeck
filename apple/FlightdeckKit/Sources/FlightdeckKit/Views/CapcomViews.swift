@@ -352,12 +352,16 @@ struct CapcomPacingLine: View {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, plain ? 16 : 12)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: plain ? nil : .infinity, alignment: .leading)
                     .background(plain ? AnyShapeStyle(.clear) : AnyShapeStyle(.bar))
+                    // Over the composer the line sits in the bar the thread scrolls under: on glass (app.md 4.2).
+                    .glassEffect(plain ? .regular.interactive() : .identity, in: .capsule)
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, plain ? 10 : 0)
                 .disabled(usage == nil)
                 .accessibilityHint(usage == nil ? "" : "Opens usage")
             }

@@ -158,7 +158,7 @@ public struct TerminalScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 .environment(\.colorScheme, .dark)
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -196,8 +196,10 @@ public struct TerminalScreen: View {
                 .buttonStyle(.borderless)
                 .help("Dismiss")
             }
-            .padding(10)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            .environment(\.colorScheme, .dark)
             .padding(12)
         }
     }
@@ -209,13 +211,16 @@ public struct TerminalScreen: View {
         case .connecting:
             ProgressView()
                 .controlSize(.small)
-                .padding(10)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(12)
+                .glassEffect(.regular, in: .circle)
+                .environment(\.colorScheme, .dark)
         case .retrying:
             Label("Reconnecting", systemImage: "wifi.exclamationmark")
                 .font(.callout)
-                .padding(10)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .glassEffect(.regular, in: .capsule)
+                .environment(\.colorScheme, .dark)
         case .exited(let x):
             VStack(spacing: 10) {
                 Text(Self.exitText(x))
@@ -223,12 +228,14 @@ public struct TerminalScreen: View {
                 Button("Close") { dismiss() }
             }
             .padding(16)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+            .environment(\.colorScheme, .dark)
         case .gone:
             Text("This pane is gone")
                 .font(.headline)
                 .padding(16)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                .environment(\.colorScheme, .dark)
         case .closed:
             EmptyView()
         }
@@ -306,14 +313,11 @@ struct TerminalSizeControl: View {
                 }
             }
             .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 34)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 17))
-            .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(.white.opacity(0.18)))
-            .padding(5)
-            .contentShape(Rectangle())
+            .frame(minHeight: 22)
         }
+        // A glass control, as the system's own buttons over content (app.md 5.4).
+        .buttonStyle(.glass)
+        .padding(5)
         .tint(.white)
         .environment(\.colorScheme, .dark)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)

@@ -347,6 +347,7 @@ public struct SessionView: View {
         .navigationSubtitle(ChatHeader.line(model.context, round: true))
         .toolbar {
             // The switch sits with the controls, so the bar keeps the session's title.
+            // Three glass groups (app.md 3.8): the switch, the session's actions, the More menu.
             if !sideBySide, !model.context.isCapcomService {
                 ToolbarItem(placement: .primaryAction) {
                     Picker("View", selection: $mode) {
@@ -355,6 +356,7 @@ public struct SessionView: View {
                     .pickerStyle(.segmented)
                     .fixedSize()
                 }
+                ToolbarSpacer(.fixed, placement: .primaryAction)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 if model.context.isCapcom { newConversationButton }
@@ -363,16 +365,30 @@ public struct SessionView: View {
                     withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
                 }
             }
-            if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
+            // A spacer before the More menu only when the menu has items.
+            if hasConsole || showsChatFilter || model.context.takesFriction {
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+            }
+            if hasConsole {
                 ToolbarItem(placement: .secondaryAction) { consoleButton }
             }
-            if model.show != nil, !model.context.isCapcomService {
+            if showsChatFilter {
                 ToolbarItem(placement: .secondaryAction) { ChatShowButton(shown: $chatShowShown) }
             }
             if model.context.takesFriction {
                 ToolbarItem(placement: .secondaryAction) { frictionButton }
             }
         }
+    }
+
+    /// The session has a console to open (app.md 6).
+    private var hasConsole: Bool {
+        model.target.session != nil && !model.context.isConsole && !model.context.isCapcomService
+    }
+
+    /// Show in chat applies (app.md 4.11).
+    private var showsChatFilter: Bool {
+        model.show != nil && !model.context.isCapcomService
     }
     #endif
 

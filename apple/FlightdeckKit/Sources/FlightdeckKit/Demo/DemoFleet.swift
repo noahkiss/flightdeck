@@ -36,6 +36,19 @@ public enum DemoFleet {
             fleet.keepAlive.append(ScriptBox(Task { await run(workbench: workbench, attic: attic) }))
             fleet.keepAlive.append(ScriptBox(await DemoTerminal.populate(workbench: workbench, attic: attic)))
         }
+        #if DEBUG
+        // Debug builds only: `-FlightdeckDemoOffline YES` takes the attic hab offline 8 s after
+        // launch, once a session opened with `-FlightdeckOpenSession` has loaded, so the
+        // offline banner (app.md 4.3) can be screenshotted. The hab stays silent, so the app
+        // keeps reconnecting.
+        if UserDefaults.standard.bool(forKey: "FlightdeckDemoOffline") {
+            fleet.keepAlive.append(ScriptBox(Task {
+                try? await Task.sleep(for: .seconds(8))
+                await attic.setSilent(true)
+                await attic.dropConnections()
+            }))
+        }
+        #endif
     }
 
     private final class ScriptBox {

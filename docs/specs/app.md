@@ -339,7 +339,8 @@ percentage. Tap opens the usage sheet (14).
 
 - **iPhone and iPad:** the strip is the tab bar's bottom accessory (3.8), on every tab. It hides
   while no account has a reading.
-- **Mac:** the footer under the board list.
+- **Mac:** the footer under the board list, in a bar the list scrolls under
+  (`safeAreaBar(edge: .bottom)`), with no divider or background of its own.
 
 ### 3.8 The app shell (iPhone and iPad)
 
@@ -371,7 +372,9 @@ The root is a stock tab view with four tabs, in this order:
   - **The session:** the detail column's system bar: the session's title, a subtitle of round,
     harness, hab and model, and the controls as toolbar items: Chat | Terminal (when
     not side by side), New conversation (Capcom), Voice, Show files; Console, Show in chat and
-    Note friction in its More menu. Chat and terminal sit side by side while the column is at
+    Note friction in its More menu. `ToolbarSpacer(.fixed)` splits them into three glass
+    groups, as Apple's apps group a bar: the switch, the session's actions, and the More menu.
+    Chat and terminal sit side by side while the column is at
     least 900 pt wide; narrower (portrait, or a sidebar open) the switch shows one at a time.
     The chat column stays under 820 pt wide, centred, so lines stay readable on a 13" screen.
   - **Capcom:** the phone's Capcom tab (4.10) as it is: the "Capcom" title with its subtitle
@@ -522,6 +525,19 @@ tab bar minimising on scroll, settings split by area).
   (Capcom tab) or the back button (a pushed session) is in reach again (3.8).
 - **Controls:** an attach button (4.4), a microphone for dictation (13.4) that becomes Send once
   the draft holds something, and Stop while the agent works (4.11).
+- **A floating bar, on glass, as in Messages.** The composer sits in a bar over the messages
+  (`safeAreaBar(edge: .bottom)`): the messages scroll under it, and the system's scroll edge
+  effect keeps it legible. No divider and no bar background. The attach button is a glass
+  circle; the field is on interactive glass, a capsule while it holds one line, with the
+  microphone inside it; Stop is a glass circle with a red mark. Send is the one prominent
+  control (`glassProminent`); it morphs out of the field once the draft holds something
+  (`glassEffectID`, animated on the draft), and the text keeps its place when the microphone
+  leaves. One `GlassEffectContainer` holds every glass piece of the composer, so they sample
+  together. The request card and the folder trust card above the field sit on glass tinted
+  orange. Every other line in the bar sits on a glass capsule, so it stays legible over the
+  messages: the Capcom context chips, a notice (red notices in semibold), the line after an
+  answer, the Capcom thread's notice and proposals line (a `glass` button), and the Capcom
+  tab's pacing line.
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Send follows the hab's input rules** (`harness-adapters.md`, Input delivery):
 
@@ -548,7 +564,8 @@ tab bar minimising on scroll, settings split by area).
 
 | Case | Behaviour |
 |---|---|
-| The transcript reader is degraded (format drift) | A banner says "chat view may be incomplete" and offers the terminal view. Messages the reader skipped are not guessed |
+| The hab is offline or reconnecting | A status capsule on glass at the top says "Offline since 14:02", "Reconnecting" or what to update; the messages scroll under it. The composer is off |
+| The transcript reader is degraded (format drift) | A glass capsule at the top says "chat view may be incomplete" and offers the terminal view. Messages the reader skipped are not guessed |
 | The transcript file does not exist yet | The view shows "waiting for the first message", not an error |
 | The harness has no chat reader | The session opens in the terminal view. The chat tab is hidden |
 | A huge tool output | The card shows the first lines and a "show all" control. Full output loads on demand |
@@ -733,7 +750,10 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   tail again: the hab opens the new transcript only on a `chat.page`.
 - **Scrolling.** New rows follow only while the owner is at the bottom. An older page keeps the
   row that was first in place. A first load or a replaced conversation goes to the bottom; a
-  message the owner sends always shows.
+  message the owner sends always shows. The composer and the keyboard change the thread's
+  bottom inset, not its frame, so a change of that inset scrolls to the newest row while the
+  owner is at the bottom and no finger moves the thread (during the drag that takes the
+  keyboard away the inset changes on every frame).
 - **Shared model.** Views count on `start` and `stop`; the listener stops when the last view
   leaves. Rows are kept in the model and rebuilt per changed message, so a long history does not
   parse its Markdown and tool input again on each event.
@@ -774,6 +794,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   sent the first part (no call fetches more yet).
 - **Banners.** Offline or reconnecting shows a banner and turns the composer off. An agent
   state with a version warning shows "chat view may be incomplete" with a Terminal button.
+  Both are capsules on glass in a bar at the top (`safeAreaBar(edge: .top)`), with the pinned
+  banners (4.11) under them; the messages scroll under the bar.
 - **Layout.** Phone: a board row pushes the session; chat first, a segmented switch flips to
   the terminal. A session with no harness opens on the terminal. iPad and Mac: the board list
   stays on the left; the session fills the rest with chat and terminal at 50/50 under one header
@@ -1514,7 +1536,9 @@ loses one (5.3, Grid equals the PTY). At least 2 columns and 1 row.
 **Two modes.** A control at the top right of the terminal shows the mode and the pane's size in
 cells: "Fitted · 50 × 38" or "Host size · 100 × 30". It sits in a strip of its own over the
 pane, in the pane's background colour, so it never covers the pane's top lines; the fitted grid
-leaves the strip out. It opens a menu: Fit to this screen, Host
+leaves the strip out. The control is on interactive glass in the dark scheme; the notices
+below and the terminal's status overlays (connecting, reconnecting, exited, gone) are on plain
+glass, as the system shows a status over content. It opens a menu: Fit to this screen, Host
 size, and Redraw, with a check on the current mode. iPad shows the same control in its terminal
 column. The mode lives as long as the view; a new view opens fitted.
 
@@ -1561,6 +1585,8 @@ hide with a hardware keyboard).
   and Paste. Esc, Tab, Ctrl and Opt carry text labels. The row scrolls sideways; a Keyboard key at
   the right end stays put and shows or hides the system keyboard.
 - **Targets.** Each key is at least 44 by 44 pt.
+- **Look.** Solid keys on the system's grouped background, as the system keyboard's keys are,
+  not glass: the bar extends the keyboard.
 - **Modifiers.** Ctrl and Opt each have three states:
 
 | State | How it is reached | How it looks | VoiceOver value |
@@ -2819,7 +2845,8 @@ Rules:
   never push the switch off; its microphone stays in the bar. Beside the switch the
   phone's bar holds one control and the More menu: Voice in the chat, the pane's microphone in
   the terminal. New conversation, Note friction, and Voice in the terminal, go in the More menu
-  (owner report 2026-11-02: four controls covered the switch). On iPad the controls are the
+  (owner report 2026-11-02: four controls covered the switch). The control and the More menu
+  share one glass group, as the system groups a phone's trailing bar items. On iPad the controls are the
   system bar's toolbar items (3.8); the Mac keeps its header, with Note friction as one more
   icon there.
 - **Note friction** (`diagnostics.md` 9.1) shows when the session's hab lists `friction`. It
