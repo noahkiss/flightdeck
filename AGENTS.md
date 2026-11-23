@@ -73,7 +73,7 @@ commands locally before you push; CI confirms. Release builds and signing run in
 
 - A behaviour change updates its spec in `docs/specs/` and, when it adds a test, `docs/testing.md`.
 - Generated files change only through `make gen`; edit `api/` instead.
-- The app, its extensions and the Swift packages build in Swift 6 language mode with strict concurrency; no compatibility mode.
+- The app, its extensions and the Swift packages build in Swift 6 language mode with strict concurrency; no compatibility mode. The throwaway spikes in `swift/Spikes/` are the exception: they stay as they were built.
 
 ## Hygiene: the repo stays publishable
 

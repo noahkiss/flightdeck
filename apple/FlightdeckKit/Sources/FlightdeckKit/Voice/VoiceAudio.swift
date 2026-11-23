@@ -150,12 +150,27 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     }
 
     /// The synthesizer's buffer callback, which runs off the main actor (see
-    /// `tapBlock`). Each buffer is new and handed over whole.
+    /// `tapBlock`). AVFoundation does not say its buffer outlives the callback,
+    /// so the callback hands over a copy it made itself.
     private nonisolated static func speechBuffers(_ deliver: @escaping @Sendable (AudioBufferHandoff) -> Void) -> AVSpeechSynthesizer.BufferCallback {
         { buffer in
-            guard let pcm = buffer as? AVAudioPCMBuffer else { return }
-            deliver(AudioBufferHandoff(pcm))
+            guard let pcm = buffer as? AVAudioPCMBuffer, let own = copy(pcm) else { return }
+            deliver(AudioBufferHandoff(own))
         }
+    }
+
+    /// A new buffer with the same format, length and samples. An empty buffer
+    /// (the synthesizer's end) copies as an empty one.
+    nonisolated static func copy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let out = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: max(buffer.frameLength, 1)) else { return nil }
+        out.frameLength = buffer.frameLength
+        let from = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let to = UnsafeMutableAudioBufferListPointer(out.mutableAudioBufferList)
+        for (s, d) in zip(from, to) {
+            guard let src = s.mData, let dst = d.mData else { continue }
+            memcpy(dst, src, Int(min(s.mDataByteSize, d.mDataByteSize)))
+        }
+        return out
     }
 
     /// A route change or a reset of the audio hardware: start again in place.
@@ -360,10 +375,10 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
 /// One audio buffer handed from one thread to another.
 ///
 /// AVAudioPCMBuffer is not Sendable, and AVFAudio gives no Sendable buffer
-/// before iOS 27, so this one escape is needed. It is safe because the sender
-/// makes each buffer (a converter's output, or one the synthesizer just
-/// wrote), hands it over at once and never touches it again: the receiver is
-/// its only user.
+/// before iOS 27, so this one escape is needed. It is safe by construction:
+/// the sender allocates each buffer itself (a converter's output, or its own
+/// copy of a synthesizer buffer), hands it over at once and keeps no
+/// reference, so the receiver is its only user.
 struct AudioBufferHandoff: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
     init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }

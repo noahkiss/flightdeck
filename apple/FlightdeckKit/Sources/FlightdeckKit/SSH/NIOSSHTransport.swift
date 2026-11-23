@@ -178,6 +178,7 @@ actor SSHPool {
         if !fresh, let d = dialing, d.gen == gen {
             let c = try await d.task.value
             if resets != resetsAtStart { throw CancellationError() }
+            try Self.requireActive(c)
             // This caller may resume before the dialer does: whichever comes
             // first adds the slot, so the caller's count always lands.
             register(c, generation: gen)
@@ -205,8 +206,16 @@ actor SSHPool {
             c.close()
             throw CancellationError()
         }
+        // A sharer that resumed first may have used the connection and seen it
+        // close: then it is gone, and its slot with it. Never register it again.
+        try Self.requireActive(c)
         register(c, generation: gen)
         return c
+    }
+
+    /// Throws when a dialed connection closed before this caller could use it.
+    private static func requireActive(_ c: SSHConnection) throws {
+        guard c.isActive else { throw TransportError("the SSH connection closed before a channel opened") }
     }
 
     /// Adds a slot for a new connection, once.

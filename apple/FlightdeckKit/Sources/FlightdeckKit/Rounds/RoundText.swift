@@ -80,7 +80,7 @@ public enum RoundText {
     }
 
     /// A time as the hab takes it: RFC 3339 in UTC with fractional seconds.
-    public static func stamp(_ d: Date) -> String { formatters.stamp(d) }
+    public static func stamp(_ d: Date) -> String { ISOTime.format(d) }
 
     private static let formatters = Formatters()
 
@@ -90,11 +90,6 @@ public enum RoundText {
         private struct Cache {
             var days: [String: DateFormatter] = [:]
             var clocks: [String: DateFormatter] = [:]
-            let iso: ISO8601DateFormatter = {
-                let f = ISO8601DateFormatter()
-                f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                return f
-            }()
         }
 
         private let cache = Mutex(Cache())
@@ -112,10 +107,6 @@ public enum RoundText {
                     $0.dateStyle = .none
                 }.string(from: d)
             }
-        }
-
-        func stamp(_ d: Date) -> String {
-            cache.withLock { $0.iso.string(from: d) }
         }
 
         private static func cached(_ cache: inout [String: DateFormatter], _ z: TimeZone, _ l: Locale,
