@@ -43,8 +43,8 @@ struct CapcomChipStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            // On glass: the chips sit in the composer's bar, over the messages (app.md 4.2).
-            GlassEffectContainer(spacing: 6) {
+            // On glass: the chips sit in the composer's bar, over the messages (app.md 4.2). The
+            // composer's container holds them with the rest of the bar.
             HStack(spacing: 6) {
                 ForEach(model.pending, id: \.self) { item in
                     HStack(spacing: 4) {
@@ -69,7 +69,6 @@ struct CapcomChipStrip: View {
                 }
             }
             .padding(.vertical, 2)
-            }
         }
     }
 }

@@ -313,14 +313,11 @@ struct TerminalSizeControl: View {
                 }
             }
             .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 34)
-            // A glass control, as the system's own buttons over content (app.md 5.4).
-            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 17))
-            .padding(5)
-            .contentShape(Rectangle())
+            .frame(minHeight: 22)
         }
+        // A glass control, as the system's own buttons over content (app.md 5.4).
+        .buttonStyle(.glass)
+        .padding(5)
         .tint(.white)
         .environment(\.colorScheme, .dark)
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)

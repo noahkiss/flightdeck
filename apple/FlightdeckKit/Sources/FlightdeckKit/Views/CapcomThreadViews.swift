@@ -74,20 +74,19 @@ struct CapcomThreadView: View {
         }
         // Over the composer, in a bar of its own: the thread scrolls under it (app.md 4.2).
         .safeAreaBar(edge: .bottom, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
+            GlassEffectContainer(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let n = thread.notice {
-                    Text(n).font(.caption).foregroundStyle(.red).composerNote()
+                    Text(n).font(.footnote.weight(.semibold)).foregroundStyle(.red).composerNote()
                 }
                 if let line = CapcomThread.proposalsLine(thread.proposals?.count ?? 0) {
                     Button { showProposals = true } label: {
                         Label(line, systemImage: "tray.full")
                             .font(.callout)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
                     }
-                    .buttonStyle(.borderless)
-                    .glassEffect(.regular.interactive(), in: .capsule)
+                    .buttonStyle(.glass)
                 }
+            }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)

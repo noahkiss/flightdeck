@@ -365,17 +365,30 @@ public struct SessionView: View {
                     withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
                 }
             }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
+            // A spacer before the More menu only when the menu has items.
+            if hasConsole || showsChatFilter || model.context.takesFriction {
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+            }
+            if hasConsole {
                 ToolbarItem(placement: .secondaryAction) { consoleButton }
             }
-            if model.show != nil, !model.context.isCapcomService {
+            if showsChatFilter {
                 ToolbarItem(placement: .secondaryAction) { ChatShowButton(shown: $chatShowShown) }
             }
             if model.context.takesFriction {
                 ToolbarItem(placement: .secondaryAction) { frictionButton }
             }
         }
+    }
+
+    /// The session has a console to open (app.md 6).
+    private var hasConsole: Bool {
+        model.target.session != nil && !model.context.isConsole && !model.context.isCapcomService
+    }
+
+    /// Show in chat applies (app.md 4.11).
+    private var showsChatFilter: Bool {
+        model.show != nil && !model.context.isCapcomService
     }
     #endif
 

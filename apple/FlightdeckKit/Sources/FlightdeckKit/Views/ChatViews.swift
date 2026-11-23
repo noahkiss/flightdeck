@@ -130,16 +130,22 @@ struct DismissesKeyboard: ViewModifier {
 
 /// Keeps the newest row in view when the bars over the thread change height: the keyboard, a
 /// growing draft, a request card. The bars sit in the scroll view's inset, not its frame, so the
-/// bottom anchor for size changes does not see them (app.md 4.2). Only while at the bottom.
+/// bottom anchor for size changes does not see them (app.md 4.2). Only while at the bottom, and
+/// never while a finger moves the thread: during the drag that takes the keyboard away the inset
+/// changes on every frame, and a scroll then would fight the finger.
 struct FollowsBottomInset: ViewModifier {
     let atBottom: Bool
     let proxy: ScrollViewProxy
     let bottom: String
+    @State private var phase: ScrollPhase = .idle
 
     func body(content: Content) -> some View {
-        content.onScrollGeometryChange(for: CGFloat.self, of: { $0.contentInsets.bottom }) { old, new in
-            if new != old, atBottom { proxy.scrollTo(bottom, anchor: .bottom) }
-        }
+        content
+            .onScrollPhaseChange { _, new in phase = new }
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentInsets.bottom }) { old, new in
+                guard new != old, atBottom, phase == .idle || phase == .animating else { return }
+                proxy.scrollTo(bottom, anchor: .bottom)
+            }
     }
 }
 
@@ -231,25 +237,24 @@ struct ChatBanners: View {
         let offline = !context.online && context.status != .stopped
         let warning = context.agent?.warning != nil
         if offline || warning {
-            // Status capsules on glass, as the system shows a status over content; no `.interactive()`
-            // on the offline one, since it takes no touches.
+            // Status capsules on plain glass, as the system shows a status over content; only the
+            // Terminal button is interactive glass.
             GlassEffectContainer(spacing: 6) {
                 VStack(spacing: 6) {
                     if offline {
-                        banner(offlineText, symbol: "wifi.slash", tint: .secondary)
+                        banner(offlineText, symbol: "wifi.slash", tint: .primary)
                             .glassEffect(.regular, in: .capsule)
                     }
                     if warning {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 6) {
                             banner("Chat view may be incomplete", symbol: "exclamationmark.triangle", tint: .orange)
+                                .glassEffect(.regular, in: .capsule)
                             if let openTerminal {
                                 Button("Terminal", action: openTerminal)
                                     .font(.caption.weight(.semibold))
-                                    .buttonStyle(.borderless)
+                                    .buttonStyle(.glass)
                             }
                         }
-                        .padding(.trailing, 14)
-                        .glassEffect(.regular.interactive(), in: .capsule)
                     }
                 }
             }
@@ -269,7 +274,7 @@ struct ChatBanners: View {
 
     private func banner(_ text: String, symbol: String, tint: Color) -> some View {
         Label(text, systemImage: symbol)
-            .font(.caption.weight(.medium))
+            .font(.footnote.weight(.semibold))
             .foregroundStyle(tint)
             .lineLimit(2)
             .padding(.horizontal, 14)
@@ -787,12 +792,19 @@ struct ComposerView: View {
     @State private var dictationNotice: String?
     /// Why a file was not attached.
     @State private var attachNotice: String?
+    /// Ties the field, Send and Stop together, so Send morphs out of the field (app.md 4.2).
+    @Namespace private var glass
 
     var body: some View {
         let gate = model.gate
         let card = approvals?.card(for: model.target)
         let mode = ChatAnswer.composerMode(gate: gate, agent: model.context.agent, card: card)
-        VStack(alignment: .leading, spacing: 6) {
+        // Glass as in Messages (app.md 4.2): a glass attach button, the field on glass with the
+        // microphone inside it, and Send as the one prominent control. One container holds every
+        // glass piece of the bar (cards, lines, chips, the field row), so they sample together
+        // and Send morphs in beside the field.
+        GlassEffectContainer(spacing: Self.spacing) {
+        VStack(alignment: .leading, spacing: Self.spacing) {
             if gate == .blocked, let a = model.context.agent {
                 if a.kind == .trust {
                     TrustCardView(model: model, openTerminal: openTerminal)
@@ -808,7 +820,6 @@ struct ComposerView: View {
             } else if let note = model.answerNote {
                 Label(note, systemImage: "checkmark.circle.fill")
                     .font(.footnote.weight(.medium))
-                    .foregroundStyle(.secondary)
                     .composerNote()
                     .accessibilityAddTraits(.updatesFrequently)
             }
@@ -816,7 +827,6 @@ struct ComposerView: View {
                 HStack {
                     Text(model.context.sessionExited ? "The session has exited." : "No agent runs in this session.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
                     if model.context.sessionExited {
                         Button("Resume") { Task { await model.resume() } }
                     }
@@ -825,14 +835,13 @@ struct ComposerView: View {
             }
             if let n = model.notice {
                 Text(n)
-                    .font(.caption)
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(.red)
                     .composerNote()
             }
             if let n = dictationNotice ?? dictation?.notice ?? attachNotice {
                 Text(n)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.footnote.weight(.medium))
                     .composerNote()
             }
             if model.context.isCapcom && !model.pending.isEmpty {
@@ -841,10 +850,7 @@ struct ComposerView: View {
             if !attachments.isEmpty {
                 DraftStrip(attachments: $attachments)
             }
-            // Glass as in Messages (app.md 4.2): a glass attach button, the field on glass with the
-            // microphone inside it, and Send as the one prominent control. One container, so the
-            // pieces share their sampling and Send morphs in beside the field.
-            GlassEffectContainer(spacing: Self.spacing) {
+            Group {
                 if typeSize.isAccessibilitySize {
                     // At accessibility sizes the field takes its own row; the buttons go below it (app.md 4.11).
                     VStack(alignment: .leading, spacing: Self.spacing) {
@@ -864,6 +870,8 @@ struct ComposerView: View {
                 }
             }
         }
+        }
+        .animation(.smooth(duration: 0.25), value: hasDraft)
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .padding(.bottom, 10)
@@ -904,6 +912,7 @@ struct ComposerView: View {
         AttachButton(attachments: $attachments) { attachNotice = $0 }
             .disabled(mode == .off || mode == .answer)
             .glassEffect(.regular.interactive(), in: .circle)
+            .glassEffectID("attach", in: glass)
     }
 
     /// The field on glass, with the microphone inside it while there is nothing to send.
@@ -914,8 +923,8 @@ struct ComposerView: View {
                 .textFieldStyle(.plain)
                 .focused($focused)
                 .disabled(mode == .off)
-                .padding(.leading, 16)
-                .padding(.trailing, showsDictation ? 0 : 16)
+                // The same gap whether or not the microphone shows, so the text never jumps.
+                .padding(.horizontal, 16)
                 .padding(.vertical, 11)
                 .frame(minHeight: 44)
                 .accessibilityLabel("Message")
@@ -935,6 +944,7 @@ struct ComposerView: View {
             }
         }
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .glassEffectID("field", in: glass)
     }
 
     /// The microphone shows while the draft is empty, or while it dictates.
@@ -955,6 +965,7 @@ struct ComposerView: View {
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
             .foregroundStyle(.red)
+            .glassEffectID("stop", in: glass)
             .accessibilityLabel("Stop")
         }
         if hasDraft || voiceKit == nil {
@@ -965,6 +976,7 @@ struct ComposerView: View {
             }
             .buttonStyle(.glassProminent)
             .buttonBorderShape(.circle)
+            .glassEffectID("send", in: glass)
             .disabled(mode == .off || !hasDraft)
             .keyboardShortcut(.return, modifiers: .command)
             .accessibilityLabel(mode == .answer ? "Send answer" : "Send")

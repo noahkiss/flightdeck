@@ -530,12 +530,14 @@ tab bar minimising on scroll, settings split by area).
   effect keeps it legible. No divider and no bar background. The attach button is a glass
   circle; the field is on interactive glass, a capsule while it holds one line, with the
   microphone inside it; Stop is a glass circle with a red mark. Send is the one prominent
-  control (`glassProminent`); it slides in beside the field once the draft holds something.
-  One `GlassEffectContainer` holds them, so they share one glass surface and morph. The
-  request card and the folder trust card above the field sit on glass tinted orange. Every
-  other line in the bar sits on a glass capsule, so it stays legible over the messages: the
-  Capcom context chips, a notice, the line after an answer, the Capcom thread's notice and
-  proposals line, and the Capcom tab's pacing line.
+  control (`glassProminent`); it morphs out of the field once the draft holds something
+  (`glassEffectID`, animated on the draft), and the text keeps its place when the microphone
+  leaves. One `GlassEffectContainer` holds every glass piece of the composer, so they sample
+  together. The request card and the folder trust card above the field sit on glass tinted
+  orange. Every other line in the bar sits on a glass capsule, so it stays legible over the
+  messages: the Capcom context chips, a notice (red notices in semibold), the line after an
+  answer, the Capcom thread's notice and proposals line (a `glass` button), and the Capcom
+  tab's pacing line.
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Send follows the hab's input rules** (`harness-adapters.md`, Input delivery):
 
@@ -750,7 +752,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   row that was first in place. A first load or a replaced conversation goes to the bottom; a
   message the owner sends always shows. The composer and the keyboard change the thread's
   bottom inset, not its frame, so a change of that inset scrolls to the newest row while the
-  owner is at the bottom.
+  owner is at the bottom and no finger moves the thread (during the drag that takes the
+  keyboard away the inset changes on every frame).
 - **Shared model.** Views count on `start` and `stop`; the listener stops when the last view
   leaves. Rows are kept in the model and rebuilt per changed message, so a long history does not
   parse its Markdown and tool input again on each event.

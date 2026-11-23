@@ -78,7 +78,7 @@ The first five are the core set. If only five tests could exist, these would be 
 | 11 | Each harness adapter over its fixture transcripts | Exact `agent.state` stream; a scheduled job runs the newest harness versions |
 | 12 | Signed update on a Mac (release smoke) | A pane reads the clipboard and a protected folder with no prompt; the setup check exits 0 |
 | 13 | Uninstall (release smoke) | Every file the install wrote is gone |
-| 14 | The app on a device (release smoke) | Connects over SSH, lists sessions, the terminal echoes typing, one approval round trip |
+| 14 | The app on a device (release smoke) | Connects over SSH, lists sessions, the terminal echoes typing, one approval round trip; a downward drag on the messages takes the keyboard away without a jump or a snap, on an empty and a short session chat and an empty and a short Capcom thread (`app.md` 4.2) |
 
 Test 5 lives in three places. `api/api_test.go` writes the messages of the current revision to
 `api/testdata/rev<N>/`, with every field set and extra `x_unknown_*` fields in every object. The
