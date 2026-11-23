@@ -3332,7 +3332,7 @@ In: gff-hab (embedded data)
 
 ==============================================================================
 sherpa-onnx
-Version: 2.0.2
+Version: 2.0.3
 Source: https://github.com/k2-fsa/sherpa-onnx
 Licence: Apache-2.0
 In: gff-hab-speech (static library)

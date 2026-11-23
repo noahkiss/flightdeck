@@ -37,7 +37,7 @@ GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/lib/pkgconfig CGO_ENABLED=1 \
 
 # The speech helper, gff-hab-speech (docs/specs/voice.md): sherpa-onnx's C API from its pinned
 # static release, plus libopus from the system (pkg-config opus). Nothing of it is committed.
-SHERPA_VERSION := 2.0.2
+SHERPA_VERSION := 2.0.3
 SHERPA_RELEASE := https://github.com/k2-fsa/sherpa-onnx/releases/download/v$(SHERPA_VERSION)
 SHERPA_HEADER_URL := https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v$(SHERPA_VERSION)/sherpa-onnx/c-api/c-api.h
 SHERPA_HEADER_SHA256 := 1f738de63a206328253ff471edda96b011fa1bd6f2a028f82967a7761abc2edd
@@ -47,16 +47,16 @@ SPEECH_OS := $(shell uname -s)
 SPEECH_ARCH := $(shell uname -m)
 ifeq ($(SPEECH_OS)-$(SPEECH_ARCH),Darwin-arm64)
 SHERPA_ARCHIVE := sherpa-onnx-v$(SHERPA_VERSION)-osx-arm64-static-no-tts-lib
-SHERPA_SHA256 := 80b98612de9a50038c9a3ac1812ec4e6833982dd58fc58dbec1eafeff072aec2
+SHERPA_SHA256 := 02d0059b66a8fcd20d711962943b37b59b499536077e6c3a42bb64c3d750455f
 else ifeq ($(SPEECH_OS)-$(SPEECH_ARCH),Darwin-x86_64)
 SHERPA_ARCHIVE := sherpa-onnx-v$(SHERPA_VERSION)-osx-universal2-static-no-tts-lib
-SHERPA_SHA256 := c87b3619bed92409b2c7b7deac12c6cca1fe0f36c8660ab285e40151b68fa8bc
+SHERPA_SHA256 := f7f4010a0b8fb45ffed6a09787932a9c3a45d80a79c547264620579f9d724d2c
 else ifeq ($(SPEECH_OS)-$(SPEECH_ARCH),Linux-x86_64)
 SHERPA_ARCHIVE := sherpa-onnx-v$(SHERPA_VERSION)-linux-x64-static-no-tts-lib
-SHERPA_SHA256 := edb55283283edef3aa0a945970b9fcb397e186ef17999ac554154fea1d6d1db5
+SHERPA_SHA256 := b8aca5c2772f6234b65b25b8b034b9589db0d862444807431a996b368b0f00f8
 else ifeq ($(SPEECH_OS)-$(SPEECH_ARCH),Linux-aarch64)
 SHERPA_ARCHIVE := sherpa-onnx-v$(SHERPA_VERSION)-linux-aarch64-static-lib
-SHERPA_SHA256 := c2ff3464e4065b4e04a0cdbc00f43f4e44405d6c3ea4e4023f4a4e069645e3fb
+SHERPA_SHA256 := 11f9860fd4dc18af397a493ee9bcb88d18c6ba1b235fb3041ec1a3ef6522364b
 endif
 ifeq ($(SPEECH_OS),Darwin)
 SHERPA_SYSLIBS := -lc++ -framework Foundation
