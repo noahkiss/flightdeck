@@ -42,6 +42,12 @@ let package = Package(
         // Parakeet TDT on Core ML, as the on-device spike measured it. Pre-1.0:
         // pin it exactly.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.4"),
+        // Markdown in the chat (app.md 4.6): native SwiftUI views over swift-markdown. Pinned
+        // exactly; the LaTeX trait is off, so SwiftMath is not linked.
+        .package(url: "https://github.com/LiYanan2004/MarkdownView.git", exact: "3.0.0", traits: []),
+        // The parser MarkdownView uses, for the chat's own reads of a reply (its code blocks,
+        // a fold by blocks). Pre-1.0: pinned exactly.
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
     ],
     targets: [
         .target(
@@ -57,6 +63,8 @@ let package = Package(
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "MarkdownView", package: "MarkdownView"),
+                .product(name: "Markdown", package: "swift-markdown"),
             ],
             swiftSettings: concurrency
         ),

@@ -503,6 +503,26 @@ public final class ChatModel {
     /// (capcom.md 8.4).
     public var sendsContextAlone: Bool { context.isCapcom && !pending.isEmpty }
 
+    /// Messages that failed or were not delivered: a rise plays the warning haptic (app.md 4.12).
+    public var failedCount: Int {
+        outgoing.reduce(0) { n, o in
+            switch o.status {
+            case .failed, .notDelivered: return n + 1
+            default: return n
+            }
+        }
+    }
+
+    /// Grows when something asks the composer to take the owner's words: "Tell it what to do"
+    /// on a request card (app.md 4.11).
+    public private(set) var composeRequest = 0
+
+    /// Focuses the composer for the owner's instructions after a denial.
+    /// The hab's answer carries no text with a denial, so the words go as the next message.
+    public func askForInstructions() {
+        composeRequest += 1
+    }
+
     /// Sends the owner's text and attachments under the send gate. Empty text with no
     /// attachments does nothing, unless Capcom chips wait. Voice mode sends with origin
     /// `dictated`. A file over the limit is refused here, before any upload, with the limit named.

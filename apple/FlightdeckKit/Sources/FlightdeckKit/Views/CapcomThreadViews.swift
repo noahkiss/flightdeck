@@ -14,87 +14,41 @@ struct CapcomThreadView: View {
     let thread: CapcomThread
     let model: ChatModel
     @Environment(\.capcomEarlier) private var earlier
-    @State private var atBottom = true
-    @State private var showProposals = false
 
     var body: some View {
         let rows = thread.rows
         let lastUser = rows.last { if case .user = $0 { return true }; return false }?.id
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if !earlier.isEmpty {
-                        CapcomEarlierSection(earlier: earlier, images: model.images)
-                    }
-                    if thread.hasOlder {
-                        HStack {
-                            Spacer()
-                            if thread.loadingOlder { ProgressView().controlSize(.small) } else { Text("Earlier messages").font(.caption).foregroundStyle(.secondary) }
-                            Spacer()
-                        }
-                        .onAppear { Task { await thread.loadOlder() } }
-                    }
-                    ForEach(rows) { row in
-                        CapcomRowView(row: row, thread: thread, images: model.images, hostID: model.context.hostID, showMark: row.id == lastUser)
-                            .id(row.id)
-                    }
-                    ForEach(model.outgoing.filter(Self.showsOutgoing)) { o in
-                        OutgoingView(outgoing: o, model: model)
-                            .id("out-\(o.id)")
-                    }
-                    if thread.typing {
-                        CapcomTypingMark()
-                            .id("typing")
-                    }
-                    Color.clear.frame(height: 1).id(Self.bottom)
-                        .onAppear { atBottom = true }
-                        .onDisappear { atBottom = false }
+        ChatScroll(rowIDs: rows.map(\.id), readKey: "capcom|" + ChatTranscript.readKey(model.target), sent: model.outgoing.count) { divider in
+            if !earlier.isEmpty {
+                CapcomEarlierSection(earlier: earlier, images: model.images)
+            }
+            if thread.hasOlder {
+                HStack {
+                    Spacer()
+                    if thread.loadingOlder { ProgressView().controlSize(.small) } else { Text("Earlier messages").font(.caption).foregroundStyle(.secondary) }
+                    Spacer()
                 }
-                .padding(12)
+                .onAppear { Task { await thread.loadOlder() } }
             }
-            .defaultScrollAnchor(.bottom)
-            // The newest message stays in view when the keyboard or the composer resizes the thread.
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            .overlay { placeholder.allowsHitTesting(false) }
-            .modifier(DismissesKeyboard())
-            .modifier(FollowsBottomInset(atBottom: atBottom, proxy: proxy, bottom: Self.bottom))
-            .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
-                switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
-                case .none: break
-                case .toBottom: proxy.scrollTo(Self.bottom, anchor: .bottom)
-                case .keep(let id): proxy.scrollTo(id, anchor: .top)
-                }
+            ForEach(rows) { row in
+                if row.id == divider { UnreadDivider() }
+                let id = row.id
+                CapcomRowView(row: row, thread: thread, images: model.images, hostID: model.context.hostID, showMark: row.id == lastUser)
+                    .messageMenu(id: id, content: MessageMenu.content(row), current: { [thread] in
+                        thread.rows.first { $0.id == id }.flatMap(MessageMenu.content)
+                    })
+                    .id(id)
             }
-            .onChange(of: thread.typing) { _, on in
-                if on && atBottom { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+            ForEach(model.outgoing.filter(Self.showsOutgoing)) { o in
+                OutgoingView(outgoing: o, model: model)
+                    .id("out-\(o.id)")
             }
-            .onChange(of: model.outgoing.count) { old, new in
-                if new > old { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+            if thread.typing {
+                CapcomTypingMark()
+                    .id("typing")
             }
         }
-        // Over the composer, in a bar of its own: the thread scrolls under it (app.md 4.2).
-        .safeAreaBar(edge: .bottom, spacing: 0) {
-            GlassEffectContainer(spacing: 8) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let n = thread.notice {
-                    Text(n).font(.footnote.weight(.semibold)).foregroundStyle(.red).composerNote()
-                }
-                if let line = CapcomThread.proposalsLine(thread.proposals?.count ?? 0) {
-                    Button { showProposals = true } label: {
-                        Label(line, systemImage: "tray.full")
-                            .font(.callout)
-                    }
-                    .buttonStyle(.glass)
-                }
-            }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, thread.notice == nil && (thread.proposals ?? []).isEmpty ? 0 : 6)
-        }
-        .sheet(isPresented: $showProposals) {
-            CapcomProposalsSheet(records: thread.proposals ?? [])
-        }
+        .overlay { placeholder.allowsHitTesting(false) }
     }
 
     /// The thread shows the user's sent messages itself; the composer's list keeps the ones
@@ -106,8 +60,6 @@ struct CapcomThreadView: View {
         }
     }
 
-    static let bottom = "capcom-bottom"
-
     @ViewBuilder private var placeholder: some View {
         if thread.items.isEmpty && model.outgoing.isEmpty {
             switch thread.load {
@@ -115,6 +67,29 @@ struct CapcomThreadView: View {
             case .failed(let e): ContentUnavailableView("Thread did not load", systemImage: "exclamationmark.bubble", description: Text(e))
             case .unavailable(let h): ContentUnavailableView("No thread", systemImage: "text.bubble", description: Text(h))
             default: ContentUnavailableView("Ask Capcom anything", systemImage: "dot.radiowaves.left.and.right")
+            }
+        }
+    }
+}
+
+/// The Capcom thread's lines over the composer: its notice and the proposals line. They sit in
+/// the composer's glass container, so the bar is one glass group (app.md 4.2).
+struct CapcomThreadBar: View {
+    let thread: CapcomThread
+    @State private var showProposals = false
+
+    var body: some View {
+        if let n = thread.notice {
+            Text(n).font(.footnote.weight(.semibold)).foregroundStyle(.red).composerNote()
+        }
+        if let line = CapcomThread.proposalsLine(thread.proposals?.count ?? 0) {
+            Button { showProposals = true } label: {
+                Label(line, systemImage: "tray.full")
+                    .font(.callout)
+            }
+            .buttonStyle(.glass)
+            .sheet(isPresented: $showProposals) {
+                CapcomProposalsSheet(records: thread.proposals ?? [])
             }
         }
     }
@@ -139,7 +114,6 @@ struct CapcomRowView: View {
                     if !att.isEmpty { AttachmentThumbRow(ids: att, images: images) }
                     if !text.isEmpty {
                         Text(text)
-                            .textSelection(.enabled)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
@@ -159,8 +133,7 @@ struct CapcomRowView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    MarkdownView(blocks: MarkdownBlock.parse(text))
-                        .textSelection(.enabled)
+                    MarkdownBody(text: text)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))

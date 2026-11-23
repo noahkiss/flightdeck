@@ -103,6 +103,15 @@ final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
         synthesizer.delegate = self
     }
 
+    /// Runs when speech ends, finished or stopped.
+    var onEnd: (() -> Void)?
+
+    var isSpeaking: Bool { synthesizer.isSpeaking }
+
+    func stop() {
+        synthesizer.stopSpeaking(at: .immediate)
+    }
+
     func play(_ text: String, voice: AVSpeechSynthesisVoice?) {
         synthesizer.stopSpeaking(at: .immediate)
         #if os(iOS)
@@ -128,10 +137,16 @@ final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.release() }
+        Task { @MainActor in
+            self.release()
+            self.onEnd?()
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.release() }
+        Task { @MainActor in
+            self.release()
+            self.onEnd?()
+        }
     }
 }

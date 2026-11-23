@@ -310,7 +310,6 @@ struct DocumentBody: View {
     let model: ContentModel
 
     static let foldedLines = 8
-    static let foldedBlocks = 4
     @State private var showAll = false
 
     var body: some View {
@@ -323,10 +322,10 @@ struct DocumentBody: View {
                 fullText
             } else {
                 // Folded keeps whole blocks, so a code fence is never cut open.
-                let blocks = model.markdown(for: item, data: data)
+                let md = model.markdown(for: item, data: data)
                 VStack(alignment: .leading, spacing: 4) {
-                    MarkdownView(blocks: folded ? Array(blocks.prefix(Self.foldedBlocks)) : blocks)
-                    if folded && blocks.count > Self.foldedBlocks {
+                    MarkdownBody(text: folded ? md.folded : md.text)
+                    if folded && md.cut {
                         Text("…").foregroundStyle(.secondary)
                     }
                     if !folded && ContentModel.markdownCut(data) {

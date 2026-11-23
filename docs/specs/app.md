@@ -625,18 +625,21 @@ tab bar minimising on scroll, settings split by area).
 
 ### 4.2 The composer
 
-- The full system keyboard, with autocorrect. Multi-line text stays one message, so Return
-  writes a new line and never puts the keyboard away.
+- The full system keyboard, with autocorrect. Multi-line text stays one message, so the
+  on-screen keyboard's Return writes a new line and never puts the keyboard away.
+- **A hardware keyboard (iPad and Mac), as in Messages.** Return sends; Shift-Return and
+  Option-Return write a new line where the caret is (`onKeyPress`). Cmd-Return also sends.
 - **Chat conventions (iPhone), as in Messages.** Dragging the messages down takes the keyboard
   with the finger and puts it away (`scrollDismissesKeyboard(.interactively)`); a tap on the
   messages does not. The thread bounces even when it is too short to scroll, so the drag also
   works on an empty or short thread. Only the empty state's buttons take touches; a drag on
   its words reaches the thread.
-  Not built: the composer does not ride the keyboard during the drag. It stays above the
-  keyboard's starting height and drops when the drag ends; in Messages it follows the
-  finger. That needs the composer pinned to the keyboard's layout guide, which waits for the
-  iOS message list's rewrite. The thread opens at the newest message and stays there while the
-  keyboard or a growing composer resizes it. The composer grows with its text up to eight
+  The composer sits in the keyboard's safe area, in a bar over the thread, and nothing in the
+  thread scrolls while a finger moves it (4.12), so the thread never fights the drag. Not
+  verified on a device: whether the composer rides the keyboard during the drag (K1 in 4.12)
+  or drops when the drag ends; the device smoke test checks it (`testing.md`). If it drops, the
+  fix is the composer pinned to UIKit's keyboard layout guide. The thread opens at the newest
+  message and stays there while the keyboard or a growing composer resizes it. The composer grows with its text up to eight
   lines, then scrolls. A pushed session goes back with the back button or an edge swipe.
   These hold in a session's chat and in the Capcom thread. With the keyboard gone the tab bar
   (Capcom tab) or the back button (a pushed session) is in reach again (3.8).
@@ -654,7 +657,12 @@ tab bar minimising on scroll, settings split by area).
   orange. Every other line in the bar sits on a glass capsule, so it stays legible over the
   messages: the Capcom context chips, a notice (red notices in semibold), the line after an
   answer, the Capcom thread's notice and proposals line (a `glass` button), and the Capcom
-  tab's pacing line.
+  tab's pacing line. These lines sit in the composer's container too, so the bar is one glass
+  group.
+- **Long-press Send** while the agent works offers "Send After This Turn" (what a tap does) and
+  "Stop and Send Now": the message waits as usual, Stop ends the turn (`session.interrupt`), and
+  the message goes out at the next prompt. The Capcom thread keeps its own "Send now" (capcom-service.md
+  10.1). Not built: a model or effort per message; no hab call takes one.
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Drafts survive.** The composer's text is kept per session on the device
   (`Board/DraftStore.swift`, tests `DraftStoreTests`). Going back to the list, opening another
@@ -684,7 +692,10 @@ tab bar minimising on scroll, settings split by area).
 - If the hab reports "not delivered" (no working signal and no new user record in a few seconds),
   the message shows "not delivered" with a retry button. The app never retries on its own.
 - **Stop** sends the harness's interrupt through the adapter. It is a separate button, never a
-  side effect of sending.
+  side effect of sending (Stop and Send Now above is the owner's explicit choice of both).
+- **Haptics (iPhone).** A light tap when a message goes out, a success when a request is
+  answered from the card, a warning when a message fails or is not delivered. No haptics while
+  a reply streams: a long run would buzz the whole time.
 
 ### 4.3 Edge cases
 
@@ -874,12 +885,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
 - **New native session.** The model remembers the native session id its tail came from. When
   the agent state names another one (`/clear`, a new agent in the pane, a resume), it takes the
   tail again: the hab opens the new transcript only on a `chat.page`.
-- **Scrolling.** New rows follow only while the owner is at the bottom. An older page keeps the
-  row that was first in place. A first load or a replaced conversation goes to the bottom; a
-  message the owner sends always shows. The composer and the keyboard change the thread's
-  bottom inset, not its frame, so a change of that inset scrolls to the newest row while the
-  owner is at the bottom and no finger moves the thread (during the drag that takes the
-  keyboard away the inset changes on every frame).
+- **Scrolling** follows 4.12: one SwiftUI list on every device, at-bottom from the scroll
+  geometry, a jump-to-latest button and an unread divider.
 - **Shared model.** Views count on `start` and `stop`; the listener stops when the last view
   leaves. Rows are kept in the model and rebuilt per changed message, so a long history does not
   parse its Markdown and tool input again on each event.
@@ -906,13 +913,21 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   `working` confirmed.
 - **Stop** calls `session.interrupt`, else sends Escape through `pane.input`. It shows only
   while the agent works.
-- **Rows.** `ChatRender.items` turns messages into rows: user, agent (Markdown blocks), tool
+- **Rows.** `ChatRender.items` turns messages into rows: user, agent (its Markdown), tool
   card, event line, plan checklist, and "unsupported" for an unknown kind. A message whose
   `parent` is a tool call nests in that card. Only the latest top-level plan shows its steps;
   earlier plans fold to one line.
-- **Markdown.** A small line parser splits blocks: paragraphs, headings, fenced code, list
-  items (task boxes too), quotes and rules. Inline Markdown uses
-  `AttributedString(markdown:)`. No third-party renderer.
+- **Markdown.** MarkdownView (LiYanan2004, MIT, pinned exactly; its LaTeX trait is off)
+  renders agent replies, Capcom messages and Markdown files with native SwiftUI views over
+  swift-markdown (CommonMark: lists, tables, quotes, links, code). Ours on top of it: the type
+  scale (heading 1 `title3` bold, heading 2 `headline`, the rest `subheadline` bold), the code
+  block (no soft wrap, the side-scroll cue of 4.11, a language label and a Copy button), and
+  images. Agent text is not trusted, so an `http` or `https` image never loads by itself: it
+  shows as a link with its alt text, and a tap opens it in the browser. The chat reads code
+  blocks and folds by blocks with swift-markdown, the same parser, so a code block it copies is
+  the one on screen. A row parses its whole text on each change. The library's streaming
+  reader is not used: its first frame is empty, which would jump the list, and the harness
+  transcripts hold whole messages, so a reply arrives whole.
 - **Tool cards** are folded, under a one-sentence header (4.11). Reads and searches fold to one
   line. Shell tools show the exact command, edits a diff with a file header and line numbers
   where known, `Write` its content as added lines, Codex's `apply_patch` each file's diff, other
@@ -1436,6 +1451,11 @@ one answer, the expiry, answered elsewhere).
   allow shows only when the request offers it; no hab answer path offers it yet (the API's
   choices are allow, deny and answer), so today the row holds Deny and Allow. A plan keeps
   Keep planning and Approve plan.
+- **Tell it what to do.** Under Deny and Allow, a permission offers "Tell it what to do", as
+  Codex Remote does: it denies, then focuses the composer, whose draft stays as it was. The
+  owner's words go as the next message once the agent is at its prompt. A denial carries no
+  text in `approval.answer` (its `text` counts only with choice `answer`), so the words cannot
+  ride on the denial itself. Not built: the same action from the push and the Live Activity.
 - **A question with options** (Claude's `AskUserQuestion`, a request with an id) shows each
   option as a full-width button: its label and its description. One question with single choice
   answers on the tap. Several questions or multiple choice take taps, then "Send answer". Free
@@ -1489,6 +1509,81 @@ numbers. Debug builds take `-FlightdeckShowChatFilter YES` to open the Show in c
 `-FlightdeckShowPinned YES` to open the first banner's sheet at launch; `-FlightdeckOpenToolCards YES` opens every
 tool card, and `-FlightdeckAutoAnswer allow` or `option` answers the open request from its card
 after 3 s. A list's tail stays in view when the request card changes its height.
+
+### 4.12 Chat conventions
+
+How the session chat and the Capcom thread behave as a chat app, as Messages, ChatGPT and the
+Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.swift`,
+`Views/MarkdownViews.swift`, `Chat/ChatFollow.swift` and `Chat/MessageMenu.swift`.
+
+| # | Behaviour | Built with | State |
+|---|---|---|---|
+| K1 | Dragging the thread down hides the keyboard; the keyboard follows the finger and the composer rides on it | `scrollDismissesKeyboard(.interactively)`, the composer in `safeAreaBar` | Built; the composer's ride not verified on a device (4.2) |
+| K2 | Scrolling up to read does not hide the keyboard by surprise | The same modifier | Built |
+| S1 | The thread opens at the newest message | `defaultScrollAnchor(.bottom)` | Built |
+| S2 | At the bottom, streamed text and growing tool cards stay pinned | `defaultScrollAnchor(.bottom, for: .sizeChanges)`, and `ChatFollow` going back to the bottom once no finger moves the thread | Built, both threads |
+| S3 | Scrolled up, new output never moves the view | `onScrollGeometryChange` and `onScrollPhaseChange` feed `ChatFollow` | Built |
+| S4 | A jump-to-latest button with the count of new rows | `ScrollPosition.scrollTo(edge: .bottom)` | Built |
+| S5 | Loading an older page keeps the row under the finger still | `ScrollPosition.scrollTo(id:anchor: .top)` | Built |
+| C1 | The composer grows with its text to eight lines, then scrolls | `TextField(axis: .vertical)` | Built |
+| C2 | Send is the one filled control; Mic when empty; Stop while the agent works | 4.2 | Built |
+| C3 | Paste an image into the field | `onPasteCommand`, UIKit paste hooks | Not built: Paste is in the attach menu (4.4) |
+| C4 | The draft survives leaving the thread | App state | Built where the session view holds the draft |
+| N1 | Back and the edge swipe pop the thread | `NavigationStack` | Built |
+| N2 | A push opens the thread at the item it names | `onOpenURL`, then a scroll | Not built: it opens the session at the bottom |
+| L1 | Long press a message: Copy, Select Text, Share, Read Aloud, Copy Last Code Block; Retry on a failed send | `contextMenu`, `ShareLink`, `AVSpeechSynthesizer` | Built |
+| L2 | Code blocks carry a Copy button | Our code block style | Built |
+| T1 | A working mark sits at the bottom while the agent works | Plain view | Built (Capcom's typing mark; a session's state in its header) |
+| T2 | A "New" divider marks where the owner left off | `ChatReadMarks` | Built |
+| H1 | Light haptics on send, an answered request, a failure | `sensoryFeedback` | Built (4.2) |
+| M1 | Mac: Return sends; Shift-Return and Option-Return break the line | `onKeyPress` | Built |
+| M2 | iPad with a hardware keyboard: the same; the on-screen keyboard's Return is a new line | `onKeyPress` (key presses come only from a hardware keyboard) | Built, not verified on hardware |
+| M3 | Cmd-Down jumps to the newest row; Esc stops the agent | `keyboardShortcut` | Cmd-Down built (while the jump button shows); Esc not built |
+| M4 | The Mac field shows the focus ring and takes focus when a thread opens | `focused`, `defaultFocus` | Not built: focus comes from a tap |
+
+- **One list on every device.** The study proposed ChatLayout (a UIKit collection view layout)
+  for the iPhone and iPad list. It is not adopted. It would mean a UIKit list with our rows in
+  hosted cells on iOS beside a SwiftUI list on the Mac: two lists to keep alike. It sits outside
+  what OS 26 gives a SwiftUI scroll view and that this app already uses: `safeAreaBar` with the
+  soft scroll edge effect, `ScrollPosition`, scroll geometry and phases, and
+  `scrollDismissesKeyboard`. It leaves the keyboard to the app, and it cannot run in the macOS
+  `swift test` that covers this logic. The SwiftUI list meets every row above.
+- **At the bottom** is a distance from the scroll geometry: content height plus the bottom inset
+  (the composer, the keyboard and any card above the field sit in the inset) less the visible
+  bottom. Within 48 pt counts as at the bottom. No marker row.
+- **Following is sticky.** Only the owner's own scroll (phase interacting or decelerating) past
+  48 pt stops it. Content that grows, and insets that change, never stop it: once no finger moves
+  the thread and nothing animates, a following thread goes back to the bottom. So the drag that
+  takes the keyboard away never meets a scroll, and a tall tool card that lands at once is
+  followed.
+- **New rows while reading** count up on the jump button ("3 new messages"; an arrow alone with
+  none counted). The button is a glass control over the bottom of the thread; a tap, or
+  Cmd-Down, scrolls to the newest row with a short animation. Rows the owner sends always show
+  and clear the count. An older page and a row that changes in place count nothing.
+- **The unread divider.** The app remembers, per thread, the last row the thread showed at its
+  bottom, for as long as the app runs. Opening the thread again draws "New" above the first row
+  after it, at the row level, so the rows themselves do not change. The divider stays for the
+  visit and goes when the owner sends. A new tail (another conversation) shows none.
+- **The message menu.** A long press on iPhone and iPad, a right click on the Mac, on a user
+  message, an agent reply, a Capcom message or report, and a tool card. Each action reads the
+  row's text when tapped, so the menu works while a reply streams.
+  - Copy takes the Markdown as written. Select Text opens the message in a sheet with
+    continuous selection across blocks (MarkdownView's `MarkdownText`). On iPhone and iPad a
+    long press on a message opens the menu rather than selecting text; the Mac selects by
+    dragging. Text inside tool cards stays selectable in place.
+  - Share hands the text to the share sheet.
+  - Read Aloud reads the message with the system voice chosen for voice mode (13.5): Markdown
+    marks dropped, code as one placeholder, as voice mode speaks (13.2), up to 2,000 words. One
+    message at a time; the menu offers Stop Reading while it reads.
+  - Copy Last Code Block shows when the message holds a code block.
+  - A tool card offers Copy Command and Copy Output.
+  - A message on its way offers Cancel (queued) or Retry (failed, not delivered), and Copy.
+  - Not built: thumbs up or down and regenerate; the harness owns the conversation.
+- **Voice inside the thread.** Built: dictation writes into the composer as words are heard
+  (13.4); a long press on the microphone opens voice mode (13); Read Aloud above. Not built,
+  for a later stage: an in-thread voice bar in place of the full-screen voice mode, talking to
+  interrupt the reply being read, push-to-talk, and a tap on the waveform to show or hide the
+  live words. Full-screen voice mode stays as the option.
 
 ---
 

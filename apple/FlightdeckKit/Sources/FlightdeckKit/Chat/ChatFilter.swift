@@ -119,7 +119,7 @@ public enum ChatKindMap {
         switch item {
         case .user(_, _, let sender, _):
             return sender == nil ? nil : .agents
-        case .agent(_, _, let sender):
+        case .agent(_, _, _, let sender):
             return sender == nil ? nil : .agents
         case .tool(_, let card):
             if card.status == .error || card.status == .denied { return nil }
