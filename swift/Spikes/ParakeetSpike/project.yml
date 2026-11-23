@@ -8,7 +8,7 @@ options:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    exactVersion: 0.18.3
+    exactVersion: 0.18.4
 targets:
   ParakeetSpike:
     type: application
