@@ -59,7 +59,8 @@ public enum AttachmentUpload {
     }
 
     /// Uploads `a` for `session`. `progress` hears the bytes the hab holds.
-    public static func run(_ a: DraftAttachment, session: String, connection: HabConnection,
+    /// `@concurrent`: hashing and slicing up to 25 MB stays off the caller's actor.
+    @concurrent public static func run(_ a: DraftAttachment, session: String, connection: HabConnection,
                            progress: (@MainActor (Int) -> Void)? = nil) async throws -> UploadedAttachment {
         let put = try await connection.call(HabMethods.attachmentPut, AttachmentPutParams(
             name: a.name, session: session, sha256: sha256(a.data), size: UInt64(a.data.count), type: a.type))
@@ -81,8 +82,8 @@ public enum AttachmentUpload {
         return UploadedAttachment(id: put.id, path: put.path)
     }
 
-    /// The whole of a stored file, read in runs.
-    public static func fetch(_ id: String, connection: HabConnection) async throws -> AttachmentData {
+    /// The whole of a stored file, read in runs, off the caller's actor.
+    @concurrent public static func fetch(_ id: String, connection: HabConnection) async throws -> AttachmentData {
         var first = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: maxRun))
         var data = first.data
         while first.eof != true, !first.data.isEmpty, data.count < AttachmentLimits.maxBytes {

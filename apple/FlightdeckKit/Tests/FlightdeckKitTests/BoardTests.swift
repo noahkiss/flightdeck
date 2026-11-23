@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import HabAPI
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -306,16 +307,12 @@ final class ConfigTests: XCTestCase {
 }
 
 /// A tiny hab on a real Unix socket: answers hello and subscribe, counts closed connections.
-final class SocketHab: @unchecked Sendable {
+final class SocketHab: Sendable {
     private let fd: Int32
-    private let lock = NSLock()
-    private var closed = 0
-    private var stopped = false
+    private let closed = Atomic<Int>(0)
+    private let stopped = Atomic<Bool>(false)
 
-    var closedConnections: Int {
-        lock.lock(); defer { lock.unlock() }
-        return closed
-    }
+    var closedConnections: Int { closed.load(ordering: .sequentiallyConsistent) }
 
     init(path: String) throws {
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -335,7 +332,7 @@ final class SocketHab: @unchecked Sendable {
     }
 
     func shutdown() {
-        lock.lock(); stopped = true; lock.unlock()
+        stopped.store(true, ordering: .sequentiallyConsistent)
         Darwin.shutdown(fd, SHUT_RDWR)
         Darwin.close(fd)
     }
@@ -375,6 +372,6 @@ final class SocketHab: @unchecked Sendable {
             }
         }
         Darwin.close(c)
-        lock.lock(); closed += 1; lock.unlock()
+        closed.add(1, ordering: .sequentiallyConsistent)
     }
 }

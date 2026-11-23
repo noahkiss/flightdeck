@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import NIOSSH
+import Synchronization
 
 /// A hab over SSH, in the app: swift-nio-ssh with the device key
 /// (transport.md 4.3, 4.8). Works on iOS and macOS.
@@ -16,7 +17,7 @@ import NIOSSH
 /// - When the host refuses a channel (OpenSSH allows 10 per connection), the
 ///   next data stream dials one more connection (transport.md 7.6).
 /// - The host key must match the pinned fingerprint, checked before auth.
-public final class NIOSSHTransport: Transport, @unchecked Sendable {
+public final class NIOSSHTransport: Transport, Sendable {
     public let user: String
     public let endpoints: [SSHEndpoint]
     public let command: String
@@ -77,7 +78,19 @@ actor SSHPool {
     let check: HostKeyCheck
     let key: SSHKeySource
     let timing: SSHTiming
-    private var conns: [SSHConnection] = []
+
+    /// One connection and the pool's counts for it.
+    private struct Slot {
+        let conn: SSHConnection
+        /// The pool generation it belongs to; older ones take no new channels.
+        let generation: Int
+        /// Open session channels.
+        var children = 0
+        /// The host refused a channel (OpenSSH's MaxSessions): take no more.
+        var full = false
+    }
+
+    private var slots: [Slot] = []
     private var generation = 0
     private var resets = 0
     private var dialing: (gen: Int, task: Task<SSHConnection, Error>)?
@@ -91,7 +104,7 @@ actor SSHPool {
     }
 
     func liveConnections() -> Int {
-        conns.filter(\.isActive).count
+        slots.filter(\.conn.isActive).count
     }
 
     func open(_ kind: StreamKind, command: String) async throws -> ByteStream {
@@ -102,7 +115,7 @@ actor SSHPool {
         var rejected = 0
         while true {
             let conn = try await connection(fresh: kind == .control)
-            conn.children += 1
+            update(conn) { $0.children += 1 }
             // Strong: the pool lives while any of its channels does.
             let once = Once { [self] in
                 Task { await self.childEnded(conn) }
@@ -112,7 +125,7 @@ actor SSHPool {
             } catch let e as NIOSSHError where e.type == .channelSetupRejected && rejected == 0 && kind == .data {
                 // The host's session limit: one more connection for the next channels.
                 rejected += 1
-                conn.full = true
+                update(conn) { $0.full = true }
                 once.run()
                 continue
             } catch {
@@ -127,38 +140,49 @@ actor SSHPool {
         resets += 1
         dialing?.task.cancel()
         dialing = nil
-        for c in conns { c.close() }
-        conns.removeAll()
+        for s in slots { s.conn.close() }
+        slots.removeAll()
+    }
+
+    private func update(_ c: SSHConnection, _ change: (inout Slot) -> Void) {
+        if let i = slots.firstIndex(where: { $0.conn === c }) { change(&slots[i]) }
     }
 
     private func childEnded(_ c: SSHConnection) {
-        c.children = max(0, c.children - 1)
-        if c.children == 0 {
+        guard let i = slots.firstIndex(where: { $0.conn === c }) else { return }
+        slots[i].children = max(0, slots[i].children - 1)
+        if slots[i].children == 0 {
             // No channel left: close it. The next stream dials again, so
             // nothing stays open in the background.
             c.close()
-            conns.removeAll { $0 === c }
+            slots.remove(at: i)
         }
     }
 
     /// Closes older connections that carry no channel.
     private func retireOld() {
-        for c in conns where c.generation != generation && c.children == 0 {
-            c.close()
+        for s in slots where s.generation != generation && s.children == 0 {
+            s.conn.close()
         }
-        conns.removeAll { !$0.isActive || ($0.generation != generation && $0.children == 0) }
+        slots.removeAll { !$0.conn.isActive || ($0.generation != generation && $0.children == 0) }
     }
 
     /// A connection of the current generation with room, else a new one.
     private func connection(fresh: Bool) async throws -> SSHConnection {
-        conns.removeAll { !$0.isActive && $0.children == 0 }
-        if !fresh, let c = conns.last(where: { $0.generation == generation && !$0.full && $0.isActive }) {
-            return c
+        slots.removeAll { !$0.conn.isActive && $0.children == 0 }
+        if !fresh, let s = slots.last(where: { $0.generation == generation && !$0.full && $0.conn.isActive }) {
+            return s.conn
         }
         let gen = generation
         let resetsAtStart = resets
         if !fresh, let d = dialing, d.gen == gen {
-            return try await d.task.value
+            let c = try await d.task.value
+            if resets != resetsAtStart { throw CancellationError() }
+            try Self.requireActive(c)
+            // This caller may resume before the dialer does: whichever comes
+            // first adds the slot, so the caller's count always lands.
+            register(c, generation: gen)
+            return c
         }
         let (user, endpoints, check, key, timing) = (self.user, self.endpoints, self.check, self.key, self.timing)
         let task = Task {
@@ -177,27 +201,39 @@ actor SSHPool {
         } onCancel: {
             task.cancel()
         }
-        c.generation = gen
         if resets != resetsAtStart {
             // closeAll ran meanwhile.
             c.close()
             throw CancellationError()
         }
-        conns.append(c)
+        // A sharer that resumed first may have used the connection and seen it
+        // close: then it is gone, and its slot with it. Never register it again.
+        try Self.requireActive(c)
+        register(c, generation: gen)
         return c
+    }
+
+    /// Throws when a dialed connection closed before this caller could use it.
+    private static func requireActive(_ c: SSHConnection) throws {
+        guard c.isActive else { throw TransportError("the SSH connection closed before a channel opened") }
+    }
+
+    /// Adds a slot for a new connection, once.
+    private func register(_ c: SSHConnection, generation gen: Int) {
+        if !slots.contains(where: { $0.conn === c }) {
+            slots.append(Slot(conn: c, generation: gen))
+        }
     }
 }
 
 /// Runs a closure once.
-final class Once: @unchecked Sendable {
-    private let lock = NSLock()
-    private var f: (() -> Void)?
-    init(_ f: @escaping () -> Void) { self.f = f }
+final class Once: Sendable {
+    private let f: Mutex<(@Sendable () -> Void)?>
+    init(_ f: @escaping @Sendable () -> Void) { self.f = Mutex(f) }
     func run() {
-        let g: (() -> Void)? = lock.withLock {
-            let g = f
-            f = nil
-            return g
+        let g = f.withLock { f in
+            defer { f = nil }
+            return f
         }
         g?()
     }
@@ -238,42 +274,45 @@ enum SSHDial {
     }
 }
 
-final class DialRace: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cont: CheckedContinuation<SSHConnection, Error>?
-    private var errors: [Int: Error] = [:]
-    private var left: Int
-    private var done = false
-    private var tasks: [Task<Void, Never>] = []
-    private var failureWaiter: CheckedContinuation<Void, Never>?
-    private var failures = 0
-    private var waitGen = 0
+final class DialRace: Sendable {
+    private struct State {
+        var cont: CheckedContinuation<SSHConnection, Error>?
+        var errors: [Int: Error] = [:]
+        var left: Int
+        var done = false
+        var tasks: [Task<Void, Never>] = []
+        var failureWaiter: CheckedContinuation<Void, Never>?
+        var failures = 0
+        var waitGen = 0
+    }
 
-    init(count: Int) { left = count }
+    private let state: Mutex<State>
 
-    var isDone: Bool { lock.withLock { done } }
+    init(count: Int) { state = Mutex(State(left: count)) }
+
+    var isDone: Bool { state.withLock { $0.done } }
 
     /// Attempts that failed so far.
-    var failureCount: Int { lock.withLock { failures } }
+    var failureCount: Int { state.withLock { $0.failures } }
 
     func begin(_ c: CheckedContinuation<SSHConnection, Error>) {
-        lock.withLock { cont = c }
+        state.withLock { $0.cont = c }
     }
 
     func track(_ t: Task<Void, Never>) {
-        lock.withLock { tasks.append(t) }
+        state.withLock { $0.tasks.append(t) }
     }
 
     /// Returns false when another endpoint already won.
     func win(_ conn: SSHConnection) -> Bool {
-        let (c, w, others): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, [Task<Void, Never>]) = lock.withLock {
-            if done { return (nil, nil, []) }
-            done = true
-            let c = cont
-            cont = nil
-            let w = failureWaiter
-            failureWaiter = nil
-            return (c, w, tasks)
+        let (c, w, others): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, [Task<Void, Never>]) = state.withLock { s in
+            if s.done { return (nil, nil, []) }
+            s.done = true
+            let c = s.cont
+            s.cont = nil
+            let w = s.failureWaiter
+            s.failureWaiter = nil
+            return (c, w, s.tasks)
         }
         guard let c else { return false }
         w?.resume()
@@ -283,17 +322,17 @@ final class DialRace: @unchecked Sendable {
     }
 
     func lose(_ i: Int, _ error: Error) {
-        let (c, w, err): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, Error?) = lock.withLock {
-            errors[i] = error
-            left -= 1
-            failures += 1
-            let w = failureWaiter
-            failureWaiter = nil
-            if left == 0 && !done {
-                done = true
-                let c = cont
-                cont = nil
-                return (c, w, Self.best(errors))
+        let (c, w, err): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, Error?) = state.withLock { s in
+            s.errors[i] = error
+            s.left -= 1
+            s.failures += 1
+            let w = s.failureWaiter
+            s.failureWaiter = nil
+            if s.left == 0 && !s.done {
+                s.done = true
+                let c = s.cont
+                s.cont = nil
+                return (c, w, Self.best(s.errors))
             }
             return (nil, w, nil)
         }
@@ -302,14 +341,14 @@ final class DialRace: @unchecked Sendable {
     }
 
     func cancel() {
-        let (c, w, ts): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, [Task<Void, Never>]) = lock.withLock {
-            let w = failureWaiter
-            failureWaiter = nil
-            if done { return (nil, w, tasks) }
-            done = true
-            let c = cont
-            cont = nil
-            return (c, w, tasks)
+        let (c, w, ts): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, [Task<Void, Never>]) = state.withLock { s in
+            let w = s.failureWaiter
+            s.failureWaiter = nil
+            if s.done { return (nil, w, s.tasks) }
+            s.done = true
+            let c = s.cont
+            s.cont = nil
+            return (c, w, s.tasks)
         }
         w?.resume()
         for t in ts { t.cancel() }
@@ -320,11 +359,11 @@ final class DialRace: @unchecked Sendable {
     /// whichever comes first.
     func waitFailure(after seen: Int, orFor d: Duration) async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            let gen: Int? = lock.withLock {
-                if done || failures > seen { return nil }
-                waitGen += 1
-                failureWaiter = c
-                return waitGen
+            let gen: Int? = state.withLock { s in
+                if s.done || s.failures > seen { return nil }
+                s.waitGen += 1
+                s.failureWaiter = c
+                return s.waitGen
             }
             guard let gen else {
                 c.resume()
@@ -333,10 +372,10 @@ final class DialRace: @unchecked Sendable {
             Task {
                 try? await Task.sleep(for: d)
                 // A sleep from an earlier wait must not end a later one.
-                let w: CheckedContinuation<Void, Never>? = self.lock.withLock {
-                    guard self.waitGen == gen else { return nil }
-                    let w = self.failureWaiter
-                    self.failureWaiter = nil
+                let w: CheckedContinuation<Void, Never>? = self.state.withLock { s in
+                    guard s.waitGen == gen else { return nil }
+                    let w = s.failureWaiter
+                    s.failureWaiter = nil
                     return w
                 }
                 w?.resume()
@@ -356,14 +395,13 @@ final class DialRace: @unchecked Sendable {
 /// The time from process start to the first byte any hab sent, logged once
 /// per process (cold start to first hab reply).
 public enum ColdStart {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var value: Duration?
+    private static let first = Mutex<Duration?>(nil)
 
     /// Process start to the first hab reply, once one arrived.
-    public static var firstReply: Duration? { lock.withLock { value } }
+    public static var firstReply: Duration? { first.withLock { $0 } }
 
     static func markFirstReply() {
-        let d: Duration? = lock.withLock {
+        let d: Duration? = first.withLock { value in
             guard value == nil, let start = processStart() else { return nil }
             let secs = Date().timeIntervalSince(start)
             value = .milliseconds(Int64(secs * 1000))

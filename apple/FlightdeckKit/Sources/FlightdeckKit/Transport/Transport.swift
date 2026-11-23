@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// What a stream will carry. The hab tells them apart by the first byte
 /// (hab-logic-api.md 4.1), so a carrier opens both the same way today. The kind
@@ -62,20 +63,18 @@ public struct TransportError: Error, CustomStringConvertible, Sendable {
 /// A stream counts from open until its file descriptors are closed. The
 /// lifecycle check reads it: no stream may stay open in the background.
 public enum OpenStreams {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var count = 0
+    private static let count = Atomic<Int>(0)
 
     /// Streams open now.
     public static var live: Int {
-        lock.lock(); defer { lock.unlock() }
-        return count
+        count.load(ordering: .sequentiallyConsistent)
     }
 
     static func opened() {
-        lock.lock(); count += 1; lock.unlock()
+        count.wrappingAdd(1, ordering: .sequentiallyConsistent)
     }
 
     static func closed() {
-        lock.lock(); count -= 1; lock.unlock()
+        count.wrappingSubtract(1, ordering: .sequentiallyConsistent)
     }
 }

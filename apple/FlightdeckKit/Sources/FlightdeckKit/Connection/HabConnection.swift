@@ -416,11 +416,11 @@ public actor HabConnection {
         await r.start()
         let inbound = Task {
             for await n in r.inbound {
-                await self.handle(n, from: r)
+                self.handle(n, from: r)
             }
             // Keep the client's own reason (a read error, an over-long message) when it has one.
             let why = await r.endError ?? ConnectionClosed(detail: stream.diagnostics)
-            await self.endSession(r, why)
+            self.endSession(r, why)
         }
         var liveness: Task<Void, Never>?
         defer {
@@ -720,7 +720,7 @@ public actor HabConnection {
             wake = c
             Task {
                 try? await Task.sleep(for: d)
-                await self.fireWake(gen)
+                self.fireWake(gen)
             }
         }
     }

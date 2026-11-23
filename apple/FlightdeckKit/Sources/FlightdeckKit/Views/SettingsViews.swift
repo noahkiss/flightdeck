@@ -259,11 +259,11 @@ struct ValueControl: View {
     let value: JSONValue?
     let set: (JSONValue) -> Void
 
-    static let minutes: [Int64] = [0, 15, 30, 60, 120, 240, 480, 1440]
+    nonisolated static let minutes: [Int64] = [0, 15, 30, 60, 120, 240, 480, 1440]
 
     /// The picker's minutes for a range: the presets inside it, and the current value when it
     /// is in the range but no preset.
-    static func minuteChoices(_ range: ClosedRange<Int64>, current: Int64) -> [Int64] {
+    nonisolated static func minuteChoices(_ range: ClosedRange<Int64>, current: Int64) -> [Int64] {
         let presets = minutes.filter(range.contains)
         return presets.contains(current) || !range.contains(current) ? presets : (presets + [current]).sorted()
     }

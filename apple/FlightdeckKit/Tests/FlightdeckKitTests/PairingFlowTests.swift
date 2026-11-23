@@ -290,8 +290,9 @@ final class PairingFlowTests: XCTestCase {
         try await s.start()
         defer { s.stop() }
         let shown = Box<String>()
-        let t = Task { [self] in
-            try await Pairing.pair(code(s), key: key, keyID: "device", name: "x", kind: .phone, timing: fastPairing(owner: .seconds(60))) { shown.set($0) }
+        let (c, timing) = (code(s), fastPairing(owner: .seconds(60)))
+        let t = Task {
+            try await Pairing.pair(c, key: key, keyID: "device", name: "x", kind: .phone, timing: timing) { shown.set($0) }
         }
         let start = Date()
         while shown.get() == nil && Date().timeIntervalSince(start) < 5 { try await Task.sleep(for: .milliseconds(20)) }

@@ -212,7 +212,9 @@ public struct ApprovalAnswerer: Sendable {
         return try await call(host: host, method, params, liveDropped: &dropped)
     }
 
-    private func call<P: Encodable & Sendable, R: Decodable & Sendable>(host: String, _ method: HabMethod<P, R>, _ params: P, liveDropped: inout Bool) async throws -> R {
+    /// `@concurrent`: the one-shot route loads the hab list and the key, file
+    /// and Keychain reads that must not hold the caller's actor (the main actor).
+    @concurrent private func call<P: Encodable & Sendable, R: Decodable & Sendable>(host: String, _ method: HabMethod<P, R>, _ params: P, liveDropped: inout Bool) async throws -> R {
         if let conn = await live(host), await conn.state.status == .online {
             do {
                 return try await conn.call(method, params)

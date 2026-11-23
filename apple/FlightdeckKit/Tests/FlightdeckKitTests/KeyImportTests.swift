@@ -4,6 +4,7 @@ import HabAPI
 import LocalAuthentication
 import NIOSSH
 import Security
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -662,15 +663,14 @@ final class KeyImportTests: XCTestCase {
     }
 }
 
-private final class Counter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = 0
-    var n: Int { lock.withLock { value } }
-    func add() { lock.withLock { value += 1 } }
+private final class Counter: Sendable {
+    private let value = Atomic<Int>(0)
+    var n: Int { value.load(ordering: .sequentiallyConsistent) }
+    func add() { value.add(1, ordering: .sequentiallyConsistent) }
 }
 
 /// A store whose items exist but cannot be read: a locked device.
-private final class LockedStore: SecretStore, @unchecked Sendable {
+private final class LockedStore: SecretStore {
     func read(account: String) throws -> Data? {
         guard account.hasSuffix("present") else { return nil }
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed))

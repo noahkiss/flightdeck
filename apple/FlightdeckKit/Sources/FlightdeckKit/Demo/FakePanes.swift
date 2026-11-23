@@ -29,8 +29,9 @@ public actor FakePanes {
     }
 
     /// One data connection. Frames go out through one queue, in the order
-    /// they were queued, so a catch-up never races live output.
-    private final class DataConn: @unchecked Sendable {
+    /// they were queued, so a catch-up never races live output. It never
+    /// leaves the actor, so it needs no Sendable conformance.
+    private final class DataConn {
         let stream: ByteStream
         let pane: String
         let client: String

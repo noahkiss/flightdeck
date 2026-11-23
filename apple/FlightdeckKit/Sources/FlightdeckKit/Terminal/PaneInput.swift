@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import Synchronization
 
 /// Input the pump did not send, because a `pane.input` call failed.
 public struct InputDropped: Error, CustomStringConvertible, Sendable {
@@ -32,21 +33,24 @@ public struct InputDropped: Error, CustomStringConvertible, Sendable {
 /// sent, and the pump reports once. One exception: when the pane may be left inside a
 /// bracketed paste (the hab took the failed call or not), an end marker is sent next, so
 /// the program does not stay in paste mode.
-public final class PaneInputPump: @unchecked Sendable {
+public final class PaneInputPump: Sendable {
     public typealias Send = @Sendable (Data) async throws -> Void
     public typealias OnError = @Sendable (InputDropped) -> Void
 
-    private let lock = NSLock()
-    private var pending = Data()
-    private var running = false
-    /// True while `pending` starts with an end marker the pump owes the pane.
-    private var owesEnd = false
-    /// Whether the bytes the hab took so far leave the pane inside a bracketed paste, and
-    /// their last few bytes, so a marker cut by a batch boundary is still seen.
-    private var inPaste = false
-    private var carry = Data()
+    private struct State {
+        var pending = Data()
+        var running = false
+        /// True while `pending` starts with an end marker the pump owes the pane.
+        var owesEnd = false
+        /// Whether the bytes the hab took so far leave the pane inside a bracketed paste, and
+        /// their last few bytes, so a marker cut by a batch boundary is still seen.
+        var inPaste = false
+        var carry = Data()
+        var onError: OnError
+    }
+
+    private let state: Mutex<State>
     private let send: Send
-    private var onError: OnError
     /// Bytes per `pane.input` call at most.
     static let maxBatch = 64 << 10
     /// The start of a bracketed paste.
@@ -56,7 +60,7 @@ public final class PaneInputPump: @unchecked Sendable {
 
     public init(send: @escaping Send, onError: @escaping OnError = { _ in }) {
         self.send = send
-        self.onError = onError
+        state = Mutex(State(onError: onError))
     }
 
     public convenience init(pane: String, connection: HabConnection, onError: @escaping OnError = { _ in }) {
@@ -68,16 +72,16 @@ public final class PaneInputPump: @unchecked Sendable {
     /// Replaces the error handler, including one passed to `init`: the terminal model
     /// sets its own once it exists, over the one its `Calls` pump came with.
     public func setOnError(_ f: @escaping OnError) {
-        lock.withLock { onError = f }
+        state.withLock { $0.onError = f }
     }
 
     /// Queues bytes. Safe from any thread.
     public func enqueue(_ data: Data) {
         guard !data.isEmpty else { return }
-        let start: Bool = lock.withLock {
-            pending.append(data)
-            if running { return false }
-            running = true
+        let start: Bool = state.withLock { s in
+            s.pending.append(data)
+            if s.running { return false }
+            s.running = true
             return true
         }
         if start { Task.detached { await self.drain() } }
@@ -85,48 +89,48 @@ public final class PaneInputPump: @unchecked Sendable {
 
     private func drain() async {
         while true {
-            let next: (batch: Data, owed: Bool)? = lock.withLock {
-                if pending.isEmpty {
-                    running = false
+            let next: (batch: Data, owed: Bool)? = state.withLock { s in
+                if s.pending.isEmpty {
+                    s.running = false
                     return nil
                 }
-                let owed = owesEnd
-                owesEnd = false
+                let owed = s.owesEnd
+                s.owesEnd = false
                 // An owed end marker goes alone, so a failure can tell it from typed bytes.
-                let n = owed ? Self.pasteEnd.count : min(pending.count, Self.maxBatch)
-                let b = pending.prefix(n)
-                pending = Data(pending.dropFirst(n))
+                let n = owed ? Self.pasteEnd.count : min(s.pending.count, Self.maxBatch)
+                let b = s.pending.prefix(n)
+                s.pending = Data(s.pending.dropFirst(n))
                 return (Data(b), owed)
             }
             guard let next else { return }
             do {
                 try await send(next.batch)
-                lock.withLock {
-                    let seen = carry + next.batch
-                    inPaste = Self.inPaste(after: seen, from: inPaste)
-                    carry = Data(seen.suffix(Self.pasteEnd.count - 1))
+                state.withLock { s in
+                    let seen = s.carry + next.batch
+                    s.inPaste = Self.inPaste(after: seen, from: s.inPaste)
+                    s.carry = Data(seen.suffix(Self.pasteEnd.count - 1))
                 }
             } catch {
                 // A failed call is not sent again: whether the hab wrote it is unknown.
                 // What waits behind it goes too, so nothing lands after a gap.
-                let (dropped, stop, report): (Int, Bool, OnError) = lock.withLock {
+                let (dropped, stop, report): (Int, Bool, OnError) = state.withLock { s in
                     // The hab took the failed call whole or not at all. If either way leaves
                     // the pane inside a paste, the pump owes it an end marker.
-                    let after = Self.inPaste(after: carry + next.batch, from: inPaste)
-                    let endLost = next.owed || inPaste || after
-                    inPaste = false
-                    carry = Data()
-                    let n = pending.count
-                    pending = Data()
+                    let after = Self.inPaste(after: s.carry + next.batch, from: s.inPaste)
+                    let endLost = next.owed || s.inPaste || after
+                    s.inPaste = false
+                    s.carry = Data()
+                    let n = s.pending.count
+                    s.pending = Data()
                     if endLost {
-                        pending = Self.pasteEnd
-                        owesEnd = true
+                        s.pending = Self.pasteEnd
+                        s.owesEnd = true
                     }
                     // The owed marker failed again: hold it until the next input,
                     // rather than spin on a connection that is down.
                     let stop = next.owed
-                    if stop { running = false }
-                    return (n, stop, onError)
+                    if stop { s.running = false }
+                    return (n, stop, s.onError)
                 }
                 if dropped > 0 || !next.owed {
                     report(InputDropped(dropped: dropped, cause: String(describing: error),

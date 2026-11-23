@@ -2,6 +2,7 @@
 import ActivityKit
 #endif
 import Foundation
+import Synchronization
 
 /// The Live Activity of one session (app.md 9). The hab that owns the session
 /// updates it by push; the content state keys are the hab's contract
@@ -71,7 +72,14 @@ extension SessionActivityAttributes: ActivityAttributes {}
 /// `LiveActivityIntent` runs in the app's process, where the app sets this
 /// handler at launch.
 public enum ActivityAnswerBridge {
-    nonisolated(unsafe) public static var handler: (@Sendable (_ hab: String, _ pane: String, _ request: String, _ allow: Bool) async -> Void)?
+    public typealias Handler = @Sendable (_ hab: String, _ pane: String, _ request: String, _ allow: Bool) async -> Void
+
+    private static let slot = Mutex<Handler?>(nil)
+
+    public static var handler: Handler? {
+        get { slot.withLock { $0 } }
+        set { slot.withLock { $0 = newValue } }
+    }
 }
 
 /// Settings the app shares with its widget through the App Group.

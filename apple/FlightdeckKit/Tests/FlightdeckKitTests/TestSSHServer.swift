@@ -3,25 +3,34 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import Synchronization
 @testable import FlightdeckKit
 
 /// An SSH server on a loopback port for the SSH carrier's tests. Every exec
 /// channel bridges to a `FakeHab`, as `gff-hab connect` bridges to the hab's
 /// socket: the first byte tells a data connection (1) from a control one.
-final class TestSSHServer: @unchecked Sendable {
+final class TestSSHServer: Sendable {
     let hostKey: NIOSSHPrivateKey
     let hab: FakeHab
     private let habTransport: FakeTransport
-    private let lock = NSLock()
-    private var allowed: Set<NIOSSHPublicKey> = []
-    private var channel: Channel?
-    private var _accepted = 0
-    private var _authAttempts = 0
-    private var _sessions = 0
-    private var _live = 0
-    private var _commands: [String] = []
+
+    private struct State {
+        var allowed: Set<NIOSSHPublicKey> = []
+        var channel: Channel?
+        var accepted = 0
+        var authAttempts = 0
+        var sessions = 0
+        var live = 0
+        var commands: [String] = []
+        var maxSessions = 10
+    }
+
+    private let state = Mutex(State())
     /// Sessions allowed per connection, like OpenSSH's MaxSessions.
-    var maxSessions = 10
+    var maxSessions: Int {
+        get { state.withLock { $0.maxSessions } }
+        set { state.withLock { $0.maxSessions = newValue } }
+    }
 
     init(hab: FakeHab, hostKey: NIOSSHPrivateKey = NIOSSHPrivateKey(ed25519Key: .init())) {
         self.hab = hab
@@ -31,27 +40,27 @@ final class TestSSHServer: @unchecked Sendable {
 
     var hostKeyFingerprint: String { SSHFingerprint.of(hostKey.publicKey) }
 
-    func allow(_ key: NIOSSHPublicKey) { lock.withLock { _ = allowed.insert(key) } }
+    func allow(_ key: NIOSSHPublicKey) { state.withLock { _ = $0.allowed.insert(key) } }
 
     /// TCP connections accepted.
-    var accepted: Int { lock.withLock { _accepted } }
+    var accepted: Int { state.withLock { $0.accepted } }
     /// Public key auth requests seen.
-    var authAttempts: Int { lock.withLock { _authAttempts } }
+    var authAttempts: Int { state.withLock { $0.authAttempts } }
     /// Session channels opened, over all connections.
-    var sessions: Int { lock.withLock { _sessions } }
+    var sessions: Int { state.withLock { $0.sessions } }
     /// TCP connections open now.
-    var live: Int { lock.withLock { _live } }
-    var commands: [String] { lock.withLock { _commands } }
+    var live: Int { state.withLock { $0.live } }
+    var commands: [String] { state.withLock { $0.commands } }
 
-    var port: Int { channel?.localAddress?.port ?? 0 }
+    var port: Int { state.withLock { $0.channel }?.localAddress?.port ?? 0 }
     var endpoint: SSHEndpoint { SSHEndpoint(host: "127.0.0.1", port: port) }
 
     func start() async throws {
         let ch = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { [self] ch in
-                lock.withLock { _accepted += 1; _live += 1 }
-                ch.closeFuture.whenComplete { _ in self.lock.withLock { self._live -= 1 } }
+                state.withLock { $0.accepted += 1; $0.live += 1 }
+                ch.closeFuture.whenComplete { _ in self.state.withLock { $0.live -= 1 } }
                 let perConn = SessionCount()
                 return ch.eventLoop.makeCompletedFuture {
                     try ch.pipeline.syncOperations.addHandler(NIOSSHHandler(
@@ -61,16 +70,16 @@ final class TestSSHServer: @unchecked Sendable {
                             guard case .session = type else {
                                 return child.eventLoop.makeFailedFuture(TransportError("not a session"))
                             }
-                            let ok: Bool = self.lock.withLock {
-                                guard perConn.n < self.maxSessions else { return false }
-                                perConn.n += 1
-                                self._sessions += 1
+                            let ok: Bool = self.state.withLock { s in
+                                guard perConn.n.load(ordering: .sequentiallyConsistent) < s.maxSessions else { return false }
+                                perConn.n.add(1, ordering: .sequentiallyConsistent)
+                                s.sessions += 1
                                 return true
                             }
                             guard ok else {
                                 return child.eventLoop.makeFailedFuture(TransportError("session limit"))
                             }
-                            child.closeFuture.whenComplete { _ in self.lock.withLock { perConn.n -= 1 } }
+                            child.closeFuture.whenComplete { _ in perConn.n.subtract(1, ordering: .sequentiallyConsistent) }
                             return child.eventLoop.makeCompletedFuture {
                                 try child.pipeline.syncOperations.addHandler(Bridge(server: self))
                             }
@@ -79,24 +88,25 @@ final class TestSSHServer: @unchecked Sendable {
                 }
             }
             .bind(host: "127.0.0.1", port: 0).get()
-        channel = ch
+        state.withLock { $0.channel = ch }
     }
 
     func stop() {
-        channel?.close(promise: nil)
+        state.withLock { $0.channel }?.close(promise: nil)
     }
 
-    fileprivate func sawAuth() { lock.withLock { _authAttempts += 1 } }
-    fileprivate func isAllowed(_ k: NIOSSHPublicKey) -> Bool { lock.withLock { allowed.contains(k) } }
-    fileprivate func sawCommand(_ c: String) { lock.withLock { _commands.append(c) } }
+    fileprivate func sawAuth() { state.withLock { $0.authAttempts += 1 } }
+    fileprivate func isAllowed(_ k: NIOSSHPublicKey) -> Bool { state.withLock { $0.allowed.contains(k) } }
+    fileprivate func sawCommand(_ c: String) { state.withLock { $0.commands.append(c) } }
     fileprivate func openHab(_ kind: StreamKind) async throws -> FakeStream {
         // The fake transport hands back its client end as a FakeStream.
         try await habTransport.open(kind) as! FakeStream
     }
 
-    private final class SessionCount: @unchecked Sendable { var n = 0 }
+    /// Checked and raised under the server's lock; lowered alone.
+    private final class SessionCount: Sendable { let n = Atomic<Int>(0) }
 
-    private final class Auth: NIOSSHServerUserAuthenticationDelegate {
+    private final class Auth: NIOSSHServerUserAuthenticationDelegate, Sendable {
         let server: TestSSHServer
         init(server: TestSSHServer) { self.server = server }
         var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { .publicKey }
@@ -110,8 +120,10 @@ final class TestSSHServer: @unchecked Sendable {
         }
     }
 
-    /// One exec channel bridged to the fake hab.
-    private final class Bridge: ChannelInboundHandler, @unchecked Sendable {
+    /// One exec channel bridged to the fake hab. Not Sendable: it lives on
+    /// its channel's event loop, and the hab task reaches it through a
+    /// loop-bound handle.
+    private final class Bridge: ChannelInboundHandler {
         typealias InboundIn = SSHChannelData
         typealias OutboundOut = SSHChannelData
 
@@ -148,10 +160,12 @@ final class TestSSHServer: @unchecked Sendable {
             let kind: StreamKind = first == 1 ? .data : .control
             let ch = context.channel
             let loop = context.eventLoop
+            let server = self.server
+            let bound = NIOLoopBound(self, eventLoop: loop)
             Task {
                 do {
-                    let s = try await self.server.openHab(kind)
-                    loop.execute { self.attach(s, channel: ch) }
+                    let s = try await server.openHab(kind)
+                    loop.execute { bound.value.attach(s, channel: ch) }
                 } catch {
                     ch.close(promise: nil)
                 }

@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -23,58 +24,63 @@ final class ConsoleTests: XCTestCase {
     }
 
     /// Calls that answer from fixture outputs, and an event stream the test feeds.
-    final class FakeCalls: @unchecked Sendable {
-        let lock = NSLock()
-        var outputs: [UInt64: CommandOutput] = [:]
-        var commands: [Command] = []
-        var more = false
-        var generation = 1
-        var inputs: [String] = []
-        var lists = 0
-        var outputReads = 0
-        /// Answers output reads first, when set; nil falls back to `outputs`.
-        var outputHook: (@Sendable (UInt64, UInt64?) async -> CommandOutput?)?
-        /// Runs before an input is recorded, when set: a slow link.
-        var inputHook: (@Sendable (String) async -> Void)?
+    final class FakeCalls: Sendable {
+        struct State {
+            var outputs: [UInt64: CommandOutput] = [:]
+            var commands: [Command] = []
+            var more = false
+            var generation = 1
+            var inputs: [String] = []
+            var lists = 0
+            var outputReads = 0
+            /// Answers output reads first, when set; nil falls back to `outputs`.
+            var outputHook: (@Sendable (UInt64, UInt64?) async -> CommandOutput?)?
+            /// Runs before an input is recorded, when set: a slow link.
+            var inputHook: (@Sendable (String) async -> Void)?
+        }
+
+        private let state: Mutex<State>
         let events: AsyncStream<CommandUpdate>
         let sink: AsyncStream<CommandUpdate>.Continuation
 
         /// Serves every fixture output; lists the first `listed` commands (all by default).
         init(_ fixture: [CommandOutput], listed: Int? = nil) {
-            for o in fixture { outputs[o.command.id] = o }
-            commands = fixture.prefix(listed ?? fixture.count).map(\.command)
+            var s = State()
+            for o in fixture { s.outputs[o.command.id] = o }
+            s.commands = fixture.prefix(listed ?? fixture.count).map(\.command)
+            state = Mutex(s)
             (events, sink) = AsyncStream.makeStream(of: CommandUpdate.self)
         }
 
-        func with<T>(_ f: () -> T) -> T { lock.withLock(f) }
+        func with<T: Sendable>(_ f: (inout State) -> T) -> T { state.withLock { f(&$0) } }
 
         var calls: ConsoleModel.Calls {
             ConsoleModel.Calls(
                 list: { [self] before in
-                    with {
-                        lists += 1
-                        let cs = commands.filter { before == nil || $0.id < before! }
-                        return CommandList(commands: cs, more: more, seq: 1)
+                    with { s in
+                        s.lists += 1
+                        let cs = s.commands.filter { before == nil || $0.id < before! }
+                        return CommandList(commands: cs, more: s.more, seq: 1)
                     }
                 },
                 output: { [self] id, from in
-                    if let hook = with({ outputHook }), let o = await hook(id, from) {
-                        with { outputReads += 1 }
+                    if let hook = with({ $0.outputHook }), let o = await hook(id, from) {
+                        with { $0.outputReads += 1 }
                         return o
                     }
-                    let o: CommandOutput? = with {
-                        outputReads += 1
-                        return outputs[id]
+                    let o: CommandOutput? = with { s in
+                        s.outputReads += 1
+                        return s.outputs[id]
                     }
                     guard let o else { throw RPCError(code: -1, message: "not found", data: nil) }
                     return o
                 },
                 input: { [self] text in
-                    if let hook = with({ inputHook }) { await hook(text) }
-                    with { inputs.append(text) }
+                    if let hook = with({ $0.inputHook }) { await hook(text) }
+                    with { $0.inputs.append(text) }
                 },
                 updates: { [self] in events },
-                generation: { [self] in with { generation } }
+                generation: { [self] in with { $0.generation } }
             )
         }
     }
@@ -101,7 +107,7 @@ final class ConsoleTests: XCTestCase {
         XCTAssertEqual(byText["vim notes.txt"]?.command.cwd, "/home/user/project/src")
 
         // Folded: no output read. Opened: each card reads its range.
-        XCTAssertEqual(fake.with { fake.outputReads }, 0)
+        XCTAssertEqual(fake.with { $0.outputReads }, 0)
         for c in m.list.cards { m.toggle(c.id) }
         await eventually("outputs") { m.list.cards.allSatisfy { $0.output != nil } }
 
@@ -114,10 +120,10 @@ final class ConsoleTests: XCTestCase {
         XCTAssertEqual(text, want, "card snapshot differs; FLIGHTDECK_UPDATE_SNAPSHOTS=1 rewrites it")
 
         // Folding hides the output again and reads nothing.
-        let reads = fake.with { fake.outputReads }
+        let reads = fake.with { $0.outputReads }
         m.toggle(m.list.cards[0].id)
         XCTAssertFalse(m.expanded.contains(m.list.cards[0].id))
-        XCTAssertEqual(fake.with { fake.outputReads }, reads)
+        XCTAssertEqual(fake.with { $0.outputReads }, reads)
     }
 
     /// Events add and end cards; an ended card that was open reads its output
@@ -130,7 +136,7 @@ final class ConsoleTests: XCTestCase {
         m.start()
         defer { m.stop() }
         await eventually("loaded") { m.list.cards.count == 2 }
-        XCTAssertEqual(fake.with { fake.lists }, 1)
+        XCTAssertEqual(fake.with { $0.lists }, 1)
 
         // Another pane's command is not this console's.
         var other = fx[2].command
@@ -150,44 +156,48 @@ final class ConsoleTests: XCTestCase {
         await eventually("running output") { m.list.card(running.id)?.output != nil }
 
         // It ends: the card shows the exit and duration, and reads its output again.
-        let reads = fake.with { fake.outputReads }
+        let reads = fake.with { $0.outputReads }
         fake.sink.yield(CommandUpdate(pane: "%9", command: fx[2].command, generation: 1))
         await eventually("ended") { m.list.cards.last?.status == "Exit 0" }
-        await eventually("read again") { fake.with { fake.outputReads } > reads }
+        await eventually("read again") { fake.with { $0.outputReads } > reads }
         XCTAssertEqual(m.list.cards.map(\.id), fx.prefix(3).map(\.command.id))
 
         // The hab left events out: the list is read again.
-        fake.with { fake.commands = fx.prefix(4).map(\.command) }
+        fake.with { $0.commands = fx.prefix(4).map(\.command) }
         var dropped = fx[3].command
         dropped.dropped = 2
         fake.sink.yield(CommandUpdate(pane: "%9", command: dropped, generation: 1))
         await eventually("reloaded") { m.list.cards.count == 4 }
-        XCTAssertEqual(fake.with { fake.lists }, 2)
+        XCTAssertEqual(fake.with { $0.lists }, 2)
 
         // A reconnect (new generation) with no event: the poll reads the list again.
         fake.with {
-            fake.commands = fx.prefix(5).map(\.command)
-            fake.generation = 2
+            $0.commands = fx.prefix(5).map(\.command)
+            $0.generation = 2
         }
         await eventually("after reconnect") { m.list.cards.count == 5 }
     }
 
     /// A hab-side running command: a growing buffer that `command.output`
     /// serves from any offset, at most `limit` bytes per call.
-    final class Growing: @unchecked Sendable {
-        let lock = NSLock()
+    final class Growing: Sendable {
+        private struct State {
+            var bytes = Data()
+            var froms: [UInt64?] = []
+        }
+
+        private let state = Mutex(State())
         let command: Command
-        var bytes = Data()
-        var froms: [UInt64?] = []
         let limit: Int
+        var froms: [UInt64?] { state.withLock { $0.froms } }
         init(_ c: Command, limit: Int) { command = c; self.limit = limit }
-        func append(_ s: String) { lock.withLock { bytes.append(contentsOf: s.utf8) } }
+        func append(_ s: String) { state.withLock { $0.bytes.append(contentsOf: s.utf8) } }
         func read(_ from: UInt64?) -> CommandOutput {
-            lock.withLock {
-                froms.append(from)
+            state.withLock { st in
+                st.froms.append(from)
                 let start = Int((from ?? command.output) - command.output)
-                let end = min(bytes.count, start + limit)
-                return CommandOutput(command: command, data: bytes.subdata(in: start..<end),
+                let end = min(st.bytes.count, start + limit)
+                return CommandOutput(command: command, data: st.bytes.subdata(in: start..<end),
                                      end: command.output + UInt64(end), gap: false, more: true, seq: 1, start: command.output + UInt64(start))
             }
         }
@@ -196,12 +206,13 @@ final class ConsoleTests: XCTestCase {
     /// An open running card reads on from where it stopped, so output past
     /// the first read shows, and keeps only its last part.
     func testRunningCardReadsOnFromItsCursor() async throws {
-        var c = try Self.fixture("basic")[6].command // tail -f, running
-        c.state = .running
+        var running = try Self.fixture("basic")[6].command // tail -f, running
+        running.state = .running
+        let c = running
         let g = Growing(c, limit: 8)
         for i in 1...6 { g.append("line \(i)\r\n") }
         let fake = FakeCalls([CommandOutput(command: c, data: Data(), end: c.output, gap: false, more: true, seq: 1, start: c.output)])
-        fake.outputHook = { id, from in id == c.id ? g.read(from) : nil }
+        fake.with { $0.outputHook = { id, from in id == c.id ? g.read(from) : nil } }
         let m = ConsoleModel(pane: "%9", calls: fake.calls, terminal: nil)
         m.readLimit = 8
         m.outputTail = 40
@@ -214,11 +225,11 @@ final class ConsoleTests: XCTestCase {
         XCTAssertEqual(m.list.card(c.id)?.outputCut, true, "40 bytes keep the last lines only")
         XCTAssertFalse(m.list.card(c.id)?.output?.contains("line 1") ?? true)
 
-        let before = g.lock.withLock { g.froms.count }
+        let before = g.froms.count
         g.append("line 7\r\n")
         await eventually("new line") { m.list.card(c.id)?.output?.last == "line 7" }
         // The poll after the first read started where the first read ended.
-        let froms = g.lock.withLock { Array(g.froms[before...]) }
+        let froms = Array(g.froms[before...])
         XCTAssertEqual(froms.first ?? nil, c.output + 48, "read on from the cursor, not from the start")
     }
 
@@ -227,18 +238,21 @@ final class ConsoleTests: XCTestCase {
     func testEndDuringAReadReadsAgain() async throws {
         let fx = try Self.fixture("basic")
         let done = fx[0] // ls, ended
-        var runningCmd = done.command
-        runningCmd.state = .running
-        runningCmd.end = nil
-        runningCmd.endedAt = nil
-        runningCmd.exit = nil
+        var running = done.command
+        running.state = .running
+        running.end = nil
+        running.endedAt = nil
+        running.exit = nil
+        let runningCmd = running
         let fake = FakeCalls([done], listed: 0)
-        fake.with { fake.commands = [runningCmd] }
+        fake.with { $0.commands = [runningCmd] }
         let gate = Gate()
-        fake.outputHook = { id, from in
-            guard await gate.isFirst() else { return nil }
-            await gate.wait()
-            return CommandOutput(command: runningCmd, data: Data("partial\r\n".utf8), end: runningCmd.output + 9, gap: false, more: true, seq: 1, start: runningCmd.output)
+        fake.with {
+            $0.outputHook = { id, from in
+                guard await gate.isFirst() else { return nil }
+                await gate.wait()
+                return CommandOutput(command: runningCmd, data: Data("partial\r\n".utf8), end: runningCmd.output + 9, gap: false, more: true, seq: 1, start: runningCmd.output)
+            }
         }
         let m = ConsoleModel(pane: "%9", calls: fake.calls, terminal: nil)
         m.pollEvery = .seconds(60)
@@ -273,8 +287,8 @@ final class ConsoleTests: XCTestCase {
         m.send()
         XCTAssertEqual(m.draft, "")
         m.sendRaw("\u{03}")
-        await eventually("typed") { fake.with { fake.inputs.count } == 2 }
-        XCTAssertEqual(fake.with { fake.inputs }, ["sleep 2\r", "\u{03}"])
+        await eventually("typed") { fake.with { $0.inputs.count } == 2 }
+        XCTAssertEqual(fake.with { $0.inputs }, ["sleep 2\r", "\u{03}"])
     }
 
     /// A slow first call still lands first: Ctrl+C never overtakes the
@@ -282,7 +296,7 @@ final class ConsoleTests: XCTestCase {
     func testInputKeepsOrderOverASlowCall() async {
         let fake = FakeCalls([])
         fake.with {
-            fake.inputHook = { text in
+            $0.inputHook = { text in
                 if text.hasSuffix("\r") { try? await Task.sleep(for: .milliseconds(100)) }
             }
         }
@@ -291,8 +305,8 @@ final class ConsoleTests: XCTestCase {
         m.send()
         m.sendRaw("\u{03}")
         m.run("echo ok")
-        await eventually("typed") { fake.with { fake.inputs.count } == 3 }
-        XCTAssertEqual(fake.with { fake.inputs }, ["sleep 2\r", "\u{03}", "echo ok\r"])
+        await eventually("typed") { fake.with { $0.inputs.count } == 3 }
+        XCTAssertEqual(fake.with { $0.inputs }, ["sleep 2\r", "\u{03}", "echo ok\r"])
     }
 
     /// A failed call drops the inputs queued behind it with one error, so
@@ -300,7 +314,7 @@ final class ConsoleTests: XCTestCase {
     func testFailedInputDropsTheQueue() async {
         let fake = FakeCalls([])
         fake.with {
-            fake.inputHook = { text in
+            $0.inputHook = { text in
                 if text == "first\r" { try? await Task.sleep(for: .milliseconds(50)) }
             }
         }
@@ -317,16 +331,16 @@ final class ConsoleTests: XCTestCase {
         m.sendRaw("\u{03}")
         await eventually("failed") { m.lastError != nil }
         m.run("later")
-        await eventually("later sent") { fake.with { fake.inputs.count } == 2 }
-        XCTAssertEqual(fake.with { fake.inputs }, ["first\r", "later\r"])
+        await eventually("later sent") { fake.with { $0.inputs.count } == 2 }
+        XCTAssertEqual(fake.with { $0.inputs }, ["first\r", "later\r"])
         // Closing the console drops what is still queued: input given just
         // before the close has not started, so none of it goes.
         m.run("a")
         m.run("b")
         m.stop()
         m.run("after close")
-        await eventually("after close sent") { fake.with { fake.inputs.count } == 3 }
-        XCTAssertEqual(fake.with { fake.inputs }, ["first\r", "later\r", "after close\r"])
+        await eventually("after close sent") { fake.with { $0.inputs.count } == 3 }
+        XCTAssertEqual(fake.with { $0.inputs }, ["first\r", "later\r", "after close\r"])
     }
 
     /// A fresh page replaces the list, but a card newer than the page (an
@@ -489,33 +503,50 @@ final class ConsoleTests: XCTestCase {
 
     // MARK: - Opening a console
 
-    final class OpenerCalls: @unchecked Sendable {
-        let lock = NSLock()
-        var store: HabStore
-        var created: [SessionCreateParams] = []
-        var closed: [String] = []
+    final class OpenerCalls: Sendable {
+        private struct State {
+            var store: HabStore
+            var created: [SessionCreateParams] = []
+            var closed: [String] = []
+            var cwd: String?
+            var createErrors: [Error] = []
+            var storeAfterFailure: HabStore?
+        }
+
+        private let state: Mutex<State>
+        var created: [SessionCreateParams] { state.withLock { $0.created } }
+        var closed: [String] { state.withLock { $0.closed } }
         /// The folder of the session pane's newest command.
-        var cwd: String?
+        var cwd: String? {
+            get { state.withLock { $0.cwd } }
+            set { state.withLock { $0.cwd = newValue } }
+        }
         /// Errors the next creates throw, in order.
-        var createErrors: [Error] = []
+        var createErrors: [Error] {
+            get { state.withLock { $0.createErrors } }
+            set { state.withLock { $0.createErrors = newValue } }
+        }
         /// The store after a create failed (another device's console arrived).
-        var storeAfterFailure: HabStore?
-        init(_ store: HabStore) { self.store = store }
+        var storeAfterFailure: HabStore? {
+            get { state.withLock { $0.storeAfterFailure } }
+            set { state.withLock { $0.storeAfterFailure = newValue } }
+        }
+        init(_ store: HabStore) { state = Mutex(State(store: store)) }
         var calls: ConsoleOpener.Calls {
             .init(
-                store: { [self] in lock.withLock { store } },
+                store: { [self] in state.withLock { $0.store } },
                 create: { [self] p in
-                    try lock.withLock {
-                        created.append(p)
-                        if !createErrors.isEmpty {
-                            if let s = storeAfterFailure { store = s }
-                            throw createErrors.removeFirst()
+                    try state.withLock { s throws(any Error) in
+                        s.created.append(p)
+                        if !s.createErrors.isEmpty {
+                            if let f = s.storeAfterFailure { s.store = f }
+                            throw s.createErrors.removeFirst()
                         }
                     }
                     return SessionCreated(pane: "%new", seq: 1, session: "s-new")
                 },
-                close: { [self] id in lock.withLock { closed.append(id) } },
-                newestCwd: { [self] _ in lock.withLock { cwd } }
+                close: { [self] id in state.withLock { $0.closed.append(id) } },
+                newestCwd: { [self] _ in state.withLock { $0.cwd } }
             )
         }
     }

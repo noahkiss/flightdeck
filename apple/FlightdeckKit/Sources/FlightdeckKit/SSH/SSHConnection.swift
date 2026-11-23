@@ -2,6 +2,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import Synchronization
 
 /// How the client checks the host key.
 public enum HostKeyCheck: Sendable, Equatable {
@@ -26,21 +27,18 @@ public struct SSHTiming: Sendable {
 }
 
 /// One authenticated SSH connection. The pool that made it owns the counts.
-final class SSHConnection: @unchecked Sendable {
+final class SSHConnection: Sendable {
     let channel: Channel
     let endpoint: SSHEndpoint
     let hostKey: NIOSSHPublicKey?
-    /// The pool generation it belongs to; older ones take no new channels.
-    var generation = 0
-    /// Open session channels.
-    var children = 0
-    /// The host refused a channel (OpenSSH's MaxSessions): take no more.
-    var full = false
+    /// The fingerprint of the key the host took, for a key-auth dial.
+    let offered: String?
 
-    init(channel: Channel, endpoint: SSHEndpoint, hostKey: NIOSSHPublicKey?) {
+    init(channel: Channel, endpoint: SSHEndpoint, hostKey: NIOSSHPublicKey?, offered: String? = nil) {
         self.channel = channel
         self.endpoint = endpoint
         self.hostKey = hostKey
+        self.offered = offered
     }
 
     var isActive: Bool { channel.isActive }
@@ -65,7 +63,6 @@ final class SSHConnection: @unchecked Sendable {
         let stream = SSHChannelStream(onEnd: onEnd, onFirstData: onFirstData)
         let parent = channel
         let execReply = parent.eventLoop.makePromise(of: Void.self)
-        let handler = stream.makeHandler(execReply: execReply)
         let child: Channel
         do {
             child = try await parent.eventLoop.flatSubmit { () -> EventLoopFuture<Channel> in
@@ -76,7 +73,9 @@ final class SSHConnection: @unchecked Sendable {
                         child.eventLoop.makeCompletedFuture {
                             try child.syncOptions?.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
                             try child.syncOptions?.setOption(ChannelOptions.autoRead, value: false)
-                            try child.pipeline.syncOperations.addHandler(handler)
+                            // The handler is made here, on the child's loop, and
+                            // stays there: it never crosses threads.
+                            try child.pipeline.syncOperations.addHandler(stream.makeHandler(execReply: execReply))
                         }
                     }
                 } catch {
@@ -117,18 +116,17 @@ final class SSHConnection: @unchecked Sendable {
                 throw DeviceKeys.explain(error)
             }
         }
-        let c = try await dial(ep, user: user, auth: ClientKeyAuth(user: user, fingerprint: key.fingerprint, keys: signing, probe: check == .probe), check: check, timing: timing)
+        let auth = ClientKeyAuth(user: user, fingerprint: key.fingerprint, keys: signing, probe: check == .probe)
+        let c = try await dial(ep, user: user, auth: auth, check: check, timing: timing)
         // Auth succeeded with the key offered last; a key move records it.
         if let fp = c.offered { key.accepted(fingerprint: fp) }
         return c
     }
 
-    /// The fingerprint of the key the host took, for a key-auth dial.
-    var offered: String?
-
     /// Dials one endpoint with a ready user-auth delegate: TCP, key
-    /// exchange, host key check (always before auth), auth.
-    static func dial(_ ep: SSHEndpoint, user: String, auth: NIOSSHClientUserAuthenticationDelegate, check: HostKeyCheck, timing: SSHTiming) async throws -> SSHConnection {
+    /// exchange, host key check (always before auth), auth. The delegate is
+    /// Sendable: the channel initializer runs on the event loop.
+    static func dial(_ ep: SSHEndpoint, user: String, auth: some NIOSSHClientUserAuthenticationDelegate & Sendable, check: HostKeyCheck, timing: SSHTiming) async throws -> SSHConnection {
         let loop = MultiThreadedEventLoopGroup.singleton.next()
         let watcher = ConnectionWatcher(ready: loop.makePromise(of: Void.self))
         let hostKeys = HostKeyValidator(check: check, endpoint: ep.description)
@@ -152,7 +150,7 @@ final class SSHConnection: @unchecked Sendable {
             ch = try await bootstrap.connect(host: ep.host, port: ep.port).get()
         } catch {
             let e = TransportError("connect \(ep): \(Self.describe(error))")
-            loop.execute { watcher.abandon(e) }
+            watcher.abandon(e)
             throw e
         }
         let ready = watcher.ready
@@ -172,9 +170,7 @@ final class SSHConnection: @unchecked Sendable {
             throw error
         }
         timer.cancel()
-        let conn = SSHConnection(channel: ch, endpoint: ep, hostKey: hostKeys.presented)
-        conn.offered = (auth as? ClientKeyAuth)?.lastOffered
-        return conn
+        return SSHConnection(channel: ch, endpoint: ep, hostKey: hostKeys.presented, offered: (auth as? ClientKeyAuth)?.lastOffered)
     }
 
     static func describe(_ error: Error) -> String {
@@ -183,21 +179,28 @@ final class SSHConnection: @unchecked Sendable {
     }
 }
 
-/// Watches the parent channel: authenticated, or the first error.
-final class ConnectionWatcher: ChannelInboundHandler, @unchecked Sendable {
+/// Watches the parent channel: authenticated, or the first error. The
+/// pipeline calls it on the loop; the dial calls `abandon` and `fail` from
+/// outside, so its state sits behind a mutex.
+final class ConnectionWatcher: ChannelInboundHandler, Sendable {
     typealias InboundIn = Any
     let ready: EventLoopPromise<Void>
-    private var done = false
+
+    private struct State {
+        var done = false
+        var firstError: Error?
+    }
+
+    private let state = Mutex(State())
 
     init(ready: EventLoopPromise<Void>) {
         self.ready = ready
     }
 
-    /// The connect failed before the pipeline saw anything. On the loop.
+    /// The connect failed before the pipeline saw anything.
     func abandon(_ error: Error) {
         complete(error)
     }
-    private var firstError: Error?
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if event is UserAuthSuccessEvent {
@@ -207,36 +210,41 @@ final class ConnectionWatcher: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        if firstError == nil { firstError = error }
+        state.withLock { if $0.firstError == nil { $0.firstError = error } }
         complete(error)
         context.close(promise: nil)
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        complete(firstError ?? ConnectionClosed(detail: "the host closed the connection during the SSH handshake"))
+        let first = state.withLock { $0.firstError }
+        complete(first ?? ConnectionClosed(detail: "the host closed the connection during the SSH handshake"))
         context.fireChannelInactive()
     }
 
     /// Fails the handshake from outside the pipeline (the timeout).
     func fail(_ error: Error, channel: Channel) {
-        channel.eventLoop.execute {
-            self.complete(error)
-            channel.close(promise: nil)
-        }
+        complete(error)
+        channel.close(promise: nil)
     }
 
     private func complete(_ error: Error?) {
-        guard !done else { return }
-        done = true
+        let first: Bool = state.withLock { s in
+            defer { s.done = true }
+            return !s.done
+        }
+        guard first else { return }
         if let error { ready.fail(error) } else { ready.succeed(()) }
     }
 }
 
 /// Pins the host key, or stops at it for the user to confirm.
-final class HostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+final class HostKeyValidator: NIOSSHClientServerAuthenticationDelegate, Sendable {
     let check: HostKeyCheck
     let endpoint: String
-    private(set) var presented: NIOSSHPublicKey?
+    private let seen = Mutex<NIOSSHPublicKey?>(nil)
+
+    /// The key the host presented, once it did.
+    var presented: NIOSSHPublicKey? { seen.withLock { $0 } }
 
     init(check: HostKeyCheck, endpoint: String) {
         self.check = check
@@ -244,7 +252,7 @@ final class HostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @uncheck
     }
 
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
-        presented = hostKey
+        seen.withLock { $0 = hostKey }
         switch check {
         case .pinned(let fp):
             let got = SSHFingerprint.of(hostKey)
@@ -262,15 +270,22 @@ final class HostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @uncheck
 /// Offers each key once, in order: one device key, or during a key move the
 /// new key, then the old one (transport.md 7.2). A request after the last
 /// offer means the host refused them all.
-final class ClientKeyAuth: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+final class ClientKeyAuth: NIOSSHClientUserAuthenticationDelegate, Sendable {
     let user: String
     let fingerprint: String
     let keys: [(fingerprint: String, key: NIOSSHPrivateKey)]
     let probe: Bool
-    private var next = 0
+
+    private struct State {
+        var next = 0
+        var lastOffered: String?
+    }
+
+    private let state = Mutex(State())
+
     /// The fingerprint of the key offered last: the one the host took, once
     /// auth succeeds. Read after the handshake.
-    private(set) var lastOffered: String?
+    var lastOffered: String? { state.withLock { $0.lastOffered } }
 
     init(user: String, fingerprint: String, keys: [(fingerprint: String, key: NIOSSHPrivateKey)], probe: Bool = false) {
         self.user = user
@@ -284,13 +299,17 @@ final class ClientKeyAuth: NIOSSHClientUserAuthenticationDelegate, @unchecked Se
             nextChallengePromise.fail(TransportError("no key to sign with"))
             return
         }
-        guard next < keys.count, availableMethods.contains(.publicKey) else {
+        let k: (fingerprint: String, key: NIOSSHPrivateKey)? = state.withLock { s in
+            guard s.next < keys.count, availableMethods.contains(.publicKey) else { return nil }
+            let k = keys[s.next]
+            s.next += 1
+            s.lastOffered = k.fingerprint
+            return k
+        }
+        guard let k else {
             nextChallengePromise.fail(SSHKeyRefused(user: user, fingerprint: fingerprint))
             return
         }
-        let k = keys[next]
-        next += 1
-        lastOffered = k.fingerprint
         nextChallengePromise.succeed(.init(username: user, serviceName: "", offer: .privateKey(.init(privateKey: k.key))))
     }
 }

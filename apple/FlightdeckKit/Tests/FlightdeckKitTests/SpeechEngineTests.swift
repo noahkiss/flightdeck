@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -40,34 +41,53 @@ final class FakeEngine: SpeechEngine {
 }
 
 /// A Parakeet runtime that counts loads and unloads.
-final class FakeRuntime: ParakeetRuntime, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _downloaded: Bool
-    private var _loaded = false
-    private(set) var loadCount = 0
-    private(set) var unloadCount = 0
-    var loadDelay: Duration = .zero
-    var text = "on device text"
+final class FakeRuntime: ParakeetRuntime, Sendable {
+    private struct State {
+        var downloaded: Bool
+        var loaded = false
+        var loadCount = 0
+        var unloadCount = 0
+        var loadDelay: Duration = .zero
+        var text = "on device text"
+        var transcribeDelay: Duration = .zero
+    }
 
-    init(downloaded: Bool = true) { _downloaded = downloaded }
+    private let state: Mutex<State>
 
-    var loaded: Bool { lock.withLock { _loaded } }
+    init(downloaded: Bool = true) { state = Mutex(State(downloaded: downloaded)) }
 
-    func isDownloaded() async -> Bool { lock.withLock { _downloaded } }
+    var loaded: Bool { state.withLock { $0.loaded } }
+    var loadCount: Int { state.withLock { $0.loadCount } }
+    var unloadCount: Int { state.withLock { $0.unloadCount } }
+    var loadDelay: Duration {
+        get { state.withLock { $0.loadDelay } }
+        set { state.withLock { $0.loadDelay = newValue } }
+    }
+    var text: String {
+        get { state.withLock { $0.text } }
+        set { state.withLock { $0.text = newValue } }
+    }
+
+    func isDownloaded() async -> Bool { state.withLock { $0.downloaded } }
     func download(progress: @escaping @Sendable (Double) -> Void) async throws {
         progress(0.5)
         progress(1)
-        lock.withLock { _downloaded = true }
+        state.withLock { $0.downloaded = true }
     }
-    func removeDownload() async throws { lock.withLock { _downloaded = false } }
+    func removeDownload() async throws { state.withLock { $0.downloaded = false } }
     func load() async throws {
-        if loadDelay > .zero { try await Task.sleep(for: loadDelay) }
-        lock.withLock { _loaded = true; loadCount += 1 }
+        let delay = loadDelay
+        if delay > .zero { try await Task.sleep(for: delay) }
+        state.withLock { $0.loaded = true; $0.loadCount += 1 }
     }
-    func unload() async { lock.withLock { _loaded = false; unloadCount += 1 } }
-    var transcribeDelay: Duration = .zero
+    func unload() async { state.withLock { $0.loaded = false; $0.unloadCount += 1 } }
+    var transcribeDelay: Duration {
+        get { state.withLock { $0.transcribeDelay } }
+        set { state.withLock { $0.transcribeDelay = newValue } }
+    }
     func transcribe(_ samples: [Float]) async throws -> String {
-        if transcribeDelay > .zero { try await Task.sleep(for: transcribeDelay) }
+        let delay = transcribeDelay
+        if delay > .zero { try await Task.sleep(for: delay) }
         guard loaded else { throw SpeechEngineError.unavailable("not loaded", sticky: false) }
         return text
     }
@@ -89,23 +109,52 @@ final class SlowPrepare: SpeechEngine {
 }
 
 /// A `SpeechHab` with scripted answers.
-final class FakeSpeechHab: SpeechHab, @unchecked Sendable {
-    var speech = true
-    var prepareResult: Result<SpeechStatus, Error> = .success(status(.ready, formats: [.opus, .pcm16]))
-    var transcribeResult: Result<SpeechTranscript, Error> = .success(SpeechTranscript(audioMs: 0, decodeMs: 0, seq: 0, text: "hab text"))
-    private(set) var sent: [SpeechTranscribeParams] = []
-    private(set) var prepares = 0
+final class FakeSpeechHab: SpeechHab, Sendable {
+    private struct State {
+        var speech = true
+        var prepareResult: Result<SpeechStatus, Error> = .success(status(.ready, formats: [.opus, .pcm16]))
+        var transcribeResult: Result<SpeechTranscript, Error> = .success(SpeechTranscript(audioMs: 0, decodeMs: 0, seq: 0, text: "hab text"))
+        var sent: [SpeechTranscribeParams] = []
+        var prepares = 0
+        var welcomed = true
+    }
 
-    var welcomed = true
+    private let state = Mutex(State())
+
+    var speech: Bool {
+        get { state.withLock { $0.speech } }
+        set { state.withLock { $0.speech = newValue } }
+    }
+    var prepareResult: Result<SpeechStatus, Error> {
+        get { state.withLock { $0.prepareResult } }
+        set { state.withLock { $0.prepareResult = newValue } }
+    }
+    var transcribeResult: Result<SpeechTranscript, Error> {
+        get { state.withLock { $0.transcribeResult } }
+        set { state.withLock { $0.transcribeResult = newValue } }
+    }
+    var sent: [SpeechTranscribeParams] { state.withLock { $0.sent } }
+    var prepares: Int { state.withLock { $0.prepares } }
+
+    var welcomed: Bool {
+        get { state.withLock { $0.welcomed } }
+        set { state.withLock { $0.welcomed = newValue } }
+    }
     func isWelcomed() async -> Bool { welcomed }
     func hasSpeech() async -> Bool { speech }
     func prepare() async throws -> SpeechStatus {
-        prepares += 1
-        return try prepareResult.get()
+        let r = state.withLock { s in
+            s.prepares += 1
+            return s.prepareResult
+        }
+        return try r.get()
     }
     func transcribe(_ p: SpeechTranscribeParams) async throws -> SpeechTranscript {
-        sent.append(p)
-        return try transcribeResult.get()
+        let r = state.withLock { s in
+            s.sent.append(p)
+            return s.transcribeResult
+        }
+        return try r.get()
     }
 }
 

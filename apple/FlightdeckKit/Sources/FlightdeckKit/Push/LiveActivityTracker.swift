@@ -184,11 +184,13 @@ public final class SystemActivities: ActivityHost {
 
     public var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
-    private var all: [Activity<SessionActivityAttributes>] {
+    /// The running activities. Activity is not Sendable: each caller reads its own list and
+    /// keeps it in its own isolation.
+    private nonisolated static func all() -> [Activity<SessionActivityAttributes>] {
         Activity<SessionActivityAttributes>.activities.filter { $0.activityState == .active || $0.activityState == .stale }
     }
 
-    public func running() -> [String] { all.map(\.attributes.session) }
+    public func running() -> [String] { Self.all().map(\.attributes.session) }
 
     public func start(_ attributes: SessionActivityAttributes, _ state: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data> {
         let a = try Activity.request(attributes: attributes, content: .init(state: state, staleDate: nil), pushType: .token)
@@ -202,13 +204,23 @@ public final class SystemActivities: ActivityHost {
     }
 
     public func update(session: String, _ state: SessionActivityAttributes.ContentState) async {
-        for a in all where a.attributes.session == session {
+        await Self.update(session: session, state)
+    }
+
+    public func end(session: String) async {
+        await Self.end(session: session)
+    }
+
+    // Off the main actor: ActivityKit's update and end run on their own, and an activity read
+    // there never crosses back.
+    @concurrent private nonisolated static func update(session: String, _ state: SessionActivityAttributes.ContentState) async {
+        for a in all() where a.attributes.session == session {
             await a.update(.init(state: state, staleDate: nil))
         }
     }
 
-    public func end(session: String) async {
-        for a in all where a.attributes.session == session {
+    @concurrent private nonisolated static func end(session: String) async {
+        for a in all() where a.attributes.session == session {
             await a.end(nil, dismissalPolicy: .immediate)
         }
     }

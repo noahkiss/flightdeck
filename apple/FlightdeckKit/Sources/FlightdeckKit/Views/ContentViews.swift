@@ -414,6 +414,7 @@ struct PDFDocumentView: NSViewRepresentable {
 
 /// The bytes a PDF view shows. A parent redraw with the same bytes keeps the document, its
 /// scroll position and zoom; re-serializing the document to compare would cost a full copy.
+@MainActor
 final class PDFSource {
     private(set) var shown: Data?
     private(set) var loads = 0

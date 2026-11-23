@@ -107,7 +107,7 @@ public enum AppFleet {
     @MainActor
     static func addSettings(to fleet: Fleet, defaults: UserDefaults) {
         let center = SettingsCenter(defaults: defaults) { [weak fleet] habID, params in
-            guard let conn = await fleet?.connections.first(where: { $0.id == habID }) else {
+            guard let conn = fleet?.connections.first(where: { $0.id == habID }) else {
                 throw TransportError("that hab is no longer in the app")
             }
             return try await conn.call(HabMethods.settingsSet, params)

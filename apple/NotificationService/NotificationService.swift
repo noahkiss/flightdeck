@@ -12,13 +12,13 @@ import UserNotifications
 /// notification: sender "Capcom" with its avatar. Without the Communication Notifications
 /// capability iOS refuses the update, and the plain banner shows. Any other push passes
 /// through unchanged.
+///
+/// `didReceive` calls the content handler before it returns, on every path, so
+/// the extension keeps no state between calls. iOS may call its methods on
+/// different threads; with nothing stored there is nothing to share. If time ran
+/// out first, iOS shows the push as it came.
 final class NotificationService: UNNotificationServiceExtension {
-    private var handler: ((UNNotificationContent) -> Void)?
-    private var original: UNNotificationContent?
-
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
-        handler = contentHandler
-        original = request.content
         guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
             contentHandler(request.content)
             return
@@ -26,17 +26,10 @@ final class NotificationService: UNNotificationServiceExtension {
         let meta = PushMeta(userInfo: content.userInfo)
         if meta?.kind == "capcom" {
             contentHandler(Self.communication(content, meta: meta))
-            handler = nil
             return
         }
         content.body = ExpiryText.append(to: content.body, meta: meta)
         contentHandler(content)
-        handler = nil
-    }
-
-    override func serviceExtensionTimeWillExpire() {
-        if let handler, let original { handler(original) }
-        handler = nil
     }
 
     /// The Capcom message as a message from Capcom; the content as it came when iOS refuses.

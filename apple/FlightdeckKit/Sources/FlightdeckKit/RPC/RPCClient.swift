@@ -121,7 +121,7 @@ public actor RPCClient {
             timeouts[id] = Task {
                 try? await Task.sleep(for: timeout)
                 if Task.isCancelled { return }
-                await self.fail(id, CallTimedOut(method: method.name))
+                self.fail(id, CallTimedOut(method: method.name))
             }
         }
         let resp = try decoder.decode(Response<R>.self, from: line)

@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import LocalAuthentication
 import NIOSSH
+import Synchronization
 
 /// Where a device key's private part lives.
 public enum SSHKeyKind: String, Codable, Sendable {
@@ -214,7 +215,7 @@ public struct GeneratedKey: SSHKeySource {
 }
 
 /// The device's SSH keys, kept in a secret store (the Keychain in the app).
-public final class DeviceKeys: @unchecked Sendable {
+public final class DeviceKeys: Sendable {
     /// The id of the key made on first start.
     public static let defaultID = "device"
     /// The store account of the device-wide "Require Face ID for SSH keys"
@@ -224,19 +225,23 @@ public final class DeviceKeys: @unchecked Sendable {
     static let settingPrefix = "setting-"
 
     let store: SecretStore
-    private let lock = NSLock()
-    private var cache: [String: any SSHKeySource] = [:]
     /// Whether new keys go to the Secure Enclave when it exists.
     private let preferEnclave: Bool
     /// The Face ID setting. Keys hold it too, so they read it at each use
     /// (review S1); it holds no key, so there is no cycle.
     private let setting: FaceIDState
-    private var upgraded = false
-    private var moveObserver: (@Sendable () -> Void)?
+
+    private struct State {
+        var cache: [String: any SSHKeySource] = [:]
+        var upgraded = false
+        var moveObserver: (@Sendable () -> Void)?
+        var unlockedCheck: @Sendable () async -> Bool = { await ApprovalCenter.protectedDataAvailable() }
+        var faceIDAsk: @Sendable () async throws -> LAContext = { try await GeneratedKey.faceIDContext() }
+    }
+
+    private let state = Mutex(State())
     /// Serialises the move record's read and write: hosts dial in parallel.
-    private let moveLock = NSLock()
-    private var unlockedCheck: @Sendable () async -> Bool = { await ApprovalCenter.protectedDataAvailable() }
-    private var faceIDAsk: @Sendable () async throws -> LAContext = { try await GeneratedKey.faceIDContext() }
+    private let moveLock = Mutex(())
 
     public init(store: SecretStore, preferEnclave: Bool = true) {
         self.store = store
@@ -249,7 +254,7 @@ public final class DeviceKeys: @unchecked Sendable {
 
     /// The key with this id, generated or imported, or nil when there is none.
     public func key(_ id: String) throws -> (any SSHKeySource)? {
-        if let k = lock.withLock({ cache[id] }) { return k }
+        if let k = state.withLock({ $0.cache[id] }) { return k }
         // The item first: a missing key reads as missing even when the
         // setting cannot be read yet.
         guard !id.hasPrefix(Self.settingPrefix), let data = try store.read(account: id) else { return nil }
@@ -285,7 +290,7 @@ public final class DeviceKeys: @unchecked Sendable {
     }
 
     func cacheKey(_ k: any SSHKeySource) {
-        lock.withLock { cache[k.id] = k }
+        state.withLock { $0.cache[k.id] = k }
     }
 
     /// The default key, made on first use.
@@ -316,7 +321,7 @@ public final class DeviceKeys: @unchecked Sendable {
         }
         try store.write(account: id, data: JSONEncoder().encode(stored))
         let k = try GeneratedKey(id: id, stored: stored, faceID: faceIDSetting)
-        lock.withLock { cache[id] = k }
+        state.withLock { $0.cache[id] = k }
         return k
     }
 
@@ -324,10 +329,10 @@ public final class DeviceKeys: @unchecked Sendable {
     /// 7.2). Runs once per process; a locked device fails and the next call
     /// tries again.
     public func upgradeStore() {
-        guard !lock.withLock({ upgraded }) else { return }
+        guard !state.withLock({ $0.upgraded }) else { return }
         do {
             try store.upgradeProtection()
-            lock.withLock { upgraded = true }
+            state.withLock { $0.upgraded = true }
         } catch {
             Self.log.notice("keychain upgrade failed, will retry: \(kind: error) \(error)")
         }
@@ -347,21 +352,21 @@ public final class DeviceKeys: @unchecked Sendable {
     /// Whether the device is unlocked now. The default reads UIKit on iOS;
     /// tests replace it, so they never read the simulator's lock.
     public var isUnlocked: @Sendable () async -> Bool {
-        get { lock.withLock { unlockedCheck } }
-        set { lock.withLock { unlockedCheck = newValue } }
+        get { state.withLock { $0.unlockedCheck } }
+        set { state.withLock { $0.unlockedCheck = newValue } }
     }
 
     /// Asks for Face ID once and returns the context that then signs with
     /// no prompt. Tests replace it.
     var askFaceID: @Sendable () async throws -> LAContext {
-        get { lock.withLock { faceIDAsk } }
-        set { lock.withLock { faceIDAsk = newValue } }
+        get { state.withLock { $0.faceIDAsk } }
+        set { state.withLock { $0.faceIDAsk = newValue } }
     }
 
     /// Called after a host takes the new key, on any thread.
     public var onKeyMove: (@Sendable () -> Void)? {
-        get { lock.withLock { moveObserver } }
-        set { lock.withLock { moveObserver = newValue } }
+        get { state.withLock { $0.moveObserver } }
+        set { state.withLock { $0.moveObserver = newValue } }
     }
 
     /// The new key while a move runs.
@@ -396,7 +401,7 @@ public final class DeviceKeys: @unchecked Sendable {
     /// entry's `moveMark`, so an entry pointed at another host waits again.
     public func noteMoved(entry: String) {
         do {
-            let added = try moveLock.withLock {
+            let added = try moveLock.withLock { _ in
                 var s = try movedEntries()
                 guard !s.contains(entry) else { return false }
                 s.insert(entry)
@@ -417,7 +422,7 @@ public final class DeviceKeys: @unchecked Sendable {
     public func finishKeyMove() throws {
         guard let data = try store.read(account: Self.nextID) else { return }
         try store.write(account: Self.defaultID, data: data)
-        _ = lock.withLock { cache.removeValue(forKey: Self.defaultID) }
+        _ = state.withLock { $0.cache.removeValue(forKey: Self.defaultID) }
         try cancelKeyMove()
         Self.log.notice("key move finished")
     }
@@ -426,7 +431,7 @@ public final class DeviceKeys: @unchecked Sendable {
     public func cancelKeyMove() throws {
         try store.delete(account: Self.nextID)
         try store.delete(account: Self.moveAccount)
-        _ = lock.withLock { cache.removeValue(forKey: Self.nextID) }
+        _ = state.withLock { $0.cache.removeValue(forKey: Self.nextID) }
     }
 
     /// The key an entry signs with: during a move, the default key offers
@@ -466,7 +471,7 @@ public final class DeviceKeys: @unchecked Sendable {
     /// Removes a key. Hab entries that named it have no key until one is chosen.
     public func delete(_ id: String) throws {
         try store.delete(account: id)
-        _ = lock.withLock { cache.removeValue(forKey: id) }
+        _ = state.withLock { $0.cache.removeValue(forKey: id) }
     }
 
     /// A key error in words: the locked device is the common one.
@@ -562,30 +567,34 @@ struct MovingKey: SSHKeySource {
 
 /// The "Require Face ID for SSH keys" setting: one item in the keys' store
 /// (no item means off), and the migration of earlier per-key flags into it.
-final class FaceIDState: @unchecked Sendable {
+final class FaceIDState: Sendable {
     static let account = "setting-face-id"
 
     private let store: SecretStore
+
+    private struct State {
+        var migrated = false
+        /// The setting as last read or written; nil until first read. The app
+        /// makes one `DeviceKeys`, so this copy is the truth once read.
+        var cached: Bool?
+    }
+
     /// Held for the whole migration and each change, so a first migration on
     /// another thread cannot undo a change (review N2).
-    private let lock = NSRecursiveLock()
-    private var migrated = false
-    /// The setting as last read or written; nil until first read. The app
-    /// makes one `DeviceKeys`, so this copy is the truth once read.
-    private var cached: Bool?
+    private let state = Mutex(State())
 
     init(store: SecretStore) {
         self.store = store
     }
 
     func value() throws -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if let v = cached { return v }
-        try migrate()
-        let v = try store.read(account: Self.account) != nil
-        cached = v
-        return v
+        try state.withLock { s in
+            if let v = s.cached { return v }
+            try migrate(&s)
+            let v = try store.read(account: Self.account) != nil
+            s.cached = v
+            return v
+        }
     }
 
     /// For keys at each use. A setting that cannot be read counts as on:
@@ -595,23 +604,23 @@ final class FaceIDState: @unchecked Sendable {
     }
 
     func set(_ on: Bool) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try migrate()
-        if on {
-            try store.write(account: Self.account, data: Data("on".utf8))
-        } else {
-            try store.delete(account: Self.account)
+        try state.withLock { s in
+            try migrate(&s)
+            if on {
+                try store.write(account: Self.account, data: Data("on".utf8))
+            } else {
+                try store.delete(account: Self.account)
+            }
+            s.cached = on
         }
-        cached = on
     }
 
     /// Folds the per-key Face ID flags of earlier builds into the setting:
     /// any key that had it on turns the setting on, then every stored key is
     /// written again without its flag. The setting is written first, so a
     /// stop halfway leaves it on and the next run finishes the rest.
-    private func migrate() throws {
-        if migrated { return }
+    private func migrate(_ s: inout State) throws {
+        if s.migrated { return }
         var anyOn = false
         var rewrites: [(String, Data)] = []
         for account in try store.accounts() where account != Self.account {
@@ -637,6 +646,6 @@ final class FaceIDState: @unchecked Sendable {
         if !rewrites.isEmpty {
             DeviceKeys.log.notice("moved \(rewrites.count) per-key Face ID flags into the setting (on: \(anyOn))")
         }
-        migrated = true
+        s.migrated = true
     }
 }

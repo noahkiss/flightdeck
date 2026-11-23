@@ -196,12 +196,13 @@ final class VoiceAudioTests: XCTestCase {
         let (stream, sink) = AsyncStream.makeStream(of: VoiceInputEvent.self)
         let tap = TapState(sink: sink)
         let fmt = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
-        tap.reset(input: fmt, live: nil)
+        let converters = TapConverters(input: fmt)
+        tap.reset(live: nil)
         tap.beginTurn()
         let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 16_000)!
         buf.frameLength = 16_000
         for i in 0..<16_000 { buf.floatChannelData![0][i] = 0.1 }
-        for _ in 0..<125 { tap.take(buf) }
+        for _ in 0..<125 { tap.take(buf, with: converters) }
         sink.finish()
         var full = 0
         for await e in stream where e == .turnFull { full += 1 }

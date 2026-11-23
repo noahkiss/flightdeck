@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Speech
+import Synchronization
 
 /// The real microphone and speaker for voice mode and dictation: one
 /// `AVAudioEngine` with voice processing (echo cancellation), so the app's
@@ -20,6 +21,8 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     private var running = false
     private var speakDone: CheckedContinuation<Bool, Never>?
     private var speakID = 0
+    /// Resamples the current utterance's buffers to `playFormat`.
+    private var speakConverter: AVAudioConverter?
     /// Open microphones across windows; the last to stop ends the audio session.
     static var sessionUsers = 0
     /// The format the player renders in: the mixer's, mono.
@@ -78,10 +81,8 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw SpeechEngineError.unavailable("no microphone input", sticky: true)
         }
-        tapState.reset(input: format, live: nil)
-        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [tapState] buffer, _ in
-            tapState.take(buffer)
-        }
+        tapState.reset(live: nil)
+        input.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.tapBlock(tapState, input: format))
         engine.prepare()
         try engine.start()
         if speaks {
@@ -139,6 +140,39 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         tapState.endTurn()
     }
 
+    /// The microphone tap. AVAudioEngine calls it on its audio thread, so it is
+    /// made here, outside the main actor: a closure written inside a main-actor
+    /// method would be main-actor isolated and trap on that thread.
+    /// The block owns its converters: only the audio thread uses them.
+    private nonisolated static func tapBlock(_ state: TapState, input: AVAudioFormat) -> AVAudioNodeTapBlock {
+        let converters = TapConverters(input: input)
+        return { buffer, _ in state.take(buffer, with: converters) }
+    }
+
+    /// The synthesizer's buffer callback, which runs off the main actor (see
+    /// `tapBlock`). AVFoundation does not say its buffer outlives the callback,
+    /// so the callback hands over a copy it made itself.
+    private nonisolated static func speechBuffers(_ deliver: @escaping @Sendable (AudioBufferHandoff) -> Void) -> AVSpeechSynthesizer.BufferCallback {
+        { buffer in
+            guard let pcm = buffer as? AVAudioPCMBuffer, let own = copy(pcm) else { return }
+            deliver(AudioBufferHandoff(own))
+        }
+    }
+
+    /// A new buffer with the same format, length and samples. An empty buffer
+    /// (the synthesizer's end) copies as an empty one.
+    nonisolated static func copy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let out = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: max(buffer.frameLength, 1)) else { return nil }
+        out.frameLength = buffer.frameLength
+        let from = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let to = UnsafeMutableAudioBufferListPointer(out.mutableAudioBufferList)
+        for (s, d) in zip(from, to) {
+            guard let src = s.mData, let dst = d.mData else { continue }
+            memcpy(dst, src, Int(min(s.mDataByteSize, d.mDataByteSize)))
+        }
+        return out
+    }
+
     /// A route change or a reset of the audio hardware: start again in place.
     private func restart() {
         guard running else { return }
@@ -146,11 +180,8 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         engine.inputNode.removeTap(onBus: 0)
         let format = engine.inputNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { return }
-        live?.reset(natural: format)
-        tapState.reset(input: format, live: live)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { [tapState] buffer, _ in
-            tapState.take(buffer)
-        }
+        tapState.reset(live: live)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.tapBlock(tapState, input: format))
         do {
             try engine.start()
             if speaks {
@@ -250,27 +281,34 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         }
         return await withCheckedContinuation { c in
             speakDone = c
-            var converter: AVAudioConverter?
-            synthesizer.write(utterance) { [weak self] buffer in
-                guard let pcm = buffer as? AVAudioPCMBuffer else { return }
-                Task { @MainActor in
-                    guard let self, self.speakID == id, self.speakDone != nil else { return }
-                    if pcm.frameLength == 0 {
-                        // The end: finish once the queued audio has played.
-                        self.player.scheduleBuffer(AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 1)!, completionCallbackType: .dataPlayedBack) { _ in
-                            Task { @MainActor in self.finishSpeaking(id, finished: true) }
-                        }
-                        return
-                    }
-                    if converter == nil || converter?.inputFormat != pcm.format {
-                        converter = AVAudioConverter(from: pcm.format, to: fmt)
-                    }
-                    if let out = converter.flatMap({ Self.convert(pcm, with: $0, to: fmt) }) {
-                        self.player.scheduleBuffer(out)
-                    }
-                }
-            }
+            speakConverter = nil
+            synthesizer.write(utterance, toBufferCallback: Self.speechBuffers { [weak self] chunk in
+                Task { @MainActor in await self?.playSpeech(chunk.buffer, id: id, format: fmt) }
+            })
         }
+    }
+
+    /// One buffer from the synthesizer; an empty one is the end.
+    private func playSpeech(_ pcm: AVAudioPCMBuffer, id: Int, format fmt: AVAudioFormat) async {
+        guard speakID == id, speakDone != nil else { return }
+        if pcm.frameLength == 0 {
+            // The end: finish once the queued audio has played.
+            await player.scheduleBuffer(AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 1)!, completionCallbackType: .dataPlayedBack)
+            finishSpeaking(id, finished: true)
+            return
+        }
+        if speakConverter == nil || speakConverter?.inputFormat != pcm.format {
+            speakConverter = AVAudioConverter(from: pcm.format, to: fmt)
+        }
+        if let out = speakConverter.flatMap({ Self.convert(pcm, with: $0, to: fmt) }) {
+            schedule(out)
+        }
+    }
+
+    /// Queues one buffer of speech. Synchronous on purpose: the player keeps
+    /// the order, and nothing waits for a buffer but the last.
+    private func schedule(_ buffer: AVAudioPCMBuffer) {
+        player.scheduleBuffer(buffer)
     }
 
     public func stopSpeaking() {
@@ -334,96 +372,140 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     }
 }
 
+/// One audio buffer handed from one thread to another.
+///
+/// AVAudioPCMBuffer is not Sendable, and AVFAudio gives no Sendable buffer
+/// before iOS 27, so this one escape is needed. It is safe by construction:
+/// the sender allocates each buffer itself (a converter's output, or its own
+/// copy of a synthesizer buffer), hands it over at once and keeps no
+/// reference, so the receiver is its only user.
+struct AudioBufferHandoff: @unchecked Sendable {
+    let buffer: AVAudioPCMBuffer
+    init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+}
+
+/// The tap's resamplers: to the clip format, and to the live recognizer's.
+/// Only one tap block holds it, and AVAudioEngine calls that block on its
+/// audio thread one buffer at a time, so it needs no lock and never crosses
+/// threads. A route change installs a new tap with new converters.
+final class TapConverters {
+    let input: AVAudioFormat
+    private let toClip: AVAudioConverter?
+    private var toLive: (format: AVAudioFormat, converter: AVAudioConverter)?
+
+    init(input: AVAudioFormat) {
+        self.input = input
+        toClip = AVAudioConverter(from: input, to: TapState.target)
+    }
+
+    /// The buffer as 16 kHz mono.
+    func clip(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        toClip.flatMap { VoiceAudio.convert(buffer, with: $0, to: TapState.target) }
+    }
+
+    /// The buffer in the live recognizer's format.
+    func live(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        if toLive?.format != format {
+            toLive = AVAudioConverter(from: input, to: format).map { (format, $0) }
+        }
+        return toLive.flatMap { VoiceAudio.convert(buffer, with: $0.converter, to: format) }
+    }
+}
+
 /// The audio thread's side: resamples to 16 kHz mono, reports the level,
 /// keeps the turn's samples (with a short lead-in), and feeds the live recognizer.
-final class TapState: @unchecked Sendable {
-    private let lock = NSLock()
-    private let sink: AsyncStream<VoiceInputEvent>.Continuation
-    private var converter: AVAudioConverter?
-    private var target = AVAudioFormat(standardFormatWithSampleRate: Double(SpeechClip.sampleRate), channels: 1)!
-    private weak var live: LiveWords?
-    private var muted = false
-    private var inTurn = false
-    private var full = false
-    private var samples: [Float] = []
-    private var text = LiveText()
-    private let clock = ContinuousClock()
-    private let start = ContinuousClock.now
+/// The main actor starts and ends turns; the audio thread adds samples.
+final class TapState: Sendable {
+    static let target = AVAudioFormat(standardFormatWithSampleRate: Double(SpeechClip.sampleRate), channels: 1)!
     /// Lead-in kept before a turn starts, so its first word is not cut.
     static let leadIn = SpeechClip.sampleRate / 2
     static let maxTurn = Int(SpeechLimits.maxClipSeconds) * SpeechClip.sampleRate
+
+    private struct State {
+        weak var live: LiveWords?
+        var muted = false
+        var inTurn = false
+        var full = false
+        var samples: [Float] = []
+        var text = LiveText()
+    }
+
+    private let state = Mutex(State())
+    private let sink: AsyncStream<VoiceInputEvent>.Continuation
+    private let clock = ContinuousClock()
+    private let start = ContinuousClock.now
 
     init(sink: AsyncStream<VoiceInputEvent>.Continuation) {
         self.sink = sink
     }
 
-    func reset(input: AVAudioFormat, live: LiveWords?) {
-        lock.withLock {
-            converter = AVAudioConverter(from: input, to: target)
-            self.live = live
-        }
+    /// A new tap: the live recognizer it feeds, if any yet.
+    func reset(live: LiveWords?) {
+        state.withLock { $0.live = live }
     }
 
     func attach(_ live: LiveWords) {
-        lock.withLock { self.live = live }
+        state.withLock { $0.live = live }
     }
 
     func setMuted(_ m: Bool) {
-        lock.withLock {
-            muted = m
-            if m { samples.removeAll(); inTurn = false; full = false }
+        state.withLock { s in
+            s.muted = m
+            if m { s.samples.removeAll(); s.inTurn = false; s.full = false }
         }
     }
 
     func beginTurn() {
-        lock.withLock {
-            inTurn = true
-            full = false
-            text.begin(at: now())
+        let t = now()
+        state.withLock { s in
+            s.inTurn = true
+            s.full = false
+            s.text.begin(at: t)
         }
     }
 
     func endTurn() -> (clip: SpeechClip, live: String) {
-        lock.withLock {
-            let clip = SpeechClip(samples: samples)
-            let t = text.turn
-            samples.removeAll(keepingCapacity: true)
-            inTurn = false
-            full = false
-            text.end()
+        state.withLock { s in
+            let clip = SpeechClip(samples: s.samples)
+            let t = s.text.turn
+            s.samples.removeAll(keepingCapacity: true)
+            s.inTurn = false
+            s.full = false
+            s.text.end()
             return (clip, t)
         }
     }
 
     func liveChanged(finished: String, volatile: String) {
-        let event: VoiceInputEvent? = lock.withLock {
-            text.update(finished: finished, volatile: volatile, at: now())
-            let t = text.turn
-            return muted || t.isEmpty ? nil : .words(t, at: now())
+        let t = now()
+        let event: VoiceInputEvent? = state.withLock { s in
+            s.text.update(finished: finished, volatile: volatile, at: t)
+            let turn = s.text.turn
+            return s.muted || turn.isEmpty ? nil : .words(turn, at: t)
         }
         if let event { sink.yield(event) }
     }
 
-    func take(_ buffer: AVAudioPCMBuffer) {
-        let (conv, words, isMuted) = lock.withLock { (converter, live, muted) }
+    /// One microphone buffer, on the audio thread.
+    func take(_ buffer: AVAudioPCMBuffer, with converters: TapConverters) {
+        let (words, isMuted) = state.withLock { ($0.live, $0.muted) }
         if isMuted { return }
-        words?.feed(buffer)
-        guard let conv, let out = VoiceAudio.convert(buffer, with: conv, to: target), let data = out.floatChannelData else { return }
-        let n = Int(out.frameLength)
-        let chunk = UnsafeBufferPointer(start: data[0], count: n)
-        let db = audioLevel(chunk)
-        let reachedFull: Bool = lock.withLock {
-            if !inTurn {
-                samples.append(contentsOf: chunk)
-                if samples.count > Self.leadIn { samples.removeFirst(samples.count - Self.leadIn) }
+        words?.feed(buffer, with: converters)
+        guard let out = converters.clip(buffer), let data = out.floatChannelData else { return }
+        let chunk = Array(UnsafeBufferPointer(start: data[0], count: Int(out.frameLength)))
+        let db = chunk.withUnsafeBufferPointer { audioLevel($0) }
+        let reachedFull: Bool = state.withLock { s in
+            if !s.inTurn {
+                s.samples.append(contentsOf: chunk)
+                if s.samples.count > Self.leadIn { s.samples.removeFirst(s.samples.count - Self.leadIn) }
                 return false
             }
-            guard !full else { return false }
-            let room = Self.maxTurn - samples.count
-            samples.append(contentsOf: chunk.prefix(max(0, room)))
-            if samples.count >= Self.maxTurn {
+            guard !s.full else { return false }
+            let room = Self.maxTurn - s.samples.count
+            s.samples.append(contentsOf: chunk.prefix(max(0, room)))
+            if s.samples.count >= Self.maxTurn {
                 // The hab takes at most 120 s: the turn ends here, whole.
-                full = true
+                s.full = true
                 return true
             }
             return false
@@ -437,7 +519,6 @@ final class TapState: @unchecked Sendable {
         return Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
     }
 }
-
 /// The live recognizer's text, split by turn. Finished results only grow,
 /// so a turn is the finished text since it began plus the result in
 /// progress; a revision of the result in progress never brings back earlier speech.
@@ -491,32 +572,24 @@ struct LiveText: Sendable {
 
 /// Apple's live recognizer over the microphone (SpeechAnalyzer).
 /// It reports the whole text heard so far: finished results plus the one in progress.
-final class LiveWords: @unchecked Sendable {
-    private let lock = NSLock()
+final class LiveWords: Sendable {
+    private struct State {
+        var feed: AsyncStream<AudioBufferHandoff>.Continuation?
+        var format: AVAudioFormat?
+        var task: Task<Void, Never>?
+        var finished = ""
+        var volatile = ""
+        var stopped = false
+    }
+
+    private let state = Mutex(State())
     private let onText: @Sendable (_ finished: String, _ volatile: String) -> Void
     private let onStatus: @Sendable (String?) -> Void
-    private var feedSink: AsyncStream<AnyObject>.Continuation?
-    private var converter: AVAudioConverter?
-    private var format: AVAudioFormat?
-    private var task: Task<Void, Never>?
-    private var finished = ""
-    private var volatile = ""
 
     init(onText: @escaping @Sendable (_ finished: String, _ volatile: String) -> Void, onStatus: @escaping @Sendable (String?) -> Void) {
         self.onText = onText
         self.onStatus = onStatus
     }
-
-    /// The microphone's format changed (a route change): rebuild the converter.
-    /// During the asset download it is kept for `start`.
-    func reset(natural: AVAudioFormat) {
-        lock.withLock {
-            latestNatural = natural
-            if let f = format { converter = AVAudioConverter(from: natural, to: f) }
-        }
-    }
-
-    private var latestNatural: AVAudioFormat?
 
     func start(natural: AVAudioFormat) async {
         guard SpeechTranscriber.isAvailable,
@@ -541,34 +614,25 @@ final class LiveWords: @unchecked Sendable {
         onStatus(nil)
         let (stream, cont) = AsyncStream.makeStream(of: AnalyzerInput.self)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        lock.withLock {
-            format = fmt
-            converter = AVAudioConverter(from: latestNatural ?? natural, to: fmt)
-            feedSink = nil
-        }
-        // Buffers go through a type-erased sink so this class needs no availability mark.
-        let (erased, erasedSink) = AsyncStream.makeStream(of: AnyObject.self)
-        lock.withLock { feedSink = erasedSink }
+        let (buffers, feed) = AsyncStream.makeStream(of: AudioBufferHandoff.self)
         let pump = Task {
-            for await b in erased {
-                if let pcm = b as? AVAudioPCMBuffer { cont.yield(AnalyzerInput(buffer: pcm)) }
-            }
+            for await b in buffers { cont.yield(AnalyzerInput(buffer: b.buffer)) }
             cont.finish()
         }
-        task = Task { [weak self] in
+        let task = Task { [weak self] in
             do {
                 try await analyzer.start(inputSequence: stream)
                 for try await r in transcriber.results {
                     guard let self else { break }
                     let t = String(r.text.characters)
-                    let (f, v): (String, String) = self.lock.withLock {
+                    let (f, v): (String, String) = self.state.withLock { s in
                         if r.isFinal {
-                            self.finished += t
-                            self.volatile = ""
+                            s.finished += t
+                            s.volatile = ""
                         } else {
-                            self.volatile = t
+                            s.volatile = t
                         }
-                        return (self.finished, self.volatile)
+                        return (s.finished, s.volatile)
                     }
                     self.onText(f, v)
                 }
@@ -578,19 +642,32 @@ final class LiveWords: @unchecked Sendable {
             pump.cancel()
             await analyzer.cancelAndFinishNow()
         }
+        // `stop` may have run during the download: then nothing is left running.
+        let stoppedMeanwhile: Bool = state.withLock { s in
+            if s.stopped { return true }
+            s.format = fmt
+            s.feed = feed
+            s.task = task
+            return false
+        }
+        if stoppedMeanwhile {
+            feed.finish()
+            task.cancel()
+        }
     }
 
-    func feed(_ buffer: AVAudioPCMBuffer) {
-        let (conv, fmt, sink) = lock.withLock { (converter, format, feedSink) }
-        guard let conv, let fmt, let sink, let out = VoiceAudio.convert(buffer, with: conv, to: fmt) else { return }
-        sink.yield(out)
+    /// One microphone buffer, on the audio thread.
+    func feed(_ buffer: AVAudioPCMBuffer, with converters: TapConverters) {
+        let (fmt, sink) = state.withLock { ($0.format, $0.feed) }
+        guard let fmt, let sink, let out = converters.live(buffer, to: fmt) else { return }
+        sink.yield(AudioBufferHandoff(out))
     }
 
     func stop() async {
-        let sink = lock.withLock { () -> AsyncStream<AnyObject>.Continuation? in
-            let s = feedSink
-            feedSink = nil
-            return s
+        let (sink, task) = state.withLock { s in
+            s.stopped = true
+            defer { s.feed = nil }
+            return (s.feed, s.task)
         }
         sink?.finish()
         task?.cancel()

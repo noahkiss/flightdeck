@@ -2,6 +2,7 @@ import Foundation
 import GhosttyTerminal
 import HabAPI
 import Observation
+import Synchronization
 
 /// One pane in the terminal view: its data stream feeds libghostty, the
 /// terminal's key output goes to `pane.input`, and the size rule decides when
@@ -128,17 +129,16 @@ public final class TerminalModel {
     }
 
     /// Thread-safe facts the terminal's write callback reads off the main thread.
-    final class Flags: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _owner = false
-        private var _liveRun = false
+    final class Flags: Sendable {
+        private let _owner = Atomic<Bool>(false)
+        private let _liveRun = Atomic<Bool>(false)
         var owner: Bool {
-            get { lock.withLock { _owner } }
-            set { lock.withLock { _owner = newValue } }
+            get { _owner.load(ordering: .sequentiallyConsistent) }
+            set { _owner.store(newValue, ordering: .sequentiallyConsistent) }
         }
         var liveRun: Bool {
-            get { lock.withLock { _liveRun } }
-            set { lock.withLock { _liveRun = newValue } }
+            get { _liveRun.load(ordering: .sequentiallyConsistent) }
+            set { _liveRun.store(newValue, ordering: .sequentiallyConsistent) }
         }
     }
 

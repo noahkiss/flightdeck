@@ -22,16 +22,16 @@ final class AppBadgeTests: XCTestCase {
 
     func testWritesOnChangeOnlyAndRetriesARefusal() async {
         var writes: [Int] = []
-        var allowed = false
+        let allowed = Box<Bool>()
         let b = AppBadge { n in
             writes.append(n)
-            return allowed
+            return allowed.get() ?? false
         }
         b.update(2, active: true, online: 1, habs: 1)
         await b.settle()
         XCTAssertEqual(writes, [2])
         XCTAssertNil(b.shown, "refused: nothing shown")
-        allowed = true
+        allowed.set(true)
         b.update(2, active: true, online: 1, habs: 1)
         await b.settle()
         XCTAssertEqual(writes, [2, 2], "a refused write is tried again")

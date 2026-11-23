@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import Synchronization
 
 /// The words the round views show (rounds.md 4.1, 10.3).
 public enum RoundText {
@@ -70,52 +71,46 @@ public enum RoundText {
         case 1: return "tomorrow \(c)"
         case -1: return "yesterday \(c)"
         default:
-            return "\(formatters.day(timeZone, locale).string(from: d)) \(c)"
+            return "\(formatters.day(d, timeZone, locale)) \(c)"
         }
     }
 
     static func clock(_ d: Date, timeZone: TimeZone, locale: Locale) -> String {
-        formatters.clock(timeZone, locale).string(from: d)
+        formatters.clock(d, timeZone, locale)
     }
 
     /// A time as the hab takes it: RFC 3339 in UTC with fractional seconds.
-    public static func stamp(_ d: Date) -> String { formatters.stamp(d) }
+    public static func stamp(_ d: Date) -> String { ISOTime.format(d) }
 
     private static let formatters = Formatters()
 
     /// The formatters the words use, made once per zone and locale: the list redraws under a
-    /// timeline. DateFormatter is safe across threads once set up; the lock guards the cache.
-    private final class Formatters: @unchecked Sendable {
-        private let lock = NSLock()
-        private var days: [String: DateFormatter] = [:]
-        private var clocks: [String: DateFormatter] = [:]
-        private let iso: ISO8601DateFormatter = {
-            let f = ISO8601DateFormatter()
-            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            return f
-        }()
-
-        func day(_ z: TimeZone, _ l: Locale) -> DateFormatter {
-            cached(&days, z, l) { $0.setLocalizedDateFormatFromTemplate("EEE d MMM") }
+    /// timeline. Formatters are not Sendable, so they stay inside the mutex and format there.
+    private final class Formatters: Sendable {
+        private struct Cache {
+            var days: [String: DateFormatter] = [:]
+            var clocks: [String: DateFormatter] = [:]
         }
 
-        func clock(_ z: TimeZone, _ l: Locale) -> DateFormatter {
-            cached(&clocks, z, l) {
-                $0.timeStyle = .short
-                $0.dateStyle = .none
+        private let cache = Mutex(Cache())
+
+        func day(_ d: Date, _ z: TimeZone, _ l: Locale) -> String {
+            cache.withLock { c in
+                Self.cached(&c.days, z, l) { $0.setLocalizedDateFormatFromTemplate("EEE d MMM") }.string(from: d)
             }
         }
 
-        func stamp(_ d: Date) -> String {
-            lock.lock()
-            defer { lock.unlock() }
-            return iso.string(from: d)
+        func clock(_ d: Date, _ z: TimeZone, _ l: Locale) -> String {
+            cache.withLock { c in
+                Self.cached(&c.clocks, z, l) {
+                    $0.timeStyle = .short
+                    $0.dateStyle = .none
+                }.string(from: d)
+            }
         }
 
-        private func cached(_ cache: inout [String: DateFormatter], _ z: TimeZone, _ l: Locale,
-                            _ setUp: (DateFormatter) -> Void) -> DateFormatter {
-            lock.lock()
-            defer { lock.unlock() }
+        private static func cached(_ cache: inout [String: DateFormatter], _ z: TimeZone, _ l: Locale,
+                                   _ setUp: (DateFormatter) -> Void) -> DateFormatter {
             let key = "\(z.identifier)|\(l.identifier)"
             if let f = cache[key] { return f }
             let f = DateFormatter()

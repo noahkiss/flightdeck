@@ -6,7 +6,11 @@ import Foundation
 /// port, as the spike measured it (`swift/Spikes/ParakeetSpike`). The model
 /// downloads on first use from Hugging Face into FluidAudio's cache; the
 /// app's `ParakeetHost` decides when it is loaded.
-public final class FluidParakeetRuntime: ParakeetRuntime, @unchecked Sendable {
+///
+/// Every disk or model step is `@concurrent`: it walks or reads hundreds of
+/// MB, or runs the model, so it never starts on the caller's actor (the main
+/// actor in the app).
+public final class FluidParakeetRuntime: ParakeetRuntime, Sendable {
     private let state = State()
 
     public init() {}
@@ -18,7 +22,7 @@ public final class FluidParakeetRuntime: ParakeetRuntime, @unchecked Sendable {
 
     private var directory: URL { AsrModels.defaultCacheDirectory(for: .v2) }
 
-    public func isDownloaded() async -> Bool {
+    @concurrent public func isDownloaded() async -> Bool {
         let here = AsrModels.modelsExist(at: directory, version: .v2)
         if here { excludeFromBackup() }
         return here
@@ -37,14 +41,14 @@ public final class FluidParakeetRuntime: ParakeetRuntime, @unchecked Sendable {
         try? url.setResourceValues(values)
     }
 
-    public func removeDownload() async throws {
+    @concurrent public func removeDownload() async throws {
         await unload()
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)
         }
     }
 
-    public func load() async throws {
+    @concurrent public func load() async throws {
         if await state.manager != nil { return }
         let models = try await AsrModels.load(from: directory, version: .v2)
         let manager = AsrManager(config: .default)
@@ -58,7 +62,7 @@ public final class FluidParakeetRuntime: ParakeetRuntime, @unchecked Sendable {
         await m.cleanup()
     }
 
-    public func transcribe(_ samples: [Float]) async throws -> String {
+    @concurrent public func transcribe(_ samples: [Float]) async throws -> String {
         guard let m = await state.manager else {
             throw SpeechEngineError.unavailable("the on-device model is not loaded", sticky: false)
         }

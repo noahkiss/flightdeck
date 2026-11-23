@@ -71,7 +71,7 @@ public enum SpeechEngineStatus: Equatable, Sendable {
 /// One speech-to-text engine. Voice mode and dictation open it with
 /// `prepare`, send it one clip per turn, and `close` it when they close.
 @MainActor
-public protocol SpeechEngine: AnyObject {
+public protocol SpeechEngine: AnyObject, Sendable {
     var kind: SpeechEngineKind { get }
     /// Warms the engine up. Throws `SpeechEngineError.unavailable` to be skipped.
     func prepare() async throws -> SpeechEngineStatus
@@ -116,7 +116,7 @@ public final class SpeechEngines {
     public func prepare() async {
         await withTaskGroup(of: Void.self) { g in
             for e in engines {
-                g.addTask { @MainActor in await self.prepare(e) }
+                g.addTask { await self.prepare(e) }
             }
         }
     }

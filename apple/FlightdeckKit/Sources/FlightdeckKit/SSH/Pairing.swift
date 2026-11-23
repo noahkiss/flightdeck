@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import NIOSSH
+import Synchronization
 
 /// The device's half of QR pairing (transport.md 6.1.2, app.md 18.8): dial
 /// the pairing window with the code's host key pinned, sign in with the
@@ -205,8 +206,9 @@ public enum Pairing {
     /// Runs the exchange against the code's window. `waiting` gets the
     /// fingerprint of the key the window saw, once the owner is asked; the
     /// app shows its last four characters. Cancelling the task closes the
-    /// connection.
-    public static func pair(
+    /// connection. `@concurrent`: unlocking the key reads the Keychain and the
+    /// Secure Enclave, which must not hold the main actor.
+    @concurrent public static func pair(
         _ code: PairingCode,
         key: SSHKeySource,
         keyID: String,
@@ -313,11 +315,10 @@ public enum Pairing {
         }
     }
 
-    final class Flag: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value = false
-        func set() { lock.withLock { value = true } }
-        var isSet: Bool { lock.withLock { value } }
+    final class Flag: Sendable {
+        private let value = Atomic<Bool>(false)
+        func set() { value.store(true, ordering: .sequentiallyConsistent) }
+        var isSet: Bool { value.load(ordering: .sequentiallyConsistent) }
     }
 }
 

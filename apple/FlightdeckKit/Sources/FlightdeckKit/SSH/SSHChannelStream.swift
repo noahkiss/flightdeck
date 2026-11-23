@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import NIOSSH
+import Synchronization
 
 /// One SSH session channel as a byte stream: stdin and stdout of the remote
 /// command (`gff-hab connect`).
@@ -8,75 +9,77 @@ import NIOSSH
 /// The channel does not read on its own: each `read()` asks for more, so the
 /// SSH window opens only as fast as the reader takes bytes. That gives every
 /// stream its own flow control (transport.md 4.4).
-final class SSHChannelStream: ByteStream, @unchecked Sendable {
-    private let lock = NSLock()
-    private var chunks: [Data] = []
-    private var finished = false
-    private var failure: Error?
-    private var waiter: CheckedContinuation<Data?, Error>?
-    private var channel: Channel?
-    private var closing = false
-    private var counted = false
-    private var ended = false
-    private var stderr = Data()
-    private var exitStatus: Int?
+final class SSHChannelStream: ByteStream, Sendable {
+    private struct State {
+        var chunks: [Data] = []
+        var finished = false
+        var failure: Error?
+        var waiter: CheckedContinuation<Data?, Error>?
+        var channel: Channel?
+        var closing = false
+        var counted = false
+        var ended = false
+        var stderr = Data()
+        var exitStatus: Int?
+        var sawData = false
+    }
+
+    private let state = Mutex(State())
     private let onEnd: @Sendable () -> Void
     private let onFirstData: (@Sendable () -> Void)?
-    private var sawData = false
 
     init(onEnd: @escaping @Sendable () -> Void, onFirstData: (@Sendable () -> Void)? = nil) {
         self.onEnd = onEnd
         self.onFirstData = onFirstData
     }
 
-    /// The handler to put in the child channel's pipeline.
+    /// The handler to put in the child channel's pipeline. Call it on the
+    /// child's event loop: the handler stays there.
     func makeHandler(execReply: EventLoopPromise<Void>) -> ChannelHandler {
         Handler(stream: self, execReply: execReply)
     }
 
     /// Called once the remote command runs. Counts the stream as open.
     func attach(_ ch: Channel) {
-        lock.withLock {
-            channel = ch
-            if !ended {
-                counted = true
+        state.withLock { s in
+            s.channel = ch
+            if !s.ended {
+                s.counted = true
                 OpenStreams.opened()
             }
         }
     }
 
     var diagnostics: String? {
-        lock.withLock {
+        state.withLock { s in
             var parts: [String] = []
-            let s = String(decoding: stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !s.isEmpty { parts.append(s) }
-            if let e = exitStatus { parts.append("remote command exited with status \(e)") }
+            let text = String(decoding: s.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { parts.append(text) }
+            if let e = s.exitStatus { parts.append("remote command exited with status \(e)") }
             return parts.isEmpty ? nil : parts.joined(separator: "; ")
         }
     }
 
     func read() async throws -> Data? {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Data?, Error>) in
-            lock.lock()
-            if !chunks.isEmpty {
-                let d = chunks.removeFirst()
-                lock.unlock()
-                c.resume(returning: d)
-            } else if finished {
-                let f = failure
-                lock.unlock()
-                if let f { c.resume(throwing: f) } else { c.resume(returning: nil) }
-            } else {
-                waiter = c
-                let ch = channel
-                lock.unlock()
-                ch?.read()
+            enum Next { case data(Data), end(Error?), wait(Channel?) }
+            let next: Next = state.withLock { s in
+                if !s.chunks.isEmpty { return .data(s.chunks.removeFirst()) }
+                if s.finished { return .end(s.failure) }
+                s.waiter = c
+                return .wait(s.channel)
+            }
+            switch next {
+            case .data(let d): c.resume(returning: d)
+            case .end(let f?): c.resume(throwing: f)
+            case .end(nil): c.resume(returning: nil)
+            case .wait(let ch): ch?.read()
             }
         }
     }
 
     func write(_ data: Data) async throws {
-        let ch: Channel? = lock.withLock { closing || finished ? nil : channel }
+        let ch: Channel? = state.withLock { $0.closing || $0.finished ? nil : $0.channel }
         guard let ch else { throw TransportError("stream closed") }
         let buf = ch.allocator.buffer(bytes: data)
         do {
@@ -88,75 +91,70 @@ final class SSHChannelStream: ByteStream, @unchecked Sendable {
 
     /// Ends the remote command's input (SSH EOF); output stays readable.
     func closeWrite() async {
-        let ch: Channel? = lock.withLock { closing || finished ? nil : channel }
+        let ch: Channel? = state.withLock { $0.closing || $0.finished ? nil : $0.channel }
         try? await ch?.close(mode: .output).get()
     }
 
     /// The remote command's exit status, once the host sent it.
-    var exit: Int? { lock.withLock { exitStatus } }
+    var exit: Int? { state.withLock { $0.exitStatus } }
 
     func close() {
-        lock.lock()
-        if closing {
-            lock.unlock()
-            return
+        let taken: (waiter: CheckedContinuation<Data?, Error>?, channel: Channel?)? = state.withLock { s in
+            if s.closing { return nil }
+            s.closing = true
+            let w = s.waiter
+            s.waiter = nil
+            s.finished = true
+            s.failure = nil
+            s.chunks.removeAll()
+            return (w, s.channel)
         }
-        closing = true
-        let w = waiter
-        waiter = nil
-        finished = true
-        failure = nil
-        chunks.removeAll()
-        let ch = channel
-        lock.unlock()
-        w?.resume(returning: nil)
-        ch?.close(promise: nil)
+        guard let taken else { return }
+        taken.waiter?.resume(returning: nil)
+        taken.channel?.close(promise: nil)
     }
 
     // MARK: - From the handler (on the event loop)
 
     fileprivate func deliver(_ d: Data) {
-        lock.lock()
-        let first = !sawData
-        sawData = true
-        if finished {
-            lock.unlock()
-            return
+        let (first, w, keep): (Bool, CheckedContinuation<Data?, Error>?, Bool) = state.withLock { s in
+            let first = !s.sawData
+            s.sawData = true
+            if s.finished { return (first, nil, false) }
+            if let w = s.waiter {
+                s.waiter = nil
+                return (first, w, true)
+            }
+            s.chunks.append(d)
+            return (first, nil, true)
         }
-        if let w = waiter {
-            waiter = nil
-            lock.unlock()
-            w.resume(returning: d)
-        } else {
-            chunks.append(d)
-            lock.unlock()
-        }
+        guard keep else { return }
+        w?.resume(returning: d)
         if first { onFirstData?() }
     }
 
     fileprivate func appendStderr(_ d: Data) {
-        lock.withLock {
-            stderr.append(d)
-            if stderr.count > 2048 { stderr = stderr.suffix(2048) }
+        state.withLock { s in
+            s.stderr.append(d)
+            if s.stderr.count > 2048 { s.stderr = s.stderr.suffix(2048) }
         }
     }
 
     fileprivate func setExit(_ status: Int) {
-        lock.withLock { exitStatus = status }
+        state.withLock { $0.exitStatus = status }
     }
 
     /// End of input (remote EOF) or a failure. Bytes already queued stay readable.
     fileprivate func finish(_ error: Error?) {
-        lock.lock()
-        if finished {
-            lock.unlock()
-            return
+        let w: CheckedContinuation<Data?, Error>? = state.withLock { s in
+            if s.finished { return nil }
+            s.finished = true
+            s.failure = error
+            guard s.chunks.isEmpty else { return nil }
+            let w = s.waiter
+            s.waiter = nil
+            return w
         }
-        finished = true
-        failure = error
-        let w = chunks.isEmpty ? waiter : nil
-        if w != nil { waiter = nil }
-        lock.unlock()
         if let w {
             if let error { w.resume(throwing: error) } else { w.resume(returning: nil) }
         }
@@ -165,10 +163,10 @@ final class SSHChannelStream: ByteStream, @unchecked Sendable {
     /// The channel closed. Runs once.
     fileprivate func channelEnded() {
         finish(nil)
-        let wasCounted: Bool = lock.withLock {
-            guard !ended else { return false }
-            ended = true
-            return counted
+        let wasCounted: Bool = state.withLock { s in
+            guard !s.ended else { return false }
+            s.ended = true
+            return s.counted
         }
         if wasCounted { OpenStreams.closed() }
         onEnd()

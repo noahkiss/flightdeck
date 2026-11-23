@@ -106,21 +106,9 @@ public struct ConsoleCardList: Equatable, Sendable {
 }
 
 enum ConsoleTime {
-    // Built once: a running card's time is drawn every second. The
-    // formatter is thread-safe for parsing.
-    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    nonisolated(unsafe) private static let whole: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
+    // A running card's time is drawn every second: ISOTime keeps one formatter.
     static func parse(_ s: String) -> Date? {
-        fractional.date(from: s) ?? whole.date(from: s)
+        ISOTime.parse(s)
     }
 
     /// "0.1s" and "2.0s" under 10 s (tenths, rounded down), "12s", "3m 12s",

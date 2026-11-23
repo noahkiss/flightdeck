@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import Synchronization
 
 /// One call to a hab on a connection of its own: open, hello, the call,
 /// close. For work outside the visible app, such as a notification action in
@@ -72,19 +73,22 @@ public enum HabOneShot {
 }
 
 /// The first outcome wins; later ones are dropped.
-final class OneShotRace<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cont: CheckedContinuation<T, Error>?
-    private var early: Swift.Result<T, Error>?
-    private var done = false
+final class OneShotRace<T: Sendable>: Sendable {
+    private struct State {
+        var cont: CheckedContinuation<T, Error>?
+        var early: Swift.Result<T, Error>?
+        var done = false
+    }
+
+    private let state = Mutex(State())
 
     func begin(_ c: CheckedContinuation<T, Error>) {
-        let r: Swift.Result<T, Error>? = lock.withLock {
-            if let e = early {
-                early = nil
+        let r: Swift.Result<T, Error>? = state.withLock { s in
+            if let e = s.early {
+                s.early = nil
                 return e
             }
-            cont = c
+            s.cont = c
             return nil
         }
         if let r { c.resume(with: r) }
@@ -93,12 +97,12 @@ final class OneShotRace<T: Sendable>: @unchecked Sendable {
     /// Returns true when this outcome won.
     @discardableResult
     func finish(_ r: Swift.Result<T, Error>) -> Bool {
-        let (won, c): (Bool, CheckedContinuation<T, Error>?) = lock.withLock {
-            if done { return (false, nil) }
-            done = true
-            if cont == nil { early = r }
-            let c = cont
-            cont = nil
+        let (won, c): (Bool, CheckedContinuation<T, Error>?) = state.withLock { s in
+            if s.done { return (false, nil) }
+            s.done = true
+            if s.cont == nil { s.early = r }
+            let c = s.cont
+            s.cont = nil
             return (true, c)
         }
         c?.resume(with: r)
