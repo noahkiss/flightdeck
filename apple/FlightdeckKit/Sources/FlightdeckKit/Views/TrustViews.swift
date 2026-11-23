@@ -23,9 +23,10 @@ struct TrustCardView: View {
                 .foregroundStyle(.secondary)
             actions
         }
-        .padding(8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        // On glass, as the request card: the messages scroll under the composer bar (app.md 4.2).
+        .glassEffect(.regular.tint(.orange.opacity(0.15)), in: .rect(cornerRadius: 16))
     }
 
     @ViewBuilder

@@ -43,6 +43,8 @@ struct CapcomChipStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
+            // On glass: the chips sit in the composer's bar, over the messages (app.md 4.2).
+            GlassEffectContainer(spacing: 6) {
             HStack(spacing: 6) {
                 ForEach(model.pending, id: \.self) { item in
                     HStack(spacing: 4) {
@@ -61,10 +63,12 @@ struct CapcomChipStrip: View {
                         .accessibilityLabel("Remove \(item.title)")
                     }
                     .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(.quaternary.opacity(0.6), in: Capsule())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .glassEffect(.regular, in: .capsule)
                 }
+            }
+            .padding(.vertical, 2)
             }
         }
     }

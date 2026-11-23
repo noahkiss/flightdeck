@@ -347,6 +347,7 @@ public struct SessionView: View {
         .navigationSubtitle(ChatHeader.line(model.context, round: true))
         .toolbar {
             // The switch sits with the controls, so the bar keeps the session's title.
+            // Three glass groups (app.md 3.8): the switch, the session's actions, the More menu.
             if !sideBySide, !model.context.isCapcomService {
                 ToolbarItem(placement: .primaryAction) {
                     Picker("View", selection: $mode) {
@@ -355,6 +356,7 @@ public struct SessionView: View {
                     .pickerStyle(.segmented)
                     .fixedSize()
                 }
+                ToolbarSpacer(.fixed, placement: .primaryAction)
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 if model.context.isCapcom { newConversationButton }
@@ -363,6 +365,7 @@ public struct SessionView: View {
                     withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
                 }
             }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
             if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
                 ToolbarItem(placement: .secondaryAction) { consoleButton }
             }

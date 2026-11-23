@@ -57,6 +57,7 @@ struct CapcomThreadView: View {
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .overlay { placeholder.allowsHitTesting(false) }
             .modifier(DismissesKeyboard())
+            .modifier(FollowsBottomInset(atBottom: atBottom, proxy: proxy, bottom: Self.bottom))
             .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
                 switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
                 case .none: break
@@ -71,20 +72,24 @@ struct CapcomThreadView: View {
                 if new > old { proxy.scrollTo(Self.bottom, anchor: .bottom) }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 4) {
+        // Over the composer, in a bar of its own: the thread scrolls under it (app.md 4.2).
+        .safeAreaBar(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
                 if let n = thread.notice {
-                    Text(n).font(.caption).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(n).font(.caption).foregroundStyle(.red).composerNote()
                 }
                 if let line = CapcomThread.proposalsLine(thread.proposals?.count ?? 0) {
                     Button { showProposals = true } label: {
                         Label(line, systemImage: "tray.full")
                             .font(.callout)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
                     }
                     .buttonStyle(.borderless)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, thread.notice == nil && (thread.proposals ?? []).isEmpty ? 0 : 6)
         }
