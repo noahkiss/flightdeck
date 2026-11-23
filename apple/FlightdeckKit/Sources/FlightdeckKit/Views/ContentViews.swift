@@ -325,6 +325,7 @@ struct DocumentBody: View {
                 let md = model.markdown(for: item, data: data)
                 VStack(alignment: .leading, spacing: 4) {
                     MarkdownBody(text: folded ? md.folded : md.text)
+                        .textSelection(.enabled)
                     if folded && md.cut {
                         Text("…").foregroundStyle(.secondary)
                     }

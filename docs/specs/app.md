@@ -889,7 +889,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   geometry, a jump-to-latest button and an unread divider.
 - **Shared model.** Views count on `start` and `stop`; the listener stops when the last view
   leaves. Rows are kept in the model and rebuilt per changed message, so a long history does not
-  parse its Markdown and tool input again on each event.
+  parse its tool input again on each event. A row holds its Markdown as text; the row's view
+  parses it when the text changes.
 - **No reader yet.** `unavailable` from `chat.page` shows the hab's hint. The model tries again
   when the agent state names a native session or a harness. An empty page with an empty cursor
   shows "waiting for the first message".
@@ -922,12 +923,14 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   swift-markdown (CommonMark: lists, tables, quotes, links, code). Ours on top of it: the type
   scale (heading 1 `title3` bold, heading 2 `headline`, the rest `subheadline` bold), the code
   block (no soft wrap, the side-scroll cue of 4.11, a language label and a Copy button), and
-  images. Agent text is not trusted, so an `http` or `https` image never loads by itself: it
+  images. Not built: syntax colours in code blocks. Our code block style replaces the library's
+  highlighted one, so Highlightr is linked but unused; colours would come from it. Agent text is not trusted, so an `http` or `https` image never loads by itself: it
   shows as a link with its alt text, and a tap opens it in the browser. The chat reads code
   blocks and folds by blocks with swift-markdown, the same parser, so a code block it copies is
   the one on screen. A row parses its whole text on each change. The library's streaming
-  reader is not used: its first frame is empty, which would jump the list, and the harness
-  transcripts hold whole messages, so a reply arrives whole.
+  reader is not used: its first frame is empty, which would jump the list. Claude Code and Codex
+  transcripts hold whole messages, so their replies arrive whole; an opencode part can grow
+  over a few updates, each parsed whole.
 - **Tool cards** are folded, under a one-sentence header (4.11). Reads and searches fold to one
   line. Shell tools show the exact command, edits a diff with a file header and line numbers
   where known, `Write` its content as added lines, Codex's `apply_patch` each file's diff, other
@@ -1452,7 +1455,8 @@ one answer, the expiry, answered elsewhere).
   choices are allow, deny and answer), so today the row holds Deny and Allow. A plan keeps
   Keep planning and Approve plan.
 - **Tell it what to do.** Under Deny and Allow, a permission offers "Tell it what to do", as
-  Codex Remote does: it denies, then focuses the composer, whose draft stays as it was. The
+  Codex Remote does: it denies, then focuses the composer. The draft is not prefilled: it stays
+  as the owner left it, and the line after the answer says the request was denied. The
   owner's words go as the next message once the agent is at its prompt. A denial carries no
   text in `approval.answer` (its `text` counts only with choice `answer`), so the words cannot
   ride on the denial itself. Not built: the same action from the push and the Live Activity.
@@ -1518,7 +1522,7 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
 
 | # | Behaviour | Built with | State |
 |---|---|---|---|
-| K1 | Dragging the thread down hides the keyboard; the keyboard follows the finger and the composer rides on it | `scrollDismissesKeyboard(.interactively)`, the composer in `safeAreaBar` | Built; the composer's ride not verified on a device (4.2) |
+| K1 | Dragging the thread down hides the keyboard; the keyboard follows the finger and the composer rides on it | `scrollDismissesKeyboard(.interactively)`, the composer in `safeAreaBar` | The dismissal is built. The ride has no code of its own: it rests on the system's keyboard safe area, not verified on a device (4.2) |
 | K2 | Scrolling up to read does not hide the keyboard by surprise | The same modifier | Built |
 | S1 | The thread opens at the newest message | `defaultScrollAnchor(.bottom)` | Built |
 | S2 | At the bottom, streamed text and growing tool cards stay pinned | `defaultScrollAnchor(.bottom, for: .sizeChanges)`, and `ChatFollow` going back to the bottom once no finger moves the thread | Built, both threads |
@@ -1560,6 +1564,9 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
   none counted). The button is a glass control over the bottom of the thread; a tap, or
   Cmd-Down, scrolls to the newest row with a short animation. Rows the owner sends always show
   and clear the count. An older page and a row that changes in place count nothing.
+- **Debug builds** take `-FlightdeckShowFollow YES`: a line over the thread shows the distance
+  from the bottom and the follow state, and the jump button stays on, so a screenshot shows what
+  the geometry reads.
 - **The unread divider.** The app remembers, per thread, the last row the thread showed at its
   bottom, for as long as the app runs. Opening the thread again draws "New" above the first row
   after it, at the row level, so the rows themselves do not change. The divider stays for the

@@ -17,9 +17,12 @@ enum ComposerKeys {
     static func insertingNewline(_ text: String, at selection: TextSelection?) -> (String, TextSelection) {
         var out = text
         var range = out.endIndex..<out.endIndex
+        // A selection left from text the app rewrote (a send, dictation) may not fit this text:
+        // then the line goes at the end.
         if case .selection(let r)? = selection?.indices,
-           r.lowerBound >= out.startIndex, r.upperBound <= out.endIndex {
-            range = r
+           r.lowerBound >= out.startIndex, r.upperBound <= out.endIndex,
+           let lo = String.Index(r.lowerBound, within: out), let hi = String.Index(r.upperBound, within: out) {
+            range = lo..<hi
         }
         let offset = out.distance(from: out.startIndex, to: range.lowerBound)
         out.replaceSubrange(range, with: "\n")

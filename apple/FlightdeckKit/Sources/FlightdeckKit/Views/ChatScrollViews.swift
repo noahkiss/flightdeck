@@ -22,6 +22,12 @@ struct ChatScroll<Content: View>: View {
     @State private var last = LastDistance()
     @State private var divider: String?
     @State private var dividerDecided = false
+    #if DEBUG
+    /// Debug builds only: `-FlightdeckShowFollow YES` prints the distance and the follow state
+    /// over the thread and keeps the jump button on, so a screenshot shows what the geometry reads.
+    private static var showFollow: Bool { UserDefaults.standard.bool(forKey: "FlightdeckShowFollow") }
+    @State private var shownDistance: CGFloat = 0
+    #endif
 
     var body: some View {
         ScrollView {
@@ -55,6 +61,9 @@ struct ChatScroll<Content: View>: View {
                                 topInset: g.contentInsets.top, bottomInset: g.contentInsets.bottom).rounded()
         } action: { _, d in
             last.value = d
+            #if DEBUG
+            if Self.showFollow { shownDistance = d }
+            #endif
             update { $0.scrolled(distance: d, motion: motion) }
         }
         .onChange(of: rowIDs, initial: true) { old, new in
@@ -72,8 +81,19 @@ struct ChatScroll<Content: View>: View {
         .onChange(of: follow.following) { _, on in
             if on { ChatReadMarks.shared.saw(rowIDs.last, in: readKey) }
         }
+        #if DEBUG
+        .overlay(alignment: .top) {
+            if Self.showFollow {
+                Text("distance \(Int(shownDistance)) · \(follow.following ? "following" : "reading") · unread \(follow.unread)")
+                    .font(.caption.monospaced())
+                    .padding(6)
+                    .background(.yellow.opacity(0.8), in: Capsule())
+                    .allowsHitTesting(false)
+            }
+        }
+        #endif
         .overlay(alignment: .bottom) {
-            if follow.showsJump {
+            if follow.showsJump || debugJump {
                 JumpToLatest(unread: follow.unread) {
                     update(animated: true) { $0.jump() }
                 }
@@ -104,6 +124,14 @@ struct ChatScroll<Content: View>: View {
         case .keep(let id):
             position.scrollTo(id: id, anchor: .top)
         }
+    }
+
+    private var debugJump: Bool {
+        #if DEBUG
+        Self.showFollow
+        #else
+        false
+        #endif
     }
 
     private final class LastDistance {

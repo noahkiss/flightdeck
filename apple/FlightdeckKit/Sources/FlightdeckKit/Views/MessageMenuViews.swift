@@ -127,7 +127,9 @@ struct SelectTextSheet: View {
                 }
             }
         }
+        #if os(macOS)
         .frame(minWidth: 420, minHeight: 360)
+        #endif
         .presentationDetents([.medium, .large])
     }
 }

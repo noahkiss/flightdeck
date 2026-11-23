@@ -72,8 +72,9 @@ final class ChatFollowTests: XCTestCase {
         // 1000 pt of rows in a 600 pt view, under an 80 pt composer: the bottom offset is 480.
         XCTAssertEqual(ChatFollow.distance(contentHeight: 1000, offsetY: 480, containerHeight: 600, topInset: 0, bottomInset: 80), 0)
         XCTAssertEqual(ChatFollow.distance(contentHeight: 1000, offsetY: 400, containerHeight: 600, topInset: 0, bottomInset: 80), 80)
-        // A short thread sits at its top: at the bottom too.
+        // A short thread is at the bottom wherever it rests: anchored low or high.
         XCTAssertEqual(ChatFollow.distance(contentHeight: 100, offsetY: -50, containerHeight: 600, topInset: 50, bottomInset: 80), 0)
+        XCTAssertEqual(ChatFollow.distance(contentHeight: 100, offsetY: -420, containerHeight: 600, topInset: 50, bottomInset: 80), 0)
     }
 
     @MainActor

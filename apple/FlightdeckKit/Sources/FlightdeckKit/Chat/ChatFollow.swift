@@ -103,8 +103,9 @@ public struct ChatFollow: Equatable, Sendable {
 
     /// How far the visible bottom is above the end of the content, the bottom inset included.
     public static func distance(contentHeight: CGFloat, offsetY: CGFloat, containerHeight: CGFloat, topInset: CGFloat, bottomInset: CGFloat) -> CGFloat {
-        let maxOffset = max(-topInset, contentHeight + bottomInset - containerHeight)
-        return maxOffset - offsetY
+        // Rows that fit the visible area are always at the bottom, wherever they rest.
+        if contentHeight + topInset + bottomInset <= containerHeight { return 0 }
+        return contentHeight + bottomInset - containerHeight - offsetY
     }
 }
 

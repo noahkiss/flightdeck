@@ -855,6 +855,10 @@ struct ComposerView: View {
                     }
                     return .handled
                 }
+                #if os(macOS)
+                // The field's own Return, should a key press not reach the handler above.
+                .onSubmit { send() }
+                #endif
             if showsDictation {
                 DictationButton(dictation: dictation, start: startDictation, stop: stopDictation)
                     .disabled(mode == .off && dictation == nil)
@@ -947,6 +951,7 @@ struct ComposerView: View {
             Task { await d.cancel() }
         }
         draft = ""
+        selection = nil
         attachments = []
         attachNotice = nil
     }
