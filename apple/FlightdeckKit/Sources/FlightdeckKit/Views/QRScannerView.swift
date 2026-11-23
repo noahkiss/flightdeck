@@ -42,8 +42,11 @@ struct QRScannerView: UIViewControllerRepresentable {
             case .authorized:
                 configure()
             case .notDetermined:
-                AVCaptureDevice.requestAccess(for: .video) { ok in
-                    DispatchQueue.main.async { ok ? self.configure() : self.show("Camera access is off. Paste the code below.") }
+                // The async form: a completion block written here would be main-actor
+                // isolated, and AVFoundation calls it on another thread.
+                Task {
+                    let ok = await AVCaptureDevice.requestAccess(for: .video)
+                    ok ? configure() : show("Camera access is off. Paste the code below.")
                 }
             default:
                 show("Camera access is off. Turn it on in Settings, or paste the code below.")
