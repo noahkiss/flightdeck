@@ -1351,7 +1351,7 @@ SOFTWARE.
 
 ==============================================================================
 fluidaudio
-Version: 0.18.3
+Version: 0.18.4
 Source: https://github.com/FluidInference/FluidAudio
 Licence: Apache-2.0; its third-party licences follow
 In: Flightdeck (Swift package)
