@@ -222,7 +222,7 @@ library with `#cgo pkg-config: --static libghostty-vt-static`, and only the Make
 **What go-ci runs as it is, and what it needs.** go-ci sets up Go from `go.mod` (the
 `toolchain` line), caches modules keyed on `go.sum`, checks `gofmt`, checks `go generate`, and runs
 commands in order. That covers `make test-pure`, `make check-pure`, `make race` and the generate
-check unchanged. The libghostty half (`make test`, `make vet`, `make build`) needs zig 0.17.0 and
+check unchanged. The libghostty half (`make test`, `make vet`, `make build`) needs zig 0.17.1 and
 the built library. Without a cache it rebuilds libghostty every run, a few minutes. Extensions
 E1 and E2 (11.2) close the gap. Until they merge, the job stays inline, with the same
 steps in the same order.

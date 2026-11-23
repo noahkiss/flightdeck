@@ -4,7 +4,7 @@ ZIG ?= zig
 # libghostty-vt, pinned to the Ghostty commit that the go.mitchellh.com/libghostty version in
 # go.mod was built against, or a later one with the same C headers (docs/specs/ci-release.md 7.9).
 # Bump both together.
-GHOSTTY_COMMIT := a622196c930138f312884382ab784e45b9ab653b
+GHOSTTY_COMMIT := 74d1983f27eb004ef442c8353bd703eba19c93b6
 GHOSTTY_SRC := build/ghostty-src
 GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
 # Ghostty's dependencies, fetched before the build, and the zig cache of the offline build.
