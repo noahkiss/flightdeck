@@ -31,7 +31,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.105.0"),
         // Parakeet TDT on Core ML, as the on-device spike measured it. Pre-1.0:
         // pin it exactly.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.3"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.4"),
     ],
     targets: [
         .target(
