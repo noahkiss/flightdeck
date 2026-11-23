@@ -205,7 +205,7 @@ helper), `internal/control/speech.go` (the methods). Layout and build: `layout.m
 helper.
 
 - **The helper.** `gff-hab-speech` links sherpa-onnx's C API from its pinned static release
-  (2.0.2) and libopus from the system, through cgo. On macOS libopus is linked statically (the
+  (2.0.3) and libopus from the system, through cgo. On macOS libopus is linked statically (the
   system's `libopus.a`): under the hardened runtime, library validation refuses a library signed
   by another team or ad hoc, so a signed helper may load system libraries only. It builds only with the `speech` tag
   (`make speech-helper`), so `make check-pure`, `make build` and `make test-pure` never compile it.
