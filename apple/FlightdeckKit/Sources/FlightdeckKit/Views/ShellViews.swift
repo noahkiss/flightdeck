@@ -218,6 +218,7 @@ struct SessionsTab: View {
     /// The board's search and host scope (app.md 3.6).
     @State private var query = ""
     @State private var scope: BoardSearchScope = .all
+    @State private var searchShown = false
 
     var body: some View {
         if sizeClass == .compact {
@@ -252,8 +253,10 @@ struct SessionsTab: View {
         SessionsListView(fleet: fleet, opened: $opened, selectable: selectable, newSession: $newSession, query: query, scope: scope)
             .navigationTitle("Sessions")
             .navigationBarTitleDisplayMode(.large)
-            .searchable(text: $query, prompt: "Search sessions")
+            .searchable(text: $query, isPresented: $searchShown, prompt: "Search sessions")
             .modifier(HostScopes(board: fleet.board, scope: $scope))
+            // The scopes show only while the search is open; closing it drops the scope too.
+            .onChange(of: searchShown) { _, on in if !on { scope = .all } }
             // iPhone: the field waits in the bottom toolbar as a button until tapped.
             .searchToolbarBehavior(sizeClass == .compact ? .minimize : .automatic)
             .toolbar {

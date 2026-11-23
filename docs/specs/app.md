@@ -335,9 +335,13 @@ Code: `Board/BoardSearch.swift`, the search in `Views/ShellViews.swift` (iPhone 
   the row's context line. Every word the owner types must match somewhere in the row. It works
   offline, from the cache.
 - **Host scopes.** With more than one hab, scope buttons under the field filter by computer:
-  All, then each hab by label (`searchScopes`). They show while the search is open.
-- The filter applies to session rows. Confirmation cards and group rows match on their title.
-  The sections keep their order and their counts follow the filter.
+  All, then each hab by label (`searchScopes`). On iPhone and iPad they show while the search
+  is open, and closing the search returns the scope to All, so no hidden scope keeps filtering.
+  On the Mac they stay under the field.
+- The filter applies to session rows. On iPhone and iPad, confirmation cards and group rows match
+  on their title and hab. The Mac board shows only the matching session rows while it searches:
+  the Capcom row, confirmations, groups and rounds step aside. The sections keep their order and
+  their counts follow the filter. The query outlives opening a session.
 - **Later:** branches (the hab sends them with the sidebar, 3.5); a Pinned scope and a pin
   action on rows; a Cmd-K palette over sessions and commands (the Mac and iPad stage); full-text
   search over chat messages, run on each hab by its transcript reader (`chat.search`, 17).
@@ -560,8 +564,9 @@ Code: `Board/SessionRestore.swift`, the scene storage in `Views/ShellViews.swift
 `Views/BoardViews.swift`. Tests: `SessionRestoreTests`.
 
 - Each window keeps its tab and its open session (`SceneStorage`): the tab by name, the session
-  by its row's id (hab and session). After iOS ends the app in the background, or the Mac app
-  restarts, the window opens on the same tab.
+  by its row's id (hab and session). After iOS ends the app in the background, the window opens
+  on the same tab. On the Mac, the system restores a window's scene storage only when it
+  restores the window itself (the "Close windows when quitting an app" setting off).
 - The open session opens again as a tap on its row opens it, once the board lists the row,
   within one minute. A row that comes later opens nothing.
 - **Any other open wins.** A notification, a round, a group member, a sent file, a started

@@ -34,8 +34,10 @@ public final class SessionActionCenter {
     /// The welcome capability that says a hab serves `session.restart`.
     public nonisolated static let restartCapability = "session-restart"
 
-    /// The row whose Close question is up.
-    public var closing: BoardRow?
+    /// The row the Close question asks about. It stays set while the question dismisses, so
+    /// the question's words do not blank; `closingShown` says whether it is up.
+    public private(set) var closing: BoardRow?
+    public var closingShown = false
     /// The row whose Rename alert is up, and the name in its field.
     public var renaming: BoardRow?
     public var newName = ""
@@ -99,7 +101,10 @@ public final class SessionActionCenter {
 
     // MARK: - Starting an action
 
-    public func askClose(_ row: BoardRow) { closing = row }
+    public func askClose(_ row: BoardRow) {
+        closing = row
+        closingShown = true
+    }
 
     public func askRename(_ row: BoardRow) {
         newName = row.name ?? ""
@@ -111,7 +116,7 @@ public final class SessionActionCenter {
     /// Close, after the question's yes. `asked` is the row as the question showed it. Before
     /// an End goes out the row is read again: a program that ended meanwhile gets no call.
     public func close(_ asked: BoardRow) async {
-        closing = nil
+        closingShown = false
         let kind = Self.closeKind(asked)
         let now = board.rows.first { $0.id == asked.id }
         if kind == .end, now == nil || now.map(Self.closeKind) != .end {

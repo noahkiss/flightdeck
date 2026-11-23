@@ -75,6 +75,9 @@ public struct BoardScreen: View {
     @State private var capcomShown = false
     /// The open session's row id, or "capcom", kept per window (app.md 3.12).
     @SceneStorage("flightdeck.board.open") private var savedOpen = ""
+    /// The board's search and host scope (app.md 3.6), here so they outlive a switch of layout.
+    @State private var query = ""
+    @State private var scope: BoardSearchScope = .all
     @State private var showConnections = false
     /// The New session form, while it is open (app.md 3.10).
     @State private var newSession: NewSessionDraft?
@@ -153,7 +156,7 @@ public struct BoardScreen: View {
     private var layout: some View {
             if compact {
                 NavigationStack {
-                    BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, openRequest: openRequest, openCapcom: openCapcom)
+                    BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom)
                         .usageFooter(fleet?.usage)
                         .navigationTitle("Flightdeck")
                         .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
@@ -187,7 +190,7 @@ public struct BoardScreen: View {
             } else if let fleet, capcomShown {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, actions: fleet.sessionActions, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                             .usageFooter(fleet.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -197,7 +200,7 @@ public struct BoardScreen: View {
             } else if fleet != nil, let row = opened {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -208,7 +211,7 @@ public struct BoardScreen: View {
                 // The session cards column (app.md 3.3) returns when live previews exist.
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -337,9 +340,18 @@ struct HostScopes: ViewModifier {
     let board: Board
     @Binding var scope: BoardSearchScope
 
+    /// iPhone and iPad: while the search is open. Mac: always, under the toolbar's field.
+    private static var activation: SearchScopeActivation {
+        #if os(iOS)
+        return .onSearchPresentation
+        #else
+        return .automatic
+        #endif
+    }
+
     func body(content: Content) -> some View {
         if board.habs.count > 1 {
-            content.searchScopes($scope, activation: .onSearchPresentation) {
+            content.searchScopes($scope, activation: Self.activation) {
                 Text("All").tag(BoardSearchScope.all)
                 ForEach(board.habs) { h in Text(h.label).tag(BoardSearchScope.hab(h.id)) }
             }
@@ -410,6 +422,9 @@ struct BoardList: View {
     @Binding var opened: BoardRow?
     /// Close, rename and restart from a row (app.md 3.11); nil offers none.
     var actions: SessionActionCenter? = nil
+    /// The board's search and host scope (app.md 3.6), held by the screen.
+    @Binding var query: String
+    @Binding var scope: BoardSearchScope
     /// Returns true when the row opened the approval sheet instead.
     var openRequest: (BoardRow) -> Bool = { _ in false }
     /// Opens the Capcom view from its row; nil shows no row.
@@ -421,9 +436,7 @@ struct BoardList: View {
     @Environment(\.rounds) private var rounds
     @Environment(\.groups) private var groups
 
-    /// The board's search and host scope (app.md 3.6).
-    @State private var query = ""
-    @State private var scope: BoardSearchScope = .all
+    @State private var searchShown = false
 
     private var searching: Bool { BoardSearch.isActive(query: query, scope: scope) }
 
@@ -502,8 +515,12 @@ struct BoardList: View {
             .navigationDestination(for: RoundRow.self) { row in
                 if let rounds { RoundPage(center: rounds, habID: row.habID, roundID: row.round.id) }
             }
-            .searchable(text: $query, prompt: "Search sessions")
+            .searchable(text: $query, isPresented: $searchShown, prompt: "Search sessions")
             .modifier(HostScopes(board: board, scope: $scope))
+            #if os(iOS)
+            // The scopes show only while the search is open; closing it drops the scope too.
+            .onChange(of: searchShown) { _, on in if !on { scope = .all } }
+            #endif
             .overlay {
                 if searching, sections.isEmpty {
                     ContentUnavailableView("No matches", systemImage: "magnifyingglass",

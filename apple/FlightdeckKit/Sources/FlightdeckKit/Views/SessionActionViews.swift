@@ -73,11 +73,11 @@ struct SessionActionsHost: ViewModifier {
     func body(content: Content) -> some View {
         let q = center.closing.map(SessionActionCenter.question)
         content
-            .confirmationDialog(q?.title ?? "", isPresented: present(\.closing), titleVisibility: .visible, presenting: center.closing) { row in
-                Button(q?.button ?? "Close", role: .destructive) { Task { await center.close(row) } }
+            .confirmationDialog(q?.title ?? "", isPresented: $center.closingShown, titleVisibility: .visible, presenting: center.closing) { row in
+                Button(SessionActionCenter.question(row).button, role: .destructive) { Task { await center.close(row) } }
                 Button("Cancel", role: .cancel) {}
-            } message: { _ in
-                Text(q?.message ?? "")
+            } message: { row in
+                Text(SessionActionCenter.question(row).message)
             }
             .alert("Rename session", isPresented: present(\.renaming), presenting: center.renaming) { row in
                 TextField("Name", text: $center.newName)
