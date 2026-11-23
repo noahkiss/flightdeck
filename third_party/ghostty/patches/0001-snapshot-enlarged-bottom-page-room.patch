@@ -14,11 +14,11 @@ destination with more rows.
 Applied by `make libghostty` to the pinned Ghostty commit (GHOSTTY_COMMIT).
 
 diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
-index 8528d7c..a24cb82 100644
+index 122a3e6dc477..8f5f5565c7e4 100644
 --- a/src/terminal/PageList.zig
 +++ b/src/terminal/PageList.zig
-@@ -4927,22 +4927,28 @@ pub fn increaseCapacity(
-
+@@ -5088,22 +5088,28 @@ pub fn increaseCapacity(
+ 
  /// Returns `cap` with more rows, enough to fill the memory a pooled page
  /// takes up anyway. If a page with `cap` is too large for the pool, this
 -/// returns `cap` unchanged.

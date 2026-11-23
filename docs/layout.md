@@ -153,7 +153,7 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
   scrollback. The patches' id (`none` without patches) is in the stamp file and in CI's cache key
   (`make ghostty-id`), so a changed patch rebuilds the library. On a `GHOSTTY_COMMIT` bump, drop a patch the new commit makes unneeded;
   `make libghostty` stops when one no longer applies.
-- **Zig 0.17.0** builds libghostty-vt (pinned in `mise.toml`; the Ghostty commit's
+- **Zig 0.17.1** builds libghostty-vt (pinned in `mise.toml`; the Ghostty commit's
   `minimum_zig_version`). `make libghostty` fetches the pinned commit into `build/ghostty-src`.
   It fetches the library's dependencies into `build/ghostty-pkgs` with Ghostty's
   `nix/build-support/fetch-zig-cache.sh deps/libghostty-vt.txt`, then runs

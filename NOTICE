@@ -856,7 +856,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==============================================================================
 go.mitchellh.com/libghostty
-Version: v0.0.0-20261107144202-b13f277ddcb2
+Version: v0.0.0-20261123035439-5bbe1d0d0990
 Source: https://pkg.go.dev/go.mitchellh.com/libghostty
 Licence: see the text below
 In: gff, gff-hab
@@ -3121,7 +3121,7 @@ In: gff-hab
 
 ==============================================================================
 Ghostty
-Version: a622196c930138f312884382ab784e45b9ab653b
+Version: 74d1983f27eb004ef442c8353bd703eba19c93b6
 Source: https://github.com/ghostty-org/ghostty
 Licence: MIT
 In: gff, gff-hab (libghostty-vt, built with the patches in third_party/ghostty/patches of the Flightdeck repository)
@@ -3152,7 +3152,7 @@ SOFTWARE.
 
 ==============================================================================
 Zig standard library
-Version: 0.17.0
+Version: 0.17.1
 Source: https://ziglang.org
 Licence: MIT
 In: gff, gff-hab (compiled into libghostty-vt)
