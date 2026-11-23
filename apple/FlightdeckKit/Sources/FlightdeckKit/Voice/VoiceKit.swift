@@ -111,14 +111,14 @@ public final class VoiceKit {
     /// Keeps a hab's connection through the background while voice mode is
     /// open (app.md 13.1, 12.1), and lets it go.
     @ObservationIgnored public var hold: @MainActor (_ habID: String, _ on: Bool) -> Void = { _, _ in }
-    /// Apple's live recognizer runs here (26 and later).
+    /// Apple's live recognizer runs here; a test may turn it off.
     public let liveWords: Bool
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
-    public init(settings: VoiceSettingsStore? = nil, parakeet: ParakeetHost? = nil, liveWords: Bool? = nil) {
+    public init(settings: VoiceSettingsStore? = nil, parakeet: ParakeetHost? = nil, liveWords: Bool = true) {
         self.settings = settings ?? VoiceSettingsStore()
         self.parakeet = parakeet ?? ParakeetHost(runtime: nil)
-        self.liveWords = liveWords ?? LiveWords.isSupported
+        self.liveWords = liveWords
         #if os(iOS)
         observers = self.parakeet.observeSystem()
         #endif

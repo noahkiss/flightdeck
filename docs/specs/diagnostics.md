@@ -601,7 +601,7 @@ At start, before it writes its own marker, a process reads the previous one:
 
 ### 6.4 The app (stage 6)
 
-- **MetricKit.** The app subscribes to `MXMetricManager` at launch. iOS 17 and macOS 14 (the
+- **MetricKit.** The app subscribes to `MXMetricManager` at launch. iOS 26.1 and macOS 26 (the
   deployment targets, `apple/project.yml:8-10`) deliver diagnostic payloads (crash, hang, CPU
   exception, disk-write exception) at the next launch. The app stores each payload's JSON in
   `diagnostics/metrickit/`, the last 20 files. Daily metric payloads are not kept.

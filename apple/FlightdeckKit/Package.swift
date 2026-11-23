@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 // FlightdeckKit: the platform-neutral half of the app. The macOS and iOS app
 // targets (and any extension) link this one package. It builds on HabAPI, the
 // generated gff-hab API types in swift/HabAPI, and on libghostty-spm for the
@@ -7,7 +7,7 @@ import PackageDescription
 
 let package = Package(
     name: "FlightdeckKit",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v26), .iOS("26.1")],
     products: [
         .library(name: "FlightdeckKit", targets: ["FlightdeckKit"]),
         // The small part the extensions share with the app (push payload,

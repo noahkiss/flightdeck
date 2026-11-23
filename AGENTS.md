@@ -44,6 +44,9 @@ The repo layout, the API schema and the libghostty and speech-helper builds are 
 
 Go code builds on macOS or Linux; Swift and SwiftUI need a Mac with Xcode.
 
+The app targets iOS and iPadOS 26.1 and macOS 26 at minimum, so new code uses the OS 26 APIs with
+no fallbacks.
+
 | Command | What it does |
 |---|---|
 | `make gen`, `make check-gen` | Regenerate the API schema, Go client and Swift package from `api/`; fail when one is stale |

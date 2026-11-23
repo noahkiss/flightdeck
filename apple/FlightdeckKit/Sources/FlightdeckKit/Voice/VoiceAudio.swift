@@ -6,7 +6,7 @@ import Speech
 /// `AVAudioEngine` with voice processing (echo cancellation), so the app's
 /// own speech, played through the same engine, does not reach the
 /// recognizer or start a barge-in. Apple's SpeechAnalyzer gives the live
-/// words (iOS and macOS 26 and later).
+/// words.
 @MainActor
 public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     public let events: AsyncStream<VoiceInputEvent>
@@ -36,7 +36,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         tapState = TapState(sink: sink)
     }
 
-    public var hasLiveWords: Bool { LiveWords.isSupported }
+    public var hasLiveWords: Bool { true }
 
     /// Asks for the microphone. False: the owner said no.
     public static func requestPermission() async -> Bool {
@@ -91,20 +91,16 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         running = true
         Self.sessionUsers += 1
         // The microphone runs now; live words follow, after their asset downloads.
-        if LiveWords.isSupported {
-            let words = LiveWords(onText: { [weak self] finished, volatile in
-                Task { @MainActor in self?.tapState.liveChanged(finished: finished, volatile: volatile) }
-            }, onStatus: { [weak self] status in
-                Task { @MainActor in self?.sink.yield(.liveWords(status)) }
-            })
-            live = words
-            Task { [weak self] in
-                await words.start(natural: format)
-                guard let self, self.running, self.live === words else { return }
-                self.tapState.attach(words)
-            }
-        } else {
-            sink.yield(.liveWords("Live words need iOS 26 or macOS 26"))
+        let words = LiveWords(onText: { [weak self] finished, volatile in
+            Task { @MainActor in self?.tapState.liveChanged(finished: finished, volatile: volatile) }
+        }, onStatus: { [weak self] status in
+            Task { @MainActor in self?.sink.yield(.liveWords(status)) }
+        })
+        live = words
+        Task { [weak self] in
+            await words.start(natural: format)
+            guard let self, self.running, self.live === words else { return }
+            self.tapState.attach(words)
         }
         observers.append(NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.restart() }
@@ -493,14 +489,9 @@ struct LiveText: Sendable {
     }
 }
 
-/// Apple's live recognizer over the microphone (SpeechAnalyzer, 26 and later).
+/// Apple's live recognizer over the microphone (SpeechAnalyzer).
 /// It reports the whole text heard so far: finished results plus the one in progress.
 final class LiveWords: @unchecked Sendable {
-    static var isSupported: Bool {
-        if #available(iOS 26, macOS 26, *) { return true }
-        return false
-    }
-
     private let lock = NSLock()
     private let onText: @Sendable (_ finished: String, _ volatile: String) -> Void
     private let onStatus: @Sendable (String?) -> Void
@@ -528,7 +519,6 @@ final class LiveWords: @unchecked Sendable {
     private var latestNatural: AVAudioFormat?
 
     func start(natural: AVAudioFormat) async {
-        guard #available(iOS 26, macOS 26, *) else { return }
         guard SpeechTranscriber.isAvailable,
               let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else {
             onStatus("Live words are off: no English speech model on this device")
