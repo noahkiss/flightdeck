@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 /// A byte stream over file descriptors: one socket, or a pair of pipes to a
 /// child process. Both Mac carriers use it.
@@ -7,24 +8,27 @@ import Foundation
 /// A thread does blocking reads and queues what it reads. Writes run on a
 /// serial queue. The descriptors close on that queue once the reader has
 /// stopped, so a write in flight never touches a reused descriptor.
-final class FDStream: ByteStream, @unchecked Sendable {
+final class FDStream: ByteStream, Sendable {
     private let readFD: Int32
     private let writeFD: Int32
     private let isSocket: Bool
     private let onClose: (@Sendable () -> Void)?
     private let diagnose: (@Sendable () -> String?)?
 
-    private let lock = NSLock()
-    private var chunks: [Data] = []
-    private var finished = false
-    private var failure: Error?
-    private var waiter: CheckedContinuation<Data?, Error>?
-    private var closing = false
-    private var readerDone = false
+    private struct State {
+        var chunks: [Data] = []
+        var finished = false
+        var failure: Error?
+        var waiter: CheckedContinuation<Data?, Error>?
+        var closing = false
+        var readerDone = false
+    }
+
+    private let state = Mutex(State())
 
     private let writes = DispatchQueue(label: "flightdeck.fdstream.write")
-    /// Touched only on `writes`.
-    private var writeClosed = false
+    /// Set on `writes` only; the atomic makes that checked.
+    private let writeClosed = Atomic<Bool>(false)
 
     /// A stream over one connected socket.
     convenience init(socket fd: Int32) {
@@ -53,18 +57,18 @@ final class FDStream: ByteStream, @unchecked Sendable {
 
     func read() async throws -> Data? {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Data?, Error>) in
-            lock.lock()
-            if !chunks.isEmpty {
-                let d = chunks.removeFirst()
-                lock.unlock()
-                c.resume(returning: d)
-            } else if finished {
-                let f = failure
-                lock.unlock()
-                if let f { c.resume(throwing: f) } else { c.resume(returning: nil) }
-            } else {
-                waiter = c
-                lock.unlock()
+            enum Next { case data(Data), end(Error?), wait }
+            let next: Next = state.withLock { s in
+                if !s.chunks.isEmpty { return .data(s.chunks.removeFirst()) }
+                if s.finished { return .end(s.failure) }
+                s.waiter = c
+                return .wait
+            }
+            switch next {
+            case .data(let d): c.resume(returning: d)
+            case .end(let f?): c.resume(throwing: f)
+            case .end(nil): c.resume(returning: nil)
+            case .wait: break
             }
         }
     }
@@ -72,7 +76,7 @@ final class FDStream: ByteStream, @unchecked Sendable {
     func write(_ data: Data) async throws {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             writes.async { [self] in
-                if writeClosed {
+                if writeClosed.load(ordering: .sequentiallyConsistent) {
                     c.resume(throwing: TransportError("stream closed"))
                     return
                 }
@@ -101,29 +105,28 @@ final class FDStream: ByteStream, @unchecked Sendable {
     }
 
     func close() {
-        lock.lock()
-        if closing {
-            lock.unlock()
-            return
+        let w: CheckedContinuation<Data?, Error>?? = state.withLock { s in
+            if s.closing { return nil }
+            s.closing = true
+            if isSocket && !s.readerDone {
+                // Wakes the blocked read with end of file. The descriptor stays valid:
+                // the reader closes it only after it marks itself done under this lock.
+                Darwin.shutdown(readFD, SHUT_RDWR)
+            }
+            let w = s.waiter
+            s.waiter = nil
+            s.finished = true
+            s.failure = nil
+            s.chunks.removeAll()
+            return .some(w)
         }
-        closing = true
-        if isSocket && !readerDone {
-            // Wakes the blocked read with end of file. The descriptor stays valid:
-            // the reader closes it only after it marks itself done under this lock.
-            Darwin.shutdown(readFD, SHUT_RDWR)
-        }
-        let w = waiter
-        waiter = nil
-        finished = true
-        failure = nil
-        chunks.removeAll()
-        lock.unlock()
+        guard let w else { return }
         w?.resume(returning: nil)
         if !isSocket {
             writes.async { [self] in
-                if !writeClosed {
+                if !writeClosed.load(ordering: .sequentiallyConsistent) {
                     Darwin.close(writeFD)
-                    writeClosed = true
+                    writeClosed.store(true, ordering: .sequentiallyConsistent)
                 }
             }
         }
@@ -143,22 +146,23 @@ final class FDStream: ByteStream, @unchecked Sendable {
             if n < 0 { end = TransportError("read: " + String(cString: strerror(errno))) }
             break
         }
-        lock.lock()
-        readerDone = true
-        let w = finished ? nil : waiter
-        if !finished {
-            finished = true
-            failure = end
-            waiter = nil
+        let failure = end
+        let w: CheckedContinuation<Data?, Error>? = state.withLock { s in
+            s.readerDone = true
+            guard !s.finished else { return nil }
+            s.finished = true
+            s.failure = failure
+            let w = s.waiter
+            s.waiter = nil
+            return w
         }
-        lock.unlock()
         if let w {
             if let end { w.resume(throwing: end) } else { w.resume(returning: nil) }
         }
         writes.async { [self] in
-            if !writeClosed {
+            if !writeClosed.load(ordering: .sequentiallyConsistent) {
                 if !isSocket { Darwin.close(writeFD) }
-                writeClosed = true
+                writeClosed.store(true, ordering: .sequentiallyConsistent)
             }
             Darwin.close(readFD)
             OpenStreams.closed()
@@ -166,22 +170,18 @@ final class FDStream: ByteStream, @unchecked Sendable {
     }
 
     private func deliver(_ d: Data) {
-        lock.lock()
-        if finished {
-            lock.unlock()
-            return
+        let w: CheckedContinuation<Data?, Error>? = state.withLock { s in
+            if s.finished { return nil }
+            if let w = s.waiter {
+                s.waiter = nil
+                return w
+            }
+            s.chunks.append(d)
+            return nil
         }
-        if let w = waiter {
-            waiter = nil
-            lock.unlock()
-            w.resume(returning: d)
-        } else {
-            chunks.append(d)
-            lock.unlock()
-        }
+        w?.resume(returning: d)
     }
 }
-
 /// Sets close-on-exec and, where it applies, no SIGPIPE on a descriptor.
 func prepareDescriptor(_ fd: Int32, noSigPipe: Bool) {
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC)

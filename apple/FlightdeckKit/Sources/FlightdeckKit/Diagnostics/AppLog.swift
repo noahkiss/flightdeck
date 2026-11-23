@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Synchronization
 
 /// The app's logger (diagnostics.md 4.10). Every line goes to the unified log;
 /// `notice` and above also go to `app.log` once the app opened it.
@@ -198,25 +199,29 @@ extension CallTimedOut: LogKind {
 /// lines of `notice` and above, redacted, capped at 1 MiB with one old file
 /// (diagnostics.md 4.10). The unified log on iOS lets an app read only its
 /// current run; this file keeps a previous run's errors.
-public final class AppLogFile: @unchecked Sendable {
+public final class AppLogFile: Sendable {
     /// The file the app writes. Nil until the app opens it at launch, so tests
     /// and extensions write nothing.
     public static var shared: AppLogFile? {
-        sharedLock.lock()
-        defer { sharedLock.unlock() }
-        return opened
+        opened.withLock { $0 }
     }
 
-    private static var opened: AppLogFile?
-    private static let sharedLock = NSLock()
+    private static let opened = Mutex<AppLogFile?>(nil)
 
     public static let defaultMax = 1 << 20
 
     public let url: URL
     let max: Int
+    /// Keeps lines in call order and off the caller's thread.
     private let queue = DispatchQueue(label: "com.flightdeck.app.applog")
-    private var handle: FileHandle?
-    private var size = 0
+    /// The open file. Only the queue's blocks touch it; the mutex makes that
+    /// checked rather than promised.
+    private let file = Mutex<OpenFile>(OpenFile())
+
+    private struct OpenFile {
+        var handle: FileHandle?
+        var size = 0
+    }
 
     public init(url: URL, max: Int = AppLogFile.defaultMax) {
         self.url = url
@@ -230,9 +235,7 @@ public final class AppLogFile: @unchecked Sendable {
             return nil
         }
         let f = AppLogFile(url: dir.appendingPathComponent("Flightdeck/diagnostics/app.log"))
-        sharedLock.lock()
-        opened = f
-        sharedLock.unlock()
+        opened.withLock { $0 = f }
         return f
     }
 
@@ -240,37 +243,33 @@ public final class AppLogFile: @unchecked Sendable {
     public var oldURL: URL { url.appendingPathExtension("1") }
 
     func write(_ level: AppLogLevel, category: String, message: String, at t: Date = Date()) {
-        let line = AppLogLine(t: Self.timeFormat.string(from: t), lvl: level.word, cat: category, msg: message)
+        let line = AppLogLine(t: ISOTime.format(t), lvl: level.word, cat: category, msg: message)
         queue.async { self.append(line) }
     }
 
     /// Waits until every queued line is written. Tests call it.
     public func flush() { queue.sync {} }
 
-    private static let timeFormat: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-
     private func append(_ line: AppLogLine) {
         guard var data = try? JSONEncoder.sorted.encode(line) else { return }
         data.append(0x0a)
-        if handle == nil { openHandle() }
-        if handle != nil, size > 0, size + data.count > max {
-            rotate()
-        }
-        guard let h = handle else { return } // a full disk or no folder: the line is lost
-        do {
-            try h.write(contentsOf: data)
-            size += data.count
-        } catch {
-            try? h.close()
-            handle = nil
+        file.withLock { f in
+            if f.handle == nil { openHandle(&f) }
+            if f.handle != nil, f.size > 0, f.size + data.count > max {
+                rotate(&f)
+            }
+            guard let h = f.handle else { return } // a full disk or no folder: the line is lost
+            do {
+                try h.write(contentsOf: data)
+                f.size += data.count
+            } catch {
+                try? h.close()
+                f.handle = nil
+            }
         }
     }
 
-    private func openHandle() {
+    private func openHandle(_ f: inout OpenFile) {
         let fm = FileManager.default
         let dir = url.deletingLastPathComponent()
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -278,18 +277,18 @@ public final class AppLogFile: @unchecked Sendable {
             fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
         }
         guard let h = try? FileHandle(forWritingTo: url) else { return }
-        size = Int((try? h.seekToEnd()) ?? 0)
-        handle = h
+        f.size = Int((try? h.seekToEnd()) ?? 0)
+        f.handle = h
     }
 
-    private func rotate() {
-        try? handle?.close()
-        handle = nil
+    private func rotate(_ f: inout OpenFile) {
+        try? f.handle?.close()
+        f.handle = nil
         let fm = FileManager.default
         try? fm.removeItem(at: oldURL)
         try? fm.moveItem(at: url, to: oldURL)
-        size = 0
-        openHandle()
+        f.size = 0
+        openHandle(&f)
     }
 }
 

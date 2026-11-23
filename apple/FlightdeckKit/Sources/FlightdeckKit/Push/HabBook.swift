@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Which hab connection answers for a host id. A push names its hab by host id
 /// (the welcome's `host.id`); a notification action that runs in the
@@ -7,10 +8,9 @@ import Foundation
 ///
 /// The file is `Flightdeck/hab-book.json` under Application Support (or
 /// `$FLIGHTDECK_HAB_BOOK`), mode 0600. It holds ids only, no addresses.
-public final class HabBook: @unchecked Sendable {
+public final class HabBook: Sendable {
     private let url: URL?
-    private let lock = NSLock()
-    private var map: [String: Entry] = [:]
+    private let map: Mutex<[String: Entry]>
     private let log = AppLog(category: "push")
 
     public struct Entry: Codable, Equatable, Sendable {
@@ -25,10 +25,12 @@ public final class HabBook: @unchecked Sendable {
 
     public init(url: URL?) {
         self.url = url
+        var loaded: [String: Entry] = [:]
         if let url, let data = try? Data(contentsOf: url),
            let m = try? JSONDecoder().decode([String: Entry].self, from: data) {
-            map = m
+            loaded = m
         }
+        map = Mutex(loaded)
     }
 
     public static func path(environment env: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
@@ -40,18 +42,18 @@ public final class HabBook: @unchecked Sendable {
     }
 
     public func entry(host: String) -> Entry? {
-        lock.withLock { map[host] }
+        map.withLock { $0[host] }
     }
 
     /// The entry of the hab with this device id.
     public func entry(device: String) -> Entry? {
-        lock.withLock { map.values.first { $0.device == device } }
+        map.withLock { $0.values.first { $0.device == device } }
     }
 
     /// Records a pair; writes the file only when it changed.
     public func record(host: String, connection: String, label: String, device: String? = nil) {
         let e = Entry(connection: connection, label: label, device: device)
-        let snapshot: [String: Entry]? = lock.withLock {
+        let snapshot: [String: Entry]? = map.withLock { map in
             if map[host] == e { return nil }
             // One connection answers for one host: drop an older pair for it.
             for (k, v) in map where v.connection == connection && k != host { map[k] = nil }
@@ -63,7 +65,7 @@ public final class HabBook: @unchecked Sendable {
 
     /// Drops every pair of a removed connection, in memory and in the file.
     public func forget(connection: String) {
-        let snapshot: [String: Entry]? = lock.withLock {
+        let snapshot: [String: Entry]? = map.withLock { map in
             let before = map.count
             for (k, v) in map where v.connection == connection { map[k] = nil }
             return map.count == before ? nil : map

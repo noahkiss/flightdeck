@@ -1,6 +1,7 @@
 import FlightdeckShared
 import Foundation
 import HabAPI
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -31,9 +32,13 @@ private func freshDefaults() -> UserDefaults {
     return d
 }
 
-private final class Clock: @unchecked Sendable {
-    var now: Date
-    init(_ d: Date) { now = d }
+private final class Clock: Sendable {
+    private let value: Mutex<Date>
+    var now: Date {
+        get { value.withLock { $0 } }
+        set { value.withLock { $0 = newValue } }
+    }
+    init(_ d: Date) { value = Mutex(d) }
 }
 
 final class RecordingNotifier: UsageNotifier {

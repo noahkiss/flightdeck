@@ -24,8 +24,8 @@ struct UsageAccountEntity: AppEntity {
     var id: String
     var name: String
 
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Account"
-    static var defaultQuery = UsageAccountQuery()
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Account"
+    static let defaultQuery = UsageAccountQuery()
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
 
     init(_ a: UsageAccountReading) {
@@ -50,8 +50,8 @@ struct UsageAccountQuery: EntityQuery {
 }
 
 struct SelectUsageAccount: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "Account"
-    static var description = IntentDescription("Pick the account the widget shows. With none, it shows the account nearest its limit.")
+    static let title: LocalizedStringResource = "Account"
+    static let description = IntentDescription("Pick the account the widget shows. With none, it shows the account nearest its limit.")
 
     @Parameter(title: "Account")
     var account: UsageAccountEntity?

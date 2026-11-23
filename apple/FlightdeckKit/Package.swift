@@ -5,6 +5,16 @@
 // terminal view.
 import PackageDescription
 
+// Swift 6 language mode on every target (the tools version sets it), plus
+// the two Swift 6.2 approachable-concurrency features that Swift 6 mode does
+// not turn on by itself. The package keeps nonisolated as its default
+// isolation: it holds transport, SSH and audio code that must not run on the
+// main actor, so UI types say @MainActor themselves.
+let concurrency: [SwiftSetting] = [
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+]
+
 let package = Package(
     name: "FlightdeckKit",
     platforms: [.macOS(.v26), .iOS("26.1")],
@@ -36,7 +46,7 @@ let package = Package(
     targets: [
         .target(
             name: "FlightdeckShared",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: concurrency
         ),
         .target(
             name: "FlightdeckKit",
@@ -48,7 +58,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: concurrency
         ),
         .target(
             name: "FlightdeckParakeet",
@@ -56,7 +66,7 @@ let package = Package(
                 "FlightdeckKit",
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: concurrency
         ),
         .testTarget(
             name: "FlightdeckKitTests",
@@ -68,7 +78,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
             exclude: ["Snapshots"],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: concurrency
         ),
     ]
 )

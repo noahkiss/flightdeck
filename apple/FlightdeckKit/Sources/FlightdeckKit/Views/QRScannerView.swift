@@ -18,6 +18,8 @@ struct QRScannerView: UIViewControllerRepresentable {
     final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
         var found: ((String) -> Void)?
         private let session = AVCaptureSession()
+        /// Starts and stops the session in order, off the main thread, as AVFoundation asks.
+        private let sessionQueue = DispatchQueue(label: "flightdeck.qr.session")
         private var preview: AVCaptureVideoPreviewLayer?
         private var done = false
         private let label = UILabel()
@@ -55,8 +57,8 @@ struct QRScannerView: UIViewControllerRepresentable {
 
         override func viewWillDisappear(_ animated: Bool) {
             super.viewWillDisappear(animated)
-            let s = session
-            DispatchQueue.global(qos: .userInitiated).async { if s.isRunning { s.stopRunning() } }
+            let s = CaptureSessionHandle(session)
+            sessionQueue.async { if s.session.isRunning { s.session.stopRunning() } }
         }
 
         private func show(_ text: String) {
@@ -85,17 +87,26 @@ struct QRScannerView: UIViewControllerRepresentable {
             layer.frame = view.bounds
             view.layer.insertSublayer(layer, at: 0)
             preview = layer
-            let s = session
-            DispatchQueue.global(qos: .userInitiated).async { s.startRunning() }
+            let s = CaptureSessionHandle(session)
+            sessionQueue.async { s.session.startRunning() }
         }
 
         func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
             guard !done, let code = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
             done = true
-            let s = session
-            DispatchQueue.global(qos: .userInitiated).async { s.stopRunning() }
+            let s = CaptureSessionHandle(session)
+            sessionQueue.async { s.session.stopRunning() }
             found?(code)
         }
     }
+}
+
+/// The capture session, handed to the session queue. AVCaptureSession is not marked
+/// Sendable, but AVFoundation documents it as safe to start and stop from another thread
+/// and asks for exactly that; the queue only calls `startRunning`, `stopRunning` and
+/// `isRunning`, one at a time.
+private struct CaptureSessionHandle: @unchecked Sendable {
+    let session: AVCaptureSession
+    init(_ session: AVCaptureSession) { self.session = session }
 }
 #endif

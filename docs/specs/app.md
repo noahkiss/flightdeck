@@ -2247,8 +2247,9 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 - **Notification service extension.** Built: the hab leaves the expiry out of the body, so the
   extension appends " · Expires 14:05" in the device's time zone and clock style to a permission
   banner whose `expires_at` is still ahead (with the date when it is over 20 hours away). Every
-  other push passes through unchanged. The Mac has no extension yet. No push carries a badge:
-  the app alone sets it (7.9).
+  other push passes through unchanged. The extension hands the content back before `didReceive`
+  returns and keeps nothing between calls; when iOS cuts it short, iOS shows the push as it came.
+  The Mac has no extension yet. No push carries a badge: the app alone sets it (7.9).
 - **Withdrawal while the app runs.** When a request closes on the board, the app removes
   delivered permission banners for that request id (18.6, B where iOS allows).
 - **Focus.** `FocusReporter` sends `session.focus` `active` true when a session view appears in

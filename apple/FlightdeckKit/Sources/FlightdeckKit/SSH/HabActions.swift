@@ -13,22 +13,29 @@ import UserNotifications
 /// unlocked after it starts, so a Watch answer signs while the phone is
 /// locked (transport.md 7.2). A failure posts a notice and raises the request again in the
 /// foreground; nothing retries on its own (app.md 18.7).
-public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
-    public static let pingCategory = "flightdeck.hab-ping"
-    public static let pingAction = "flightdeck.hab-ping.send"
-    static let entryKey = "hab-entry"
+///
+/// The class lives on the main actor, so its notification-delegate
+/// conformance is main-actor isolated: iOS calls the completion handler on the
+/// thread where the delegate returns, and UIKit aborts when that is not the
+/// main thread (a background notification action crashed the app after Ping
+/// hab answered).
+@MainActor
+public final class HabActions: NSObject, UNUserNotificationCenterDelegate {
+    public nonisolated static let pingCategory = "flightdeck.hab-ping"
+    public nonisolated static let pingAction = "flightdeck.hab-ping.send"
+    nonisolated static let entryKey = "hab-entry"
 
-    private let keys: DeviceKeys?
-    private let listURL: URL?
-    private let log = AppLog(category: "actions")
+    private nonisolated let keys: DeviceKeys?
+    private nonisolated let listURL: URL?
+    private nonisolated let log = AppLog(category: "actions")
     /// Answers and the foreground prompt; set once the fleet is built.
-    @MainActor public weak var approvals: ApprovalCenter?
+    public weak var approvals: ApprovalCenter?
     /// Opens the usage sheet from a usage notification (app.md 14.4).
-    @MainActor public weak var usage: UsageBook?
+    public weak var usage: UsageBook?
     /// Opens Capcom from "Ask an agent" (capcom.md 8.2).
-    @MainActor public weak var capcom: CapcomCenter?
+    public weak var capcom: CapcomCenter?
     /// Opens the session a notification names, such as a round's run session (rounds.md 10.2).
-    @MainActor public weak var rounds: RoundCenter?
+    public weak var rounds: RoundCenter?
 
     public init(keys: DeviceKeys?, listURL: URL?) {
         self.keys = keys
@@ -37,7 +44,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
 
     /// Every category the app registers: the ping test and the approval set
     /// the hab names in its pushes (app.md 8.6, 16.2).
-    public static func categories() -> Set<UNNotificationCategory> {
+    public nonisolated static func categories() -> Set<UNNotificationCategory> {
         let ping = UNNotificationAction(identifier: pingAction, title: "Ping hab", options: [.authenticationRequired])
         let approve = UNNotificationAction(identifier: PushCategory.approveAction, title: "Approve", options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: PushCategory.denyAction, title: "Deny", options: [.authenticationRequired, .destructive])
@@ -69,7 +76,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
 
     /// "Open Flightdeck" reads right on the phone and on its mirrored Watch banner, where the
     /// only Flightdeck is the phone's (app.md 16.1). "Open on iPhone" read wrong on the phone.
-    static var openTitle: String {
+    nonisolated static var openTitle: String {
         #if os(iOS)
         return "Open Flightdeck"
         #else
@@ -85,7 +92,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     }
 
     /// Posts a notification with the ping action, `after` from now.
-    public static func scheduleTest(entry: SSHHabEntry, after: TimeInterval = 5) async throws {
+    public nonisolated static func scheduleTest(entry: SSHHabEntry, after: TimeInterval = 5) async throws {
         let center = UNUserNotificationCenter.current()
         guard try await center.requestAuthorization(options: [.alert, .sound]) else {
             throw TransportError("notifications are off for Flightdeck")
@@ -101,41 +108,36 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
 
     // MARK: - Delegate
 
-    // On the main actor: iOS calls its completion handler on the thread where this returns,
-    // and UIKit aborts when that is not the main thread (a background notification action
-    // crashed the app after Ping hab answered).
-    @MainActor
     public func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
     }
 
-    @MainActor
     public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let content = response.notification.request.content
         if response.actionIdentifier == Self.pingAction {
-            await ping(content)
+            await ping(entryID: content.userInfo[Self.entryKey] as? String)
             return
         }
         if let account = content.userInfo[SystemUsageNotifier.accountKey] as? String {
-            await usage?.present(account: account)
+            usage?.present(account: account)
             return
         }
         let text = (response as? UNTextInputNotificationResponse)?.userText
         let meta = PushMeta(userInfo: content.userInfo)
         switch NotificationAnswer.intent(action: response.actionIdentifier, meta: meta, text: text) {
         case .answer(let host, let params):
-            guard let approvals = await approvals else {
+            guard let approvals else {
                 await notify("Flightdeck", "Open Flightdeck to answer.")
                 return
             }
             _ = await approvals.answer(host: host, params, meta: meta)
         case .open(let m):
-            await approvals?.open(m)
-            await rounds?.open(m)
+            approvals?.open(m)
+            rounds?.open(m)
         case .ask(let m):
             await capcom?.ask(m)
         case .capcomReply(let host, let session, let text):
-            guard let answerer = await approvals?.answerer else {
+            guard let answerer = approvals?.answerer else {
                 await notify("Not sent", "Open Flightdeck to reply to Capcom.")
                 return
             }
@@ -150,7 +152,6 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     }
 
     /// The card push's Add: claim the card, then write it here. Only a failure posts.
-    @MainActor
     private func addCard(host: String, item: String) async {
         guard let answerer = approvals?.answerer, let cards = capcom?.cards else {
             await notify("Not added", "Open Flightdeck to add it.")
@@ -178,7 +179,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     }
 
     /// Posts a local notification; with `meta` its tap opens the request.
-    public static func post(_ title: String, _ body: String, meta: PushMeta?) async {
+    public nonisolated static func post(_ title: String, _ body: String, meta: PushMeta?) async {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
@@ -192,7 +193,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
 
     /// Removes delivered banners of requests that closed (app.md 18.6, B
     /// where iOS allows: while the app runs).
-    public static func withdraw(requests: Set<String>) async {
+    public nonisolated static func withdraw(requests: Set<String>) async {
         let center = UNUserNotificationCenter.current()
         let delivered = await center.deliveredNotifications()
         let ids = delivered.filter { n in
@@ -202,8 +203,10 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
     }
 
-    private func ping(_ content: UNNotificationContent) async {
-        guard let id = content.userInfo[Self.entryKey] as? String, let keys else { return }
+    /// `@concurrent`: it reads the hab list and the Keychain before it dials,
+    /// work that must not hold the main actor.
+    @concurrent private nonisolated func ping(entryID id: String?) async {
+        guard let id, let keys else { return }
         guard let entry = (try? SSHHabList.load(from: listURL))?.habs.first(where: { $0.id == id }) else {
             await notify("Flightdeck", "That hab is no longer in the app.")
             return
@@ -225,7 +228,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         }
     }
 
-    private func notify(_ title: String, _ body: String) async {
+    private nonisolated func notify(_ title: String, _ body: String) async {
         await Self.post(title, body, meta: nil)
     }
 }

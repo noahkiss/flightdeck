@@ -1,6 +1,7 @@
 #if os(macOS)
 import Darwin
 import Foundation
+import Synchronization
 
 /// A remote hab through the system ssh and the user's own keys:
 /// `ssh <host> gff-hab connect` (hab-logic-api.md 4.2). Each `open` starts
@@ -100,10 +101,9 @@ public struct SSHTransport: Transport {
 }
 
 /// Keeps the last few lines a child printed on stderr.
-final class StderrTail: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buf = Data()
-    private let limit = 2048
+final class StderrTail: Sendable {
+    private let buf = Mutex(Data())
+    private static let limit = 2048
 
     init(fd: Int32) {
         let t = Thread { [self] in
@@ -112,10 +112,11 @@ final class StderrTail: @unchecked Sendable {
                 let n = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
                 if n < 0 && errno == EINTR { continue }
                 if n <= 0 { break }
-                lock.lock()
-                buf.append(contentsOf: chunk[0..<n])
-                if buf.count > limit { buf = buf.suffix(limit) }
-                lock.unlock()
+                let got = Data(chunk[0..<n])
+                buf.withLock { b in
+                    b.append(got)
+                    if b.count > Self.limit { b = b.suffix(Self.limit) }
+                }
             }
             Darwin.close(fd)
         }
@@ -124,14 +125,13 @@ final class StderrTail: @unchecked Sendable {
     }
 
     var text: String? {
-        lock.lock(); defer { lock.unlock() }
-        let s = String(decoding: buf, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let s = buf.withLock { String(decoding: $0, as: UTF8.self) }.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
     }
 }
 
 /// Stops an ssh child: SIGTERM now, SIGKILL after two seconds if it lingers.
-final class ProcessBox: @unchecked Sendable {
+final class ProcessBox: Sendable {
     private let proc: Process
     init(_ proc: Process) { self.proc = proc }
 

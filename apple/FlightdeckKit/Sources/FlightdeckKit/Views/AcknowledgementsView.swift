@@ -34,7 +34,7 @@ struct AcknowledgementsView: View {
 
     /// Splits the file at each entry rule and each licence file, so a long
     /// file renders as many small texts instead of one.
-    static func sections(of text: String) -> [String] {
+    nonisolated static func sections(of text: String) -> [String] {
         let rule = "\n" + String(repeating: "=", count: 78) + "\n"
         return text.components(separatedBy: rule).flatMap { entry in
             entry.components(separatedBy: "\n--- ").enumerated().map { i, part in

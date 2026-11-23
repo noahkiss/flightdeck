@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Security
 
 /// Small secrets by account name: device keys and imported keys.
@@ -54,10 +55,12 @@ public struct KeychainStore: SecretStore {
     }
 
     /// The attributes every write sets: the storage class (app.md 10.4).
-    static let protection: [String: Any] = [
-        kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        kSecAttrSynchronizable as String: false,
-    ]
+    static var protection: [String: Any] {
+        [
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrSynchronizable as String: false,
+        ]
+    }
 
     /// The query that adds a new item.
     func addQuery(account: String, data: Data) -> [String: Any] {
@@ -138,14 +141,13 @@ public struct KeychainStore: SecretStore {
 }
 
 /// An in-memory store for tests and previews.
-public final class MemorySecretStore: SecretStore, @unchecked Sendable {
-    private let lock = NSLock()
-    private var items: [String: Data] = [:]
+public final class MemorySecretStore: SecretStore, Sendable {
+    private let items = Mutex<[String: Data]>([:])
 
     public init() {}
 
-    public func read(account: String) throws -> Data? { lock.withLock { items[account] } }
-    public func write(account: String, data: Data) throws { lock.withLock { items[account] = data } }
-    public func delete(account: String) throws { _ = lock.withLock { items.removeValue(forKey: account) } }
-    public func accounts() throws -> [String] { lock.withLock { Array(items.keys) } }
+    public func read(account: String) throws -> Data? { items.withLock { $0[account] } }
+    public func write(account: String, data: Data) throws { items.withLock { $0[account] = data } }
+    public func delete(account: String) throws { _ = items.withLock { $0.removeValue(forKey: account) } }
+    public func accounts() throws -> [String] { items.withLock { Array($0.keys) } }
 }

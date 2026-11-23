@@ -4,6 +4,7 @@ import Foundation
 import HabAPI
 import LocalAuthentication
 import NIOSSH
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -309,15 +310,14 @@ final class KeyMoveTests: XCTestCase {
     }
 }
 
-private final class MoveCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
-    func add() { lock.withLock { count += 1 } }
-    var n: Int { lock.withLock { count } }
+private final class MoveCounter: Sendable {
+    private let count = Atomic<Int>(0)
+    func add() { count.add(1, ordering: .sequentiallyConsistent) }
+    var n: Int { count.load(ordering: .sequentiallyConsistent) }
 }
 
 /// The Keychain before the first unlock after a restart: every call fails.
-final class BootLockedStore: SecretStore, @unchecked Sendable {
+final class BootLockedStore: SecretStore {
     func read(account: String) throws -> Data? { throw KeychainStore.error("read", errSecInteractionNotAllowed) }
     func write(account: String, data: Data) throws { throw KeychainStore.error("write", errSecInteractionNotAllowed) }
     func delete(account: String) throws { throw KeychainStore.error("delete", errSecInteractionNotAllowed) }

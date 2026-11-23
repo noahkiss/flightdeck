@@ -6,7 +6,14 @@
 
 MACOSX_DEPLOYMENT_TARGET = 26.0
 IPHONEOS_DEPLOYMENT_TARGET = 26.1
-SWIFT_VERSION = 5.0
+// Swift 6 language mode with strict concurrency on every target, and the Swift
+// 6.2 approachable-concurrency features (nonisolated async runs on the caller's
+// actor; isolated conformances are inferred). Every target keeps nonisolated as
+// its default isolation: the app types are main-actor already through SwiftUI
+// and UIKit, and the extensions and the shared intents run off the main actor.
+SWIFT_VERSION = 6.0
+SWIFT_APPROACHABLE_CONCURRENCY = YES
+SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated
 ENABLE_HARDENED_RUNTIME = YES
 ENABLE_USER_SCRIPT_SANDBOXING = YES
 // No get-task-allow in a release: notarization refuses it.

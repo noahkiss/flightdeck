@@ -3,10 +3,10 @@ import SwiftUI
 
 /// The view that fills the terminal half of a session: the pane's terminal
 /// view by default. `.terminalSlot { target in ... }` replaces it.
-public struct TerminalSlot {
-    public var make: @MainActor (SessionTarget) -> AnyView
+public struct TerminalSlot: Sendable {
+    public var make: @MainActor @Sendable (SessionTarget) -> AnyView
 
-    public init(make: @escaping @MainActor (SessionTarget) -> AnyView) {
+    public init(make: @escaping @MainActor @Sendable (SessionTarget) -> AnyView) {
         self.make = make
     }
 

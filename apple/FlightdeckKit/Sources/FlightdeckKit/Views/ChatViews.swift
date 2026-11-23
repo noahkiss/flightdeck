@@ -1059,7 +1059,7 @@ struct ComposerView: View {
         }
     }
 
-    static func join(_ base: String, _ heard: String) -> String {
+    nonisolated static func join(_ base: String, _ heard: String) -> String {
         guard !heard.isEmpty else { return base }
         guard !base.isEmpty else { return heard }
         return base.hasSuffix(" ") || base.hasSuffix("\n") ? base + heard : base + " " + heard

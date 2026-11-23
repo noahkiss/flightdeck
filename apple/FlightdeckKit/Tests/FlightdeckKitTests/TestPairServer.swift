@@ -4,33 +4,53 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOSSH
+import Synchronization
 @testable import FlightdeckKit
 
 /// An SSH server on a loopback port for the pairing and password setup
 /// tests. It stands in for the hab's pairing window (`flightdeck-pair`, the
 /// answers scripted by the test) or for a host's sshd with password auth,
 /// whose `sh -s` runs the real `/bin/sh` with a temporary `HOME`.
-final class TestPairServer: @unchecked Sendable {
+final class TestPairServer: Sendable {
     /// Gets the request line; writes answer lines with `write`, ends with `close`.
     typealias PairHandler = @Sendable (_ request: Data, _ write: @escaping @Sendable (String) -> Void, _ close: @escaping @Sendable () -> Void) -> Void
 
     let hostKey: NIOSSHPrivateKey
     let methods: NIOSSHAvailableUserAuthenticationMethods
-    var password: String?
-    var pairHandler: PairHandler?
+    var password: String? {
+        get { state.withLock { $0.password } }
+        set { state.withLock { $0.password = newValue } }
+    }
+    var pairHandler: PairHandler? {
+        get { state.withLock { $0.pairHandler } }
+        set { state.withLock { $0.pairHandler = newValue } }
+    }
     /// The `HOME` the shell runs with.
-    var home: URL?
+    var home: URL? {
+        get { state.withLock { $0.home } }
+        set { state.withLock { $0.home = newValue } }
+    }
     /// Never answer the subsystem request: a window that takes auth, then stalls.
-    var silent = false
+    var silent: Bool {
+        get { state.withLock { $0.silent } }
+        set { state.withLock { $0.silent = newValue } }
+    }
 
-    private let lock = NSLock()
-    private var channel: Channel?
-    private var _keys: [NIOSSHPublicKey] = []
-    private var _users: [String] = []
-    private var _passwords: [String] = []
-    private var _subsystems: [String] = []
-    private var _execs: [String] = []
-    private var _requests: [Data] = []
+    fileprivate struct State {
+        var password: String?
+        var pairHandler: PairHandler?
+        var home: URL?
+        var silent = false
+        var channel: Channel?
+        var keys: [NIOSSHPublicKey] = []
+        var users: [String] = []
+        var passwords: [String] = []
+        var subsystems: [String] = []
+        var execs: [String] = []
+        var requests: [Data] = []
+    }
+
+    private let state = Mutex(State())
 
     init(methods: NIOSSHAvailableUserAuthenticationMethods = .publicKey, hostKey: NIOSSHPrivateKey = NIOSSHPrivateKey(ed25519Key: .init())) {
         self.methods = methods
@@ -38,15 +58,15 @@ final class TestPairServer: @unchecked Sendable {
     }
 
     var hostKeyFingerprint: String { SSHFingerprint.of(hostKey.publicKey) }
-    var port: Int { channel?.localAddress?.port ?? 0 }
+    var port: Int { state.withLock { $0.channel }?.localAddress?.port ?? 0 }
     var endpoint: SSHEndpoint { SSHEndpoint(host: "127.0.0.1", port: port) }
 
-    var keys: [NIOSSHPublicKey] { lock.withLock { _keys } }
-    var users: [String] { lock.withLock { _users } }
-    var passwords: [String] { lock.withLock { _passwords } }
-    var subsystems: [String] { lock.withLock { _subsystems } }
-    var execs: [String] { lock.withLock { _execs } }
-    var requests: [Data] { lock.withLock { _requests } }
+    var keys: [NIOSSHPublicKey] { state.withLock { $0.keys } }
+    var users: [String] { state.withLock { $0.users } }
+    var passwords: [String] { state.withLock { $0.passwords } }
+    var subsystems: [String] { state.withLock { $0.subsystems } }
+    var execs: [String] { state.withLock { $0.execs } }
+    var requests: [Data] { state.withLock { $0.requests } }
 
     func start() async throws {
         let ch = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -69,26 +89,27 @@ final class TestPairServer: @unchecked Sendable {
                 }
             }
             .bind(host: "127.0.0.1", port: 0).get()
-        channel = ch
+        state.withLock { $0.channel = ch }
     }
 
     func stop() {
-        channel?.close(promise: nil)
+        state.withLock { $0.channel }?.close(promise: nil)
     }
 
-    fileprivate func record(_ f: (TestPairServer) -> Void) { lock.withLock { f(self) } }
+    fileprivate func record(_ f: (inout State) -> Void) { state.withLock { f(&$0) } }
 
-    private final class Auth: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
+    /// Its only state is the server, which is Sendable.
+    private final class Auth: NIOSSHServerUserAuthenticationDelegate, Sendable {
         let server: TestPairServer
         init(server: TestPairServer) { self.server = server }
         var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { server.methods }
         func requestReceived(request: NIOSSHUserAuthenticationRequest, responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
             switch request.request {
             case .publicKey(let pk) where server.methods.contains(.publicKey):
-                server.record { $0._keys.append(pk.publicKey); $0._users.append(request.username) }
+                server.record { $0.keys.append(pk.publicKey); $0.users.append(request.username) }
                 responsePromise.succeed(.success)
             case .password(let p) where server.methods.contains(.password):
-                server.record { $0._passwords.append(p.password); $0._users.append(request.username) }
+                server.record { $0.passwords.append(p.password); $0.users.append(request.username) }
                 responsePromise.succeed(p.password == server.password ? .success : .failure)
             default:
                 responsePromise.succeed(.failure)
@@ -96,7 +117,8 @@ final class TestPairServer: @unchecked Sendable {
         }
     }
 
-    private final class Session: ChannelInboundHandler, @unchecked Sendable {
+    /// Not Sendable: it lives on its channel's event loop, as NIO handlers do.
+    private final class Session: ChannelInboundHandler {
         typealias InboundIn = SSHChannelData
         typealias OutboundOut = SSHChannelData
 
@@ -113,13 +135,13 @@ final class TestPairServer: @unchecked Sendable {
             let ch = context.channel
             switch event {
             case let s as SSHChannelRequestEvent.SubsystemRequest:
-                server.record { $0._subsystems.append(s.subsystem) }
+                server.record { $0.subsystems.append(s.subsystem) }
                 if server.silent { return }
                 let ok = mode == nil && s.subsystem == Pairing.subsystem && server.pairHandler != nil
                 if ok { mode = "pair" }
                 if s.wantReply { ch.triggerUserOutboundEvent(ok ? ChannelSuccessEvent() : ChannelFailureEvent(), promise: nil) }
             case let e as SSHChannelRequestEvent.ExecRequest:
-                server.record { $0._execs.append(e.command) }
+                server.record { $0.execs.append(e.command) }
                 let ok = mode == nil && e.command == "sh -s" && server.home != nil
                 if ok { startShell(ch) }
                 if e.wantReply { ch.triggerUserOutboundEvent(ok ? ChannelSuccessEvent() : ChannelFailureEvent(), promise: nil) }
@@ -143,7 +165,7 @@ final class TestPairServer: @unchecked Sendable {
             guard let nl = input.firstIndex(of: 0x0A) else { return }
             handled = true
             let line = Data(input[..<nl])
-            server.record { $0._requests.append(line) }
+            server.record { $0.requests.append(line) }
             let ch = context.channel
             server.pairHandler?(line, { text in
                 let buf = ch.allocator.buffer(string: text + "\n")

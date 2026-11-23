@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import NIOSSH
+import Synchronization
 
 /// The hidden password setup (transport.md 6.1.6), like `ssh-copy-id`: for
 /// a host that cannot run the pairing window. The app signs in once with the
@@ -135,27 +136,29 @@ public enum PasswordSetup {
 
 /// Offers the password once. A host with password auth off, or one that
 /// refuses the password, ends the dial with a plain reason.
-final class ClientPasswordAuth: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+final class ClientPasswordAuth: NIOSSHClientUserAuthenticationDelegate, Sendable {
     let user: String
-    private var password: String?
+    private let password: Mutex<String?>
 
     init(user: String, password: String) {
         self.user = user
-        self.password = password
+        self.password = Mutex(password)
     }
 
     func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods, nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
+        // Offered once, then dropped.
+        let p = password.withLock { p in
+            defer { p = nil }
+            return p
+        }
         guard availableMethods.contains(.password) else {
-            password = nil
             nextChallengePromise.fail(PasswordAuthOff(user: user))
             return
         }
-        guard let p = password else {
+        guard let p else {
             nextChallengePromise.fail(PasswordRefused(user: user))
             return
         }
-        // Offered once, then dropped.
-        password = nil
         nextChallengePromise.succeed(.init(username: user, serviceName: "", offer: .password(.init(password: p))))
     }
 }

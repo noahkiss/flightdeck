@@ -81,7 +81,7 @@ final class ImageCache {
     @MainActor static let shared: ImageCache = {
         let c = ImageCache()
         let src = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
-        src.setEventHandler { MainActor.assumeIsolated { c.removeAll() } }
+        src.setEventHandler { MainActor.assumeIsolated { ImageCache.shared.removeAll() } }
         src.activate()
         c.pressure = src
         return c

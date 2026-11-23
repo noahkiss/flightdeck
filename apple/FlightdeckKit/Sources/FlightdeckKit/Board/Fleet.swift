@@ -85,9 +85,13 @@ public final class Fleet {
         badge?.update(board.needsYouCount, active: isActive, online: board.onlineCount, habs: board.habs.count)
     }
     /// `session.focus` reports for the session views on screen (app.md 8.6).
-    public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
-        guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
-        _ = try? await conn.call(HabMethods.sessionFocus, params)
+    public private(set) lazy var focus: FocusReporter = makeFocus()
+
+    private func makeFocus() -> FocusReporter {
+        FocusReporter { [weak self] habID, params in
+            guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
+            _ = try? await conn.call(HabMethods.sessionFocus, params)
+        }
     }
 
     /// Voice mode and dictation (app.md 13). Its connection hold keeps the
@@ -308,7 +312,7 @@ public final class Fleet {
     }
 
     /// Runs `work`, giving up on it after `limit`.
-    static func within(_ limit: Duration, _ work: @escaping @MainActor () async -> Void) async {
+    static func within(_ limit: Duration, _ work: @escaping @MainActor @Sendable () async -> Void) async {
         await withTaskGroup(of: Void.self) { g in
             g.addTask { await work() }
             g.addTask { try? await Task.sleep(for: limit) }

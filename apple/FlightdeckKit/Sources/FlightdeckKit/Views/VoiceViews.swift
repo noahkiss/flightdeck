@@ -494,7 +494,7 @@ struct PaneDictationButton: View {
 
     /// The text as typed into the pane: control characters (ESC, newlines)
     /// become spaces, so dictation never runs a command or a key sequence.
-    static func paneText(_ text: String, after: Bool = false) -> Data {
+    nonisolated static func paneText(_ text: String, after: Bool = false) -> Data {
         let clean = String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
         return Data(((after ? " " : "") + clean).utf8)
     }

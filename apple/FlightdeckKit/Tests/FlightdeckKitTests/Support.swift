@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import Synchronization
 import XCTest
 @testable import FlightdeckKit
 
@@ -64,12 +65,13 @@ extension HabConnection {
 /// writes. A piece leaves no earlier than the rate allows, so a write of n bytes takes at
 /// least n / rate seconds. While stalled, no piece leaves at all; a stalled write ends only
 /// when the stream closes. Bytes from the hab arrive at once.
-final class SlowUplink: Transport, @unchecked Sendable {
+final class SlowUplink: Transport, Sendable {
     let inner: FakeTransport
     let bytesPerSecond: Double
     let slice = 16 << 10
     let gate = NSCondition()
-    private var stalled = false
+    /// Read and written under `gate`; atomic only so the class is Sendable.
+    private let stalled = Atomic<Bool>(false)
 
     init(_ inner: FakeTransport, bytesPerSecond: Double = 1_000_000) {
         self.inner = inner
@@ -81,7 +83,7 @@ final class SlowUplink: Transport, @unchecked Sendable {
     /// Stops or restarts every write on every stream.
     func setStalled(_ on: Bool) {
         gate.lock()
-        stalled = on
+        stalled.store(on, ordering: .sequentiallyConsistent)
         gate.broadcast()
         gate.unlock()
     }
@@ -90,7 +92,7 @@ final class SlowUplink: Transport, @unchecked Sendable {
     fileprivate func mayWrite(_ closed: () -> Bool) -> Bool {
         gate.lock()
         defer { gate.unlock() }
-        while stalled && !closed() { gate.wait() }
+        while stalled.load(ordering: .sequentiallyConsistent) && !closed() { gate.wait() }
         return !closed()
     }
 
@@ -101,12 +103,12 @@ final class SlowUplink: Transport, @unchecked Sendable {
     }
 }
 
-private final class SlowStream: ByteStream, @unchecked Sendable {
+private final class SlowStream: ByteStream, Sendable {
     private let inner: FakeStream
     private let uplink: SlowUplink
     private let writes = DispatchQueue(label: "test.slowuplink.write")
-    /// Read and written under `uplink.gate`.
-    private var closed = false
+    /// Read and written under `uplink.gate`; atomic only so the class is Sendable.
+    private let closed = Atomic<Bool>(false)
 
     init(_ inner: FakeStream, uplink: SlowUplink) {
         self.inner = inner
@@ -121,7 +123,7 @@ private final class SlowStream: ByteStream, @unchecked Sendable {
                 var off = 0
                 let start = Date()
                 while off < data.count {
-                    guard uplink.mayWrite({ closed }) else {
+                    guard uplink.mayWrite({ closed.load(ordering: .sequentiallyConsistent) }) else {
                         c.resume(throwing: TransportError("slow uplink: stream closed"))
                         return
                     }
@@ -144,7 +146,7 @@ private final class SlowStream: ByteStream, @unchecked Sendable {
 
     func close() {
         uplink.gate.lock()
-        closed = true
+        closed.store(true, ordering: .sequentiallyConsistent)
         uplink.gate.broadcast()
         uplink.gate.unlock()
         inner.close()

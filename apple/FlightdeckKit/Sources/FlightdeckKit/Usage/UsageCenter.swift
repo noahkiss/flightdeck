@@ -52,20 +52,21 @@ public final class UsageCenter {
 }
 
 /// Where `SystemUsageNotifier` sends its requests; the system center in
-/// the app, a recorder in tests.
+/// the app, a recorder in tests. A request is not Sendable: the notifier
+/// makes each one and hands it over.
 public protocol UsageNotificationSink: AnyObject, Sendable {
     func authorize() async
-    func add(_ request: UNNotificationRequest) async
+    func add(_ request: sending UNNotificationRequest) async
     func remove(_ ids: [String]) async
 }
 
-final class SystemNotificationSink: UsageNotificationSink, @unchecked Sendable {
+final class SystemNotificationSink: UsageNotificationSink, Sendable {
     func authorize() async {
         // iOS asks once and returns the stored answer after that.
         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
     }
 
-    func add(_ request: UNNotificationRequest) async {
+    func add(_ request: sending UNNotificationRequest) async {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
@@ -78,12 +79,22 @@ final class SystemNotificationSink: UsageNotificationSink, @unchecked Sendable {
 /// the account (`HabActions` routes it). Posts and cancels reach the center
 /// one at a time, in call order, so a cancel never overtakes the post it
 /// cancels and an older post never lands after a newer one with the same id.
-public final class SystemUsageNotifier: UsageNotifier, @unchecked Sendable {
+public final class SystemUsageNotifier: UsageNotifier, Sendable {
     public static let accountKey = "flightdeck.usage.account"
     public static let threadID = "flightdeck.usage"
 
-    private enum Op {
-        case add(UNNotificationRequest)
+    /// One post, as plain values; the worker makes the request from it.
+    private struct Post: Sendable {
+        var id: String
+        var title: String
+        var body: String
+        var account: String
+        /// When it fires; nil for now.
+        var at: Date?
+    }
+
+    private enum Op: Sendable {
+        case add(Post)
         case remove(String)
     }
 
@@ -101,12 +112,12 @@ public final class SystemUsageNotifier: UsageNotifier, @unchecked Sendable {
             var authorized = false
             for await op in stream {
                 switch op {
-                case .add(let r):
+                case .add(let p):
                     if !authorized {
                         await sink.authorize()
                         authorized = true
                     }
-                    await sink.add(r)
+                    await sink.add(Self.request(p))
                 case .remove(let id):
                     await sink.remove([id])
                 }
@@ -119,22 +130,24 @@ public final class SystemUsageNotifier: UsageNotifier, @unchecked Sendable {
     }
 
     public func post(id: String, title: String, body: String, account: String, at: Date?) {
-        let c = UNMutableNotificationContent()
-        c.title = title
-        c.body = body
-        c.threadIdentifier = Self.threadID
-        c.userInfo = [Self.accountKey: account]
-        var trigger: UNNotificationTrigger?
-        if let at, at.timeIntervalSinceNow > 1 {
-            trigger = UNCalendarNotificationTrigger(dateMatching: Self.triggerComponents(at), repeats: false)
-        }
-        ops.yield(.add(UNNotificationRequest(identifier: id, content: c, trigger: trigger)))
+        // The trigger is decided now, not when the worker gets to it.
+        let when = at.flatMap { $0.timeIntervalSinceNow > 1 ? $0 : nil }
+        ops.yield(.add(Post(id: id, title: title, body: body, account: account, at: when)))
     }
 
     public func cancel(id: String) {
         ops.yield(.remove(id))
     }
 
+    private static func request(_ p: Post) -> UNNotificationRequest {
+        let c = UNMutableNotificationContent()
+        c.title = p.title
+        c.body = p.body
+        c.threadIdentifier = threadID
+        c.userInfo = [accountKey: p.account]
+        let trigger = p.at.map { UNCalendarNotificationTrigger(dateMatching: triggerComponents($0), repeats: false) }
+        return UNNotificationRequest(identifier: p.id, content: c, trigger: trigger)
+    }
     /// The calendar date of a trigger, in UTC. Not an interval: it fires at
     /// that instant across sleep and a time-zone change. Not local time: a
     /// local time can be ambiguous on the night clocks go back.

@@ -1,6 +1,7 @@
 import FlightdeckShared
 import Foundation
 import HabAPI
+import Synchronization
 import UserNotifications
 import XCTest
 @testable import FlightdeckKit
@@ -20,20 +21,24 @@ extension XCTestCase {
 }
 
 private enum TestDefaultsSlots {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var test: String?
-    nonisolated(unsafe) private static var used = 0
+    private struct State {
+        var test: String?
+        var used = 0
+    }
+
+    private static let state = Mutex(State())
 
     static func next(for current: String) -> UserDefaults {
-        lock.lock()
-        if current != test {
-            test = current
-            used = 0
+        let name = state.withLock { s in
+            if current != s.test {
+                s.test = current
+                s.used = 0
+            }
+            let test = String(current.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" })
+            let name = "flightdeck.tests.\(test).\(s.used)"
+            s.used += 1
+            return name
         }
-        let test = String(current.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" })
-        let name = "flightdeck.tests.\(test).\(used)"
-        used += 1
-        lock.unlock()
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
         return d

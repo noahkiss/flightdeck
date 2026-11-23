@@ -203,20 +203,8 @@ public final class UsageBook {
         return out
     }
 
-    // ISO8601DateFormatter is thread safe; one of each, made once.
-    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    nonisolated(unsafe) private static let whole: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
     nonisolated static func parseTime(_ s: String) -> Date? {
-        fractional.date(from: s) ?? whole.date(from: s)
+        ISOTime.parse(s)
     }
 
     /// Opens the usage sheet, at an account or at the top.
