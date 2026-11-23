@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import XCTest
 @testable import HabAPI
 
@@ -147,17 +148,17 @@ final class BlockTests: XCTestCase {
 
     /// Decodes on a thread with a 512 KB stack, the size GCD and Swift concurrency threads get.
     func decodeOnSmallStack(_ data: Data) -> Result<Block, Error> {
-        final class Box: @unchecked Sendable { var result: Result<Block, Error>? }
-        let box = Box()
+        let box = Mutex<Result<Block, Error>?>(nil)
         let done = expectation(description: "decode")
         let thread = Thread {
-            box.result = Result { try JSONDecoder().decode(Block.self, from: data) }
+            let r = Result { try JSONDecoder().decode(Block.self, from: data) }
+            box.withLock { $0 = r }
             done.fulfill()
         }
         thread.stackSize = 512 * 1024
         thread.start()
         wait(for: [done], timeout: 60)
-        return box.result ?? .failure(CocoaError(.featureUnsupported))
+        return box.withLock { $0 } ?? .failure(CocoaError(.featureUnsupported))
     }
 
     /// A tree past the depth limit throws instead of exhausting the stack; one at the limit
