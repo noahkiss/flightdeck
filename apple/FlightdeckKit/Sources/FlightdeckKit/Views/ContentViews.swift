@@ -184,6 +184,7 @@ struct ZoomedImage: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         }
@@ -291,7 +292,7 @@ struct DocumentCard: View {
             NavigationStack {
                 ScrollView { ContentDetail(model: model, item: item).padding() }
                     .navigationTitle(item.title ?? item.name)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { full = false } } }
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { full = false }.keyboardShortcut(.cancelAction) } }
             }
             #if os(macOS)
             .frame(minWidth: 640, minHeight: 520)
@@ -556,7 +557,7 @@ struct ModifiedFilesCard: View {
                 NavigationStack {
                     ScrollView { DiffView(model: model, item: f).padding() }
                         .navigationTitle(f.name)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { selected = nil } } }
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { selected = nil }.keyboardShortcut(.cancelAction) } }
                 }
                 #if os(macOS)
                 .frame(minWidth: 640, minHeight: 520)

@@ -163,9 +163,10 @@ struct CapcomEventEditor: View {
             }
             .navigationTitle(draft.kind == .calendar ? "Event" : "Reminder")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: cancel) }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: cancel).keyboardShortcut(.cancelAction) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") { save(draft) }
+                        .keyboardShortcut(.defaultAction)
                         .disabled(draft.title.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }

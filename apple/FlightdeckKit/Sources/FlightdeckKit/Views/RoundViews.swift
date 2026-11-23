@@ -392,13 +392,20 @@ struct RoundFormSheet: View {
             .formStyle(.grouped)
             .navigationTitle(draft.isEdit ? "Edit round" : "New round")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: close) }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: close)
+                        .keyboardShortcut(.cancelAction)
+                }
                 ToolbarItem(placement: .confirmationAction) {
+                    // The prompt takes several lines: Return writes one, Cmd-Return saves (app.md 3.8).
                     Button(draft.isEdit ? "Save" : "Create") { Task { await save() } }
                         .disabled(saving)
+                        .keyboardShortcut(.return, modifiers: .command)
                 }
             }
         }
+        // A typed name or prompt is work a stray swipe would lose (app.md 3.8).
+        .interactiveDismissDisabled(saving || !draft.name.isEmpty || !draft.prompt.isEmpty)
     }
 
     private var projects: [Project] { (store?.projects.values.map { $0 } ?? []).sorted { $0.name < $1.name } }

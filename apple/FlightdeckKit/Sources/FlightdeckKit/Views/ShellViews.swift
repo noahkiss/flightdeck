@@ -4,7 +4,7 @@ import HabAPI
 import SwiftUI
 import UIKit
 
-/// The tabs of the app shell (app.md 3.8).
+/// The tabs of the app shell (app.md 3.8). The scene keeps the open one (app.md 3.12).
 enum ShellTab: String, Hashable {
     case sessions, capcom, rounds, settings
 }
@@ -13,8 +13,12 @@ enum ShellTab: String, Hashable {
 /// tabs with the usage strip as the tab bar's bottom accessory.
 struct AppShell: View {
     let fleet: Fleet
-    @State private var tab: ShellTab = .sessions
+    /// The open tab and session, kept per window (app.md 3.12).
+    @SceneStorage("flightdeck.shell.tab") private var tab: ShellTab = .sessions
+    @SceneStorage("flightdeck.shell.open") private var savedOpen = ""
     @State private var opened: BoardRow?
+    /// The restore is opening the saved session: the tab stays as the scene kept it.
+    @State private var restoring = false
     /// The New session form, while it is open (app.md 3.10).
     @State private var newSession: NewSessionDraft?
     /// Debug builds: the Capcom jobs list opened at launch.
@@ -34,9 +38,18 @@ struct AppShell: View {
                 opened = row
             })
             .usageSheet(fleet.usage, governor: fleet.capcom)
+            // Close, rename and restart from a row (app.md 3.11).
+            .modifier(SessionActionsHost(center: fleet.sessionActions))
+            .modifier(SessionActionFollow(center: fleet.sessionActions, board: board, opened: $opened))
+            .modifier(RestoreOpenSession(board: board, opened: $opened, saved: savedOpen) { restoring = true })
             .onChange(of: opened) { _, r in
+                savedOpen = r?.id ?? ""
                 guard r != nil else { return }
-                tab = .sessions
+                if restoring {
+                    restoring = false
+                } else {
+                    tab = .sessions
+                }
                 fleet.rounds.sessionOpened()
                 fleet.newSessions.opened()
             }
@@ -202,6 +215,9 @@ struct SessionsTab: View {
     @Binding var newSession: NewSessionDraft?
     let openSettings: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// The board's search and host scope (app.md 3.6).
+    @State private var query = ""
+    @State private var scope: BoardSearchScope = .all
 
     var body: some View {
         if sizeClass == .compact {
@@ -233,9 +249,13 @@ struct SessionsTab: View {
     private var list: some View { list(selectable: false) }
 
     private func list(selectable: Bool) -> some View {
-        SessionsListView(fleet: fleet, opened: $opened, selectable: selectable, newSession: $newSession)
+        SessionsListView(fleet: fleet, opened: $opened, selectable: selectable, newSession: $newSession, query: query, scope: scope)
             .navigationTitle("Sessions")
             .navigationBarTitleDisplayMode(.large)
+            .searchable(text: $query, prompt: "Search sessions")
+            .modifier(HostScopes(board: fleet.board, scope: $scope))
+            // iPhone: the field waits in the bottom toolbar as a button until tapped.
+            .searchToolbarBehavior(sizeClass == .compact ? .minimize : .automatic)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HostsMenu(board: fleet.board, openSettings: openSettings)
@@ -305,8 +325,16 @@ struct SessionsListView: View {
     var selectable = false
     /// The New session form, for the empty list's action.
     @Binding var newSession: NewSessionDraft?
+    /// The search's words and host scope (app.md 3.6).
+    var query = ""
+    var scope: BoardSearchScope = .all
 
     private var board: Board { fleet.board }
+
+    /// The list as the search filters it.
+    private func filtered(_ all: [SessionsSection]) -> [SessionsSection] {
+        BoardSearch.filter(all, query: query, scope: BoardSearch.fit(scope, habs: board.habs.map(\.id)))
+    }
 
     private var sections: [SessionsSection] {
         var rows = RoundCenter.filter(board.sections, showRunSessions: fleet.rounds.showRunSessions)
@@ -322,7 +350,8 @@ struct SessionsListView: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
-            let sections = sections
+            let all = sections
+            let sections = filtered(all)
             ScrollViewReader { proxy in
             List(selection: selectable ? selection : nil) {
                 ForEach(board.habs.filter(\.needsUpdate)) { h in
@@ -338,6 +367,8 @@ struct SessionsListView: View {
                     .id(section.kind)
                 }
             }
+            // Pull to refresh retries every hab at once (app.md 10.2).
+            .refreshable { await fleet.refresh() }
             #if DEBUG
             // Debug builds only: `-FlightdeckScrollTo Working` scrolls to a section, for screenshots.
             .task {
@@ -348,7 +379,10 @@ struct SessionsListView: View {
             #endif
             }
             .overlay {
-                if sections.isEmpty {
+                if sections.isEmpty, !all.isEmpty {
+                    ContentUnavailableView("No matches", systemImage: "magnifyingglass",
+                                           description: Text("Try other words, or check the host scope."))
+                } else if sections.isEmpty {
                     ContentUnavailableView {
                         Label("No sessions", systemImage: "rectangle.stack")
                     } description: {
@@ -381,9 +415,11 @@ struct SessionsListView: View {
         case .permission(let row):
             PermissionRow(row: row, approvals: fleet.approvals, now: now) { open(row) }
                 .modifier(OpenRowMark(id: row.id, open: selectable && opened?.id == row.id))
+                .sessionRowActions(row, fleet.sessionActions)
         case .question(let row):
             ActionRow(row: row, now: now, action: "Answer", open: { open(row) }, act: { open(row) })
                 .modifier(OpenRowMark(id: row.id, open: selectable && opened?.id == row.id))
+                .sessionRowActions(row, fleet.sessionActions)
         case .confirm(let card):
             if let center = fleet.confirms { ConfirmRow(center: center, card: card, now: now) }
         case .group(let g):
@@ -391,9 +427,11 @@ struct SessionsListView: View {
         case .session(let row):
             if selectable {
                 SessionRow(row: row, now: now).tag(row.id)
+                    .sessionRowActions(row, fleet.sessionActions)
             } else {
                 Button { open(row) } label: { SessionRow(row: row, now: now) }
                     .buttonStyle(.plain)
+                    .sessionRowActions(row, fleet.sessionActions)
             }
         }
     }
@@ -726,6 +764,7 @@ struct ConfirmReviewSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", action: close)
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         }

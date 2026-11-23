@@ -414,6 +414,10 @@ The root is a stock tab view with four tabs, in this order:
 - **Deployment.** The app targets iOS 26.1, iPadOS 26.1 and macOS 26.0 at minimum (`Tab` items,
   the sidebar-adaptable style, the bottom accessory and the minimise-on-scroll behaviour need
   26.1). The code has no fallback for an earlier version.
+- **Privacy manifest.** The app, the widget extension and the notification extension each ship a
+  `PrivacyInfo.xcprivacy` that names the required-reason APIs they use: UserDefaults for the
+  app's own settings (CA92.1) and, on iPhone and iPad, for the app group the extensions share
+  (1C8F.1). The app tracks nothing and collects nothing for its developer.
 - **The Sessions tab.** A large title, "Sessions", that collapses on scroll. The toolbar holds a
   hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its
   state and opens Computers. Beside it, New session (a plus) opens the New session form (3.10);

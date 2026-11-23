@@ -84,8 +84,11 @@ public struct SessionView: View {
     @Environment(\.voiceKit) private var voiceKit
     /// Raised by voice mode's Keyboard control: focus the composer.
     @State private var focusComposer = 0
-    /// The composer's draft, here so the Capcom toolbar's New conversation can carry it.
-    @State private var draft = ""
+    /// The composer's draft, here so the Capcom toolbar's New conversation can carry it. It
+    /// lives in the fleet's draft store, so it outlives this view (app.md 4.2); without a
+    /// store (a preview) the view keeps it.
+    @Environment(\.drafts) private var drafts
+    @State private var ownDraft = ""
     @Environment(\.terminalSlot) private var terminal
     /// The Capcom view this session view sits in, if any.
     @Environment(\.capcomView) private var capcomView
@@ -118,6 +121,18 @@ public struct SessionView: View {
         #endif
     }
 
+    private var draft: String {
+        get { drafts?[model.target] ?? ownDraft }
+        nonmutating set {
+            if let drafts { drafts[model.target] = newValue } else { ownDraft = newValue }
+        }
+    }
+
+    /// The composer's binding to the draft.
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { draft = $0 })
+    }
+
     public init(model: ChatModel, compact: Bool, close: (() -> Void)? = nil) {
         _model = State(initialValue: model)
         self.compact = compact
@@ -137,7 +152,7 @@ public struct SessionView: View {
             if compact {
                 Group {
                     switch model.context.isCapcomService ? .chat : mode {
-                    case .chat: ChatView(model: model, openTerminal: model.context.isCapcomService ? nil : { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                    case .chat: ChatView(model: model, openTerminal: model.context.isCapcomService ? nil : { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
                     case .terminal: terminal.make(model.target)
                     }
                 }
@@ -259,13 +274,13 @@ public struct SessionView: View {
                             // The Capcom view (app.md 4.10): the conversation fills the width;
                             // the terminal is one switch away.
                             switch model.context.isCapcomService ? .chat : mode {
-                            case .chat: ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                            case .chat: ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
                             case .terminal: terminal.make(model.target)
                             }
                         } else {
                             GeometryReader { geo in
                                 HStack(spacing: 0) {
-                                    ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                                    ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
                                         .frame(width: geo.size.width / 2)
                                     Divider()
                                     terminal.make(model.target)
@@ -322,7 +337,7 @@ public struct SessionView: View {
             if sideBySide {
                 GeometryReader { geo in
                     HStack(spacing: 0) {
-                        ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                        ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
                             .frame(width: geo.size.width / 2)
                         Divider()
                         terminal.make(model.target)
@@ -331,7 +346,7 @@ public struct SessionView: View {
                 }
             } else {
                 switch model.context.isCapcomService ? .chat : mode {
-                case .chat: ChatView(model: model, openTerminal: model.context.isCapcomService ? nil : { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                case .chat: ChatView(model: model, openTerminal: model.context.isCapcomService ? nil : { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
                 case .terminal: terminal.make(model.target)
                 }
             }

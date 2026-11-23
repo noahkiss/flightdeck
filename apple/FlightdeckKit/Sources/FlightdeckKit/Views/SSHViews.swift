@@ -315,6 +315,7 @@ struct AddHabView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", action: done)
+                    .keyboardShortcut(.cancelAction)
             }
             ToolbarItem(placement: .confirmationAction) {
                 switch step {
@@ -322,6 +323,7 @@ struct AddHabView: View {
                 default:
                     Button("Connect") { Task { await probe() } }
                         .disabled(SSHDestination.parse(destination) == nil || keyLine == nil)
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
@@ -503,6 +505,7 @@ struct PairingView: View {
                     task?.cancel()
                     done()
                 }
+                .keyboardShortcut(.cancelAction)
             }
         }
         .onAppear {
@@ -752,6 +755,7 @@ struct SSHSheets: ViewModifier {
                                 .toolbar {
                                     ToolbarItem(placement: .cancellationAction) {
                                         Button("Close") { setup.pendingCodeError = nil }
+                                            .keyboardShortcut(.cancelAction)
                                     }
                                 }
                         }

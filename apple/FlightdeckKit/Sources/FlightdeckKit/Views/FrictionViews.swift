@@ -107,23 +107,29 @@ struct FrictionSheet: View {
                 if note.trace == nil {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         if note.sending {
                             ProgressView()
                         } else {
+                            // The note takes several lines: Return writes one, Cmd-Return sends (app.md 3.8).
                             Button("Send") { Task { await note.send() } }
                                 .disabled(!note.canSend)
+                                .keyboardShortcut(.return, modifiers: .command)
                         }
                     }
                 } else {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
+                            .keyboardShortcut(.defaultAction)
                     }
                 }
             }
             .onAppear { focused = true }
         }
+        // Typed words are work a stray swipe would lose (app.md 3.8).
+        .interactiveDismissDisabled(note.trace == nil && (note.sending || !note.trimmed.isEmpty))
         .presentationDetents([.medium, .large])
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 320)

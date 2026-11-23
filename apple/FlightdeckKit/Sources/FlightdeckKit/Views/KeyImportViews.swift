@@ -194,9 +194,12 @@ struct KeyImportView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Import a key")
+        // A pasted key or a typed passphrase is work a stray swipe would lose (app.md 3.8).
+        .interactiveDismissDisabled(working || (result == nil && (!text.isEmpty || !passphrase.isEmpty)))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(result == nil ? "Cancel" : "Done", action: finish)
+                    .keyboardShortcut(.cancelAction)
             }
             if working {
                 ToolbarItem(placement: .confirmationAction) { ProgressView() }

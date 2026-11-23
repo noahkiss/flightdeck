@@ -118,10 +118,13 @@ struct NewSessionSheet: View {
                     } else {
                         Button("Start") { Task { await start() } }
                             .disabled(center.habs.isEmpty || center.loading.contains(draft.habID))
+                            .keyboardShortcut(.defaultAction)
                     }
                 }
             }
         }
+        // A swipe never closes the form while Start runs (app.md 3.8, 3.10).
+        .interactiveDismissDisabled(starting)
         #if os(macOS)
         .frame(minWidth: 440, minHeight: 340)
         #endif
