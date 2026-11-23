@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "HabAPI", targets: ["HabAPI"]),
     ],
     targets: [
-        .target(name: "HabAPI"),
-        .testTarget(name: "HabAPITests", dependencies: ["HabAPI"]),
+        .target(name: "HabAPI", swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "HabAPITests", dependencies: ["HabAPI"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

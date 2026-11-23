@@ -369,7 +369,7 @@ The root is a stock tab view with four tabs, in this order:
     column, "Choose a session" while none is open. The open session's row shows selected, also
     when the session opened from elsewhere (a notification, a round, a group, a sent file).
   - **The session:** the detail column's system bar: the session's title, a subtitle of round,
-    harness, hab and model (iOS 26), and the controls as toolbar items: Chat | Terminal (when
+    harness, hab and model, and the controls as toolbar items: Chat | Terminal (when
     not side by side), New conversation (Capcom), Voice, Show files; Console, Show in chat and
     Note friction in its More menu. Chat and terminal sit side by side while the column is at
     least 900 pt wide; narrower (portrait, or a sidebar open) the switch shows one at a time.

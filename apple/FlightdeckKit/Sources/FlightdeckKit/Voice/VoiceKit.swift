@@ -115,10 +115,10 @@ public final class VoiceKit {
     public let liveWords: Bool
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
-    public init(settings: VoiceSettingsStore? = nil, parakeet: ParakeetHost? = nil, liveWords: Bool? = nil) {
+    public init(settings: VoiceSettingsStore? = nil, parakeet: ParakeetHost? = nil, liveWords: Bool = true) {
         self.settings = settings ?? VoiceSettingsStore()
         self.parakeet = parakeet ?? ParakeetHost(runtime: nil)
-        self.liveWords = liveWords ?? true
+        self.liveWords = liveWords
         #if os(iOS)
         observers = self.parakeet.observeSystem()
         #endif
