@@ -1490,6 +1490,21 @@ public actor FakeHab {
             let n = transcribes.count - 1
             let text = speechTexts.isEmpty ? "a clip of \(p.audio.count) bytes" : speechTexts[min(n, speechTexts.count - 1)]
             await reply(c, id: id, result: SpeechTranscript(audioMs: 0, decodeMs: 0, seq: c.seq, text: text))
+        case HabMethods.sessionRename.name, HabMethods.sessionClose.name, HabMethods.paneClose.name,
+             HabMethods.sessionRestart.name:
+            do {
+                let r = try await sessionAction(method, params)
+                if var created = r {
+                    created.seq = c.seq
+                    await reply(c, id: id, result: created)
+                } else {
+                    await reply(c, id: id, result: Empty(seq: c.seq))
+                }
+            } catch let f as Failure {
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+            } catch {
+                await fail(c, id: id, kind: .invalid, hint: "\(error)")
+            }
         case HabMethods.sessionCreate.name:
             guard let p = try? params.decode(SessionCreateParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad session.create params")
@@ -1560,6 +1575,105 @@ public actor FakeHab {
             await put(Fixture.agent(pane: pid, harness: h, state: .idle, revision: 0, session: sid))
         }
         return SessionCreated(pane: pid, seq: 0, session: sid)
+    }
+
+    /// Every call of the row actions (app.md 3.11), in order: method and session or pane.
+    public private(set) var sessionActions: [String] = []
+    /// Holds the next `session.restart` until the test releases it.
+    private var restartHook: (@Sendable () async -> Void)?
+    public func setRestartHook(_ hook: (@Sendable () async -> Void)?) { restartHook = hook }
+
+    /// The row actions by the real hab's rules and hints (cmd/gff-hab actions.go, restart.go;
+    /// internal/structure): the name rule, Capcom's reserved names, a taken name, a missing
+    /// record, a pane that is gone, and a restart only of a running session whose agent is idle
+    /// or done and has its session id. One difference: the fake's pane ids are not UUIDs, so it
+    /// skips the real hab's pane id check.
+    private func sessionAction(_ method: String, _ params: JSONValue) async throws -> SessionCreated? {
+        switch method {
+        case HabMethods.sessionRename.name:
+            guard let p = try? params.decode(SessionRenameParams.self) else { throw Failure(kind: .invalid, hint: "bad session.rename params") }
+            sessionActions.append("rename \(p.session) \(p.name)")
+            guard p.name.range(of: "^[A-Za-z0-9._-]{1,64}$", options: .regularExpression) != nil else {
+                throw Failure(kind: .invalid, hint: "session name \"\(p.name)\": use 1 to 64 of A-Z a-z 0-9 . _ -")
+            }
+            if p.name == "capcom" || p.name.hasPrefix("capcom-") {
+                throw Failure(kind: .invalid, hint: "session name \"\(p.name)\" is kept for the Capcom service; capcom and names that start with capcom- are not free")
+            }
+            guard var s = sessions[p.session] else { throw Failure(kind: .notFound, hint: "not_found: session \(p.session)") }
+            if s.name == p.name { return nil }
+            if sessions.values.contains(where: { $0.name == p.name }) {
+                throw Failure(kind: .conflict, hint: "conflict: a session named \"\(p.name)\" exists")
+            }
+            s.name = p.name
+            await put(s)
+            return nil
+        case HabMethods.sessionClose.name:
+            guard let p = try? params.decode(SessionRef.self) else { throw Failure(kind: .invalid, hint: "bad session.close params") }
+            sessionActions.append("close \(p.session)")
+            guard let s = sessions[p.session] else { throw Failure(kind: .notFound, hint: "not_found: session \(p.session)") }
+            // The record goes; a live pane keeps running, unfiled.
+            await deleteSession(s.id)
+            if let pid = s.project, var pr = projects[pid] {
+                pr.sessions.removeAll { $0 == s.id }
+                await put(pr)
+            }
+            if let pane = s.pane, var pn = panes[pane] {
+                pn.session = nil
+                await put(pn)
+            }
+            return nil
+        case HabMethods.paneClose.name:
+            guard let p = try? params.decode(PaneRef.self) else { throw Failure(kind: .invalid, hint: "bad pane.close params") }
+            sessionActions.append("pane.close \(p.pane)")
+            guard panes[p.pane] != nil else { throw Failure(kind: .notFound, hint: "pane \(p.pane) does not exist") }
+            await endPane(p.pane)
+            return nil
+        default:
+            guard capabilities.contains(SessionActionCenter.restartCapability) else { throw Failure(kind: .unavailable, hint: "this hab cannot restart sessions") }
+            guard let p = try? params.decode(SessionRef.self) else { throw Failure(kind: .invalid, hint: "bad session.restart params") }
+            sessionActions.append("restart \(p.session)")
+            guard var s = sessions[p.session] else { throw Failure(kind: .notFound, hint: "session \(p.session) does not exist") }
+            if s.round?.watcher == true {
+                throw Failure(kind: .conflict, hint: "session \(s.name) is a watcher session: gff-hab starts its watcher (rounds.md 4.4)")
+            }
+            guard s.state == .running, let old = s.pane else {
+                throw Failure(kind: .conflict, hint: "session \(s.name) is not running: session.resume starts it")
+            }
+            guard let a = agents[old], ["claude", "codex", "opencode"].contains(a.harness) else {
+                throw Failure(kind: .unavailable, hint: "session \(s.name) runs no harness gff-hab can resume")
+            }
+            guard a.state == .idle || a.state == .done else {
+                throw Failure(kind: .conflict, hint: "session \(s.name): the agent is \(a.state.rawValue); a restart waits until it is idle or done")
+            }
+            guard let native = a.session, !native.isEmpty else {
+                throw Failure(kind: .unavailable, hint: "session \(s.name): \(a.harness) has not reported its session id, so it cannot resume")
+            }
+            if let hook = restartHook { await hook() }
+            // Exit the old pane, then start the harness again with its resume id in a new pane.
+            await emit(type: "pane.deleted", id: old, revision: (panes[old]?.revision ?? 0) + 1, data: Deleted())
+            panes[old] = nil
+            agents[old] = nil
+            let pid = "%restart\(nextCreated)"
+            nextCreated += 1
+            await put(Fixture.pane(pid, session: s.id))
+            s.pane = pid
+            s.state = .running
+            await put(s)
+            await put(Fixture.agent(pane: pid, harness: a.harness, state: .idle, revision: 0, session: native))
+            return SessionCreated(pane: pid, seq: 0, session: s.id)
+        }
+    }
+
+    /// Ends a pane's program as `pane.close` does: the pane goes, and its session, if any,
+    /// stays, exited.
+    public func endPane(_ pane: String) async {
+        await emit(type: "pane.deleted", id: pane, revision: (panes[pane]?.revision ?? 0) + 1, data: Deleted())
+        panes[pane] = nil
+        agents[pane] = nil
+        if var s = sessions.values.first(where: { $0.pane == pane }) {
+            s.state = .exited
+            await put(s)
+        }
     }
 
     /// The Capcom entry calls, by the real hab's rules (capcom.md 8.4): refs resolve at once,

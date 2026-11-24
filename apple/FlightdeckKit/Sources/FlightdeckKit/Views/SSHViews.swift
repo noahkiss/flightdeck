@@ -311,10 +311,13 @@ struct AddHabView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Add a hab")
+        // A typed address or password is work a stray swipe would lose (app.md 3.8).
+        .interactiveDismissDisabled(!destination.isEmpty || !password.isEmpty || step == .probing || step == .testing)
         .onDisappear { password = "" }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", action: done)
+                    .keyboardShortcut(.cancelAction)
             }
             ToolbarItem(placement: .confirmationAction) {
                 switch step {
@@ -322,6 +325,7 @@ struct AddHabView: View {
                 default:
                     Button("Connect") { Task { await probe() } }
                         .disabled(SSHDestination.parse(destination) == nil || keyLine == nil)
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
@@ -497,12 +501,15 @@ struct PairingView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Pair with a code")
+        // A typed code, or a pairing under way, is work a stray swipe would lose (app.md 3.8).
+        .interactiveDismissDisabled(!text.isEmpty || step != .ready)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(step == .ready ? "Close" : "Cancel") {
                     task?.cancel()
                     done()
                 }
+                .keyboardShortcut(.cancelAction)
             }
         }
         .onAppear {
@@ -752,6 +759,7 @@ struct SSHSheets: ViewModifier {
                                 .toolbar {
                                     ToolbarItem(placement: .cancellationAction) {
                                         Button("Close") { setup.pendingCodeError = nil }
+                                            .keyboardShortcut(.cancelAction)
                                     }
                                 }
                         }

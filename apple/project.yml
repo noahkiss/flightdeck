@@ -20,7 +20,10 @@ targets:
     platform: macOS
     sources:
       - path: App/macOS
-        excludes: ["*.entitlements", "Info.plist"]
+        excludes: ["*.entitlements", "Info.plist", "PrivacyInfo.xcprivacy"]
+      # The privacy manifest: required-reason APIs the app uses (UserDefaults).
+      - path: App/macOS/PrivacyInfo.xcprivacy
+        buildPhase: resources
       # Third-party notices, written by `make notices`; the Acknowledgements page in Settings reads it.
       - path: App/Acknowledgements.txt
         buildPhase: resources
@@ -47,7 +50,10 @@ targets:
     platform: iOS
     sources:
       - path: App/iOS
-        excludes: ["*.entitlements", "Info.plist"]
+        excludes: ["*.entitlements", "Info.plist", "PrivacyInfo.xcprivacy"]
+      # The privacy manifest: UserDefaults, the app's own and the app group's.
+      - path: App/iOS/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: App/Acknowledgements.txt
         buildPhase: resources
       - path: Shared
@@ -88,7 +94,9 @@ targets:
     platform: iOS
     sources:
       - path: NotificationService
-        excludes: ["*.entitlements", "Info.plist"]
+        excludes: ["*.entitlements", "Info.plist", "PrivacyInfo.xcprivacy"]
+      - path: NotificationService/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: FlightdeckKit
         product: FlightdeckShared
@@ -110,7 +118,9 @@ targets:
     platform: iOS
     sources:
       - path: Widgets
-        excludes: ["*.entitlements", "Info.plist"]
+        excludes: ["*.entitlements", "Info.plist", "PrivacyInfo.xcprivacy"]
+      - path: Widgets/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Shared
     dependencies:
       - package: FlightdeckKit

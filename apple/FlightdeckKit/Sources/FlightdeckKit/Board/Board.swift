@@ -60,8 +60,12 @@ public final class Board {
         rebuild()
     }
 
+    /// How many rows were opened, so a waiting restore sees any open (app.md 3.12).
+    public private(set) var opens = 0
+
     /// Opens a row: marks a `done` seen, then calls `onOpen`.
     public func open(_ row: BoardRow) {
+        opens += 1
         if row.state == .done, let k = row.seenKey {
             seen.insert(k)
             rebuild()

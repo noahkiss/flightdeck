@@ -173,6 +173,8 @@ Its long-running command cards are the closest match.
 | Device key | Made on first start | Secure Enclave (phone, iPad) or Keychain (Mac) |
 | Imported SSH keys | The owner's own key files (10.4) | Keychain, this device only, never in backups |
 | Push tokens | APNs | Sent to each hab that has push set up |
+| Composer drafts | The owner (4.2) | Yes, per session, until sent. In the app's own defaults: they go into device backups, and on the Mac (no sandbox) any program of the user can read them, so a pasted secret in a draft is not protected |
+| Open tab and session | The owner (3.12) | Yes, per window |
 
 The hab owns structure. The app owns presentation (`hab-logic-api.md` 2.2). No layout, split or
 focus is stored on a hab.
@@ -226,7 +228,7 @@ focus is stored on a hab.
 - **Offline habs.** Their rows stay, dimmed, with "offline since" and the last known state. No
   action that needs the hab is offered.
 - **Actions from a row:** open, answer an approval (7), start or resume the harness when the pane
-  shows `none` or `exited`, close an exited session.
+  shows `none` or `exited`, and close, rename or restart the session (3.11).
 - **Rows that need you (iOS, 3.8).** Each kind of rank 1 row carries its own action:
   - A permission shows its command in a monospaced box and Deny and Allow on the row. They answer
     through the approval sheet's path (7.3), so expiry and "answered elsewhere" hold. A tap on
@@ -321,16 +323,36 @@ On iPad and Mac, inside a session, a sidebar lists every session grouped by proj
 
 ### 3.6 Search
 
-- A search field heads the sidebar and the board. It filters as the owner types.
-- **First build:** it matches names the app already holds: projects, branches, session titles,
-  shells, habs, harnesses and models. It works offline, from the cache.
-- **Later:** full-text search over chat messages, run on each hab by its transcript reader
-  (`chat.search`, 17). Results show the message, its session and hab, and open the chat at it.
+Code: `Board/BoardSearch.swift`, the search in `Views/ShellViews.swift` (iPhone and iPad) and
+`Views/BoardViews.swift` (Mac). Tests: `BoardSearchTests`.
+
+- A search field heads the Sessions list and the Mac board list. It filters as the owner types.
+  On iPhone it sits in the bottom toolbar, minimised to a button until tapped
+  (`searchToolbarBehavior(.minimize)`); on iPad it heads the list column; on the Mac it sits in
+  the window's toolbar.
+- **First build:** it matches names the app already holds, ignoring case and accents: session
+  titles and names, projects, habs, harnesses (by id and by name, "Claude Code"), models, and
+  the row's context line. Every word the owner types must match somewhere in the row. It works
+  offline, from the cache.
+- **Host scopes.** With more than one hab, scope buttons under the field filter by computer:
+  All, then each hab by label (`searchScopes`). On iPhone and iPad they show while the search
+  is open, and closing the search returns the scope to All, so no hidden scope keeps filtering.
+  On the Mac they stay under the field.
+- The filter applies to session rows. Confirmation cards match on their title and hab, and on
+  iPhone and iPad group rows do too. While words are typed, the Mac board's Capcom row, groups
+  and rounds step aside; a host scope with no words hides none of them, so nothing that waits
+  for the owner goes unseen. The sections keep their order and their counts follow the filter.
+  The query outlives opening a session.
+- **Later:** branches (the hab sends them with the sidebar, 3.5); a Pinned scope and a pin
+  action on rows; a Cmd-K palette over sessions and commands (the Mac and iPad stage); full-text
+  search over chat messages, run on each hab by its transcript reader (`chat.search`, 17).
+  Results show the message, its session and hab, and open the chat at it.
 
 | Case | Behaviour |
 |---|---|
 | An offline hab | Its cached names still match, dimmed |
-| No match | "No matches" and a hint to check the filter for project or hab |
+| No match | "No matches" and a hint to check the host scope |
+| A hab scope whose hab goes away | The scope falls back to All |
 
 ### 3.7 Usage strip
 
@@ -362,6 +384,13 @@ The root is a stock tab view with four tabs, in this order:
   also lets the owner swipe it down). The keyboard covers the tab bar, so every view that
   takes the keyboard also lets it go (4.2). Owner report 2026-11-21 (app 0.2.0): the Capcom
   tab's keyboard could not be dismissed, which hid the tab bar and left no way out.
+- **Sheets and the keyboard.** With a hardware keyboard (iPad, Mac), Return presses a sheet's
+  confirm button (Start, Save, Send, Add, Done) and Esc its Cancel or Done
+  (`keyboardShortcut(.defaultAction)` and `.cancelAction`). In a sheet whose main field takes
+  several lines (a note, a message), Return writes a new line and Cmd-Return confirms.
+- **Sheets that hold work** cannot be swiped away by accident (`interactiveDismissDisabled`):
+  New session while Start runs, and a form while its text field holds text. Cancel still
+  closes them. This keeps the 3.10 rule that a started session is never cancelled half way.
 - **iPad.** The same four tabs in the sidebar-adaptable style: a tab bar at the top that the owner
   can turn into a sidebar (the system shows the sidebar in a wide landscape window). Design call:
   it is the system's own control for one structure at two widths, so iPad and iPhone share it.
@@ -390,6 +419,10 @@ The root is a stock tab view with four tabs, in this order:
 - **Deployment.** The app targets iOS 26.1, iPadOS 26.1 and macOS 26.0 at minimum (`Tab` items,
   the sidebar-adaptable style, the bottom accessory and the minimise-on-scroll behaviour need
   26.1). The code has no fallback for an earlier version.
+- **Privacy manifest.** The app, the widget extension and the notification extension each ship a
+  `PrivacyInfo.xcprivacy` that names the required-reason APIs they use: UserDefaults for the
+  app's own settings (CA92.1) and, on iPhone and iPad, for the app group the extensions share
+  (1C8F.1). The app tracks nothing and collects nothing for its developer.
 - **The Sessions tab.** A large title, "Sessions", that collapses on scroll. The toolbar holds a
   hosts menu: a dot and "<n> hosts" (or "<n> of <m> online"). The menu lists each hab with its
   state and opens Computers. Beside it, New session (a plus) opens the New session form (3.10);
@@ -474,6 +507,90 @@ so New session is a bar control. Design call: `gff` asks for a host, a folder an
 (`gff-client.md` 6.1); the app offers harnesses by name and the shell, not a free command,
 since a phone keyboard is a poor place to type one.
 
+### 3.11 Session actions
+
+Code: `Board/SessionActions.swift` (the rules and the calls), `Views/SessionActionViews.swift`
+(the menu, the swipe, the questions). Tests: `SessionActionTests`.
+
+The owner ends, removes, renames and restarts sessions from their rows, so the list does not
+only grow. The actions follow `gff`'s sidebar (`gff-client.md` 6) and call the same methods.
+
+- **Where.** A row's context menu (a long press on iPhone and iPad, a secondary click on the
+  Mac) holds Rename, Restart, Copy name and Close, in that order, Close last and red. A swipe
+  to the left shows Close and Rename. Every session row has them, in every section, needs-you
+  rows too. Group rows and confirmation cards have their own actions.
+- **Close** depends on the session:
+  - A running session asks "End <name> on <hab>?", with "The agent stops. Its conversation
+    stays, so it can be resumed." and End session (red) and Cancel. End sends `pane.close`:
+    the program gets a hang-up and the record stays, exited. Before it sends, the app reads
+    the row again: when the program ended while the question was up, it sends nothing and
+    says "<name> has ended."
+  - An exited session asks "Remove <name> from <hab>?", with "It leaves the list. Its
+    transcript stays on the computer." and Remove (red) and Cancel. Remove sends
+    `session.close`, which removes the record. It reads the row again first: a session that
+    runs again meanwhile (another client resumed it) gets no call, and the app says "<name> is
+    running again." A removed record of a running session would leave its program unfiled.
+  - An unfiled pane asks "End this pane's program on <hab>?" and sends `pane.close`.
+- **Rename** opens an alert with the name in a text field, and Cancel and Rename. Rename sends
+  `session.rename`. The hab checks the name (1 to 64 of A-Z a-z 0-9 . _ -, unique on the host,
+  not a Capcom name) and its refusal shows in its own words. A row titled by its agent keeps
+  that title; the new name shows in Copy name and wherever the name shows.
+- **Restart** sends `session.restart`: the hab exits the harness and starts it again with its
+  resume id in a new pane, so it loads its instructions anew. It shows only while the hab's
+  welcome lists `session-restart`, the session runs, and the agent is idle or done. An open
+  session follows the restart to the new pane once the board lists it, in every window that
+  shows it. The call waits up to 75 s, past the hab's own 60 s; when it times out, the hab may
+  still finish, so an open session follows the session to its next pane all the same.
+- **Copy name** puts the session's name on the clipboard.
+- **What a row offers.** An offline hab's row offers Copy name only (3.1). An unfiled pane
+  offers Close only. A Capcom session and a round's watcher session offer Copy name only: Capcom
+  and the round own them. Calls run off the main thread. While a row's call runs, its actions
+  are off, so a second Close or Restart sends nothing.
+- **Per window.** Each window (an iPad or Mac window) asks its own questions and shows its own
+  alerts; the outcome (a removal, a restart) reaches every window.
+- **A failure** shows an alert, "Couldn't <action> <name>", with the hab's words as a sentence
+  ("A session named "docs" exists.").
+- **An open session that is removed** closes: the list shows, or "Choose a session" in the split
+  view. An ended session stays open and shows exited.
+- **Later:** Open in new window (the Mac and iPad stage) and Pin.
+
+| Case | Behaviour |
+|---|---|
+| The hab goes offline with the question up | The call fails; the alert says so in the connection's words |
+| The program ends while "End" is asked | Nothing is sent; "<name> has ended." |
+| A taken name | The hab answers `conflict`; the alert shows its words |
+| Restart while the agent started working | The hab answers `conflict` ("a restart waits until it is idle or done"); the alert shows it |
+| Another client removed the session first | The hab answers `not_found`; the row is already gone |
+
+Design call: Close names one control for two calls, as `gff` does, so the owner learns one
+place; the question says which it is. Removing a running session's record (`session.close`
+alone) would leave its program running as an unfiled pane, which no owner wants from a row.
+
+### 3.12 Reopen where the owner left it
+
+Code: `Board/SessionRestore.swift`, the scene storage in `Views/ShellViews.swift` and
+`Views/BoardViews.swift`. Tests: `SessionRestoreTests`.
+
+- Each window keeps its tab and its open session (`SceneStorage`): the tab by name, the session
+  by its row's id (hab and session). After iOS ends the app in the background, the window opens
+  on the same tab. On the Mac, the system restores a window's scene storage only when it
+  restores the window itself (the "Close windows when quitting an app" setting off).
+- The open session opens again as a tap on its row opens it, once the board lists the row,
+  within one minute. A row that comes later opens nothing.
+- **Any other open wins.** A notification, a round, a group member, a sent file, a started
+  session, an approval sheet, another tab, the Capcom view (Mac) or the owner's tap on any row
+  before the row arrives cancels the restore. The restore never
+  moves the tab: a session open under Sessions while the owner left on Capcom stays under
+  Sessions.
+- The Mac keeps the Capcom view the same way.
+- Going back to the list clears the open session, so the next start opens on the list.
+- Debug launch arguments (`-FlightdeckOpenSession`, `-FlightdeckTab`) win over the restore.
+
+| Case | Behaviour |
+|---|---|
+| The session was removed meanwhile | Nothing opens; the list shows |
+| The hab is slow to come online | The session opens when its row arrives, within the minute; after that the list stays |
+
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
 rows; search field; usage bars in the footer); `hab-logic-api.md` 5, 6.4; `harness-adapters.md`;
@@ -539,6 +656,15 @@ tab bar minimising on scroll, settings split by area).
   answer, the Capcom thread's notice and proposals line (a `glass` button), and the Capcom
   tab's pacing line.
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
+- **Drafts survive.** The composer's text is kept per session on the device
+  (`Board/DraftStore.swift`, tests `DraftStoreTests`). Going back to the list, opening another
+  session, a restart of the session, or iOS ending the app in the background leaves it in
+  place. Send clears it. The Capcom composer keeps its draft the same way, per conversation;
+  New conversation carries it to the new one. A draft of a session that its hab no longer
+  lists goes when that hab next comes online. Attachments are not kept. Demo mode keeps
+  drafts in memory only. A keystroke redraws only the composer that shows that draft; the
+  drafts are written half a second after typing pauses, and at once when the app goes to the
+  background.
 - **Send follows the hab's input rules** (`harness-adapters.md`, Input delivery):
 
 | Pane state | What the owner sees |
@@ -2436,7 +2562,15 @@ The connection follows `transport.md`. This section says what the app does.
 ### 10.2 Reconnect
 
 - On a lost connection, the app retries with backoff and jitter (first try at once, up to 30 s
-  apart). A network change retries at once.
+  apart). A network change retries at once: the app watches the network path
+  (`NWPathMonitor`, `Connection/NetworkWatch.swift`, tests `NetworkWatchTests`). A path that
+  becomes usable, or a usable path on other interfaces (Wi-Fi to cellular), cuts every hab's
+  retry wait short while the app is visible. A connection that still looks online pings at
+  once; with no answer within five seconds it ends and reconnects on the new path. The
+  monitor's first reading at start retries nothing.
+- **Pull to refresh.** Pulling the Sessions list down retries every hab at once and waits, up
+  to five seconds, for the habs that were connecting. A hab already offline before the pull is
+  not waited for.
 - It sends its reconnect token. Within 60 s and the same epoch, it keeps its client id and size
   ownership (`hab-logic-api.md` 3.7).
 - A new epoch means a fresh snapshot (3.5). Data streams resume by offset.
@@ -3691,6 +3825,8 @@ stage that fills it.
 | capability `push` | The hab has push config that works |
 | `session.focus {session, active}` | Report focus: marks `done` seen, and feeds hold-while-watched (8.3) |
 | `session.create {project?, project_dir?, harness?, idempotency_key?}` | New session (3.10). The console uses it too (6.3) |
+| `pane.close {pane}`, `session.close {session}`, `session.rename {session, name}` | Close and rename from a row (3.11) |
+| `session.restart {session}` | Restart from a row (3.11). Capability `session-restart` |
 | `catalog.get {}` | The New session form's project folders and harnesses (3.10); the Capcom home (4.10). Capability `catalog` |
 | `approval.answer {pane, request, choice, text?}` | Answer a pending request by id; refuses a closed id with `conflict` |
 | `trust.answer {pane, choice}` | Answer a harness's folder trust prompt (`trust` or `exit`) from the screen it shows; refuses with `conflict` when the dialog is gone (7.10). Capability `trust` |

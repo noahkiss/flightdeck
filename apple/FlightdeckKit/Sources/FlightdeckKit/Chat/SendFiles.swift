@@ -184,6 +184,7 @@ struct SendFileSheet: View {
                         center.incoming = nil
                         dismiss()
                     }
+                    .keyboardShortcut(.cancelAction)
                 }
             }
         }

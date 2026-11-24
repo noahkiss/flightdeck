@@ -123,6 +123,7 @@ struct AttachmentFullView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 }
             }
             .task {
@@ -299,6 +300,7 @@ struct MarkupView: View {
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Cancel") { done(nil) }
+                                .keyboardShortcut(.cancelAction)
                         }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { done(Markup.render(img, drawing: canvas.drawing, canvasSize: canvas.bounds.size, from: attachment)) }

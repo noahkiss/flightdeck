@@ -81,6 +81,13 @@ public struct BoardRow: Identifiable, Hashable, Sendable {
     /// A group member's group (groups.md 5.4): the group's title, "Group" when no hab in the
     /// app holds the group. Nil for any other session.
     public var group: String?
+    /// The session's name (`session.rename` changes it); nil for an unfiled pane.
+    public var name: String?
+    /// The session record is exited: its program ended (app.md 3.11).
+    public var sessionExited = false
+    /// Who owns the session: a Capcom session or a round's watcher. Rows offer it no actions
+    /// that change it (app.md 3.11).
+    public var ownedElsewhere = false
 }
 
 /// Builds and ranks rows from one hab's objects.
@@ -110,6 +117,9 @@ public enum BoardRows {
                 seenKey: key
             )
             if s.state == .exited && agent == nil { row.state = .exited }
+            row.name = s.name
+            row.sessionExited = s.state == .exited
+            row.ownedElsewhere = s.kind == .capcom || s.round?.watcher == true
             if let r = s.round { row.round = rounds[r.round]?.name ?? "Round" }
             if let g = s.group { row.group = groups[g.id] ?? "Group" }
             rows.append(row)

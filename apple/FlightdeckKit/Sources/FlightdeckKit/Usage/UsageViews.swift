@@ -166,6 +166,7 @@ public struct UsageSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: close)
+                        .keyboardShortcut(.cancelAction)
                 }
             }
         }

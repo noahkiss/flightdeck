@@ -225,6 +225,20 @@ public actor HabConnection {
         fireWake(nil)
     }
 
+    /// A network change (app.md 10.2): a connection that looks online may ride a path that
+    /// is gone. It pings at once; with no answer within `limit` it ends, and the loop
+    /// reconnects on the new path.
+    public func probe(limit: Duration = .seconds(5)) {
+        guard let r = rpc, state.status == .online else { return }
+        Task {
+            do {
+                _ = try await r.call(HabMethods.habPing, PingParams(), timeout: limit)
+            } catch is CallTimedOut {
+                endSession(r, Dead())
+            } catch {}
+        }
+    }
+
     /// The `content.read` and `content.diff` calls one connection runs at once. The hab
     /// refuses a fifth content call on a connection (`hab-logic-api.md` 3.9); three leave
     /// room for `content.list`.

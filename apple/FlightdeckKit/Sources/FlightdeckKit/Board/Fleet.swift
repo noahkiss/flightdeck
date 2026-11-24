@@ -56,6 +56,10 @@ public final class Fleet {
     public private(set) lazy var newSessions = NewSessionCenter(
         board: board,
         connection: { [weak self] id in self?.connections.first { $0.id == id } })
+    /// Close, rename and restart from a row (app.md 3.11).
+    public private(set) lazy var sessionActions = SessionActionCenter(
+        board: board,
+        connection: { [weak self] id in self?.connections.first { $0.id == id } })
     /// Rounds on every hab (rounds.md 10, app.md 21).
     public private(set) lazy var rounds = RoundCenter(
         board: board, defaults: roundDefaults,
@@ -119,7 +123,21 @@ public final class Fleet {
     private var check: Task<Void, Never>?
     private var wanted = false
     private var transition: Task<Void, Never>?
-    private let log = AppLog(category: "lifecycle")
+    let log = AppLog(category: "lifecycle")
+    /// The network watch (app.md 10.2), while one runs.
+    var networkWatch: Task<Void, Never>?
+    /// How many times every hab was retried at once (a network change, pull to refresh).
+    public private(set) var retries = 0
+
+    /// Retries every hab's connection now, skipping its backoff wait (app.md 10.2). With
+    /// `probe`, a connection that looks online pings and reconnects when the ping goes unanswered.
+    public func retryAll(probe: Bool = false) async {
+        retries += 1
+        for c in connections {
+            await c.retryNow()
+            if probe { await c.probe() }
+        }
+    }
 
     /// How long after going to the background the open-stream check runs.
     public var checkDelay: Duration = .seconds(10)
@@ -193,6 +211,7 @@ public final class Fleet {
         usage?.book.forget(habID: id)
         settings?.forget(habID: id)
         capcom.forget(habID: id)
+        drafts.forget(habID: id)
         badgeChanged()
     }
 
@@ -294,6 +313,8 @@ public final class Fleet {
                 // connections close; a hab that misses it drops the focus
                 // with the connection anyway.
                 focus.setActive(false)
+                // iOS may end the app in the background: write what was typed now.
+                drafts.flush()
                 await Self.within(.seconds(1)) { await self.focus.flush() }
                 terminals.setActive(false)
                 for c in connections where voiceHolds[c.id] == nil { await c.stop() }
@@ -383,12 +404,16 @@ public final class Fleet {
 
     /// What the chat views show (app.md 4.11), kept on the device.
     public private(set) lazy var chatShow = ChatShowStore()
+    /// The composer's draft per session (app.md 4.2). In memory until the app gives it its
+    /// defaults (`AppFleet.make`), so a test never writes the runner's own.
+    public var drafts = DraftStore(defaults: nil)
 
     private func refreshChats(habID: String) {
         guard let h = board.habs.first(where: { $0.id == habID }) else { return }
         // An online hab lists every session it has: overrides of the rest go (app.md 4.11).
         if h.state.status == .online {
             chatShow.prune(habID: habID, sessions: Set(h.state.store.sessions.keys), panes: Set(h.state.store.panes.keys))
+            drafts.prune(habID: habID, sessions: Set(h.state.store.sessions.keys), panes: Set(h.state.store.panes.keys))
         }
         for w in chats {
             guard let m = w.model, m.target.habID == habID else { continue }

@@ -26,6 +26,7 @@ public struct FlightdeckRoot: View {
             .environment(\.rounds, fleet.rounds)
             .environment(\.groups, fleet.groups)
             .environment(\.approvals, fleet.approvals)
+            .environment(\.drafts, fleet.drafts)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -43,6 +44,7 @@ public struct FlightdeckRoot: View {
             .environment(\.rounds, fleet.rounds)
             .environment(\.groups, fleet.groups)
             .environment(\.approvals, fleet.approvals)
+            .environment(\.drafts, fleet.drafts)
             .sshSheets(fleet.ssh)
         #endif
     }
@@ -71,6 +73,11 @@ public struct BoardScreen: View {
     @State private var opened: BoardRow?
     /// The Capcom view is open (app.md 4.10); it and `opened` never both hold.
     @State private var capcomShown = false
+    /// The open session's row id, or "capcom", kept per window (app.md 3.12).
+    @SceneStorage("flightdeck.board.open") private var savedOpen = ""
+    /// The board's search and host scope (app.md 3.6), here so they outlive a switch of layout.
+    @State private var query = ""
+    @State private var scope: BoardSearchScope = .all
     @State private var showConnections = false
     /// The New session form, while it is open (app.md 3.10).
     @State private var newSession: NewSessionDraft?
@@ -144,11 +151,12 @@ public struct BoardScreen: View {
         }
     }
 
-    public var body: some View {
-        Group {
+    /// The board and, beside it, the open session or the Capcom view.
+    @ViewBuilder
+    private var layout: some View {
             if compact {
                 NavigationStack {
-                    BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom)
+                    BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom)
                         .usageFooter(fleet?.usage)
                         .navigationTitle("Flightdeck")
                         .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
@@ -174,6 +182,7 @@ public struct BoardScreen: View {
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) {
                                     Button("Done") { showConnections = false }
+                                        .keyboardShortcut(.cancelAction)
                                 }
                             }
                     }
@@ -181,7 +190,7 @@ public struct BoardScreen: View {
             } else if let fleet, capcomShown {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                             .usageFooter(fleet.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -191,7 +200,7 @@ public struct BoardScreen: View {
             } else if fleet != nil, let row = opened {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -202,7 +211,7 @@ public struct BoardScreen: View {
                 // The session cards column (app.md 3.3) returns when live previews exist.
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -212,7 +221,10 @@ public struct BoardScreen: View {
                         .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
                 }
             }
-        }
+    }
+
+    public var body: some View {
+        layout
         .sheet(item: fleet == nil ? $opened : .constant(nil)) { row in
             SessionPlaceholder(row: row) { opened = nil }
         }
@@ -231,6 +243,7 @@ public struct BoardScreen: View {
             fleet?.newSessions.opened()
         }
         .onChange(of: capcomShown) { _, on in if on { opened = nil } }
+        .modifier(BoardSessionActions(fleet: fleet, opened: $opened, capcomShown: $capcomShown, saved: $savedOpen))
         // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
         .onChange(of: fleet?.rounds.openRequest) { _, t in
             guard let t else { return }
@@ -298,6 +311,58 @@ public struct BoardScreen: View {
     }
 }
 
+/// The row actions and the reopen of the last session (app.md 3.11, 3.12), with a fleet.
+struct BoardSessionActions: ViewModifier {
+    let fleet: Fleet?
+    @Binding var opened: BoardRow?
+    @Binding var capcomShown: Bool
+    /// The window's saved open session, or "capcom".
+    @Binding var saved: String
+
+    func body(content: Content) -> some View {
+        if let fleet {
+            content
+                .modifier(SessionActionsHost(center: fleet.sessionActions))
+                .modifier(SessionActionFollow(center: fleet.sessionActions, board: fleet.board, opened: $opened))
+                // The Capcom view, an approval sheet or a tap on any row cancels the restore (app.md 3.12).
+                .modifier(RestoreOpenSession(board: fleet.board, opened: $opened, saved: saved,
+                                             interrupt: "\(capcomShown)|\(fleet.approvals?.presenting ?? false)|\(fleet.board.opens)"))
+                .onChange(of: capcomShown) { _, on in saved = on ? SessionRestore.capcom : (opened?.id ?? "") }
+                .onChange(of: opened) { _, r in saved = r?.id ?? (capcomShown ? SessionRestore.capcom : "") }
+                // The Mac keeps the Capcom view the same way (app.md 3.12).
+                .task { if saved == SessionRestore.capcom { capcomShown = true } }
+        } else {
+            content
+        }
+    }
+}
+
+/// The search's host scopes (app.md 3.6): All, then each hab, with more than one hab.
+struct HostScopes: ViewModifier {
+    let board: Board
+    @Binding var scope: BoardSearchScope
+
+    /// iPhone and iPad: while the search is open. Mac: always, under the toolbar's field.
+    private static var activation: SearchScopeActivation {
+        #if os(iOS)
+        return .onSearchPresentation
+        #else
+        return .automatic
+        #endif
+    }
+
+    func body(content: Content) -> some View {
+        if board.habs.count > 1 {
+            content.searchScopes($scope, activation: Self.activation) {
+                Text("All").tag(BoardSearchScope.all)
+                ForEach(board.habs) { h in Text(h.label).tag(BoardSearchScope.hab(h.id)) }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// The board's New session control and form (app.md 3.10), with a fleet: a plus in the
 /// window's toolbar on the Mac, and the started session opened once the board lists it.
 struct BoardNewSession: ViewModifier {
@@ -357,6 +422,11 @@ struct BoardSessionSplit<ListContent: View, SessionContent: View>: View {
 struct BoardList: View {
     let board: Board
     @Binding var opened: BoardRow?
+    /// Close, rename and restart from a row (app.md 3.11); nil offers none.
+    var actions: SessionActionCenter? = nil
+    /// The board's search and host scope (app.md 3.6), held by the screen.
+    @Binding var query: String
+    @Binding var scope: BoardSearchScope
     /// Returns true when the row opened the approval sheet instead.
     var openRequest: (BoardRow) -> Bool = { _ in false }
     /// Opens the Capcom view from its row; nil shows no row.
@@ -368,10 +438,25 @@ struct BoardList: View {
     @Environment(\.rounds) private var rounds
     @Environment(\.groups) private var groups
 
+    @State private var searchShown = false
+
+    private var searching: Bool { BoardSearch.isActive(query: query, scope: scope) }
+    /// Words typed: the Capcom row, groups and rounds step aside. A host scope alone hides
+    /// none of them, so nothing that waits for the owner goes unseen.
+    private var typed: Bool { !BoardSearch.words(query).isEmpty }
+
+    /// The confirmations the search keeps: by scope, and by title while words are typed.
+    private func confirmCards(_ all: [ConfirmCard]) -> [ConfirmCard] {
+        let s = BoardSearch.fit(scope, habs: board.habs.map(\.id))
+        let w = BoardSearch.words(query)
+        return all.filter { BoardSearch.matches(.confirm($0), words: w, scope: s) }
+    }
+
     /// The board's sections with run sessions left out when the filter hides them. A run
-    /// session that needs the owner always shows (app.md 21.2).
+    /// session that needs the owner always shows (app.md 21.2). The search filters the rest.
     private var sections: [BoardSection] {
-        RoundCenter.filter(board.sections, showRunSessions: rounds?.showRunSessions ?? true)
+        let all = RoundCenter.filter(board.sections, showRunSessions: rounds?.showRunSessions ?? true)
+        return BoardSearch.filter(all, query: query, scope: BoardSearch.fit(scope, habs: board.habs.map(\.id)))
     }
 
     var body: some View {
@@ -399,7 +484,7 @@ struct BoardList: View {
                         .foregroundStyle(.orange)
                 }
                 // The standing Capcom conversation (app.md 4.10), above every section.
-                if showsCapcom, let capcom, let openCapcom {
+                if showsCapcom, !typed, let capcom, let openCapcom {
                     Button(action: openCapcom) {
                         CapcomEntryRow(center: capcom, rows: board.rows, now: ctx.date)
                     }
@@ -410,7 +495,7 @@ struct BoardList: View {
                     }
                 }
                 // The approvals area's confirmations (capcom.md 6.1): starts other agents ask for.
-                if let confirms, case let cards = confirms.approvals, !cards.isEmpty {
+                if let confirms, case let cards = confirmCards(confirms.approvals), !cards.isEmpty {
                     Section("Confirm") {
                         ForEach(cards) { ConfirmCardView(center: confirms, card: $0) }
                     }
@@ -426,23 +511,33 @@ struct BoardList: View {
                                 BoardRowView(row: row, now: ctx.date)
                             }
                             .buttonStyle(.plain)
+                            .sessionRowActions(row, actions)
                         }
                     }
                 }
                 // The group cards (groups.md 5.4), below the sessions.
-                if let groups {
+                if let groups, !typed {
                     BoardGroupsSection(center: groups, now: ctx.date)
                 }
                 // The Rounds list per hab (rounds.md 10.3), below the sessions.
-                if let rounds, rounds.any {
+                if let rounds, rounds.any, !typed {
                     BoardRoundsSections(center: rounds, now: ctx.date)
                 }
             }
             .navigationDestination(for: RoundRow.self) { row in
                 if let rounds { RoundPage(center: rounds, habID: row.habID, roundID: row.round.id) }
             }
+            .searchable(text: $query, isPresented: $searchShown, prompt: "Search sessions")
+            .modifier(HostScopes(board: board, scope: $scope))
+            #if os(iOS)
+            // The scopes show only while the search is open; closing it drops the scope too.
+            .onChange(of: searchShown) { _, on in if !on { scope = .all } }
+            #endif
             .overlay {
-                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom, !(rounds?.any ?? false),
+                if searching, sections.isEmpty, confirmCards(confirms?.approvals ?? []).isEmpty {
+                    ContentUnavailableView("No matches", systemImage: "magnifyingglass",
+                                           description: Text("Try other words, or check the host scope."))
+                } else if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom, !(rounds?.any ?? false),
                    groups?.boardCards.isEmpty ?? true {
                     ContentUnavailableView("No sessions", systemImage: "rectangle.stack",
                                            description: Text(board.habs.isEmpty ? "No habs configured." : "Sessions on your habs show here."))
@@ -579,6 +674,7 @@ struct ConnectionsList: View {
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { showSettings = false }
+                                .keyboardShortcut(.cancelAction)
                         }
                     }
                 }
@@ -595,6 +691,7 @@ struct ConnectionsList: View {
                         .toolbar {
                             ToolbarItem(placement: .confirmationAction) {
                                 Button("Done") { showVoice = false }
+                                    .keyboardShortcut(.cancelAction)
                             }
                         }
                 }
@@ -611,6 +708,7 @@ struct ConnectionsList: View {
                         .toolbar {
                             ToolbarItem(placement: .confirmationAction) {
                                 Button("Done") { showNotifications = false }
+                                    .keyboardShortcut(.cancelAction)
                             }
                         }
                 }
@@ -627,6 +725,7 @@ struct ConnectionsList: View {
                         .toolbar {
                             ToolbarItem(placement: .confirmationAction) {
                                 Button("Done") { showSSH = false }
+                                    .keyboardShortcut(.cancelAction)
                             }
                         }
                 }
