@@ -224,6 +224,33 @@ final class QuickEntryTests: XCTestCase {
         await eventually("habs disconnect once the send ends") { !f.isActive }
     }
 
+    /// A send that fails after the panel closed shows the panel again, once.
+    func testAFailureAfterClosingShowsThePanelAgain() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        let q = QuickEntry(capcom: f.capcom, defaults: defaults())
+        q.wait = .milliseconds(600)
+        let w = QuickEntryWindow(entry: q, opened: {}, closed: {})
+        var reveals = 0
+        w.onFailedWhileHidden = { reveals += 1 }
+        w.shown()
+        await a.holdSends()
+        q.text = "hello"
+        let send = Task { await q.send() }
+        await eventually("send held") { await a.sendHeldCount == 1 }
+        w.hidden()
+        let ok = await send.value
+        XCTAssertFalse(ok)
+        XCTAssertEqual(reveals, 1)
+        // A failure while the panel shows needs no reveal.
+        w.shown()
+        q.text = "again"
+        _ = await q.send()
+        XCTAssertEqual(reveals, 1)
+        await a.releaseSends()
+        await f.setActive(false)
+    }
+
     /// The window count: open while the panel shows or a send runs, once each way.
     func testWindowCountsOnceEachWay() async {
         let f = Fleet()

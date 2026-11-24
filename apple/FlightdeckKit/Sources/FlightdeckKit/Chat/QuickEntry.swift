@@ -3,7 +3,8 @@ import Observation
 
 /// Quick entry for Capcom (app.md 3.18): a message to Capcom's standing conversation, or to a
 /// new one, from the Mac's floating panel. It opens the conversation, waits until it takes a
-/// message and until the hab takes the send, and keeps the text when anything fails.
+/// message and until the hab takes the send, and keeps the text when the send fails. A send
+/// the hab never answered may still arrive, so its text moves to the recents instead.
 @MainActor
 @Observable
 public final class QuickEntry {
@@ -80,7 +81,8 @@ public final class QuickEntry {
 
     /// Sends the text to the standing conversation, or to a new one with `new`. Returns true
     /// once the hab took it; the field then empties and the text joins the recents. On failure,
-    /// a pane-based Capcom mid-turn included, the text stays and `failure` says why.
+    /// a pane-based Capcom mid-turn included, the text stays and `failure` says why; with no
+    /// answer in time the text moves to the recents.
     @discardableResult
     public func send(new: Bool = false) async -> Bool {
         guard canSend, case .ready(let habID, let label) = readiness else { return false }
@@ -188,11 +190,18 @@ public final class QuickEntryWindow {
     init(entry: QuickEntry, opened: @escaping () -> Void, closed: @escaping () -> Void) {
         self.opened = opened
         self.closed = closed
-        entry.onSending = { [weak self] on in
-            self?.sending = on
-            self?.update()
+        entry.onSending = { [weak self, weak entry] on in
+            guard let self else { return }
+            self.sending = on
+            // A send that failed after the panel closed (Esc or the shortcut): show it again.
+            if !on, !self.shows, entry?.failure != nil { self.onFailedWhileHidden?() }
+            self.update()
         }
     }
+
+    /// Called when a send ends failed while the panel is closed, so the panel shows the
+    /// failure again.
+    public var onFailedWhileHidden: (() -> Void)?
 
     /// The panel counts while it shows, or while a send runs.
     public var counts: Bool { counted }

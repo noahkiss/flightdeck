@@ -56,6 +56,8 @@ public enum ChatDropItem: Transferable, Equatable, Sendable {
     /// file over the limit is refused here, before the copy.
     public static func copying(_ received: URL) -> ChatDropItem {
         let name = received.lastPathComponent.isEmpty ? "file" : received.lastPathComponent
+        let scoped = received.startAccessingSecurityScopedResource()
+        defer { if scoped { received.stopAccessingSecurityScopedResource() } }
         let values = try? received.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
         if values?.isDirectory == true { return .refused("\(name) is a folder; attach the files in it") }
         if let size = values?.fileSize, size > AttachmentLimits.maxBytes { return .refused("\(name) is over the 25 MB limit") }

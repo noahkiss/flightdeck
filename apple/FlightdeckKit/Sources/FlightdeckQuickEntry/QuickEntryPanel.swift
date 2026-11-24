@@ -24,6 +24,7 @@ public final class QuickEntryController {
     public init(fleet: Fleet) {
         entry = QuickEntry(capcom: fleet.capcom)
         window = QuickEntryWindow(fleet: fleet, entry: entry)
+        window.onFailedWhileHidden = { [weak self] in self?.reveal() }
         // A Carbon hot key: no Accessibility permission and no entitlement.
         KeyboardShortcuts.onKeyUp(for: .quickEntry) { [weak self] in self?.toggle() }
     }
@@ -44,6 +45,14 @@ public final class QuickEntryController {
         place(p)
         window.shown()
         p.makeKeyAndOrderFront(nil)
+    }
+
+    /// Shows the panel again, without the keyboard, when a send it started failed after it
+    /// closed: the failure stays in view until the owner dismisses it.
+    private func reveal() {
+        guard let p = panel else { return }
+        window.shown()
+        p.orderFrontRegardless()
     }
 
     /// Hides the panel. A send it started keeps the habs connected until it ends.

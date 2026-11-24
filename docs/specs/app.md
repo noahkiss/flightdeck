@@ -813,7 +813,8 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
   across the screen with the pointer, in its upper third. It takes the keyboard without
   making Flightdeck the active app, so its windows stay where they were. Esc, a click
   elsewhere, or the shortcut closes it. While a send runs a click elsewhere leaves it up, so
-  the panel shows how the send ended. What was typed stays in the field while the app runs.
+  the panel shows how the send ended. A send that fails after Esc or the shortcut closed the
+  panel shows the panel again, without taking the keyboard, with the failure. What was typed stays in the field while the app runs.
 - **What it holds:** a field, "Ask Capcom", that grows to six lines (Return sends,
   Shift-Return or Option-Return writes a new line, as the composer, 4.2, and with a Japanese,
   Chinese or Korean input method Return stays the input method's); a line that says
@@ -826,7 +827,7 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
   conversation first (`capcom.open` with `new`), as New conversation does (capcom.md 8.2);
   the Capcom view follows it. The panel waits until the conversation takes a message (its
   state reaches the app after the open) and until the hab takes the send, up to 15 s each,
-  then closes. A failure keeps the text and says why: a refused open in the hab's words, a
+  then closes. A failure keeps the text (except a send with no answer, below) and says why: a refused open in the hab's words, a
   refused send in the composer's sentence for it (4.2), or "Capcom did not take the message."
   when the conversation never got ready. The failed message leaves the Capcom view, since the
   panel holds it.
