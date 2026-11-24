@@ -876,10 +876,13 @@ extension BoardRow {
 struct ApprovalSheetHost: ViewModifier {
     let center: ApprovalCenter?
     let openChat: (SessionTarget) -> Void
+    /// A sheet raised from a row shows in that row's window only (app.md 3.12).
+    @Environment(\.windowCommands) private var commands
 
     func body(content: Content) -> some View {
         if let center {
-            content.sheet(isPresented: Binding(get: { center.presenting }, set: { center.presenting = $0 })) {
+            let mine = center.presenter == nil || center.presenter == commands?.id
+            content.sheet(isPresented: Binding(get: { center.presenting && mine }, set: { center.presenting = $0 })) {
                 ApprovalSheet(model: center.sheet, openChat: openChat) { center.presenting = false }
             }
         } else {

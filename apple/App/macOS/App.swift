@@ -31,6 +31,8 @@ struct FlightdeckApp: App {
         // A session in its own window (app.md 3.14); it takes no links.
         WindowGroup(id: FlightdeckScene.session, for: SessionLink.self) { $link in
             SessionWindowRoot(fleet: fleet, link: link)
+                // A launch may restore only session windows: the quit flush needs the fleet too.
+                .task { appDelegate.fleet = fleet }
         }
         .handlesExternalEvents(matching: [])
         // The Settings window, ⌘, (app.md 3.8).
