@@ -46,7 +46,10 @@ final class NetworkWatchTests: XCTestCase {
         let f = Fleet()
         f.add(HabConnection(id: "bench", transport: hab.transport(), timing: fastTiming()), label: "bench")
         await f.setActive(true)
-        await f.refresh(limit: .seconds(5))
+        // refresh() waits only for a hab the board shows connecting; before the first state
+        // reaches the board it shows the hab stopped, and the refresh would wait for nothing.
+        await eventually("on the board") { f.board.habs.first.map { $0.state.status == .connecting || $0.state.status == .online } ?? false }
+        await f.refresh(limit: .seconds(30))
         XCTAssertEqual(f.retries, 1)
         XCTAssertTrue(f.board.habs.allSatisfy { $0.state.status == .online })
         await f.setActive(false)

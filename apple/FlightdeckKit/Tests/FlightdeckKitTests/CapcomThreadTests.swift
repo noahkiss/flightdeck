@@ -128,15 +128,16 @@ final class CapcomThreadTests: XCTestCase {
         let a = await serviceHab("bench")
         let f = await fleet([a])
         let (m, t) = try await open(f)
-        await a.setCapcomStatusDelay(.milliseconds(400))
-        let before = await a.capcomStatusCalls
+        // The read that start() began is done: the held status below is this test's own.
+        await t.loadTail()
+        await a.holdCapcomStatus()
         let read = Task { await t.loadTail() }
-        await eventually("status asked") { await a.capcomStatusCalls > before }
+        await eventually("status asked") { await a.capcomStatusHeldCount == 1 }
         await a.setCapcomTyping(true)
         await eventually("typing") { t.typing }
+        await a.releaseCapcomStatus()
         await read.value
         XCTAssertTrue(t.typing, "the status was read before the typing event")
-        await a.setCapcomStatusDelay(nil)
         await t.loadTail()
         XCTAssertFalse(t.typing, "a status read after the event clears it")
         m.stop()

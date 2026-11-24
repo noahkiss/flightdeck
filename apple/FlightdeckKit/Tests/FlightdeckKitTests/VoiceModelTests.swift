@@ -359,7 +359,7 @@ final class VoiceModelTests: XCTestCase {
         await eventually("lost") { b.model.notice == "Lost bench" }
         await b.hab.setSilent(false)
         await b.hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .done))
-        await eventually("reconnected and read", timeout: 10) { b.io.spoken.last == "Done." }
+        await eventually("reconnected and read") { b.io.spoken.last == "Done." }
         XCTAssertEqual(b.io.spoken.filter { $0 == "Done." }.count, 1)
         await b.model.end()
         await b.fleet.setActive(false)

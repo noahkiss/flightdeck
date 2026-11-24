@@ -40,16 +40,18 @@ final class FakeEngine: SpeechEngine {
     func close() async { closes += 1 }
 }
 
-/// A Parakeet runtime that counts loads and unloads.
+/// A Parakeet runtime that counts loads and unloads. A test that needs a load or a
+/// transcribe to stay in flight sets its gate and opens it when ready.
 final class FakeRuntime: ParakeetRuntime, Sendable {
     private struct State {
         var downloaded: Bool
         var loaded = false
+        var loadsStarted = 0
         var loadCount = 0
         var unloadCount = 0
-        var loadDelay: Duration = .zero
+        var loadGate: Gate?
         var text = "on device text"
-        var transcribeDelay: Duration = .zero
+        var transcribeGate: Gate?
     }
 
     private let state: Mutex<State>
@@ -57,11 +59,13 @@ final class FakeRuntime: ParakeetRuntime, Sendable {
     init(downloaded: Bool = true) { state = Mutex(State(downloaded: downloaded)) }
 
     var loaded: Bool { state.withLock { $0.loaded } }
+    var loadsStarted: Int { state.withLock { $0.loadsStarted } }
     var loadCount: Int { state.withLock { $0.loadCount } }
     var unloadCount: Int { state.withLock { $0.unloadCount } }
-    var loadDelay: Duration {
-        get { state.withLock { $0.loadDelay } }
-        set { state.withLock { $0.loadDelay = newValue } }
+    /// Each load waits on it before it ends; nil ends at once.
+    var loadGate: Gate? {
+        get { state.withLock { $0.loadGate } }
+        set { state.withLock { $0.loadGate = newValue } }
     }
     var text: String {
         get { state.withLock { $0.text } }
@@ -76,18 +80,21 @@ final class FakeRuntime: ParakeetRuntime, Sendable {
     }
     func removeDownload() async throws { state.withLock { $0.downloaded = false } }
     func load() async throws {
-        let delay = loadDelay
-        if delay > .zero { try await Task.sleep(for: delay) }
+        let gate = state.withLock { s -> Gate? in
+            s.loadsStarted += 1
+            return s.loadGate
+        }
+        await gate?.wait()
         state.withLock { $0.loaded = true; $0.loadCount += 1 }
     }
     func unload() async { state.withLock { $0.loaded = false; $0.unloadCount += 1 } }
-    var transcribeDelay: Duration {
-        get { state.withLock { $0.transcribeDelay } }
-        set { state.withLock { $0.transcribeDelay = newValue } }
+    /// Each transcribe waits on it before it answers; nil answers at once.
+    var transcribeGate: Gate? {
+        get { state.withLock { $0.transcribeGate } }
+        set { state.withLock { $0.transcribeGate = newValue } }
     }
     func transcribe(_ samples: [Float]) async throws -> String {
-        let delay = transcribeDelay
-        if delay > .zero { try await Task.sleep(for: delay) }
+        await transcribeGate?.wait()
         guard loaded else { throw SpeechEngineError.unavailable("not loaded", sticky: false) }
         return text
     }
@@ -459,13 +466,15 @@ final class SpeechEngineTests: XCTestCase {
 
     func testParakeetUnloadWaitsForARunningTranscribe() async throws {
         let rt = FakeRuntime()
-        rt.transcribeDelay = .milliseconds(150)
+        let gate = Gate()
+        rt.transcribeGate = gate
         let host = ParakeetHost(runtime: rt, offered: true)
         try await host.acquire("voice-1")
         let t = Task { try await host.transcribe([0], for: "voice-1") }
         await eventually("in flight") { host.inFlight == 1 }
         await host.setForeground(false)
         XCTAssertTrue(rt.loaded, "not freed under the inference")
+        await gate.open()
         let text = try await t.value
         XCTAssertEqual(text, "on device text")
         await eventually("unloaded after it") { !rt.loaded }
@@ -474,13 +483,15 @@ final class SpeechEngineTests: XCTestCase {
 
     func testADeferredUnloadKeepsTheModelForANewHolder() async throws {
         let rt = FakeRuntime()
-        rt.transcribeDelay = .milliseconds(150)
+        let gate = Gate()
+        rt.transcribeGate = gate
         let host = ParakeetHost(runtime: rt, offered: true)
         try await host.acquire("voice-a")
         let t = Task { try await host.transcribe([0], for: "voice-a") }
         await eventually("in flight") { host.inFlight == 1 }
         await host.release("voice-a")
         try await host.acquire("voice-b")
+        await gate.open()
         _ = try await t.value
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(rt.loaded, "voice-b holds it now")
@@ -576,11 +587,13 @@ final class SpeechEngineTests: XCTestCase {
 
     func testParakeetReleaseDuringLoadUnloads() async throws {
         let rt = FakeRuntime()
-        rt.loadDelay = .milliseconds(100)
+        let gate = Gate()
+        rt.loadGate = gate
         let host = ParakeetHost(runtime: rt, offered: true)
         let t = Task { try await host.acquire("voice") }
-        try await Task.sleep(for: .milliseconds(20))
+        await eventually("loading") { rt.loadsStarted == 1 }
         await host.release("voice")
+        await gate.open()
         _ = try? await t.value
         XCTAssertFalse(rt.loaded, "a load that finishes after the release is undone")
         XCTAssertFalse(host.isLoaded)

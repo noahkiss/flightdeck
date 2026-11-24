@@ -153,11 +153,16 @@ final class SSHTransportTests: XCTestCase {
             .childChannelInitializer { $0.eventLoop.makeSucceededFuture(()) }
             .bind(host: "127.0.0.1", port: 0).get()
         defer { mute.close(promise: nil) }
-        let t = transport(endpoints: [SSHEndpoint(host: "127.0.0.1", port: mute.localAddress!.port!), server.endpoint])
+        // A first-endpoint timeout far above any handshake time, so the bound below tells a
+        // staggered win from a wait for that timeout on a slow runner too.
+        var timing = fastSSH()
+        timing.handshakeTimeout = .seconds(60)
+        let t = NIOSSHTransport(user: "tester", endpoints: [SSHEndpoint(host: "127.0.0.1", port: mute.localAddress!.port!), server.endpoint],
+                                hostKeyFingerprint: server.hostKeyFingerprint, key: key, timing: timing)
         let clock = ContinuousClock()
         let start = clock.now
         let s = try await t.open(.control)
-        XCTAssertLessThan(clock.now - start, .seconds(1), "the second endpoint won without waiting for the first's timeout")
+        XCTAssertLessThan(clock.now - start, .seconds(30), "the second endpoint won without waiting for the first's timeout")
         s.close()
     }
 

@@ -176,11 +176,12 @@ final class CapcomPickerTests: XCTestCase {
     func testChangesDuringAReadGiveOneMoreRead() async throws {
         let a = await hab("bench")
         let f = await fleet([a])
-        await a.setCatalogDelay(.milliseconds(300))
+        await a.holdCatalog()
         let gets = await a.catalogGets
         let first = Task { await f.capcom.catalogChanged("bench") }
-        await eventually("reading") { f.capcom.rereading.contains("bench") }
+        await eventually("read held") { await a.catalogHeldCount == 1 }
         for _ in 0..<3 { await f.capcom.catalogChanged("bench") }
+        await a.releaseCatalog()
         await first.value
         let after = await a.catalogGets
         XCTAssertEqual(after - gets, 2, "one read, then one more for every change during it")
@@ -210,11 +211,13 @@ final class CapcomPickerTests: XCTestCase {
         XCTAssertEqual(f.capcom.beliefs["bench"], held)
         XCTAssertEqual(f.capcom.entry, .ready(habID: "bench"))
         // A slow read does not count as loading while it runs.
-        await a.setCatalogDelay(.milliseconds(300))
+        await a.holdCatalog()
         let t = Task { await f.capcom.catalogChanged("bench") }
-        await eventually("reading") { f.capcom.rereading.contains("bench") }
+        await eventually("read held") { await a.catalogHeldCount == 1 }
+        XCTAssertTrue(f.capcom.rereading.contains("bench"))
         XCTAssertNil(f.capcom.reading["bench"])
         XCTAssertEqual(f.capcom.entry, .ready(habID: "bench"))
+        await a.releaseCatalog()
         await t.value
         await f.setActive(false)
     }
@@ -325,8 +328,9 @@ final class CapcomPickerTests: XCTestCase {
         let f = await fleet([a, b])
         // attic took a later assignment that bench has not heard of; its read is slow.
         await b.setCapcomHome(assignment: 2, home: bID)
-        await b.setCatalogDelay(.milliseconds(300))
+        await b.holdCatalog()
         let refresh = Task { await f.capcom.refreshHome() }
+        await eventually("attic read held") { await b.catalogHeldCount == 1 }
         await eventually("attic reading") { f.capcom.reading["attic"] != nil && f.capcom.reading["bench"] == nil }
         XCTAssertEqual(f.capcom.entry, .ready(habID: "bench"), "the lower home shows meanwhile")
         let view = UUID()
@@ -334,6 +338,7 @@ final class CapcomPickerTests: XCTestCase {
         await f.capcom.openStanding()
         let early = await a.capcomOpens
         XCTAssertTrue(early.isEmpty, "no open to the lower-counter home")
+        await b.releaseCatalog()
         await refresh.value
         await eventually("opened on attic") { f.capcom.standing?.target.habID == "attic" }
         let aOpens = await a.capcomOpens

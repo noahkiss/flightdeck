@@ -70,6 +70,8 @@ public actor FakeHab {
     private var contentChunk = 1 << 20
     private var contentReadHook: (@Sendable (ContentReadParams) async -> Void)?
     public private(set) var contentReads = 0
+    /// Every content call received, answered or refused, by method name.
+    public private(set) var contentCalls: [String: Int] = [:]
     /// Content calls running per connection, and the most seen at once.
     private var contentRunning: [ObjectIdentifier: Int] = [:]
     public private(set) var contentPeak = 0
@@ -287,12 +289,33 @@ public actor FakeHab {
     /// While on, `capcom.assign` sends no `catalog.updated` after its answer.
     private var holdAssignAnnounce = false
     public func setHoldAssignAnnounce(_ on: Bool) { holdAssignAnnounce = on }
-    /// How long each `catalog.get` waits before it answers; nil answers at once.
-    private var catalogDelay: Duration?
-    public func setCatalogDelay(_ d: Duration?) { catalogDelay = d }
-    /// How long each `capcom.status` waits before it answers; nil answers at once.
-    private var capcomStatusDelay: Duration?
-    public func setCapcomStatusDelay(_ d: Duration?) { capcomStatusDelay = d }
+    /// While on, each `catalog.get` waits unanswered until `releaseCatalog()`. A test holds a
+    /// read open this way instead of racing a fixed delay.
+    private var catalogHeld = false
+    private var catalogWaiting: [(Conn, Int)] = []
+    public func holdCatalog() { catalogHeld = true }
+    /// Answers every held `catalog.get`, with the catalog as it is now, and stops holding.
+    public func releaseCatalog() async {
+        catalogHeld = false
+        let w = catalogWaiting
+        catalogWaiting = []
+        for (c, id) in w { await replyCatalog(c, id: id) }
+    }
+    /// The `catalog.get` calls held unanswered now.
+    public var catalogHeldCount: Int { catalogWaiting.count }
+    /// While on, each `capcom.status` waits unanswered until `releaseCapcomStatus()`.
+    private var capcomStatusHeld = false
+    private var capcomStatusWaiting: [(Conn, Int)] = []
+    public func holdCapcomStatus() { capcomStatusHeld = true }
+    /// Answers every held `capcom.status`, with the status as it is now, and stops holding.
+    public func releaseCapcomStatus() async {
+        capcomStatusHeld = false
+        let w = capcomStatusWaiting
+        capcomStatusWaiting = []
+        for (c, id) in w { await replyCapcomStatus(c, id: id) }
+    }
+    /// The `capcom.status` calls held unanswered now.
+    public var capcomStatusHeldCount: Int { capcomStatusWaiting.count }
     /// The `capcom.status` calls received.
     public private(set) var capcomStatusCalls = 0
     /// The next `catalog.get` calls that fail with `unavailable`.
@@ -1152,6 +1175,7 @@ public actor FakeHab {
                 await fail(c, id: id, kind: .invalid, hint: "bad chat.page params")
             }
         case HabMethods.contentList.name, HabMethods.contentRead.name, HabMethods.contentDiff.name:
+            contentCalls[method, default: 0] += 1
             // Off the read loop, with the real hab's limit of 4 content calls per connection.
             guard contentRunning[ObjectIdentifier(c), default: 0] < 4 else {
                 await fail(c, id: id, kind: .unavailable, hint: "4 content calls already run on this connection")
@@ -1263,12 +1287,9 @@ public actor FakeHab {
             await reply(c, id: id, result: CapcomThreadPage(items: page, more: older.count > page.count, seq: c.seq))
         case HabMethods.capcomStatus.name where capcomService:
             capcomStatusCalls += 1
-            if let d = capcomStatusDelay {
-                // Answer later, off this connection's read loop, with the status as it is then.
-                Task {
-                    try? await Task.sleep(for: d)
-                    await self.replyCapcomStatus(c, id: id)
-                }
+            if capcomStatusHeld {
+                // Answered by releaseCapcomStatus(), with the status as it is then.
+                capcomStatusWaiting.append((c, id))
                 break
             }
             await replyCapcomStatus(c, id: id)
@@ -1360,12 +1381,9 @@ public actor FakeHab {
                 await fail(c, id: id, kind: .unavailable, hint: "the catalog could not be read")
                 break
             }
-            if let d = catalogDelay {
-                // Answer later, off this connection's read loop, with the catalog as it is then.
-                Task {
-                    try? await Task.sleep(for: d)
-                    await self.replyCatalog(c, id: id)
-                }
+            if catalogHeld {
+                // Answered by releaseCatalog(), with the catalog as it is then.
+                catalogWaiting.append((c, id))
                 break
             }
             await replyCatalog(c, id: id)

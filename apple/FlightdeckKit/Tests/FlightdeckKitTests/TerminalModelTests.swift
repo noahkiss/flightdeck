@@ -135,7 +135,7 @@ final class TerminalModelTests: XCTestCase {
         await eventually("live") { m.status == .live }
         await hab.terminals.write("%1", Data("one ".utf8))
         let first = await hab.terminals.end("%1")
-        try await Task.sleep(for: .milliseconds(100))
+        await eventually("the view holds the output") { m.appliedOffset == first }
         m.stop()
         await eventually("closed") { await hab.terminals.dataConnectionCount == 0 }
         await hab.terminals.write("%1", Data("two".utf8))
@@ -165,7 +165,7 @@ final class TerminalModelTests: XCTestCase {
 
         // A new gff-hab process: tokens are void, so the reconnect gets a new id.
         await hab.restart()
-        await eventually("new id", timeout: 5) {
+        await eventually("new id") {
             let now = await conn.state.welcome?.clientId
             return await conn.state.status == .online && now != nil && now != before
         }
@@ -214,7 +214,7 @@ final class TerminalModelTests: XCTestCase {
         await eventually("live") { m.status == .live }
         await hab.terminals.write("%1", Data("before".utf8))
         let first = await hab.terminals.end("%1")
-        try await Task.sleep(for: .milliseconds(100))
+        await eventually("the view holds the output") { m.appliedOffset == first }
 
         await fleet.setActive(false)
         await eventually("data closed") { await hab.terminals.dataConnectionCount == 0 }
@@ -224,7 +224,7 @@ final class TerminalModelTests: XCTestCase {
         XCTAssertEqual(tickets, 1, "no retries while in the background")
 
         await fleet.setActive(true)
-        await eventually("data open", timeout: 5) { await hab.terminals.dataConnectionCount == 1 }
+        await eventually("data open") { await hab.terminals.dataConnectionCount == 1 }
         await eventually("live again") { m.status == .live }
         let hellos = await hab.terminals.hellos
         XCTAssertEqual(hellos.last ?? nil, first)
