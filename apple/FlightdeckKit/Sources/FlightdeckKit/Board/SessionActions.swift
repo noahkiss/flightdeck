@@ -61,7 +61,7 @@ public final class SessionActionCenter {
     public private(set) var running: Set<String> = []
     @ObservationIgnored private var seq = 0
 
-    @ObservationIgnored private let board: Board
+    @ObservationIgnored let board: Board
     @ObservationIgnored private let connection: @MainActor (String) -> HabConnection?
 
     public init(board: Board, connection: @escaping @MainActor (String) -> HabConnection?) {

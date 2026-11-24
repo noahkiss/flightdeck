@@ -7,45 +7,29 @@ import SwiftUI
 /// `Fleet.apply(_:)` from its own scene phase, which combines every window.
 public struct FlightdeckRoot: View {
     private let fleet: Fleet
+    /// The window's commands for the menus (app.md 3.13), and its token for its own opens.
+    @State private var commands = WindowCommands(kind: .board)
 
     public init(fleet: Fleet) {
         self.fleet = fleet
     }
 
     public var body: some View {
+        shell
+            .openPaneOnLaunch(fleet)
+            .modifier(FleetEnvironment(fleet: fleet))
+            .sshSheets(fleet.ssh)
+            .modifier(PublishCommands(fleet: fleet, commands: commands))
+            .modifier(CountsWindow(fleet: fleet))
+    }
+
+    @ViewBuilder
+    private var shell: some View {
         #if os(macOS)
         BoardScreen(fleet: fleet)
-            .environment(\.habConnections, fleet.lookup)
-            .environment(\.terminals, fleet.terminals)
-            .openPaneOnLaunch(fleet)
-            .environment(\.sshSetup, fleet.ssh)
-            .environment(\.voiceKit, fleet.voice)
-            .environment(\.sendFiles, fleet.files)
-            .environment(\.confirmations, fleet.confirms)
-            .environment(\.capcom, fleet.capcom)
-            .environment(\.rounds, fleet.rounds)
-            .environment(\.groups, fleet.groups)
-            .environment(\.approvals, fleet.approvals)
-            .environment(\.drafts, fleet.drafts)
-            .sshSheets(fleet.ssh)
-            .onAppear { fleet.windowOpened() }
-            .onDisappear { fleet.windowClosed() }
         #else
         // iPhone and iPad: the tab shell (app.md 3.8).
         AppShell(fleet: fleet)
-            .environment(\.habConnections, fleet.lookup)
-            .environment(\.terminals, fleet.terminals)
-            .openPaneOnLaunch(fleet)
-            .environment(\.sshSetup, fleet.ssh)
-            .environment(\.voiceKit, fleet.voice)
-            .environment(\.sendFiles, fleet.files)
-            .environment(\.confirmations, fleet.confirms)
-            .environment(\.capcom, fleet.capcom)
-            .environment(\.rounds, fleet.rounds)
-            .environment(\.groups, fleet.groups)
-            .environment(\.approvals, fleet.approvals)
-            .environment(\.drafts, fleet.drafts)
-            .sshSheets(fleet.ssh)
         #endif
     }
 }
@@ -86,6 +70,12 @@ public struct BoardScreen: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    /// The window's commands (app.md 3.13); its id counts this window's opens (app.md 3.12).
+    @Environment(\.windowCommands) private var commands
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.supportsMultipleWindows) private var multipleWindows
+
+    private var window: UUID? { commands?.id }
 
     public init(board: Board) {
         self.board = board
@@ -101,6 +91,7 @@ public struct BoardScreen: View {
     private func session(_ row: BoardRow, compact: Bool) -> some View {
         SessionView(model: fleet!.chat(for: row.target), compact: compact, close: { opened = nil })
             .id(row.target)
+            .sessionHandoff(row, board: board)
             // session.focus while the session is on screen (app.md 8.6).
             .onAppear {
                 fleet?.focus.show(row.target)
@@ -112,7 +103,7 @@ public struct BoardScreen: View {
     /// A rank 1 row with a request opens the approval sheet (app.md 7.2).
     private func openRequest(_ row: BoardRow) -> Bool {
         guard row.rank == .blocked, !row.offline, let a = fleet?.approvals else { return false }
-        a.open(row)
+        a.open(row, window: window)
         return a.presenting
     }
 
@@ -156,7 +147,7 @@ public struct BoardScreen: View {
     private var layout: some View {
             if compact {
                 NavigationStack {
-                    BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom)
+                    BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, finds: commands?.finds ?? 0, openRequest: openRequest, openCapcom: openCapcom)
                         .usageFooter(fleet?.usage)
                         .navigationTitle("Flightdeck")
                         .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
@@ -190,7 +181,7 @@ public struct BoardScreen: View {
             } else if let fleet, capcomShown {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, actions: fleet.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet.sessionActions, query: $query, scope: $scope, finds: commands?.finds ?? 0, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                             .usageFooter(fleet.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -200,7 +191,7 @@ public struct BoardScreen: View {
             } else if fleet != nil, let row = opened {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, finds: commands?.finds ?? 0, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -211,7 +202,7 @@ public struct BoardScreen: View {
                 // The session cards column (app.md 3.3) returns when live previews exist.
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, actions: fleet?.sessionActions, query: $query, scope: $scope, finds: commands?.finds ?? 0, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -223,6 +214,31 @@ public struct BoardScreen: View {
             }
     }
 
+    /// Opens a row in this window, as a tap does.
+    private func open(_ row: BoardRow) {
+        board.open(row, window: window)
+        opened = row
+    }
+
+    /// The board's part of the menus (app.md 3.13): New Session, Find, the Go menu, Next Needing
+    /// You and Open in New Window.
+    private func registerCommands() {
+        guard let commands, let fleet else { return }
+        commands.goTargets = [.sessions, .capcom]
+        commands.go = { t in
+            switch t {
+            case .sessions:
+                opened = nil
+                capcomShown = false
+            case .capcom: capcomShown = true
+            default: break
+            }
+        }
+        commands.newSession = { newSession = fleet.newSessions.draft() }
+        commands.openRow = { open($0) }
+        commands.openWindow = multipleWindows ? { openWindow(value: $0) } : nil
+    }
+
     public var body: some View {
         layout
         .sheet(item: fleet == nil ? $opened : .constant(nil)) { row in
@@ -231,9 +247,8 @@ public struct BoardScreen: View {
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
         .modifier(SendFileSheetHost(center: fleet?.files, board: board))
         .modifier(CapcomHost(center: fleet?.capcom, board: board, opened: $opened))
-        .modifier(BoardNewSession(fleet: fleet, draft: $newSession) { row in
-            board.open(row)
-            opened = row
+        .modifier(BoardNewSession(fleet: fleet, draft: $newSession, openedID: opened?.id) { row in
+            open(row)
         })
         // One detail at a time: a session or the Capcom view.
         .onChange(of: opened) { _, r in
@@ -243,14 +258,18 @@ public struct BoardScreen: View {
             fleet?.newSessions.opened()
         }
         .onChange(of: capcomShown) { _, on in if on { opened = nil } }
-        .modifier(BoardSessionActions(fleet: fleet, opened: $opened, capcomShown: $capcomShown, saved: $savedOpen))
+        .modifier(BoardSessionActions(fleet: fleet, opened: $opened, capcomShown: $capcomShown, saved: $savedOpen, window: window))
+        // Links and Handoff open here, in the window that received them (app.md 3.15).
+        .modifier(BoardLinks(fleet: fleet, open: open))
+        // What this window offers the menus (app.md 3.13).
+        .onChange(of: opened?.id, initial: true) { _, id in commands?.openRowID = id }
+        .onAppear(perform: registerCommands)
         // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
         .onChange(of: fleet?.rounds.openRequest) { _, t in
             guard let t else { return }
             fleet?.rounds.openRequest = nil
             if let row = board.rows.first(where: { $0.target.habID == t.habID && $0.target.session == t.session }) {
-                board.open(row)
-                opened = row
+                open(row)
             }
         }
         // A group member's session, from its card (groups.md 5.4).
@@ -258,8 +277,7 @@ public struct BoardScreen: View {
             guard let t else { return }
             fleet?.groups.openRequest = nil
             if let row = board.rows.first(where: { $0.target.habID == t.habID && $0.target.session == t.session }) {
-                board.open(row)
-                opened = row
+                open(row)
             }
         }
         // A file sent to a session from the send sheet opens that session (app.md 4.4).
@@ -318,6 +336,8 @@ struct BoardSessionActions: ViewModifier {
     @Binding var capcomShown: Bool
     /// The window's saved open session, or "capcom".
     @Binding var saved: String
+    /// The window, whose own opens cancel its restore (app.md 3.12).
+    var window: UUID?
 
     func body(content: Content) -> some View {
         if let fleet {
@@ -325,8 +345,8 @@ struct BoardSessionActions: ViewModifier {
                 .modifier(SessionActionsHost(center: fleet.sessionActions))
                 .modifier(SessionActionFollow(center: fleet.sessionActions, board: fleet.board, opened: $opened))
                 // The Capcom view, an approval sheet or a tap on any row cancels the restore (app.md 3.12).
-                .modifier(RestoreOpenSession(board: fleet.board, opened: $opened, saved: saved,
-                                             interrupt: "\(capcomShown)|\(fleet.approvals?.presenting ?? false)|\(fleet.board.opens)"))
+                .modifier(RestoreOpenSession(board: fleet.board, opened: $opened, saved: saved, window: window,
+                                             interrupt: "\(capcomShown)|\(fleet.approvals?.interrupts(window: window) ?? false)|\(fleet.board.opens(in: window))"))
                 .onChange(of: capcomShown) { _, on in saved = on ? SessionRestore.capcom : (opened?.id ?? "") }
                 .onChange(of: opened) { _, r in saved = r?.id ?? (capcomShown ? SessionRestore.capcom : "") }
                 // The Mac keeps the Capcom view the same way (app.md 3.12).
@@ -368,6 +388,8 @@ struct HostScopes: ViewModifier {
 struct BoardNewSession: ViewModifier {
     let fleet: Fleet?
     @Binding var draft: NewSessionDraft?
+    /// The open row, for Next Needing You (app.md 3.16).
+    var openedID: String?
     let open: (BoardRow) -> Void
 
     func body(content: Content) -> some View {
@@ -375,6 +397,9 @@ struct BoardNewSession: ViewModifier {
             content
                 #if os(macOS)
                 .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        NextNeedingYouButton(board: fleet.board, openedID: openedID, open: open)
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         NewSessionButton(center: fleet.newSessions, draft: $draft)
                     }
@@ -427,6 +452,8 @@ struct BoardList: View {
     /// The board's search and host scope (app.md 3.6), held by the screen.
     @Binding var query: String
     @Binding var scope: BoardSearchScope
+    /// Find Sessions' count (app.md 3.13): a change puts the cursor in the search field.
+    var finds = 0
     /// Returns true when the row opened the approval sheet instead.
     var openRequest: (BoardRow) -> Bool = { _ in false }
     /// Opens the Capcom view from its row; nil shows no row.
@@ -437,6 +464,7 @@ struct BoardList: View {
     @Environment(\.capcom) private var capcom
     @Environment(\.rounds) private var rounds
     @Environment(\.groups) private var groups
+    @Environment(\.windowCommands) private var commands
 
     @State private var searchShown = false
 
@@ -505,7 +533,7 @@ struct BoardList: View {
                         ForEach(section.rows) { row in
                             Button {
                                 if openRequest(row) { return }
-                                board.open(row)
+                                board.open(row, window: commands?.id)
                                 opened = row
                             } label: {
                                 BoardRowView(row: row, now: ctx.date)
@@ -528,6 +556,7 @@ struct BoardList: View {
                 if let rounds { RoundPage(center: rounds, habID: row.habID, roundID: row.round.id) }
             }
             .searchable(text: $query, isPresented: $searchShown, prompt: "Search sessions")
+            .onChange(of: finds) { _, _ in searchShown = true }
             .modifier(HostScopes(board: board, scope: $scope))
             #if os(iOS)
             // The scopes show only while the search is open; closing it drops the scope too.
@@ -645,7 +674,12 @@ struct ConnectionsList: View {
             }
             Section {
                 if settings != nil {
+                    #if os(macOS)
+                    // The Mac's Settings window (app.md 3.8).
+                    SettingsLink { Text("Settings") }
+                    #else
                     Button("Settings") { showSettings = true }
+                    #endif
                 }
                 if ssh != nil, settings == nil {
                     Button("SSH keys and habs") { showSSH = true }

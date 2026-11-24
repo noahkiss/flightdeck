@@ -96,6 +96,8 @@ public struct SessionView: View {
     @Environment(\.capcomTab) private var capcomTab
     /// The session column's width (iPad): it decides side by side or the switch.
     @State private var width: CGFloat = 1200
+    /// The window's menus act on this session (app.md 3.13).
+    @Environment(\.windowCommands) private var commands
 
     enum Mode: String, CaseIterable, Identifiable {
         case chat = "Chat"
@@ -206,12 +208,6 @@ public struct SessionView: View {
                         ToolbarItem(placement: .secondaryAction) { voiceMenuButton }
                     }
                 }
-                .alert("Microphone access is off", isPresented: $voiceDenied) {
-                    Button("Open Settings") { openPrivacySettings() }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Turn on microphone access for Flightdeck to use voice mode and dictation.")
-                }
                 .sheet(isPresented: $showFiles) {
                     ContentPanel(model: model.content)
                         .presentationDetents([.medium, .large])
@@ -302,6 +298,19 @@ public struct SessionView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(capcomTab != nil && compact ? .large : .inline)
         #endif
+        .alert("Microphone access is off", isPresented: $voiceDenied) {
+            Button("Open Settings") { openPrivacySettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Turn on microphone access for Flightdeck to use voice mode and dictation.")
+        }
+        // The Session menu's controls (app.md 3.13).
+        .onChange(of: controlsKey) { _, _ in registerControls() }
+        // Again on each appearance: another view (a tab, the Capcom view) may have taken them.
+        .onAppear { registerControls() }
+        .onDisappear {
+            if commands?.session?.target == model.target { commands?.session = nil }
+        }
         .sheet(isPresented: $chatShowShown) {
             if let store = model.show {
                 ChatShowSheet(store: store, target: model.target)
@@ -406,6 +415,55 @@ public struct SessionView: View {
         model.show != nil && !model.context.isCapcomService
     }
     #endif
+
+    /// What the Session menu needs to know (app.md 3.13); a change registers the controls again.
+    private struct ControlsKey: Equatable {
+        var mode: Mode?
+        var voice: Bool
+        var working: Bool
+        var console: Bool
+    }
+
+    /// The Chat | Terminal switch shows: the phone layout, an iPad column too narrow for side
+    /// by side, or the Mac's Capcom view.
+    private var hasSwitch: Bool {
+        guard !model.context.isCapcomService else { return false }
+        if compact { return capcomTab == nil }
+        #if os(iOS)
+        return !sideBySide
+        #else
+        return model.context.isCapcom
+        #endif
+    }
+
+    private var controlsKey: ControlsKey {
+        ControlsKey(mode: hasSwitch ? mode : nil,
+                    voice: voiceKit != nil && VoiceButton.allowed(model),
+                    working: (model.context.agentStatus == .working || model.thread?.typing == true) && model.context.online,
+                    console: model.target.session != nil && !model.context.isConsole && !model.context.isCapcomService)
+    }
+
+    private func registerControls() {
+        guard let commands else { return }
+        let k = controlsKey
+        var c = SessionControls(target: model.target)
+        c.mode = k.mode.map { $0 == .chat ? .chat : .terminal }
+        c.setMode = { mode = $0 == .chat ? .chat : .terminal }
+        c.voiceAllowed = k.voice
+        c.voice = {
+            if VoiceAudio.permissionDenied {
+                voiceDenied = true
+            } else {
+                voiceShown = true
+            }
+        }
+        c.working = k.working
+        let m = model
+        c.stop = { Task { await m.interrupt() } }
+        c.hasConsole = k.console
+        c.console = { consoleShown = true }
+        commands.session = c
+    }
 
     /// "New conversation" (capcom.md 8.2): the chips that can move and the draft go to a fresh
     /// Capcom session, which opens in this one's place.

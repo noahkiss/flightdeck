@@ -24,6 +24,21 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER).links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>flightdeck</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).session</string>
+	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
