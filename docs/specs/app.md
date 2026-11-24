@@ -5140,7 +5140,8 @@ what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `Acc
 - **Rotors.** The chat adds three rotors to VoiceOver's rotor: **Turns** (the owner's messages,
   each the start of a turn), **Tool calls** and **Requests** (permission prompts, questions and
   plans to approve that the agent raised). The entries come from the rows the transcript draws
-  (`ChatRotors.of`), in order. Each entry's id is the row's scroll id, so VoiceOver reaches a
+  (`ChatRotors.of`), in order. A question or a plan is known by Claude Code's tool names
+  (`AskUserQuestion`, `ExitPlanMode`), as the approval sheet knows them (7.7). Each entry's id is the row's scroll id, so VoiceOver reaches a
   row the lazy stack has not drawn yet.
 - **Folded rows.** A folded line of hidden steps (4.11) is one Tool calls entry, read as its
   summary ("3 steps hidden: 2 reads, 1 command"). The rows inside it have no view until it
@@ -5194,7 +5195,11 @@ what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `Acc
   reads "1 file" or "3 files". `String(localized:)` leaves that markup in place, so `inflected(_:)`
   resolves it through an attributed string. A count whose verb or whole phrase changes uses a
   plural variation in the catalog instead: "1 confirmation waits", "Every minute" and
-  "Every 5 minutes". No code builds a plural by hand with `n == 1`.
+  "Every 5 minutes". `inflected(_:)` keeps each result by its unresolved string and language,
+  so the chat's fold lines cost a lookup on each render, not a Markdown parse.
+- **Not built.** Two sentences still pick their words with `n == 1`: the offline-hosts sentence
+  in `Settings/SettingsCenter.swift` (a list of names with a verb) and the open request's
+  summary in `Push/OpenRequest.swift`.
 
 ### 22.4 Reduce Motion
 
