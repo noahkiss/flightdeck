@@ -39,6 +39,9 @@ type Notice struct {
 	Kind NoticeKind
 	Pane HolderPane
 	Exit *api.ExitStatus
+	// Released marks a PaneGone that a successful release caused (pane.close): the program
+	// ended, though the holder sent no status. Another PaneGone may be a lost holder.
+	Released bool
 }
 
 // Holders is what the structure needs from the live holders on its host.
@@ -181,6 +184,17 @@ func (f *FakeHolder) Remove(id string) {
 	f.mu.Unlock()
 	if ok {
 		f.notify(Notice{Kind: PaneGone, Pane: HolderPane{ID: id}})
+	}
+}
+
+// Release drops a pane as a successful pane.close does, and notifies subscribers.
+func (f *FakeHolder) Release(id string) {
+	f.mu.Lock()
+	_, ok := f.panes[id]
+	delete(f.panes, id)
+	f.mu.Unlock()
+	if ok {
+		f.notify(Notice{Kind: PaneGone, Pane: HolderPane{ID: id}, Released: true})
 	}
 }
 

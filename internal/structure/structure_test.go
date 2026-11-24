@@ -286,6 +286,37 @@ func TestSessionForNewPane(t *testing.T) {
 	}
 }
 
+// TestCloseExitedAfterRelease: a pane released by pane.close ends its program, so its session
+// closes even while a holder is not reached. A pane gone without a release, with the list
+// partial, may be a lost holder: its session stays and revives when the pane shows up again.
+func TestCloseExitedAfterRelease(t *testing.T) {
+	h := NewFakeHolder(pane("pa"), pane("pb"))
+	s, _ := open(t, t.TempDir(), h)
+	a, _ := s.CreateSession(SessionSpec{Name: "a", Pane: "pa"})
+	b, _ := s.CreateSession(SessionSpec{Name: "b", Pane: "pb"})
+	h.SetPartial(true)
+
+	h.Release("pa")
+	if ss, _ := s.Session(a.ID); ss.State != api.SessionStateExited || ss.Exit == nil {
+		t.Fatalf("a released pane's session: %+v", ss)
+	}
+	if ok, err := s.CloseExitedSession(a.ID); !ok || err != nil {
+		t.Fatalf("close after a release, list partial: %v %v", ok, err)
+	}
+
+	h.Remove("pb")
+	if ss, _ := s.Session(b.ID); ss.State != api.SessionStateExited || ss.Exit != nil {
+		t.Fatalf("a lost pane's session: %+v", ss)
+	}
+	if ok, err := s.CloseExitedSession(b.ID); ok || err != nil {
+		t.Fatalf("close after a loss, list partial: %v %v", ok, err)
+	}
+	h.Add(pane("pb"))
+	if ss, _ := s.Session(b.ID); ss.State != api.SessionStateRunning {
+		t.Fatalf("the lost pane came back: %+v", ss)
+	}
+}
+
 // TestRestartDropsNeverSpawned: gff-hab stopped between filing a session (NewPane) and its
 // spawn, so the session is still marked spawning. A start whose holder list is partial keeps it
 // (exited, no status, still marked): its program may run on a holder not reached yet, and when

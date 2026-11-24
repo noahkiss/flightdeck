@@ -188,7 +188,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
 github.com/dlclark/regexp2/v2
-Version: v2.13.1
+Version: v2.13.2
 Source: https://pkg.go.dev/github.com/dlclark/regexp2/v2
 Licence: see the text below
 In: gff-hab
@@ -219,7 +219,7 @@ SOFTWARE.
 
 ==============================================================================
 github.com/dop251/goja
-Version: v0.0.0-20261110204830-f493a2b600d6
+Version: v0.0.0-20261122185237-35fdc4b88e39
 Source: https://pkg.go.dev/github.com/dop251/goja
 Licence: see the text below
 In: gff-hab
@@ -1406,7 +1406,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==============================================================================
 modernc.org/sqlite
-Version: v1.62.0
+Version: v1.63.0
 Source: https://pkg.go.dev/modernc.org/sqlite
 Licence: see the text below
 In: gff, gff-hab

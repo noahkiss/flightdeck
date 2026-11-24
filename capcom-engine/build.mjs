@@ -10,7 +10,7 @@ const result = await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node18',
+  target: 'node24',
   external: ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'],
   // The release version (src/version.ts); a build outside a release is "dev".
   define: { __GFF_ENGINE_VERSION__: JSON.stringify(process.env.GFF_ENGINE_VERSION || 'dev') },

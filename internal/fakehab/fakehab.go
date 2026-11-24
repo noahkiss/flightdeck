@@ -392,7 +392,14 @@ func (a actions) CloseSession(session string) error {
 	a.h.mu.Lock()
 	st := a.h.store
 	a.h.mu.Unlock()
-	return kindOf(st.CloseSession(session))
+	closed, err := st.CloseExitedSession(session)
+	if err != nil {
+		return kindOf(err)
+	}
+	if !closed {
+		return control.Errorf(api.ErrorKindConflict, "session %s may still be running: pane.close ends its program, then session.close removes the record", session)
+	}
+	return nil
 }
 
 func kindOf(err error) error {

@@ -40,7 +40,7 @@ func (s structureHolders) Subscribe(fn func(structure.Notice)) func() {
 		case PaneExited:
 			fn(structure.Notice{Kind: structure.PaneExited, Pane: pn, Exit: pn.Exit})
 		case PaneGone:
-			fn(structure.Notice{Kind: structure.PaneGone, Pane: pn})
+			fn(structure.Notice{Kind: structure.PaneGone, Pane: pn, Released: n.Released})
 		}
 	})
 }
