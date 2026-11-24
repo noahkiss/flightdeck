@@ -110,8 +110,15 @@ public struct ToolSentence: Hashable, Sendable {
         return nil
     }
 
+    /// The first line that is not empty, or `s` when there is none. It walks only up to that
+    /// line: the chat's rotors call it on every message each render, pasted logs included.
     static func firstLine(_ s: String) -> String {
-        s.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? s
+        var rest = s[...]
+        while let nl = rest.firstIndex(of: "\n") {
+            if nl != rest.startIndex { return String(rest[..<nl]) }
+            rest = rest[rest.index(after: nl)...]
+        }
+        return rest.isEmpty ? s : String(rest)
     }
 
     /// "1 file", "3 files" (app.md 22.3).

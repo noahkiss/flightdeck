@@ -57,6 +57,8 @@ struct StateDot: View {
     let color: Color
     var size: CGFloat = 10
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
+    /// The symbol grows with Dynamic Type, as the text beside it does.
+    @ScaledMetric(relativeTo: .subheadline) private var scale: CGFloat = 1
 
     init(shape: StateDotShape, color: Color, size: CGFloat = 10) {
         self.shape = shape
@@ -75,7 +77,7 @@ struct StateDot: View {
                 .scaledToFit()
                 .fontWeight(.bold)
                 .foregroundStyle(color)
-                .frame(width: size + 4, height: size + 4)
+                .frame(width: (size + 4) * scale, height: (size + 4) * scale)
         } else {
             Circle().fill(color).frame(width: size, height: size)
         }

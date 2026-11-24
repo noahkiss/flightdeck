@@ -1,6 +1,120 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "" : {
+
+    },
+    "-%lld" : {
+
+    },
+    "–" : {
+
+    },
+    "…" : {
+
+    },
+    "·" : {
+
+    },
+    "· %@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "· %1$@, %2$@"
+          }
+        }
+      }
+    },
+    "%@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "%@ · %@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@, %3$@"
+          }
+        }
+      }
+    },
+    "%@ · on %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · on %2$@"
+          }
+        }
+      }
+    },
+    "%@ %lld%%" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$lld%%"
+          }
+        }
+      }
+    },
+    "%@ is offline" : {
+
+    },
+    "%@ is offline." : {
+
+    },
+    "%@, %lld added, %lld removed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$lld added, %3$lld removed"
+          }
+        }
+      }
+    },
+    "%@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
+    },
+    "%@: %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$lld"
+          }
+        }
+      }
+    },
+    "%@: %lld%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$lld%3$@"
+          }
+        }
+      }
+    },
+    "%lld" : {
+
+    },
     "%lld confirmations wait" : {
       "comment" : "The menu bar's line for confirmation cards waiting for an answer.",
       "localizations" : {
@@ -20,6 +134,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld min" : {
+
+    },
+    "%lld of %lld characters" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld characters"
+          }
+        }
+      }
+    },
+    "%lld of %lld online" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld online"
           }
         }
       }
@@ -70,69 +207,21 @@
         }
       }
     },
-    "Collapsed" : {
-      "comment" : "VoiceOver value of a row that is folded."
+    "%lld waiting" : {
+
     },
-    "Every %lld hours" : {
-      "comment" : "A round's schedule, from a cron step on the hour.",
+    "%lld%%" : {
+
+    },
+    "`gff friction show %@` on %@ prints it with its log." : {
       "localizations" : {
         "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Every hour"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Every %lld hours"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "`gff friction show %1$@` on %2$@ prints it with its log."
           }
         }
       }
-    },
-    "Every %lld minutes" : {
-      "comment" : "A round's schedule, from a cron step on the minute.",
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Every minute"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Every %lld minutes"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "Expanded" : {
-      "comment" : "VoiceOver value of a row that is open."
-    },
-    "Next ^[%lld day](inflect: true)" : {
-      "comment" : "Capcom settings: how many days of the calendar Capcom can read."
-    },
-    "Requests" : {
-      "comment" : "VoiceOver rotor name in the chat: permission prompts, questions and plans the agent asked about."
-    },
-    "Tool calls" : {
-      "comment" : "VoiceOver rotor name in the chat: the agent's tool calls."
-    },
-    "Turns" : {
-      "comment" : "VoiceOver rotor name in the chat: the owner's messages."
     },
     "^[%lld agent message](inflect: true)" : {
       "comment" : "Hidden chat steps of one kind: messages to or from subagents."
@@ -182,8 +271,1815 @@
     "^[%lld thought](inflect: true)" : {
       "comment" : "Hidden chat steps of one kind: thinking blocks."
     },
+    "+%lld" : {
+
+    },
+    "$" : {
+
+    },
+    "A host that already trusts this key needs nothing more. Otherwise add this line to ~/.ssh/authorized_keys for that user on the host." : {
+
+    },
+    "A prompt theme that rebuilds the prompt on every command, or a bash PROMPT_COMMAND array, drops the prompt marks." : {
+
+    },
+    "A round runs an agent or a command on a schedule, or when something happens." : {
+
+    },
+    "A run in progress goes on to its end." : {
+
+    },
+    "Accounts show here once a hab reports their limits." : {
+
+    },
+    "Add" : {
+
+    },
+    "Add a hab" : {
+
+    },
+    "Add a hab by address" : {
+
+    },
+    "Add from your phone." : {
+
+    },
+    "Add the key by hand" : {
+
+    },
+    "Add these lines to the shell's startup file on the hab's host, then start a new shell." : {
+
+    },
+    "Add this line to ~/.ssh/authorized_keys for that user on the host." : {
+
+    },
+    "Address" : {
+
+    },
+    "after %@" : {
+
+    },
+    "After a good run" : {
+
+    },
+    "After missed runs" : {
+
+    },
+    "Agent" : {
+
+    },
+    "Alert me when %@ is free" : {
+
+    },
+    "All" : {
+
+    },
+    "All day" : {
+
+    },
+    "All settings" : {
+
+    },
+    "Allow" : {
+
+    },
+    "Allow \"%@\"?" : {
+
+    },
+    "Allowed sites" : {
+
+    },
+    "Already answered" : {
+
+    },
+    "Also on the project" : {
+
+    },
+    "Always" : {
+
+    },
+    "An imported key also opens every other host that trusts it. The generated key exists only on this device." : {
+
+    },
+    "Another device sets this size. Fit also resizes the terminal on the other device." : {
+
+    },
+    "Answered elsewhere" : {
+
+    },
+    "Answers with this option" : {
+
+    },
+    "Apple speech" : {
+
+    },
+    "Applies to" : {
+
+    },
+    "Approve plan" : {
+
+    },
+    "Ask Capcom" : {
+
+    },
+    "Ask Capcom anything" : {
+
+    },
+    "Ask Capcom…" : {
+
+    },
+    "Ask for a spoken summary" : {
+
+    },
+    "Assign" : {
+
+    },
+    "At" : {
+
+    },
+    "Attach a file" : {
+
+    },
+    "Attach to Capcom" : {
+
+    },
+    "Attached image" : {
+
+    },
+    "Background action" : {
+
+    },
+    "Balanced" : {
+
+    },
+    "Binary file" : {
+
+    },
+    "Blocker" : {
+
+    },
+    "Bypass" : {
+
+    },
+    "Calendar" : {
+
+    },
+    "Calendars are off for Flightdeck in the system settings." : {
+
+    },
+    "Cancel" : {
+
+    },
+    "Cancel alert for %@" : {
+
+    },
+    "Capcom" : {
+
+    },
+    "Capcom follows this prompt when the job's events come in:" : {
+
+    },
+    "Capcom host" : {
+
+    },
+    "Capcom host not in this app" : {
+
+    },
+    "Capcom is typing" : {
+
+    },
+    "Capcom jobs" : {
+
+    },
+    "Capcom keeps working at night, but holds its pushes until quiet hours end, then sends one that counts them. An urgent event still pushes at once. Times follow the time zone a device last shared." : {
+
+    },
+    "Capcom may" : {
+
+    },
+    "Capcom opens pages on these sites without asking." : {
+
+    },
+    "Capcom opens when a hab is online." : {
+
+    },
+    "Capcom reads the events of the calendars you pick." : {
+
+    },
+    "Capcom reads your location only when a question needs it." : {
+
+    },
+    "Capcom runs on %@. It opens when that hab is online." : {
+
+    },
+    "Capcom uses your location and calendar to answer questions about your day." : {
+
+    },
+    "Cards" : {
+
+    },
+    "Check again" : {
+
+    },
+    "Checking the connection" : {
+
+    },
+    "Choose" : {
+
+    },
+    "Choose a file" : {
+
+    },
+    "Choose a round" : {
+
+    },
+    "Choose a session" : {
+
+    },
+    "Choose a setting" : {
+
+    },
+    "Choose another key" : {
+
+    },
+    "Choose the hab that runs Capcom." : {
+
+    },
+    "Choose this key for a hab in Habs over SSH. Hosts that already trust it need no pairing." : {
+
+    },
+    "Choose what the chat shows" : {
+
+    },
+    "Chosen by the hab" : {
+
+    },
+    "Claude Code" : {
+
+    },
+    "Clear" : {
+
+    },
+    "Close" : {
+
+    },
+    "Close group" : {
+
+    },
+    "Close group %@?" : {
+
+    },
+    "Close the session" : {
+
+    },
+    "Close…" : {
+
+    },
+    "Code copied" : {
+
+    },
+    "Code or link" : {
+
+    },
+    "Codex" : {
+
+    },
+    "Collapsed" : {
+      "comment" : "VoiceOver value of a row that is folded."
+    },
+    "Command" : {
+
+    },
+    "Command on the host" : {
+
+    },
+    "Command: %@" : {
+
+    },
+    "Commands show here once the shell sends prompt marks." : {
+
+    },
+    "Comment" : {
+
+    },
+    "Compare with ssh-keygen -lf on the host's key, for example /etc/ssh/ssh_host_ed25519_key.pub." : {
+
+    },
+    "Computer" : {
+
+    },
+    "Computers" : {
+
+    },
+    "Computers and pairing" : {
+
+    },
+    "Confirm" : {
+
+    },
+    "Confirm before send" : {
+
+    },
+    "Confirm with changes" : {
+
+    },
+    "Connect" : {
+
+    },
+    "Connecting to the hab" : {
+
+    },
+    "Connections" : {
+
+    },
+    "Console" : {
+
+    },
+    "Context" : {
+
+    },
+    "Continue" : {
+
+    },
+    "Copied" : {
+
+    },
+    "Copy" : {
+
+    },
+    "Copy code" : {
+
+    },
+    "Copy Link" : {
+
+    },
+    "Copy name" : {
+
+    },
+    "Copy Name" : {
+
+    },
+    "Copy public key" : {
+
+    },
+    "Could not open Capcom" : {
+
+    },
+    "Create" : {
+
+    },
+    "Cron expression" : {
+
+    },
+    "Custom" : {
+
+    },
+    "Delete" : {
+
+    },
+    "Delete key" : {
+
+    },
+    "Delete round %@?" : {
+
+    },
+    "Delete this key?" : {
+
+    },
+    "Delivered" : {
+
+    },
+    "Demo data is on. Restart the app to pair a computer." : {
+
+    },
+    "Denies, then opens the message field" : {
+
+    },
+    "Deny" : {
+
+    },
+    "Device name" : {
+
+    },
+    "Dictate" : {
+
+    },
+    "Dictation" : {
+
+    },
+    "Differs on %@" : {
+
+    },
+    "Dismiss" : {
+
+    },
+    "Done" : {
+
+    },
+    "Download the model (about 450 MB)" : {
+
+    },
+    "Downloading the model" : {
+
+    },
+    "Drop %@" : {
+
+    },
+    "Drop to attach" : {
+
+    },
+    "Due" : {
+
+    },
+    "Each warning shows once per window." : {
+
+    },
+    "Earlier messages" : {
+
+    },
+    "Earlier output not shown" : {
+
+    },
+    "Earlier plan · %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Earlier plan · %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Earlier threads" : {
+
+    },
+    "Edit" : {
+
+    },
+    "Edit round" : {
+
+    },
+    "Ends" : {
+
+    },
+    "Event" : {
+
+    },
+    "Every" : {
+
+    },
+    "Every %lld hours" : {
+      "comment" : "A round's schedule, from a cron step on the hour.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every hour"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld hours"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Every %lld minutes" : {
+      "comment" : "A round's schedule, from a cron step on the minute.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every minute"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld minutes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Every host must get the new public key." : {
+
+    },
+    "Expanded" : {
+      "comment" : "VoiceOver value of a row that is open."
+    },
+    "Expands the document" : {
+
+    },
+    "Expired: answer in the terminal" : {
+
+    },
+    "Expired: nothing runs" : {
+
+    },
+    "Expires in %@" : {
+
+    },
+    "Face ID" : {
+
+    },
+    "Face ID before Allow" : {
+
+    },
+    "Files" : {
+
+    },
+    "Find Sessions" : {
+
+    },
+    "Fingerprint" : {
+
+    },
+    "Finish pairing with %@" : {
+
+    },
+    "Fit to this screen" : {
+
+    },
+    "Flightdeck" : {
+
+    },
+    "Flightdeck connects while one of its windows is open." : {
+
+    },
+    "Flightdeck shows the agents that run on your computers. Pair one to see its sessions here." : {
+
+    },
+    "Flightdeck: %lld need you" : {
+
+    },
+    "flightdeck://pair?…" : {
+
+    },
+    "Folder" : {
+
+    },
+    "Folds the details" : {
+
+    },
+    "Folds the document" : {
+
+    },
+    "Folds the output" : {
+
+    },
+    "Folds the proposal" : {
+
+    },
+    "For a host that cannot run gff-hab pair." : {
+
+    },
+    "Fork" : {
+
+    },
+    "Fresh" : {
+
+    },
+    "From %@" : {
+
+    },
+    "From the session's edit calls; line numbers are not known." : {
+
+    },
+    "Full path, starting with /" : {
+
+    },
+    "General" : {
+
+    },
+    "gff-hab pair" : {
+
+    },
+    "Go" : {
+
+    },
+    "Grant" : {
+
+    },
+    "Group %@" : {
+
+    },
+    "Groups" : {
+
+    },
+    "Hab" : {
+
+    },
+    "Hab id" : {
+
+    },
+    "Habs" : {
+
+    },
+    "Habs over SSH" : {
+
+    },
+    "Habs that use it stop connecting until you choose another key." : {
+
+    },
+    "Hand-off" : {
+
+    },
+    "Harness" : {
+
+    },
+    "Help and diagnostics" : {
+
+    },
+    "Hide" : {
+
+    },
+    "Hide files" : {
+
+    },
+    "Hide keyboard" : {
+
+    },
+    "Hides these steps again" : {
+
+    },
+    "Hold Capcom's pushes at night" : {
+
+    },
+    "Host" : {
+
+    },
+    "Host key" : {
+
+    },
+    "Host key of %@@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Host key of %1$@@%2$@"
+          }
+        }
+      }
+    },
+    "Host size" : {
+
+    },
+    "Hosts: %lld of %lld online" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Hosts: %1$lld of %2$lld online"
+          }
+        }
+      }
+    },
+    "How much agents may do alone" : {
+
+    },
+    "Image %@" : {
+
+    },
+    "Import" : {
+
+    },
+    "Import a key" : {
+
+    },
+    "Imported" : {
+
+    },
+    "Imported keys" : {
+
+    },
     "in ^[%lld file](inflect: true)" : {
       "comment" : "A search tool's result when it lists files only."
+    },
+    "Interrupt" : {
+
+    },
+    "It shows a code on the screen for 10 minutes." : {
+
+    },
+    "Items" : {
+
+    },
+    "Keep it open" : {
+
+    },
+    "Keep planning" : {
+
+    },
+    "Key" : {
+
+    },
+    "Label" : {
+
+    },
+    "Label (optional)" : {
+
+    },
+    "Last outcome" : {
+
+    },
+    "Last: %@" : {
+
+    },
+    "Leave empty to run gff-hab connect. Use a full path when gff-hab is not on the remote PATH." : {
+
+    },
+    "Letters, digits, dot, dash and underscore, up to 64." : {
+
+    },
+    "Level" : {
+
+    },
+    "Limits" : {
+
+    },
+    "Lists the sessions that need you, with their count." : {
+
+    },
+    "Load older commands" : {
+
+    },
+    "Load the attached image again" : {
+
+    },
+    "Location" : {
+
+    },
+    "Location is off for Flightdeck in the system settings." : {
+
+    },
+    "Login" : {
+
+    },
+    "Look around with demo data" : {
+
+    },
+    "Looking for the Capcom host" : {
+
+    },
+    "Make a new key" : {
+
+    },
+    "Make a new key?" : {
+
+    },
+    "Mark All as Read" : {
+
+    },
+    "Mark as Read" : {
+
+    },
+    "Mark as Unread" : {
+
+    },
+    "Markup" : {
+
+    },
+    "Members" : {
+
+    },
+    "Message" : {
+
+    },
+    "Message to Capcom" : {
+
+    },
+    "Microphone access is off" : {
+
+    },
+    "Mode" : {
+
+    },
+    "Model" : {
+
+    },
+    "Model (the agent's default when empty)" : {
+
+    },
+    "Modified files" : {
+
+    },
+    "Name" : {
+
+    },
+    "Needs You" : {
+
+    },
+    "Needs you in the terminal." : {
+
+    },
+    "Never" : {
+
+    },
+    "New" : {
+
+    },
+    "New conversation" : {
+
+    },
+    "New key. Add it to each host so the Watch can answer while iPhone is locked. The old key works until then." : {
+
+    },
+    "New messages" : {
+
+    },
+    "New round" : {
+
+    },
+    "New session" : {
+
+    },
+    "New Session" : {
+
+    },
+    "New Window" : {
+
+    },
+    "Next" : {
+
+    },
+    "Next ^[%lld day](inflect: true)" : {
+      "comment" : "Capcom settings: how many days of the calendar Capcom can read."
+    },
+    "Next Needing You" : {
+
+    },
+    "Next run" : {
+
+    },
+    "No agent runs in this session." : {
+
+    },
+    "No agent was found on this computer. A shell starts." : {
+
+    },
+    "No Capcom host" : {
+
+    },
+    "No Capcom jobs. A round in capcom mode is a job." : {
+
+    },
+    "No changes." : {
+
+    },
+    "No commands yet" : {
+
+    },
+    "No console" : {
+
+    },
+    "No diff is known for this file." : {
+
+    },
+    "No hab online" : {
+
+    },
+    "No hab uses this key." : {
+
+    },
+    "No habs configured." : {
+
+    },
+    "No key: choose one" : {
+
+    },
+    "No limits" : {
+
+    },
+    "No limits reported" : {
+
+    },
+    "No longer on the hab" : {
+
+    },
+    "No matches" : {
+
+    },
+    "No online hab runs Capcom." : {
+
+    },
+    "No output" : {
+
+    },
+    "No paired computer" : {
+
+    },
+    "No paired computer has this session." : {
+
+    },
+    "No paired computer has this setting" : {
+
+    },
+    "No push token: %@" : {
+
+    },
+    "No rounds" : {
+
+    },
+    "No rounds yet" : {
+
+    },
+    "No rounds." : {
+
+    },
+    "No run limit" : {
+
+    },
+    "No sessions" : {
+
+    },
+    "No settings" : {
+
+    },
+    "No thread" : {
+
+    },
+    "No usage readings" : {
+
+    },
+    "Noisy room" : {
+
+    },
+    "None" : {
+
+    },
+    "Not connected" : {
+
+    },
+    "Not now" : {
+
+    },
+    "Note friction" : {
+
+    },
+    "Note saved" : {
+
+    },
+    "Note where Flightdeck fell short" : {
+
+    },
+    "Notes" : {
+
+    },
+    "Nothing else needs you" : {
+
+    },
+    "Nothing needs you" : {
+
+    },
+    "Nothing shown or changed yet" : {
+
+    },
+    "Nothing waits for you" : {
+
+    },
+    "Notifications" : {
+
+    },
+    "Notifications are off for Flightdeck in system Settings." : {
+
+    },
+    "Notify" : {
+
+    },
+    "Notify when a turn finishes" : {
+
+    },
+    "Offline" : {
+
+    },
+    "Offline since %@" : {
+
+    },
+    "OK" : {
+
+    },
+    "Older runs" : {
+
+    },
+    "on %@" : {
+
+    },
+    "On %@" : {
+
+    },
+    "On every hab" : {
+
+    },
+    "On failures" : {
+
+    },
+    "On the computer, run" : {
+
+    },
+    "On the hab" : {
+
+    },
+    "On this device (Parakeet)" : {
+
+    },
+    "Only the first part of the output came through." : {
+
+    },
+    "Open" : {
+
+    },
+    "Open %@ full size" : {
+
+    },
+    "Open chat" : {
+
+    },
+    "Open Flightdeck" : {
+
+    },
+    "Open in New Window" : {
+
+    },
+    "Open session" : {
+
+    },
+    "Open Settings" : {
+
+    },
+    "Open terminal" : {
+
+    },
+    "Open the chat to answer." : {
+
+    },
+    "Open the console" : {
+
+    },
+    "Open the next session that needs you (⌥⌘A)" : {
+
+    },
+    "Open the terminal to sign in." : {
+
+    },
+    "opencode" : {
+
+    },
+    "Opening %@" : {
+
+    },
+    "Opening Capcom" : {
+
+    },
+    "Opens Fit, Host size and Redraw." : {
+
+    },
+    "Opens it full size" : {
+
+    },
+    "Opens markup" : {
+
+    },
+    "Opens the card" : {
+
+    },
+    "Opens the chat" : {
+
+    },
+    "Opens the full request" : {
+
+    },
+    "Opens usage" : {
+
+    },
+    "Other folder" : {
+
+    },
+    "Output" : {
+
+    },
+    "Over SSH" : {
+
+    },
+    "Pair another computer" : {
+
+    },
+    "Pair this device" : {
+
+    },
+    "Pair with a code" : {
+
+    },
+    "Pair your computer" : {
+
+    },
+    "Pane" : {
+
+    },
+    "Parakeet TDT 0.6B v2 by NVIDIA, CC-BY-4.0" : {
+
+    },
+    "Passphrase" : {
+
+    },
+    "Password for %@" : {
+
+    },
+    "Past" : {
+
+    },
+    "Paste" : {
+
+    },
+    "Paste the private key" : {
+
+    },
+    "Pause" : {
+
+    },
+    "Pause before send" : {
+
+    },
+    "Paused" : {
+
+    },
+    "Photos" : {
+
+    },
+    "Pick a computer or a page from the list." : {
+
+    },
+    "Pick a round to see its runs." : {
+
+    },
+    "Pick a row to open its chat and terminal." : {
+
+    },
+    "Picks this option" : {
+
+    },
+    "Plan · %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Plan · %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Premium and enhanced voices download in iOS Settings › Accessibility › Spoken Content › Voices. Speech stays on this device." : {
+
+    },
+    "Premium and enhanced voices download in System Settings › Accessibility › Spoken Content › System voice. Speech stays on this device." : {
+
+    },
+    "Preview" : {
+
+    },
+    "Private key" : {
+
+    },
+    "Project" : {
+
+    },
+    "Project: %@" : {
+
+    },
+    "Prompt" : {
+
+    },
+    "Proposal" : {
+
+    },
+    "Proposals to review" : {
+
+    },
+    "Push is not set up on %@. Approvals show while the app is open." : {
+
+    },
+    "Push setup guide" : {
+
+    },
+    "Puts the message back in the field" : {
+
+    },
+    "Quiet hours" : {
+
+    },
+    "Read" : {
+
+    },
+    "Read Aloud" : {
+
+    },
+    "Read key" : {
+
+    },
+    "Read the code" : {
+
+    },
+    "Recent" : {
+
+    },
+    "Reconnecting" : {
+
+    },
+    "Redraw" : {
+
+    },
+    "Reminder" : {
+
+    },
+    "Remove" : {
+
+    },
+    "Remove %@" : {
+
+    },
+    "Remove the model" : {
+
+    },
+    "Rename" : {
+
+    },
+    "Rename session" : {
+
+    },
+    "Rename…" : {
+
+    },
+    "Replies, questions, approvals and errors always show. Hidden steps fold into one line you can open." : {
+
+    },
+    "Requests" : {
+      "comment" : "VoiceOver rotor name in the chat: permission prompts, questions and plans the agent asked about."
+    },
+    "Require Face ID for SSH keys" : {
+
+    },
+    "Reset at %@; no reading since" : {
+
+    },
+    "Restart" : {
+
+    },
+    "Resume" : {
+
+    },
+    "Retry" : {
+
+    },
+    "Review" : {
+
+    },
+    "review off" : {
+
+    },
+    "review on" : {
+
+    },
+    "Round %@" : {
+
+    },
+    "Round deleted" : {
+
+    },
+    "Rounds" : {
+
+    },
+    "Rounds in capcom mode. Choose what Capcom may do when each job's events come in." : {
+
+    },
+    "Rounds on %@" : {
+
+    },
+    "Rounds on %@ · offline" : {
+
+    },
+    "Run %lld" : {
+
+    },
+    "Run it on %@? It is always on." : {
+
+    },
+    "Run now" : {
+
+    },
+    "Run once" : {
+
+    },
+    "Running" : {
+
+    },
+    "Runs" : {
+
+    },
+    "Runs Capcom" : {
+
+    },
+    "Runs in %@ on %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Runs in %1$@ on %2$@"
+          }
+        }
+      }
+    },
+    "Safe" : {
+
+    },
+    "Save" : {
+
+    },
+    "Saved on %@ with this session and the last 10 minutes of its logs." : {
+
+    },
+    "Scan the code" : {
+
+    },
+    "Scan the code with this %@" : {
+
+    },
+    "Scheduled jobs on your computers show here." : {
+
+    },
+    "Search sessions" : {
+
+    },
+    "Search settings" : {
+
+    },
+    "Seed" : {
+
+    },
+    "Select Text" : {
+
+    },
+    "Send" : {
+
+    },
+    "Send a test notification for %@" : {
+
+    },
+    "Send After This Turn" : {
+
+    },
+    "Send answer" : {
+
+    },
+    "Send Ctrl+C" : {
+
+    },
+    "Send now" : {
+
+    },
+    "Send to" : {
+
+    },
+    "Send to Capcom's conversation (Return)" : {
+
+    },
+    "Send to New Chat" : {
+
+    },
+    "Session" : {
+
+    },
+    "Sessions" : {
+
+    },
+    "Sessions on your computers show here." : {
+
+    },
+    "Sessions on your habs show here." : {
+
+    },
+    "Set in the hab's config" : {
+
+    },
+    "Set in the hab's config on %@" : {
+
+    },
+    "Set up over SSH" : {
+
+    },
+    "Set up with a password" : {
+
+    },
+    "Settings" : {
+
+    },
+    "Settings show once a computer is paired." : {
+
+    },
+    "Share" : {
+
+    },
+    "Share calendar" : {
+
+    },
+    "Share location" : {
+
+    },
+    "Shell" : {
+
+    },
+    "Shell exited" : {
+
+    },
+    "Shell setup" : {
+
+    },
+    "Show" : {
+
+    },
+    "Show all %@" : {
+
+    },
+    "Show all %lld lines" : {
+
+    },
+    "Show all as text" : {
+
+    },
+    "Show chat" : {
+
+    },
+    "Show Chat" : {
+
+    },
+    "Show details in notifications" : {
+
+    },
+    "Show files" : {
+
+    },
+    "Show full message" : {
+
+    },
+    "Show in chat" : {
+
+    },
+    "Show in the menu bar" : {
+
+    },
+    "Show keyboard" : {
+
+    },
+    "Show less" : {
+
+    },
+    "Show run sessions" : {
+
+    },
+    "Show setting keys" : {
+
+    },
+    "Show terminal" : {
+
+    },
+    "Show Terminal" : {
+
+    },
+    "Showing the first %@ of %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Showing the first %1$@ of %2$@"
+          }
+        }
+      }
+    },
+    "Shows each setting's key under its name in All settings, so a doc or an issue can name it." : {
+
+    },
+    "Shows the details" : {
+
+    },
+    "Shows the output" : {
+
+    },
+    "Shows the proposal" : {
+
+    },
+    "Shows the summary" : {
+
+    },
+    "Shows these steps here" : {
+
+    },
+    "Skip" : {
+
+    },
+    "Speech recognition" : {
+
+    },
+    "Speech recognition: %@" : {
+
+    },
+    "Spoken commands" : {
+
+    },
+    "Spoken summary" : {
+
+    },
+    "Spoken voice" : {
+
+    },
+    "SSH" : {
+
+    },
+    "SSH keys and habs" : {
+
+    },
+    "Start" : {
+
+    },
+    "Start a new Capcom conversation" : {
+
+    },
+    "Start a new Capcom conversation with this message (⌘Return)" : {
+
+    },
+    "Start a new shell" : {
+
+    },
+    "Start a session" : {
+
+    },
+    "Start to first hab reply" : {
+
+    },
+    "Starting a shell" : {
+
+    },
+    "Starts" : {
+
+    },
+    "State" : {
+
+    },
+    "Step %lld" : {
+
+    },
+    "Stop" : {
+
+    },
+    "Stop after %lld runs" : {
+
+    },
+    "Stop and Send Now" : {
+
+    },
+    "Stop dictation" : {
+
+    },
+    "Stop Reading" : {
+
+    },
+    "Stop speech when I talk" : {
+
+    },
+    "Tap for the next key. Tap twice to lock." : {
+
+    },
+    "Tell it what to do" : {
+
+    },
+    "Terminal" : {
+
+    },
+    "Terminal keys" : {
+
+    },
+    "Text by %@" : {
+
+    },
+    "The app signs in once with the account password, adds this key to ~/.ssh/authorized_keys, and forgets the password." : {
+
+    },
+    "The file changed while loading." : {
+
+    },
+    "The hab is offline." : {
+
+    },
+    "The hab sent no SSH host key. Compare with ssh-keygen -lf on the host's key, for example /etc/ssh/ssh_host_ed25519_key.pub." : {
+
+    },
+    "The hab sent the first part of the diff." : {
+
+    },
+    "The hab shows this name when it asks to confirm." : {
+
+    },
+    "The hab that runs Capcom is not in this app." : {
+
+    },
+    "The image did not load." : {
+
+    },
+    "The job changed. Read its prompt again." : {
+
+    },
+    "The session has exited." : {
+
+    },
+    "The two devices exchange keys. Nothing goes through a server of ours." : {
+
+    },
+    "This build has no acknowledgements file." : {
+
+    },
+    "This card is gone." : {
+
+    },
+    "This computer is no longer in the app." : {
+
+    },
+    "This device" : {
+
+    },
+    "This device is paired with %@ and the hab is saved. It keeps trying in the background." : {
+
+    },
+    "This device is paired with %@, but its host key could not be read." : {
+
+    },
+    "This device's key" : {
+
+    },
+    "This group is gone." : {
+
+    },
+    "This image cannot be marked up." : {
+
+    },
+    "This key asks for Face ID until you make a new one." : {
+
+    },
+    "This key was already on this device; it is stored once." : {
+
+    },
+    "This Mac" : {
+
+    },
+    "This pane is gone" : {
+
+    },
+    "This request expired. Answer it in the session." : {
+
+    },
+    "This round is no longer on its hab." : {
+
+    },
+    "This session has no pane to show." : {
+
+    },
+    "This session is not on any paired computer." : {
+
+    },
+    "This session was removed." : {
+
+    },
+    "Thread did not load" : {
+
+    },
+    "Time zone (the hab's when empty)" : {
+
+    },
+    "Timeout: %lld min" : {
+
+    },
+    "Timing" : {
+
+    },
+    "Title" : {
+
+    },
+    "Tool calls" : {
+      "comment" : "VoiceOver rotor name in the chat: the agent's tool calls."
+    },
+    "Trace" : {
+
+    },
+    "Tried in this order." : {
+
+    },
+    "Trigger: %@" : {
+
+    },
+    "Trust this host key" : {
+
+    },
+    "Trust this host key and add the key" : {
+
+    },
+    "Try again" : {
+
+    },
+    "Try other words, or check the host scope." : {
+
+    },
+    "Try the connection again" : {
+
+    },
+    "Turn on microphone access for Flightdeck to use voice mode and dictation." : {
+
+    },
+    "Turn on when you could not do the work in Flightdeck." : {
+
+    },
+    "Turns" : {
+      "comment" : "VoiceOver rotor name in the chat: the owner's messages."
+    },
+    "Type" : {
+
+    },
+    "Type the code" : {
+
+    },
+    "Type the user name and @ before the host." : {
+
+    },
+    "Type these on %@ to confirm" : {
+
+    },
+    "Undo changes" : {
+
+    },
+    "Unpause" : {
+
+    },
+    "Upper and lower case count." : {
+
+    },
+    "Usage" : {
+
+    },
+    "Usage pacing" : {
+
+    },
+    "Usage warnings" : {
+
+    },
+    "Usage warnings live on the usage bar. Capcom and round settings live on their tabs." : {
+
+    },
+    "Used by" : {
+
+    },
+    "View" : {
+
+    },
+    "Voice" : {
+
+    },
+    "Voice mode" : {
+
+    },
+    "Voice Mode" : {
+
+    },
+    "Voice mode and dictation are off." : {
+
+    },
+    "Wait up to %lld s" : {
+
+    },
+    "Warn at %lld%%" : {
+
+    },
+    "What" : {
+
+    },
+    "What fell short?" : {
+
+    },
+    "When" : {
+
+    },
+    "Why: %@" : {
+
+    },
+    "Wrote first" : {
+
     }
   },
   "version" : "1.0"

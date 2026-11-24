@@ -1,6 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Allow a request" : {
+
+    },
+    "Deny a request" : {
+
+    },
+    "Hab" : {
+
+    },
+    "Pane" : {
+
+    },
+    "Request" : {
+
+    }
   },
   "version" : "1.0"
 }

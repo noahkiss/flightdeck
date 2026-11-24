@@ -5158,7 +5158,8 @@ what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `Acc
   request area and in the approval sheet. The drawn check mark is hidden from VoiceOver.
 - **Not built.** The Capcom thread view (4.10) has no rotors yet. The live request card sits in
   the composer's bar, not in the transcript, so the Requests rotor lists only the requests in
-  the transcript.
+  the transcript. The Requests rotor knows only Claude Code's question and plan tools; a
+  question or plan from Codex or opencode does not reach it.
 
 ### 22.2 Colour
 
@@ -5175,7 +5176,8 @@ what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `Acc
   | Idle | `circle` |
   | No agent state | `circle.dashed` |
 
-  A running group's dot uses the Working symbol.
+  A running group's dot uses the Working symbol. The symbol grows with Dynamic Type, as the
+  text beside it does.
 - **Increase Contrast.** The diff and count colours (4.11) pass 4.5:1 by default. Under Increase
   Contrast each pair switches to a darker pair in light mode and a lighter pair in dark mode that
   passes 7:1: removed and added text on their line colour, the gutter on both, the counts on the
@@ -5186,7 +5188,13 @@ what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `Acc
 
 - **String Catalogs.** English is the only language. The app targets share
   `apple/App/Localizable.xcstrings`; the FlightdeckKit package has its own in its resources, with
-  `defaultLocalization: "en"`. Each build extracts the targets' strings (`SWIFT_EMIT_LOC_STRINGS`).
+  `defaultLocalization: "en"`. Builds extract each target's strings (`SWIFT_EMIT_LOC_STRINGS`),
+  and Xcode writes new ones into the catalogs. The committed catalogs hold what extraction
+  produces, so a build leaves them unchanged. After a change to UI text, run
+  `xcodebuild -exportLocalizations -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS
+  -localizationPath <temp folder> -exportLanguage en`: it syncs both catalogs in place, and the
+  synced catalogs go in the same commit. The package's catalog holds every package literal,
+  although most of them do not resolve against it yet (next point).
 - **The package's bundle.** SwiftUI looks a literal up in the main bundle unless told otherwise.
   Package code that needs its catalog passes `bundle: #bundle`: through `Text(_:bundle:)` in a
   view, or through `inflected(_:)` and `localized(_:)` for a `String`. Older package literals
@@ -5207,4 +5215,6 @@ With Reduce Motion on, every expand, fold, zoom or scroll the app animates happe
 tool card, fold and document toggles, the files panel, the image zoom, the jump to the newest
 message, the jump button, the composer's send button, the Settings jump to a setting and the
 voice level meter. The views read `accessibilityReduceMotion` and pass their animation through
-`gateMotion(_:reduce:)`. Fades stay: the drop highlight and the key bar's hint.
+`gateMotion(_:reduce:)`. Fades stay: the drop highlight and the key bar's hint. The jump to
+the newest message then takes the plain scroll, with its second scroll after the layout pass
+(4.12), so lazy rows that measure late do not leave it short of the bottom.

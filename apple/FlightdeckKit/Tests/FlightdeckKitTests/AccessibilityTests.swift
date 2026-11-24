@@ -55,6 +55,15 @@ final class AccessibilityTests: XCTestCase {
         XCTAssertTrue((r.turns + r.tools + r.requests).allSatisfy { ids.contains($0.id) })
     }
 
+    func testFirstLineSkipsEmptyLines() {
+        XCTAssertEqual(ToolSentence.firstLine("one\ntwo"), "one")
+        XCTAssertEqual(ToolSentence.firstLine("\n\nthree\nfour"), "three")
+        XCTAssertEqual(ToolSentence.firstLine("only"), "only")
+        XCTAssertEqual(ToolSentence.firstLine("\n\nlast"), "last")
+        XCTAssertEqual(ToolSentence.firstLine("\n\n"), "\n\n")
+        XCTAssertEqual(ToolSentence.firstLine(""), "")
+    }
+
     func testRotorLabelsAreCut() {
         let long = String(repeating: "word ", count: 40)
         let r = ChatRotors.of([.item(.user(id: "u", text: long, sender: nil, attachments: []))])

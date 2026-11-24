@@ -10,6 +10,9 @@ import Synchronization
 /// `String(localized:)` leaves the `^[…](inflect: true)` markup as it is; the attributed
 /// string resolves it. Resolving costs a Markdown parse, and the chat asks for the same few
 /// counts on every render, so results are kept by the unresolved string and language.
+///
+/// The whole string is read as Markdown. Pass only counts and the app's own words, never
+/// user or agent text.
 func inflected(_ value: String.LocalizationValue) -> String {
     let key = InflectKey(raw: String(localized: value, bundle: #bundle), language: Locale.current.identifier)
     if let hit = inflectCache.withLock({ $0[key] }) { return hit }

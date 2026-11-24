@@ -145,8 +145,9 @@ struct ChatScroll<Content: View>: View {
         switch action {
         case .none: break
         case .toBottom:
-            if animated {
-                withAnimation(gateMotion(.smooth(duration: 0.3), reduce: reduceMotion)) { position.scrollTo(edge: .bottom) }
+            // Under Reduce Motion the jump takes the plain path, with its settle pass (app.md 22.4).
+            if animated && !reduceMotion {
+                withAnimation(.smooth(duration: 0.3)) { position.scrollTo(edge: .bottom) }
             } else {
                 position.scrollTo(edge: .bottom)
                 // Once more after this layout pass: the lazy rows measure only when laid out,
