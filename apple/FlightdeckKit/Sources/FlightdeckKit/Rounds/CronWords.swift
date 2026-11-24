@@ -43,7 +43,7 @@ public struct CronWords: Equatable, Sendable {
             if hour == "*" {
                 if minute == "*" { return CronWords(text: "Every minute", zoneUse: .none) }
                 if let n = step(minute, max: 59) {
-                    return CronWords(text: n == 1 ? "Every minute" : "Every \(n) minutes", zoneUse: .none)
+                    return CronWords(text: localized("Every \(n) minutes"), zoneUse: .none)
                 }
                 if let m = number(minute, in: 0...59) {
                     return CronWords(text: m == 0 ? "Every hour" : "Every hour at :\(two(m))", zoneUse: .minuteOffset)
@@ -51,7 +51,7 @@ public struct CronWords: Equatable, Sendable {
                 return nil
             }
             if let n = step(hour, max: 23), let m = number(minute, in: 0...59) {
-                let text = n == 1 ? "Every hour" : "Every \(n) hours"
+                let text = localized("Every \(n) hours")
                 return CronWords(text: m == 0 ? text : "\(text) at :\(two(m))", zoneUse: n == 1 ? .minuteOffset : .clock)
             }
         }

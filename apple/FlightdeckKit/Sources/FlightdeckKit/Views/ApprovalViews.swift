@@ -155,6 +155,7 @@ public struct ApprovalSheet: View {
                         } label: {
                             HStack(alignment: .firstTextBaseline) {
                                 Image(systemName: (picks[i] ?? []).contains(o.label) ? "checkmark.circle.fill" : "circle")
+                                    .accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(o.label)
                                     if let d = o.description { Text(d).font(.caption).foregroundStyle(.secondary) }
@@ -165,6 +166,8 @@ public struct ApprovalSheet: View {
                         }
                         .buttonStyle(.plain)
                         .pointerHover()
+                        // The check mark is drawn; VoiceOver reads the pick as "selected" (app.md 22.1).
+                        .accessibilityAddTraits((picks[i] ?? []).contains(o.label) ? .isSelected : [])
                     }
                 }
             }

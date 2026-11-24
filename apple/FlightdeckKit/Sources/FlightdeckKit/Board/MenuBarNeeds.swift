@@ -48,7 +48,7 @@ public enum MenuBarNeeds {
 
     /// The confirmations line: "1 confirmation waits".
     public static func confirmationsLine(_ n: Int) -> String {
-        n == 1 ? "1 confirmation waits" : "\(n) confirmations wait"
+        localized("\(n) confirmations wait")
     }
 
     /// The menu bar icon: filled while something needs the owner.

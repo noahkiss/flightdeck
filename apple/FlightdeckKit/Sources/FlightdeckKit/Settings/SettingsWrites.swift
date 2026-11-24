@@ -205,7 +205,7 @@ public enum SettingsWrites {
         if total == 0 {
             head = "\(level.title): no setting needed a change"
         } else if changed == total {
-            head = "\(level.title): " + (total == 1 ? "1 setting changed" : "\(total) settings changed")
+            head = "\(level.title): " + inflected("^[\(total) setting](inflect: true) changed")
         } else {
             head = "\(level.title): \(changed) of \(total) changed"
         }

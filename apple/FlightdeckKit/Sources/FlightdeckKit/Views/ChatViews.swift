@@ -284,7 +284,7 @@ struct ChatTranscript: View {
         let rows = ChatFold.rows(items, hidden: model.show?.hidden(for: model.target) ?? [])
         let placed = ContentPlacement.of(items: model.content.items, messages: model.messages, rowIDs: Set(items.map(\.id)))
         ChatScroll(rowIDs: rows.map(\.id), readKey: Self.readKey(model.target), sent: model.outgoing.count,
-                   messageIDs: Set(items.filter(\.isMessage).map(\.id))) { divider in
+                   messageIDs: Set(items.filter(\.isMessage).map(\.id)), rotors: ChatRotors.of(rows)) { divider in
             if model.hasOlder {
                 HStack {
                     Spacer()
@@ -407,6 +407,8 @@ public struct ChatItemView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(sender == nil ? Color.accentColor.opacity(0.18) : Color.purple.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
+                            // A turn starts here: VoiceOver's Headings rotor steps by turn (app.md 22.1).
+                            .accessibilityAddTraits(.isHeader)
                     }
                 }
             }
@@ -430,6 +432,7 @@ public struct ChatItemView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+                            .accessibilityAddTraits(.isHeader)
                     }
                 }
             }
@@ -464,13 +467,14 @@ public struct ChatItemView: View {
 
 /// The reply's spoken summary as a quiet caption, folded (app.md 13.7).
 struct SpokenSummaryCaption: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     @State private var open = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { open.toggle() }
             } label: {
                 Label("Spoken summary", systemImage: open ? "chevron.down" : "speaker.wave.2")
                     .font(.caption)
@@ -478,7 +482,7 @@ struct SpokenSummaryCaption: View {
             }
             .buttonStyle(.plain)
             .pointerHover()
-            .accessibilityValue(open ? "Shown" : "Hidden")
+            .disclosureState(open)
             if open {
                 Text(text)
                     .font(.caption)
@@ -683,6 +687,7 @@ struct DictationDraft: Equatable {
 
 /// The composer (app.md 4.2): text, a terminal button, Stop while working, and Send.
 struct ComposerView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: ChatModel
     @Binding var draft: String
     @Binding var attachments: [DraftAttachment]
@@ -792,7 +797,7 @@ struct ComposerView: View {
             }
         }
         }
-        .animation(.smooth(duration: 0.25), value: hasDraft)
+        .animation(gateMotion(.smooth(duration: 0.25), reduce: reduceMotion), value: hasDraft)
         .sensoryFeedback(.impact(weight: .light), trigger: sentTaps)
         .sensoryFeedback(.success, trigger: model.answerNote) { _, new in new != nil }
         .sensoryFeedback(.warning, trigger: model.failedCount) { old, new in new > old }

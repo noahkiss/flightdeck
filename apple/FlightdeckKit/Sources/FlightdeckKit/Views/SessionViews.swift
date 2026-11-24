@@ -67,6 +67,7 @@ struct TerminalPlaceholder: View {
 /// One session: chat first on the phone with a switch to the terminal; chat
 /// beside the terminal, about 50/50, on iPad and Mac (app.md 11).
 public struct SessionView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var model: ChatModel
     private let compact: Bool
     private let close: (() -> Void)?
@@ -333,7 +334,7 @@ public struct SessionView: View {
                 if model.context.isCapcom { newConversationButton }
                 VoiceButton(model: model, shown: $voiceShown)
                 Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
-                    withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
+                    withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { showFiles.toggle() }
                 }
             }
             // A spacer before the More menu only when the menu has items.
@@ -489,7 +490,7 @@ public struct SessionView: View {
     /// Shows or hides the files panel.
     private var filesButton: some View {
         Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
-            withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
+            withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { showFiles.toggle() }
         }
         .help(showFiles ? "Hide files" : "Show files")
     }

@@ -217,7 +217,7 @@ struct GroupCardView: View {
 
     private var inbox: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(g.inbox.count) report\(g.inbox.count == 1 ? "" : "s") wait for the coordinator")
+            Text("\(g.inbox.count) reports wait for the coordinator", bundle: #bundle)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
             ForEach(Array(g.inbox.suffix(3).enumerated()), id: \.offset) { _, r in

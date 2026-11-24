@@ -250,6 +250,7 @@ struct VoiceControl: View {
 
 /// A circle that grows with the level.
 struct LevelMeter: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let level: Float
     let active: Bool
 
@@ -261,7 +262,7 @@ struct LevelMeter: View {
             Circle()
                 .fill(Color.accentColor.opacity(active ? 0.6 : 0.35))
                 .scaleEffect(0.35 + 0.65 * norm)
-                .animation(.easeOut(duration: 0.12), value: norm)
+                .animation(gateMotion(.easeOut(duration: 0.12), reduce: reduceMotion), value: norm)
             Image(systemName: "waveform")
                 .font(.system(size: 36, weight: .medium))
                 .foregroundStyle(.white)

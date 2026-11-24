@@ -6,20 +6,44 @@ import SwiftUI
 
 // MARK: - Colours
 
-/// Diff and count colours that pass 4.5:1 (WCAG AA) in light and dark (app.md 4.11).
+/// Diff and count colours that pass 4.5:1 (WCAG AA) in light and dark (app.md 4.11). Under
+/// Increase Contrast every pair passes 7:1 (WCAG AAA) (app.md 22.2). The hex values stay
+/// readable so a test can check each ratio.
 struct DiffPalette {
     let dark: Bool
+    let high: Bool
 
-    init(_ scheme: ColorScheme) { dark = scheme == .dark }
+    init(_ scheme: ColorScheme, _ contrast: ColorSchemeContrast = .standard) {
+        dark = scheme == .dark
+        high = contrast == .increased
+    }
 
-    var removedBackground: Color { dark ? Color(hex: 0x3D1F1D) : Color(hex: 0xFDECEA) }
-    var removedText: Color { dark ? Color(hex: 0xFFB4AB) : Color(hex: 0x8C1D18) }
-    var addedBackground: Color { dark ? Color(hex: 0x15301E) : Color(hex: 0xE7F5EA) }
-    var addedText: Color { dark ? Color(hex: 0xA7E8B5) : Color(hex: 0x14532D) }
-    var gutter: Color { dark ? Color(hex: 0xA0A0AA) : Color(hex: 0x5C5C66) }
-    /// Counts in a header: "+3" and "-1".
-    var addedCount: Color { dark ? Color(hex: 0x6FD08C) : Color(hex: 0x1E7B3A) }
-    var removedCount: Color { dark ? Color(hex: 0xFF8A80) : Color(hex: 0xB3261E) }
+    /// The four variants of one colour: light, dark, light high contrast, dark high contrast.
+    private func pick(_ light: UInt32, _ dark: UInt32, _ lightHigh: UInt32, _ darkHigh: UInt32) -> UInt32 {
+        switch (self.dark, high) {
+        case (false, false): light
+        case (true, false): dark
+        case (false, true): lightHigh
+        case (true, true): darkHigh
+        }
+    }
+
+    var removedBackgroundHex: UInt32 { pick(0xFDECEA, 0x3D1F1D, 0xFDECEA, 0x2E1311) }
+    var removedTextHex: UInt32 { pick(0x8C1D18, 0xFFB4AB, 0x5C0B07, 0xFFDAD5) }
+    var addedBackgroundHex: UInt32 { pick(0xE7F5EA, 0x15301E, 0xE7F5EA, 0x0D2214) }
+    var addedTextHex: UInt32 { pick(0x14532D, 0xA7E8B5, 0x0A3519, 0xCDF5D6) }
+    var gutterHex: UInt32 { pick(0x5C5C66, 0xA0A0AA, 0x3A3A42, 0xCFCFD6) }
+    /// Counts in a header ("+3" and "-1"), on the system background.
+    var addedCountHex: UInt32 { pick(0x1E7B3A, 0x6FD08C, 0x0F5223, 0xA9EDBC) }
+    var removedCountHex: UInt32 { pick(0xB3261E, 0xFF8A80, 0x7F1610, 0xFFC4BD) }
+
+    var removedBackground: Color { Color(hex: removedBackgroundHex) }
+    var removedText: Color { Color(hex: removedTextHex) }
+    var addedBackground: Color { Color(hex: addedBackgroundHex) }
+    var addedText: Color { Color(hex: addedTextHex) }
+    var gutter: Color { Color(hex: gutterHex) }
+    var addedCount: Color { Color(hex: addedCountHex) }
+    var removedCount: Color { Color(hex: removedCountHex) }
 }
 
 extension Color {
@@ -83,10 +107,11 @@ struct DiffBody: View {
     let diff: ParsedDiff
     var maxLines: Int?
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var showAll = false
 
     var body: some View {
-        let p = DiffPalette(scheme)
+        let p = DiffPalette(scheme, contrast)
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(diff.files.enumerated()), id: \.offset) { _, f in
                 VStack(alignment: .leading, spacing: 0) {
@@ -205,16 +230,18 @@ struct DiffBody: View {
 /// A tool call card (app.md 4.1, 4.11): one sentence, folded by default. Open, it shows the
 /// command, the diff, the input as labelled fields, the output and a subagent's messages.
 struct ToolCardView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let card: ToolCard
     @State private var open = ToolCardView.openAtLaunch
     @State private var showAll = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { open.toggle() }
             } label: {
                 HStack(alignment: .center, spacing: 8) {
                     statusIcon
@@ -240,6 +267,7 @@ struct ToolCardView: View {
             .pointerHover()
             .accessibilityLabel(card.sentence.text + (card.status == .done ? "" : ", " + statusWord))
             .accessibilityHint(open ? "Folds the details" : "Shows the details")
+            .disclosureState(open)
             if open {
                 VStack(alignment: .leading, spacing: 10) {
                     detail
@@ -273,7 +301,7 @@ struct ToolCardView: View {
     /// The sentence: the verb in bold, the subject monospaced, the rest quieter, the counts in colour.
     private var sentence: AttributedString {
         let s = card.sentence
-        let p = DiffPalette(scheme)
+        let p = DiffPalette(scheme, contrast)
         var out = AttributedString(s.verb)
         out.font = .callout.weight(.semibold)
         if let subj = s.subject, !subj.isEmpty {
@@ -376,7 +404,7 @@ struct ToolCardView: View {
     }
 
     private var statusColor: Color {
-        let p = DiffPalette(scheme)
+        let p = DiffPalette(scheme, contrast)
         switch card.status {
         case .error: return p.removedCount
         case .denied: return .orange
@@ -385,7 +413,7 @@ struct ToolCardView: View {
     }
 
     @ViewBuilder private var statusIcon: some View {
-        let p = DiffPalette(scheme)
+        let p = DiffPalette(scheme, contrast)
         switch card.status {
         case .running: ProgressView().controlSize(.mini)
         case .error: Image(systemName: "xmark.circle.fill").foregroundStyle(p.removedCount).font(.caption)
@@ -400,6 +428,7 @@ struct ToolCardView: View {
 /// Hidden steps folded into one line (app.md 4.11): "6 steps hidden: 3 reads, 2 edits, 1
 /// command". A tap opens them in place.
 struct FoldedStepsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let summary: String
     let items: [ChatItem]
     @Binding var open: Bool
@@ -408,7 +437,7 @@ struct FoldedStepsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { open.toggle() }
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "eye.slash")
@@ -432,6 +461,7 @@ struct FoldedStepsView: View {
             .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
             .accessibilityLabel(summary)
             .accessibilityHint(open ? "Hides these steps again" : "Shows these steps here")
+            .disclosureState(open)
             if open {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(items) { ChatItemView(item: $0, images: images) }

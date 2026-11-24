@@ -53,17 +53,15 @@ public enum ChatContentKind: String, CaseIterable, Codable, Sendable, Identifiab
 
     /// The fold line's noun: "3 reads", "1 command".
     func count(_ n: Int) -> String {
-        let (one, many): (String, String)
         switch self {
-        case .plans: (one, many) = ("plan update", "plan updates")
-        case .connectors: (one, many) = ("connector call", "connector calls")
-        case .agents: (one, many) = ("agent message", "agent messages")
-        case .commands: (one, many) = ("command", "commands")
-        case .edits: (one, many) = ("edit", "edits")
-        case .reads: (one, many) = ("read", "reads")
-        case .thinking: (one, many) = ("thought", "thoughts")
+        case .plans: inflected("^[\(n) plan update](inflect: true)")
+        case .connectors: inflected("^[\(n) connector call](inflect: true)")
+        case .agents: inflected("^[\(n) agent message](inflect: true)")
+        case .commands: inflected("^[\(n) command](inflect: true)")
+        case .edits: inflected("^[\(n) edit](inflect: true)")
+        case .reads: inflected("^[\(n) read](inflect: true)")
+        case .thinking: inflected("^[\(n) thought](inflect: true)")
         }
-        return "\(n) \(n == 1 ? one : many)"
     }
 }
 
@@ -179,7 +177,7 @@ public enum ChatFold {
             a.value != b.value ? a.value > b.value : order.firstIndex(of: a.key)! < order.firstIndex(of: b.key)!
         }.map { $0.key.count($0.value) }
         let n = items.count
-        return "\(n) \(n == 1 ? "step" : "steps") hidden: " + parts.joined(separator: ", ")
+        return inflected("^[\(n) step](inflect: true) hidden: \(parts.joined(separator: ", "))")
     }
 }
 

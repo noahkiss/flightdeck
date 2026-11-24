@@ -68,7 +68,7 @@ public struct ToolSentence: Hashable, Sendable {
         case .glob:
             let pattern = obj["pattern"]?.stringValue ?? target
             var rest = pattern.map { "matching \"\($0)\"" } ?? ""
-            if t.status == .done, let n = fileCount(t.output) { rest += (rest.isEmpty ? "" : " · ") + plural(n, "file") }
+            if t.status == .done, let n = fileCount(t.output) { rest += (rest.isEmpty ? "" : " · ") + files(n) }
             return ToolSentence(verb: v("Found files", "Finding files"), rest: rest.isEmpty ? nil : rest)
         case .list:
             return ToolSentence(verb: v("Listed", "Listing"), subject: pathField(obj) ?? target)
@@ -110,12 +110,20 @@ public struct ToolSentence: Hashable, Sendable {
         return nil
     }
 
+    /// The first line that is not empty, or `s` when there is none. It walks only up to that
+    /// line: the chat's rotors call it on every message each render, pasted logs included.
     static func firstLine(_ s: String) -> String {
-        s.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? s
+        var rest = s[...]
+        while let nl = rest.firstIndex(of: "\n") {
+            if nl != rest.startIndex { return String(rest[..<nl]) }
+            rest = rest[rest.index(after: nl)...]
+        }
+        return rest.isEmpty ? s : String(rest)
     }
 
-    static func plural(_ n: Int, _ word: String) -> String {
-        n == 1 ? "1 \(word)" : "\(n) \(word)s"
+    /// "1 file", "3 files" (app.md 22.3).
+    static func files(_ n: Int) -> String {
+        inflected("^[\(n) file](inflect: true)")
     }
 
     static func shortURL(_ u: String) -> String {
@@ -145,8 +153,8 @@ public struct ToolSentence: Hashable, Sendable {
                 bare += 1
             }
         }
-        if matches > 0 { return (matches == 1 ? "1 match" : "\(matches) matches") + " in " + plural(files.count, "file") }
-        if bare > 0 { return "in " + plural(bare, "file") }
+        if matches > 0 { return inflected("^[\(matches) match](inflect: true) in ^[\(files.count) file](inflect: true)") }
+        if bare > 0 { return inflected("in ^[\(bare) file](inflect: true)") }
         return nil
     }
 

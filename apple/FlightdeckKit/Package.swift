@@ -17,6 +17,9 @@ let concurrency: [SwiftSetting] = [
 
 let package = Package(
     name: "FlightdeckKit",
+    // English is the only language. The String Catalog in FlightdeckKit/Resources holds the
+    // package's strings (app.md 22.3).
+    defaultLocalization: "en",
     platforms: [.macOS(.v26), .iOS("26.1")],
     products: [
         .library(name: "FlightdeckKit", targets: ["FlightdeckKit"]),
@@ -72,6 +75,7 @@ let package = Package(
                 .product(name: "MarkdownView", package: "MarkdownView"),
                 .product(name: "Markdown", package: "swift-markdown"),
             ],
+            resources: [.process("Resources")],
             swiftSettings: concurrency
         ),
         .target(
