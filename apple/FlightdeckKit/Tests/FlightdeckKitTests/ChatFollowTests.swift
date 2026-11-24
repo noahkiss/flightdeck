@@ -79,6 +79,12 @@ final class ChatFollowTests: XCTestCase {
         XCTAssertEqual(h.scrolled(from: rest, to: S(distance: 300, contentHeight: 2300, bottomInset: 120), motion: .idle), .toBottom)
         XCTAssertEqual(h.scrolled(from: rest, to: S(distance: 300, contentHeight: 2000, bottomInset: 420), motion: .idle), .toBottom)
         XCTAssertTrue(h.following)
+
+        // A shorter view (window resize, rotation, Split View) is not the owner either.
+        var k = ChatFollow()
+        let tall = S(distance: 0, contentHeight: 2000, bottomInset: 120, containerHeight: 800)
+        XCTAssertEqual(k.scrolled(from: tall, to: S(distance: 300, contentHeight: 2000, bottomInset: 120, containerHeight: 500), motion: .idle), .toBottom)
+        XCTAssertTrue(k.following)
     }
 
     /// Only messages count as new: tool cards and event lines do not.

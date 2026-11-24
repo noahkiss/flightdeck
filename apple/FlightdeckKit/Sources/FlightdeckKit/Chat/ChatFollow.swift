@@ -44,11 +44,15 @@ public struct ChatFollow: Equatable, Sendable {
         public var distance: CGFloat
         public var contentHeight: CGFloat
         public var bottomInset: CGFloat
+        /// The scroll view's own height. A resize, rotation or Split View change shrinks it and
+        /// moves the end away without the owner.
+        public var containerHeight: CGFloat
 
-        public init(distance: CGFloat, contentHeight: CGFloat, bottomInset: CGFloat) {
+        public init(distance: CGFloat, contentHeight: CGFloat, bottomInset: CGFloat, containerHeight: CGFloat = 0) {
             self.distance = distance
             self.contentHeight = contentHeight
             self.bottomInset = bottomInset
+            self.containerHeight = containerHeight
         }
     }
 
@@ -56,10 +60,11 @@ public struct ChatFollow: Equatable, Sendable {
     ///
     /// The owner's scroll is a finger (motion `.user`), or any move away from the end while the
     /// content and the bars keep their size: a tap on the status bar, Page Up, Home or Cmd-Up,
-    /// a VoiceOver scroll, the Mac's scroller or a mouse wheel. Only content or bars that change
-    /// size move the end without the owner.
+    /// a VoiceOver scroll, the Mac's scroller or a mouse wheel. Only content, bars or the view
+    /// itself changing size move the end without the owner.
     public mutating func scrolled(from old: Sample?, to new: Sample, motion: Motion) -> Action {
-        let movedAway = old.map { new.distance > $0.distance + 1 && new.contentHeight == $0.contentHeight && new.bottomInset == $0.bottomInset } ?? false
+        let movedAway = old.map { new.distance > $0.distance + 1 && new.contentHeight == $0.contentHeight && new.bottomInset == $0.bottomInset
+            && new.containerHeight == $0.containerHeight } ?? false
         return scrolled(distance: new.distance, motion: movedAway ? .user : motion)
     }
 

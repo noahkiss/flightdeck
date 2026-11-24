@@ -70,7 +70,8 @@ struct ChatScroll<Content: View>: View {
                 distance: ChatFollow.distance(contentHeight: g.contentSize.height, visibleMaxY: g.visibleRect.maxY,
                                               bottomInset: g.contentInsets.bottom).rounded(),
                 contentHeight: g.contentSize.height.rounded(),
-                bottomInset: g.contentInsets.bottom.rounded())
+                bottomInset: g.contentInsets.bottom.rounded(),
+                containerHeight: g.containerSize.height.rounded())
         } action: { old, new in
             last.value = new.distance
             #if DEBUG
