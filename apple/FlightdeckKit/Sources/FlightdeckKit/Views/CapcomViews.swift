@@ -89,6 +89,7 @@ struct CapcomHostList: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(!c.choosable || c.isHome || center.assigning != nil)
         }
     }
@@ -360,6 +361,8 @@ struct CapcomPacingLine: View {
                     .glassEffect(plain ? .regular.interactive() : .identity, in: .capsule)
                 }
                 .buttonStyle(.plain)
+                // Interactive glass already reacts to the pointer over the composer.
+                .pointerHover(!plain)
                 // Over the composer it sits in the composer's padded glass container.
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .disabled(usage == nil)

@@ -131,6 +131,7 @@ struct InlineImageView: View {
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     .accessibilityLabel("Image \(item.title ?? item.name)")
                     .accessibilityHint("Opens it full size")
                 }
@@ -271,6 +272,7 @@ struct DocumentCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .accessibilityHint(open ? "Folds the document" : "Expands the document")
                 Button("Open", systemImage: "arrow.up.left.and.arrow.down.right") { full = true }
                     .labelStyle(.iconOnly)
@@ -544,10 +546,12 @@ struct ModifiedFilesCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 if open {
                     ForEach(files, id: \.id) { f in
                         Button { selected = f } label: { ModifiedFileRow(item: f, folder: model.folder) }
                             .buttonStyle(.plain)
+                            .pointerHover()
                     }
                 }
             }

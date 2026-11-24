@@ -193,6 +193,7 @@ struct GroupCardView: View {
                 }
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .disabled(center.target(card, m) == nil)
             Spacer(minLength: 6)
             Text(GroupText.memberState(m))

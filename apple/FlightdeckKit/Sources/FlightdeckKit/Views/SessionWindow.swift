@@ -230,14 +230,13 @@ private struct SessionWindowContent: View {
                 .navigationBarTitleDisplayMode(.inline)
         }
         #else
+        // The session view sets the title, the subtitle and the customisable toolbar.
         session(compact: false)
-            .navigationTitle(row.title)
-            .navigationSubtitle(row.host)
         #endif
     }
 
     private func session(compact: Bool) -> some View {
-        SessionView(model: fleet.chat(for: row.target), compact: compact)
+        SessionView(model: fleet.chat(for: row.target), compact: compact, inWindow: true)
             .id(row.target)
             .sessionHandoff(row, board: fleet.board)
             // session.focus while the session is on screen (app.md 8.6).
@@ -248,27 +247,54 @@ private struct SessionWindowContent: View {
 
 #if os(macOS)
 /// The Mac's Settings window (app.md 3.8, 20.7): the full Settings page, ⌘,.
-public struct FlightdeckSettings: View {
+public struct FlightdeckSettings<ThisMac: View>: View {
     private let fleet: Fleet
+    private let thisMac: ThisMac
+    @AppStorage(MenuBarSetting.key) private var menuBarShown = true
 
-    public init(fleet: Fleet) {
+    /// `thisMac` adds rows to the This Mac tab (the quick entry shortcut, app.md 3.18).
+    public init(fleet: Fleet, @ViewBuilder thisMac: () -> ThisMac) {
         self.fleet = fleet
+        self.thisMac = thisMac()
     }
 
     public var body: some View {
-        NavigationStack {
-            if let settings = fleet.settings {
-                SettingsPage(center: settings, board: fleet.board, push: fleet.push, openUsage: fleet.usage.map { u in
-                    { u.book.present(account: nil) }
-                })
-            } else {
-                ContentUnavailableView("No settings", systemImage: "slider.horizontal.3",
-                                       description: Text("Settings show once a computer is paired."))
+        // Two tabs, as Mac apps' Settings windows have (app.md 20.7): the full Settings page,
+        // and what belongs to this Mac alone.
+        TabView {
+            Tab("General", systemImage: "gearshape") {
+                NavigationStack {
+                    if let settings = fleet.settings {
+                        SettingsPage(center: settings, board: fleet.board, push: fleet.push, openUsage: fleet.usage.map { u in
+                            { u.book.present(account: nil) }
+                        })
+                    } else {
+                        ContentUnavailableView("No settings", systemImage: "slider.horizontal.3",
+                                               description: Text("Settings show once a computer is paired."))
+                    }
+                }
+            }
+            Tab("This Mac", systemImage: "macbook") {
+                Form {
+                    Section {
+                        Toggle("Show in the menu bar", isOn: $menuBarShown)
+                    } footer: {
+                        Text("Lists the sessions that need you, with their count.")
+                    }
+                    thisMac
+                }
+                .formStyle(.grouped)
             }
         }
         .frame(minWidth: 520, idealWidth: 600, minHeight: 560, idealHeight: 720)
         .modifier(FleetEnvironment(fleet: fleet))
         .modifier(CountsWindow(fleet: fleet))
+    }
+}
+
+extension FlightdeckSettings where ThisMac == EmptyView {
+    public init(fleet: Fleet) {
+        self.init(fleet: fleet) { EmptyView() }
     }
 }
 #endif

@@ -21,6 +21,10 @@ public struct FlightdeckRoot: View {
             .sshSheets(fleet.ssh)
             .modifier(PublishCommands(fleet: fleet, commands: commands))
             .modifier(CountsWindow(fleet: fleet))
+            #if os(macOS)
+            .onAppear { fleet.boardWindowOpened() }
+            .onDisappear { fleet.boardWindowClosed() }
+            #endif
     }
 
     @ViewBuilder
@@ -397,11 +401,12 @@ struct BoardNewSession: ViewModifier {
         if let fleet {
             content
                 #if os(macOS)
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
+                // Customisable (app.md 3.13): View › Customize Toolbar… adds, removes and moves them.
+                .toolbar(id: "board") {
+                    ToolbarItem(id: "next-needing-you", placement: .primaryAction) {
                         NextNeedingYouButton(board: fleet.board, openedID: openedID, open: open)
                     }
-                    ToolbarItem(placement: .primaryAction) {
+                    ToolbarItem(id: "new-session", placement: .primaryAction) {
                         NewSessionButton(center: fleet.newSessions, draft: $draft)
                     }
                 }
@@ -518,6 +523,7 @@ struct BoardList: View {
                         CapcomEntryRow(center: capcom, rows: board.rows, now: ctx.date)
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true {
                         Text("Sessions on your habs show here.")
                             .foregroundStyle(.secondary)
@@ -540,6 +546,7 @@ struct BoardList: View {
                                 BoardRowView(row: row, now: ctx.date)
                             }
                             .buttonStyle(.plain)
+                            .pointerHover()
                             .sessionRowActions(row, actions)
                         }
                     }

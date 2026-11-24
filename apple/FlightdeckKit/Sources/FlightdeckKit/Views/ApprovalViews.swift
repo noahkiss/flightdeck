@@ -164,6 +164,7 @@ public struct ApprovalSheet: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .pointerHover()
                     }
                 }
             }

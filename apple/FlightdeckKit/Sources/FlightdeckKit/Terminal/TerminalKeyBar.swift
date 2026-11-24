@@ -196,6 +196,7 @@ struct TerminalKeyBar: View {
                         .background(keyFill, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .accessibilityLabel(keyboardShown ? "Hide keyboard" : "Show keyboard")
             }
         }
@@ -265,6 +266,7 @@ struct TerminalKeyBar: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .accessibilityLabel(key.spokenName)
         .modifier(ModifierAccessibility(key: key, state: state))
     }

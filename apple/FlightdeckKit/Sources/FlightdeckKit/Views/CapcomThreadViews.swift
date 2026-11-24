@@ -195,6 +195,7 @@ struct CapcomDividerRow: View {
                 }
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityHint(summary.isEmpty ? "" : "Shows the summary")
             if open {
                 Text(summary)

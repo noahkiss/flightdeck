@@ -49,12 +49,15 @@ struct PublishCommands: ViewModifier {
 /// Cmd-hold overlay. Each command acts on the focused window.
 public struct FlightdeckCommands: Commands {
     private let fleet: Fleet
+    /// Mac: opens the quick entry panel (app.md 3.18); nil leaves Go › Ask Capcom… out.
+    private let askCapcom: (() -> Void)?
     @FocusedValue(\.windowCommands) private var window
     @FocusedValue(\.commandState) private var focusedState
     @Environment(\.openWindow) private var openWindow
 
-    public init(fleet: Fleet) {
+    public init(fleet: Fleet, askCapcom: (() -> Void)? = nil) {
         self.fleet = fleet
+        self.askCapcom = askCapcom
     }
 
     private var state: CommandState { focusedState ?? CommandState() }
@@ -150,6 +153,10 @@ public struct FlightdeckCommands: Commands {
                 .disabled(on(.nextNeedingYou))
             Button("Mark All as Read") { fleet.board.markAllSeen() }
                 .disabled(on(.markAllRead))
+            if let askCapcom {
+                Divider()
+                Button("Ask Capcom…", action: askCapcom)
+            }
         }
     }
 

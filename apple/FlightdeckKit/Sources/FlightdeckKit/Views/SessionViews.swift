@@ -70,6 +70,9 @@ public struct SessionView: View {
     @State private var model: ChatModel
     private let compact: Bool
     private let close: (() -> Void)?
+    /// A session window of its own (app.md 3.14): on the Mac its controls go in the window's
+    /// toolbar.
+    private let inWindow: Bool
     @State private var mode: Mode
     @State private var consoleShown = false
     /// The content side panel (Mac, iPad) or sheet (iPhone), app.md 4.7.
@@ -135,10 +138,11 @@ public struct SessionView: View {
         Binding(get: { draft }, set: { draft = $0 })
     }
 
-    public init(model: ChatModel, compact: Bool, close: (() -> Void)? = nil) {
+    public init(model: ChatModel, compact: Bool, close: (() -> Void)? = nil, inWindow: Bool = false) {
         _model = State(initialValue: model)
         self.compact = compact
         self.close = close
+        self.inWindow = inWindow
         // A session with no agent (a plain shell) opens in the terminal (app.md 11.1).
         _mode = State(initialValue: model.context.harness == nil && model.target.session != nil ? .terminal : .chat)
         #if DEBUG
@@ -216,80 +220,20 @@ public struct SessionView: View {
                 #if os(iOS)
                 regular
                 #else
-                VStack(spacing: 0) {
-                    HStack {
-                        ChatHeader(context: model.context)
-                        Spacer()
-                        if model.context.isCapcom {
-                            if !model.context.isCapcomService {
-                                Picker("View", selection: $mode) {
-                                    ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-                                }
-                                .pickerStyle(.segmented)
-                                .labelsHidden()
-                                .fixedSize()
-                            }
-                            newConversationButton
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                        }
-                        VoiceButton(model: model, shown: $voiceShown)
-                            .buttonStyle(.borderless)
-                        if model.target.session != nil, !model.context.isConsole, !model.context.isCapcomService {
-                            consoleButton
-                                .buttonStyle(.borderless)
-                        }
-                        if model.show != nil, !model.context.isCapcomService {
-                            ChatShowButton(shown: $chatShowShown)
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                        }
-                        Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
-                            withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help(showFiles ? "Hide files" : "Show files")
-                        if model.context.takesFriction {
-                            frictionButton
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                        }
-                        if let close {
-                            Button("Close", systemImage: "xmark", action: close)
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                                .keyboardShortcut(.cancelAction)
-                        }
+                if inWindow {
+                    // A session window (app.md 3.14): the controls in the window's toolbar,
+                    // which the owner can customise (app.md 3.13).
+                    // One toolbar id per window kind, each with fixed items (SessionToolbar).
+                    if model.context.isCapcom {
+                        windowContent.toolbar(id: SessionToolbar.id(capcom: true)) { capcomToolbar }
+                    } else {
+                        windowContent.toolbar(id: SessionToolbar.id(capcom: false)) { agentToolbar }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    Divider()
-                    HStack(spacing: 0) {
-                        if model.context.isCapcom {
-                            // The Capcom view (app.md 4.10): the conversation fills the width;
-                            // the terminal is one switch away.
-                            switch model.context.isCapcomService ? .chat : mode {
-                            case .chat: ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
-                            case .terminal: terminal.make(model.target)
-                            }
-                        } else {
-                            GeometryReader { geo in
-                                HStack(spacing: 0) {
-                                    ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
-                                        .frame(width: geo.size.width / 2)
-                                    Divider()
-                                    terminal.make(model.target)
-                                        .frame(maxWidth: .infinity)
-                                }
-                            }
-                        }
-                        if showFiles {
-                            Divider()
-                            ContentPanel(model: model.content)
-                                .frame(width: 320)
-                                .transition(.move(edge: .trailing))
-                        }
+                } else {
+                    VStack(spacing: 0) {
+                        macHeader
+                        Divider()
+                        macContent
                     }
                 }
                 #endif
@@ -408,16 +352,158 @@ public struct SessionView: View {
         }
     }
 
+    #endif
+
+    #if os(macOS)
+    /// The Mac board's session header: title and line, then the controls.
+    private var macHeader: some View {
+        HStack {
+            ChatHeader(context: model.context)
+            Spacer()
+            if model.context.isCapcom {
+                if !model.context.isCapcomService {
+                    viewPicker
+                        .labelsHidden()
+                }
+                newConversationButton
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
+            VoiceButton(model: model, shown: $voiceShown)
+                .buttonStyle(.borderless)
+            if hasConsole {
+                consoleButton
+                    .buttonStyle(.borderless)
+            }
+            if showsChatFilter {
+                ChatShowButton(shown: $chatShowShown)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
+            filesButton
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+            if model.context.takesFriction {
+                frictionButton
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
+            if let close {
+                Button("Close", systemImage: "xmark", action: close)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// The Mac's session: chat beside the terminal, or the Capcom conversation, and the files.
+    private var macContent: some View {
+        HStack(spacing: 0) {
+            if model.context.isCapcom {
+                // The Capcom view (app.md 4.10): the conversation fills the width;
+                // the terminal is one switch away.
+                switch model.context.isCapcomService ? .chat : mode {
+                case .chat: ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
+                case .terminal: terminal.make(model.target)
+                }
+            } else {
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: draftBinding)
+                            .frame(width: geo.size.width / 2)
+                        Divider()
+                        terminal.make(model.target)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            if showFiles {
+                Divider()
+                ContentPanel(model: model.content)
+                    .frame(width: 320)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+    }
+
+    /// A session window's content with its title and subtitle (app.md 3.14).
+    private var windowContent: some View {
+        macContent
+            .navigationTitle(model.context.title)
+            .navigationSubtitle(ChatHeader.line(model.context, round: true))
+    }
+
+    private func on(_ item: SessionToolbar.Item) -> Bool {
+        SessionToolbar.enabled(item, context: model.context, session: model.target.session != nil, show: model.show != nil)
+    }
+
+    /// A Capcom window's toolbar (app.md 3.13, 3.14): each control is its own item, so the
+    /// owner can remove, add and move them (View › Customize Toolbar…). The items never change;
+    /// a control that does not apply now turns off (SessionToolbar).
+    @ToolbarContentBuilder
+    private var capcomToolbar: some CustomizableToolbarContent {
+        ToolbarItem(id: SessionToolbar.Item.view.rawValue, placement: .primaryAction) {
+            viewPicker.disabled(!on(.view))
+        }
+        ToolbarItem(id: SessionToolbar.Item.newConversation.rawValue, placement: .primaryAction) {
+            newConversationButton
+        }
+        sharedToolbar
+    }
+
+    /// An agent session window's toolbar: the Capcom window's without its two Capcom items.
+    @ToolbarContentBuilder
+    private var agentToolbar: some CustomizableToolbarContent {
+        sharedToolbar
+    }
+
+    @ToolbarContentBuilder
+    private var sharedToolbar: some CustomizableToolbarContent {
+        ToolbarItem(id: SessionToolbar.Item.voice.rawValue, placement: .primaryAction) {
+            VoiceButton(model: model, shown: $voiceShown)
+        }
+        ToolbarItem(id: SessionToolbar.Item.console.rawValue, placement: .primaryAction) {
+            consoleButton.disabled(!on(.console))
+        }
+        ToolbarItem(id: SessionToolbar.Item.showInChat.rawValue, placement: .primaryAction) {
+            ChatShowButton(shown: $chatShowShown).disabled(!on(.showInChat))
+        }
+        ToolbarItem(id: SessionToolbar.Item.files.rawValue, placement: .primaryAction) { filesButton }
+        ToolbarItem(id: SessionToolbar.Item.friction.rawValue, placement: .primaryAction) {
+            frictionButton.disabled(!on(.friction))
+        }
+    }
+
+    /// The Chat | Terminal switch.
+    private var viewPicker: some View {
+        Picker("View", selection: $mode) {
+            ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+    }
+
+    /// Shows or hides the files panel.
+    private var filesButton: some View {
+        Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
+            withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
+        }
+        .help(showFiles ? "Hide files" : "Show files")
+    }
+    #endif
+
     /// The session has a console to open (app.md 6).
     private var hasConsole: Bool {
-        model.target.session != nil && !model.context.isConsole && !model.context.isCapcomService
+        SessionToolbar.enabled(.console, context: model.context, session: model.target.session != nil, show: model.show != nil)
     }
 
     /// Show in chat applies (app.md 4.11).
     private var showsChatFilter: Bool {
-        model.show != nil && !model.context.isCapcomService
+        SessionToolbar.enabled(.showInChat, context: model.context, session: model.target.session != nil, show: model.show != nil)
     }
-    #endif
 
     /// A sheet of this view is up: console, friction, Show in chat, voice, or the phone's files.
     private var ownSheetUp: Bool {

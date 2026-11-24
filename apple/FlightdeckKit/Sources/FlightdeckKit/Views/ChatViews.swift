@@ -14,9 +14,12 @@ public struct ChatView: View {
     private var heldDraft: Binding<String>?
     @State private var ownDraft = ""
     @State private var attachments: [DraftAttachment] = []
+    /// Why a file was not attached, by the attach button or a drop (app.md 4.4).
+    @State private var attachNotice: String?
     /// Files a Capcom composer could not attach as chips: they stay in the draft.
     @State private var keptFiles: Set<UUID> = []
     @Environment(\.sendFiles) private var sendFiles
+    @Environment(\.approvals) private var approvals
     /// A line over the composer, such as the Capcom tab's pacing line.
     @Environment(\.chatAboveComposer) private var aboveComposer
     #if os(iOS)
@@ -44,6 +47,11 @@ public struct ChatView: View {
 
     private var draftBinding: Binding<String> { heldDraft ?? $ownDraft }
 
+    /// The composer takes files now, as its attach button does (app.md 4.4).
+    private var takesFiles: Bool {
+        ChatDrop.takesFiles(ChatAnswer.composerMode(gate: model.gate, agent: model.context.agent, card: approvals?.card(for: model.target)))
+    }
+
     private var draft: String {
         get { draftBinding.wrappedValue }
         nonmutating set { draftBinding.wrappedValue = newValue }
@@ -70,9 +78,11 @@ public struct ChatView: View {
         .safeAreaBar(edge: .bottom, spacing: 0) {
             // One glass container holds the whole bar (app.md 4.2): the pacing line, the Capcom
             // thread's lines and the composer.
-            ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice,
-                         focusRequest: focusComposer, above: aboveComposer)
+            ComposerView(model: model, draft: draftBinding, attachments: $attachments, attachNotice: $attachNotice,
+                         openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer, above: aboveComposer)
         }
+        // Drop a file on the chat (app.md 4.4): it joins the composer as the attach button's do.
+        .modifier(ChatDropTarget(enabled: takesFiles, takesFiles: { takesFiles }, draft: draftBinding, attachments: $attachments, notice: $attachNotice))
         // A readable column on a wide iPad: messages and composer stay under 820 pt, centred.
         .frame(maxWidth: readableWidth)
         .frame(maxWidth: .infinity)
@@ -467,6 +477,7 @@ struct SpokenSummaryCaption: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityValue(open ? "Shown" : "Hidden")
             if open {
                 Text(text)
@@ -675,6 +686,8 @@ struct ComposerView: View {
     let model: ChatModel
     @Binding var draft: String
     @Binding var attachments: [DraftAttachment]
+    /// Why a file was not attached; the chat holds it, so a drop can say it too.
+    @Binding var attachNotice: String?
     let openTerminal: (() -> Void)?
     var openVoice: (() -> Void)?
     var focusRequest = 0
@@ -693,8 +706,6 @@ struct ComposerView: View {
     @State private var micDenied = false
     /// Why dictation did not start or wrote nothing.
     @State private var dictationNotice: String?
-    /// Why a file was not attached.
-    @State private var attachNotice: String?
     /// Ties the field, Send and Stop together, so Send morphs out of the field (app.md 4.2).
     @Namespace private var glass
     /// Where the caret is, so Shift-Return writes the new line there.
@@ -1034,6 +1045,7 @@ struct RequestArea: View {
                     facts(state.request)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .accessibilityHint("Opens the full request")
                 actions(state)
             } else {
@@ -1220,6 +1232,7 @@ struct RequestArea: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     .background(.background, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(picked ? Color.accentColor : Color.clear, lineWidth: 2))
                     .disabled(!state.canAnswer)

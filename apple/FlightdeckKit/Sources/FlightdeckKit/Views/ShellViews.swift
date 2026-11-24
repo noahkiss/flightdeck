@@ -491,6 +491,7 @@ struct SessionsListView: View {
             } else {
                 Button { open(row) } label: { SessionRow(row: row, now: now) }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     .sessionRowActions(row, fleet.sessionActions)
             }
         }
@@ -633,6 +634,7 @@ struct ActionRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityElement(children: .combine)
         } trailing: {
             Button(action, action: act)
@@ -688,6 +690,7 @@ struct PermissionRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityElement(children: .combine)
             if let card {
                 if card.expired {
@@ -916,6 +919,7 @@ struct UsageAccessory: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityHint("Opens usage")
         }
         // The accessory is one bar tall, as the tab bar is; its text stops growing where the

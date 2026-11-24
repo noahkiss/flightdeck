@@ -414,9 +414,15 @@ The root is a stock tab view with four tabs, in this order:
     computer, Notifications, Voice, Usage warnings, Help) in the detail column, as the system's
     Settings app does.
   A compact width (Slide Over, a narrow window) uses the phone layout in every tab.
+- **The pointer (iPad).** With a trackpad or mouse, every control reacts to the pointer. The
+  system's own buttons, menus, tabs and list rows do so by themselves; each plain-style button
+  and custom row (board rows, tool cards, the terminal's key bar, attachment thumbnails) adds
+  the system's automatic hover effect (`hoverEffect()`, through `pointerHover()` in
+  `Views/PointerHover.swift`). The Mac has no such effect and shows its own cursor.
 - **Mac.** The window keeps the board and session split with the connections column. Settings is
-  the Mac's own Settings window (⌘, or Flightdeck › Settings…), which holds the full Settings
-  page (20.7); the connections column's Settings button opens that window. A sidebar is a later
+  the Mac's own Settings window (⌘, or Flightdeck › Settings…), with two tabs: General, which
+  holds the full Settings page (20.7), and This Mac (the menu bar extra, 3.17, and the quick
+  entry shortcut, 3.18); the connections column's Settings button opens that window. A sidebar is a later
   stage. Menus and shortcuts are in 3.13, session windows in 3.14.
 - **Deployment.** The app targets iOS 26.1, iPadOS 26.1 and macOS 26.0 at minimum (`Tab` items,
   the sidebar-adaptable style, the bottom accessory and the minimise-on-scroll behaviour need
@@ -630,6 +636,8 @@ one that applies.
 | Go | Sessions, Capcom | ⌘1, ⌘2 | Mac: Sessions shows the board with nothing open; Capcom opens the Capcom view. The Mac's Settings is its own window (⌘,) and its rounds sit in the board |
 | Go | Next Needing You | ⌥⌘A | Opens the next session that needs the owner (3.16) |
 | Go | Mark All as Read | | Marks every unread `done` session read (3.16) |
+| Go | Ask Capcom… | | Mac: opens the quick entry panel (3.18); the menu shows no key, the owner's global shortcut works anywhere |
+| View | Show Toolbar, Customize Toolbar… | ⌥⌘T | Mac: the system's toolbar commands (`ToolbarCommands`) for the board and session windows |
 
 - **Enablement.** The Session menu needs an open session in the focused window. Rename,
   Restart, Copy Name and Close follow what the row offers (3.11), so an offline hab's session
@@ -638,6 +646,19 @@ one that applies.
   side by side, or the Mac's Capcom view. Voice Mode follows the session's Voice button.
 - **Close Window** (⌘W) stays the system's. Session › Close… ends or removes the session, after
   its question.
+- **A toolbar the owner arranges (Mac).** The board window's toolbar and a session window's
+  toolbar are customisable (`toolbar(id:)`, each control a `ToolbarItem(id:)`): View ›
+  Customize Toolbar… or a secondary click on the toolbar adds, removes and moves the controls,
+  and the system keeps the arrangement per window kind. The board's items are Next Needing
+  You and New Session. A Capcom window (toolbar `session.capcom`) has the Chat | Terminal
+  switch, New conversation, Voice, Console, Show in chat, Show files and Note friction; an agent
+  session window (`session.agent`) has the same without the first two. Each kind's items never
+  change: a control that does not apply turns off instead of leaving (Console on a console or
+  on the Capcom service, the switch on the Capcom service, Note friction on a hab without
+  friction notes, Voice while offline), since the system adds no item to an arrangement the
+  owner already changed. Code: `Views/SessionToolbar.swift`. Tests: `SessionToolbarTests`. The
+  session beside the board keeps its header row of controls, since the board's toolbar is the
+  window's.
 - **Shortcuts the app already had** stay: ⌥⌘F for Note friction (11), Return and Esc in sheets
   (3.8).
 - **A session window** (3.14) offers the Session menu for its session. New Session, Find
@@ -660,7 +681,8 @@ Code: `Views/SessionWindow.swift`. Tests: `SessionLinkTests`.
   window forward.
 - **The window** shows the session as the board's detail does: chat beside the terminal on the
   Mac and in a wide iPad window, the phone's switch in a narrow one. Its title is the session's
-  title. It waits for the board to list the session, up to a minute, with "Opening <session>";
+  title; its subtitle is the session's line (round, harness, hab, model). On the Mac its
+  controls sit in the window's customisable toolbar (3.13), not in a header row. It waits for the board to list the session, up to a minute, with "Opening <session>";
   after that it says "This session is not on any paired computer."
 - **A removed session** leaves its window open with "This session was removed." The window does
   not close by itself, so a removal never makes a window vanish under the pointer.
@@ -729,6 +751,113 @@ Code: `Board/NextNeedingYou.swift`, the marks in `Board/Board.swift`. Tests:
   `done` session. They show in the row's context menu and the Session menu, for `done` sessions
   only: once the hab turns `done` into `idle` (a client focused the pane), there is nothing to
   mark. The marks stay on this device and last while the app runs, as seen does (3.1).
+
+### 3.17 Needs you in the menu bar (Mac)
+
+Code: `Board/MenuBarNeeds.swift` (what the menu lists), `Views/MenuBarViews.swift` (the menu).
+Tests: `MenuBarNeedsTests`.
+
+- **The icon.** A bell in the menu bar (`MenuBarExtra`, menu style). While something needs the
+  owner, the bell fills and the count shows beside it: the sessions the menu lists plus the
+  confirmations that wait, the same count as the Dock badge (7.9) while connected; the Dock
+  keeps its last count when the app disconnects. At 0 the bell is empty with
+  no number.
+- **The menu.** "Needs You": the sessions Next Needing You moves through (3.16: blocked, error,
+  done unseen, on online habs, in the board's order), each with its title, what it waits for
+  and its hab ("Needs permission · bench"), and a mark for the kind (a raised hand for a
+  permission, a speech bubble for a question, a triangle for an error, a tick for done). Then
+  "<n> confirmations wait" when confirmations wait (it opens the board), "Nothing needs you"
+  when the list is empty, and after a divider: Ask Capcom… (3.18), Open Flightdeck, and Mark
+  All as Read while a `done` session is unread.
+- **Picking a session** opens it in its own window (3.14), by its link (3.15): one window per
+  session, so picking it again brings that window forward. It opens the session, not the
+  approval sheet, as Next Needing You does; the chat's request card answers there. The app
+  comes to the front.
+- **Open Flightdeck** brings the app forward, and opens a board window only when none is open.
+- **Not connected.** The Mac holds its connections only while a window is open (12.1). With
+  every window closed no hab is online, so the menu says "Not connected" and "Flightdeck
+  connects while one of its windows is open", never a count of 0. With no hab paired it says
+  "No paired computer".
+- **Off in Settings.** Settings › This Mac › "Show in the menu bar" (on by default) removes it.
+  A ⌘-drag out of the menu bar turns the same switch off.
+
+| Case | Behaviour |
+|---|---|
+| A session is answered elsewhere | It leaves the menu when the board drops it from Needs you |
+| The session's hab goes offline | It leaves the menu, as it leaves Next Needing You |
+| The picked session was removed meanwhile | Its window says "This session was removed." (3.14) |
+
+Design call: a session window, not a board window, because the menu has no window of its own
+to open the session in and a session window is the one place a session opens by value inside
+the app. Opening the `flightdeck://` link instead would go through Launch Services, which can
+hand it to another installed copy of the app. Keeping the habs connected for the menu while
+every window is closed would break 12.1's lifecycle rule; that waits for the "Stay connected
+in the background" setting (20.4, not built).
+
+### 3.18 Quick entry for Capcom (Mac)
+
+Code: `Chat/QuickEntry.swift` (the send), `Views/QuickEntryViews.swift` (the panel's content),
+and the `FlightdeckQuickEntry` product (the panel and the shortcut, Mac only). Tests:
+`QuickEntryTests`.
+
+A small floating panel takes a message to Capcom from anywhere on the Mac, as the ChatGPT and
+Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward.
+
+- **The shortcut.** A system-wide shortcut opens the panel; pressing it again closes it. The
+  owner sets it in Settings › This Mac › "Quick entry for Capcom", with a recorder that warns
+  when the system or the app's menus use the keys. None is set at first. The menu bar's Ask
+  Capcom… (3.17) and Go › Ask Capcom… open the panel with or without one. A second press
+  within 150 ms is ignored, since KeyboardShortcuts 3.1.0 can fire twice while a menu is open
+  (its issue 243).
+- **The panel** floats over every app, on every Space and over full-screen apps, centred
+  across the screen with the pointer, in its upper third. It takes the keyboard without
+  making Flightdeck the active app, so its windows stay where they were. Esc, a click
+  elsewhere, or the shortcut closes it. While a send runs a click elsewhere leaves it up, so
+  the panel shows how the send ended. A send that fails after Esc or the shortcut closed the
+  panel shows the panel again, without taking the keyboard, with the failure. What was typed stays in the field while the app runs.
+- **What it holds:** a field, "Ask Capcom", that grows to six lines (Return sends,
+  Shift-Return or Option-Return writes a new line, as the composer, 4.2, and with a Japanese,
+  Chinese or Korean input method Return stays the input method's); a line that says
+  where the message goes ("To Capcom on bench") or why it cannot go yet; Send, and "Send to
+  New Chat" (⌘Return); and "Recent": the last five messages sent from the panel, newest
+  first, kept on this Mac. A click on one puts it back in the field. Clear empties the list.
+- **Send** goes to Capcom's standing conversation on the home (4.10): `capcom.open` with no
+  context, then `session.send` through that conversation's chat model, so the Capcom view
+  shows the message as if typed in its composer. **Send to New Chat** opens a new
+  conversation first (`capcom.open` with `new`), as New conversation does (capcom.md 8.2);
+  the Capcom view follows it. The panel waits until the conversation takes a message (its
+  state reaches the app after the open) and until the hab takes the send, up to 15 s each,
+  then closes. A failure keeps the text (except a send with no answer, below) and says why: a refused open in the hab's words, a
+  refused send in the composer's sentence for it (4.2), or "Capcom did not take the message."
+  when the conversation never got ready. The failed message leaves the Capcom view, since the
+  panel holds it.
+- **Before it can send** the line says why not, and Send is off: "Connecting…" while the habs
+  connect or the home is not known yet, "No Capcom host. Choose one in Settings." with no
+  home, "<host> is offline" with the home offline, and "Capcom's host is not in this app."
+- **Connections.** The panel counts as a window while it shows and while a send it started
+  runs (12.1), so with every window closed it connects the habs and waits for the home, and
+  closing it mid-send (Esc or the shortcut) does not disconnect the habs under the send. Once
+  it is closed and no send runs, the lifecycle rule applies again. Code: `QuickEntryWindow`.
+- **Dictation** is the system's: the Dictation key or the dictation shortcut types into the
+  field (the Edit menu is not reachable, since the panel leaves Flightdeck inactive), as in any Mac text field. The panel uses no microphone of its
+  own. Not built: a shortcut that opens the panel already listening, and a screenshot drag.
+- **The reply** shows in the Capcom view and in Capcom's notifications, not in the panel.
+- **Permissions.** The shortcut is a Carbon hot key (`RegisterEventHotKey`, through the
+  KeyboardShortcuts package): it needs no Accessibility or Input Monitoring permission and no
+  entitlement, and it works in the App Sandbox. A shortcut another app already holds does not
+  register; the recorder says so when the owner picks it.
+
+| Case | Behaviour |
+|---|---|
+| A pane-based Capcom is mid-turn | Nothing is queued: the panel keeps the text and says "Capcom is busy with a turn. Send again when it finishes.", since a queued message could sit in an app that disconnects once the panel closes (12.1) |
+| The hab refuses the send | The panel stays open with the text and the reason |
+| The hab does not answer the send in 15 s | The message may still arrive, so the field empties (Return cannot send it twice) and Recent keeps it: "Capcom has not confirmed it yet. It may still arrive: check Capcom before you send it again." |
+| The shortcut is pressed while a Flightdeck sheet is up | The panel shows over it; the sheet stays |
+
+Design call: no shortcut out of the box, as the KeyboardShortcuts package asks of a public app,
+since a preset global key can take one the owner uses elsewhere. "Recent" lists messages, not
+conversations: Capcom keeps one standing conversation per home, which Send continues and Send
+to New Chat replaces.
 
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
@@ -963,6 +1092,32 @@ Built choices:
   the setting that sends originals, and the warning for a harness that takes no images.
 - **Attach menu.** Photos (the system picker, up to 10, needs no library permission), Files,
   and Paste (an image on the clipboard). Not built: Camera.
+- **Drop on the chat (iPad and Mac).** A file dragged over a session's chat or a Capcom chat
+  joins the composer's attachments, as Files does; a Capcom chat turns it into a context chip
+  (capcom.md 8.1). While a drag is over the chat, a tinted border and "Drop to attach" on
+  glass cover it. The drop takes files only while the attach button would: not while the
+  composer is off or answers a question. Picked and dropped files share one loader
+  (`AttachmentPrep.load`), off the main actor. The system offers each dragged item in the
+  first form the app takes, in this order: a URL (the Mac's Finder gives file URLs), an
+  image (Photos), text, then any other file (the iPad's Files). A web link or dragged text
+  goes into the draft on a line of its own, not as a file. Dropped text over 100 KB is
+  refused ("The dropped text is over 100 KB; attach it as a file"), so a large text file that
+  arrives as text never fills the composer. Not verified on a device: the order the system
+  picks on iPad, and whether a plain-text file from Files arrives as text. Not built:
+  preferring the file over the text when the dragged item has a file name, since
+  `Transferable` does not see the name (it needs an `NSItemProvider` drop). A file the system
+  hands over is copied to the app's temporary folder, keeping its name, and read only when the
+  drop lands; a folder or a file over 25 MB is refused before the copy, and every copy is
+  deleted once the drop is read. A message holds at most 10 files, as the Photos picker
+  allows: a drop counts the files the composer holds already, and a file past the cap is not
+  read. A folder, a file over 25 MB or one that cannot be read is refused, and the line under
+  the composer names the first refusal and how many more there were ("photos is a folder;
+  attach the files in it (1 more not attached)"). A drop that finishes reading after the
+  composer stopped taking files (it now answers a question) adds nothing and says so.
+  Code: `Chat/ChatDrop.swift`, `Views/ChatDropViews.swift`. Tests: `ChatDropTests`. Design
+  call: the drop uses the `dropDestination(for:action:isTargeted:)` form, because the
+  `DropSession` form's way to see a drag arrive (`onDropSessionUpdated`) needs iOS 27, above
+  the app's 26.1 floor.
 - **Mark up.** iPhone and iPad: tap a thumbnail in the composer. PencilKit's pens, marker,
   eraser, lasso and ruler draw over the image, laid exactly on its fitted frame. Done draws the
   marks into the image at full size; Cancel keeps it as it was. Not built: crop and text.
@@ -4728,6 +4883,9 @@ The full page ("All settings" on iOS, the Settings window on the Mac, 3.8):
 - **A hab-side row** says where it is stored: "On every hab" or "On <hab>".
 - **Today's pages** (Settings › Notifications, › Voice, › SSH and the usage warnings) become
   groups of this page. Their sections keep the wording of each row.
+- **This Mac.** The Mac's Settings window puts the page under a General tab and adds a This
+  Mac tab for what belongs to that Mac alone, kept on it outside the registry: "Show in the
+  menu bar" (3.17) and the quick entry shortcut (3.18).
 
 ### 20.8 Built choices in the app
 

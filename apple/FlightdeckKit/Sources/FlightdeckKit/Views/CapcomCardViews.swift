@@ -147,6 +147,7 @@ struct ProposalLineView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityHint(open ? "Folds the proposal" : "Shows the proposal")
             if open {
                 VStack(alignment: .leading, spacing: 6) {
