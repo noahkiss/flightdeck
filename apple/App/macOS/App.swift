@@ -10,6 +10,8 @@ struct FlightdeckApp: App {
         AppLogFile.open()
         return AppFleet.make()
     }()
+    /// The needs-you menu bar extra shows (app.md 3.17).
+    @AppStorage(MenuBarSetting.key) private var menuBarShown = true
 
     var body: some Scene {
         WindowGroup(id: FlightdeckScene.board) {
@@ -43,6 +45,13 @@ struct FlightdeckApp: App {
         Settings {
             FlightdeckSettings(fleet: fleet)
         }
+        // Needs you in the menu bar (app.md 3.17); Settings turns it off.
+        MenuBarExtra(isInserted: $menuBarShown) {
+            NeedsYouMenu(fleet: fleet)
+        } label: {
+            NeedsYouMenuBarLabel(board: fleet.board)
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
 

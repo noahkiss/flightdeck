@@ -367,6 +367,14 @@ public final class Fleet {
         if windows == 0 { Task { await setActive(false) } }
     }
 
+    /// Mac: the board windows open now, so the menu bar's Open Flightdeck (app.md 3.17) opens
+    /// one only when none is.
+    public private(set) var boardWindows = 0
+
+    public func boardWindowOpened() { boardWindows += 1 }
+
+    public func boardWindowClosed() { boardWindows = max(0, boardWindows - 1) }
+
     /// Finds a hab's connection by id, for views opened from a board row.
     public var lookup: HabConnectionLookup {
         HabConnectionLookup { [weak self] id in self?.connections.first { $0.id == id } }

@@ -420,8 +420,9 @@ The root is a stock tab view with four tabs, in this order:
   the system's automatic hover effect (`hoverEffect()`, through `pointerHover()` in
   `Views/PointerHover.swift`). The Mac has no such effect and shows its own cursor.
 - **Mac.** The window keeps the board and session split with the connections column. Settings is
-  the Mac's own Settings window (⌘, or Flightdeck › Settings…), which holds the full Settings
-  page (20.7); the connections column's Settings button opens that window. A sidebar is a later
+  the Mac's own Settings window (⌘, or Flightdeck › Settings…), with two tabs: General, which
+  holds the full Settings page (20.7), and This Mac (the menu bar extra, 3.17, and the quick
+  entry shortcut, 3.18); the connections column's Settings button opens that window. A sidebar is a later
   stage. Menus and shortcuts are in 3.13, session windows in 3.14.
 - **Deployment.** The app targets iOS 26.1, iPadOS 26.1 and macOS 26.0 at minimum (`Tab` items,
   the sidebar-adaptable style, the bottom accessory and the minimise-on-scroll behaviour need
@@ -635,6 +636,7 @@ one that applies.
 | Go | Sessions, Capcom | ⌘1, ⌘2 | Mac: Sessions shows the board with nothing open; Capcom opens the Capcom view. The Mac's Settings is its own window (⌘,) and its rounds sit in the board |
 | Go | Next Needing You | ⌥⌘A | Opens the next session that needs the owner (3.16) |
 | Go | Mark All as Read | | Marks every unread `done` session read (3.16) |
+| Go | Ask Capcom… | the owner's (3.18) | Mac: opens the quick entry panel |
 | View | Show Toolbar, Customize Toolbar… | ⌥⌘T | Mac: the system's toolbar commands (`ToolbarCommands`) for the board and session windows |
 
 - **Enablement.** The Session menu needs an open session in the focused window. Rename,
@@ -746,6 +748,102 @@ Code: `Board/NextNeedingYou.swift`, the marks in `Board/Board.swift`. Tests:
   `done` session. They show in the row's context menu and the Session menu, for `done` sessions
   only: once the hab turns `done` into `idle` (a client focused the pane), there is nothing to
   mark. The marks stay on this device and last while the app runs, as seen does (3.1).
+
+### 3.17 Needs you in the menu bar (Mac)
+
+Code: `Board/MenuBarNeeds.swift` (what the menu lists), `Views/MenuBarViews.swift` (the menu).
+Tests: `MenuBarNeedsTests`.
+
+- **The icon.** A bell in the menu bar (`MenuBarExtra`, menu style). While something needs the
+  owner, the bell fills and the count shows beside it: the sessions the menu lists plus the
+  confirmations that wait, the same count as the Dock badge (7.9). At 0 the bell is empty with
+  no number.
+- **The menu.** "Needs You": the sessions Next Needing You moves through (3.16: blocked, error,
+  done unseen, on online habs, in the board's order), each with its title, what it waits for
+  and its hab ("Needs permission · bench"), and a mark for the kind (a raised hand for a
+  permission, a speech bubble for a question, a triangle for an error, a tick for done). Then
+  "<n> confirmations wait" when confirmations wait (it opens the board), "Nothing needs you"
+  when the list is empty, and after a divider: Ask Capcom… (3.18), Open Flightdeck, and Mark
+  All as Read while a `done` session is unread.
+- **Picking a session** opens it in its own window (3.14), by its link (3.15): one window per
+  session, so picking it again brings that window forward. It opens the session, not the
+  approval sheet, as Next Needing You does; the chat's request card answers there. The app
+  comes to the front.
+- **Open Flightdeck** brings the app forward, and opens a board window only when none is open.
+- **Not connected.** The Mac holds its connections only while a window is open (12.1). With
+  every window closed no hab is online, so the menu says "Not connected" and "Flightdeck
+  connects while one of its windows is open", never a count of 0. With no hab paired it says
+  "No paired computer".
+- **Off in Settings.** Settings › This Mac › "Show in the menu bar" (on by default) removes it.
+  A ⌘-drag out of the menu bar turns the same switch off.
+
+| Case | Behaviour |
+|---|---|
+| A session is answered elsewhere | It leaves the menu when the board drops it from Needs you |
+| The session's hab goes offline | It leaves the menu, as it leaves Next Needing You |
+| The picked session was removed meanwhile | Its window says "This session was removed." (3.14) |
+
+Design call: a session window, not a board window, because the menu has no window of its own
+to open the session in and a session window is the one place a session opens by value inside
+the app. Opening the `flightdeck://` link instead would go through Launch Services, which can
+hand it to another installed copy of the app. Keeping the habs connected for the menu while
+every window is closed would break 12.1's lifecycle rule; that waits for the "Stay connected
+in the background" setting (20.4, not built).
+
+### 3.18 Quick entry for Capcom (Mac)
+
+Code: `Chat/QuickEntry.swift` (the send), the `FlightdeckQuickEntry` product (the panel and the
+shortcut, Mac only). Tests: `QuickEntryTests`.
+
+A small floating panel takes a message to Capcom from anywhere on the Mac, as the ChatGPT and
+Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward.
+
+- **The shortcut.** A system-wide shortcut opens the panel; pressing it again closes it. The
+  owner sets it in Settings › This Mac › "Quick entry for Capcom", with a recorder that warns
+  when the system or the app's menus use the keys. None is set at first. The menu bar's Ask
+  Capcom… (3.17) and Go › Ask Capcom… open the panel with or without one.
+- **The panel** floats over every app, on every Space and over full-screen apps, centred
+  across the screen with the pointer, in its upper third. It takes the keyboard without
+  making Flightdeck the active app, so its windows stay where they were. Esc, a click
+  elsewhere, or the shortcut closes it. What was typed stays in the field while the app runs.
+- **What it holds:** a field, "Ask Capcom", that grows to six lines (Return sends,
+  Shift-Return or Option-Return writes a new line, as the composer, 4.2); a line that says
+  where the message goes ("To Capcom on bench") or why it cannot go yet; Send, and "Send to
+  New Chat" (⌘Return); and "Recent": the last five messages sent from the panel, newest
+  first, kept on this Mac. A click on one puts it back in the field. Clear empties the list.
+- **Send** goes to Capcom's standing conversation on the home (4.10): `capcom.open` with no
+  context, then `session.send` through that conversation's chat model, so the Capcom view
+  shows the message as if typed in its composer. **Send to New Chat** opens a new
+  conversation first (`capcom.open` with `new`), as New conversation does (capcom.md 8.2);
+  the Capcom view follows it. The panel waits until the conversation takes a message (its
+  state reaches the app after the open) and until the hab takes the send, then closes. A
+  failure keeps the text and shows the hab's words, or "Capcom did not take the message" when
+  it never got ready.
+- **Before it can send** the line says why not, and Send is off: "Connecting…" while the habs
+  connect or the home is not known yet, "No Capcom host. Choose one in Settings." with no
+  home, "<host> is offline" with the home offline, and "Capcom's host is not in this app."
+- **Connections.** The panel counts as a window while it shows (12.1), so with every window
+  closed it connects the habs and waits for the home. Once it closes the lifecycle rule
+  applies again.
+- **Dictation** is the system's: Edit › Start Dictation, the Dictation key or the dictation
+  shortcut types into the field, as in any Mac text field. The panel uses no microphone of its
+  own. Not built: a shortcut that opens the panel already listening, and a screenshot drag.
+- **The reply** shows in the Capcom view and in Capcom's notifications, not in the panel.
+- **Permissions.** The shortcut is a Carbon hot key (`RegisterEventHotKey`, through the
+  KeyboardShortcuts package): it needs no Accessibility or Input Monitoring permission and no
+  entitlement, and it works in the App Sandbox. A shortcut another app already holds does not
+  register; the recorder says so when the owner picks it.
+
+| Case | Behaviour |
+|---|---|
+| A pane-based Capcom is mid-turn | The message waits as the composer's does ("Sends after this turn") and goes when the turn ends while the app is connected |
+| The hab refuses the send | The panel stays open with the text and the hab's words |
+| The shortcut is pressed while a Flightdeck sheet is up | The panel shows over it; the sheet stays |
+
+Design call: no shortcut out of the box, as the KeyboardShortcuts package asks of a public app,
+since a preset global key can take one the owner uses elsewhere. "Recent" lists messages, not
+conversations: Capcom keeps one standing conversation per home, which Send continues and Send
+to New Chat replaces.
 
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
@@ -4762,6 +4860,9 @@ The full page ("All settings" on iOS, the Settings window on the Mac, 3.8):
 - **A hab-side row** says where it is stored: "On every hab" or "On <hab>".
 - **Today's pages** (Settings › Notifications, › Voice, › SSH and the usage warnings) become
   groups of this page. Their sections keep the wording of each row.
+- **This Mac.** The Mac's Settings window puts the page under a General tab and adds a This
+  Mac tab for what belongs to that Mac alone, kept on it outside the registry: "Show in the
+  menu bar" (3.17) and the quick entry shortcut (3.18).
 
 ### 20.8 Built choices in the app
 

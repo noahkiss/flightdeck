@@ -21,6 +21,10 @@ public struct FlightdeckRoot: View {
             .sshSheets(fleet.ssh)
             .modifier(PublishCommands(fleet: fleet, commands: commands))
             .modifier(CountsWindow(fleet: fleet))
+            #if os(macOS)
+            .onAppear { fleet.boardWindowOpened() }
+            .onDisappear { fleet.boardWindowClosed() }
+            #endif
     }
 
     @ViewBuilder
