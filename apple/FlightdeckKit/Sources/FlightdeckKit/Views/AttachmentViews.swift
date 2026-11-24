@@ -44,6 +44,7 @@ struct AttachmentThumbRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityLabel("Attached image")
             .accessibilityHint("Opens it full size")
         } else if images == nil || images?.didFail(id) == true {
@@ -58,6 +59,7 @@ struct AttachmentThumbRow: View {
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityLabel("Load the attached image again")
         } else {
             ProgressView()
@@ -177,6 +179,7 @@ struct DraftStrip: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     .accessibilityLabel(a.name)
                     #if os(iOS)
                     .accessibilityHint("Opens markup")
@@ -198,6 +201,7 @@ struct DraftStrip: View {
                     .foregroundStyle(.white, .black.opacity(0.6))
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .offset(x: 6, y: -6)
             .accessibilityLabel("Remove \(a.name)")
         }
@@ -241,15 +245,14 @@ struct AttachButton: View {
         }
         .fileImporter(isPresented: $files, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
-            for url in urls {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > AttachmentLimits.maxBytes {
-                    notice("\(url.lastPathComponent) is over the 25 MB limit")
-                    continue
+            // The same loader as a drop on the chat (app.md 4.4), off the main actor.
+            Task {
+                for url in urls {
+                    switch await AttachmentPrep.loading(url) {
+                    case .file(let a): add(a)
+                    case .refused(let why): notice(why)
+                    }
                 }
-                guard let data = try? Data(contentsOf: url) else { continue }
-                add(AttachmentPrep.file(data, name: url.lastPathComponent))
             }
         }
     }

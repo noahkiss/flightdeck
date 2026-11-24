@@ -414,6 +414,11 @@ The root is a stock tab view with four tabs, in this order:
     computer, Notifications, Voice, Usage warnings, Help) in the detail column, as the system's
     Settings app does.
   A compact width (Slide Over, a narrow window) uses the phone layout in every tab.
+- **The pointer (iPad).** With a trackpad or mouse, every control reacts to the pointer. The
+  system's own buttons, menus, tabs and list rows do so by themselves; each plain-style button
+  and custom row (board rows, tool cards, the terminal's key bar, attachment thumbnails) adds
+  the system's automatic hover effect (`hoverEffect()`, through `pointerHover()` in
+  `Views/PointerHover.swift`). The Mac has no such effect and shows its own cursor.
 - **Mac.** The window keeps the board and session split with the connections column. Settings is
   the Mac's own Settings window (⌘, or Flightdeck › Settings…), which holds the full Settings
   page (20.7); the connections column's Settings button opens that window. A sidebar is a later
@@ -963,6 +968,23 @@ Built choices:
   the setting that sends originals, and the warning for a harness that takes no images.
 - **Attach menu.** Photos (the system picker, up to 10, needs no library permission), Files,
   and Paste (an image on the clipboard). Not built: Camera.
+- **Drop on the chat (iPad and Mac).** A file dragged over a session's chat or a Capcom chat
+  joins the composer's attachments, as Files does; a Capcom chat turns it into a context chip
+  (capcom.md 8.1). While a drag is over the chat, a tinted border and "Drop to attach" on
+  glass cover it. The drop takes files only while the attach button would: not while the
+  composer is off or answers a question. Picked and dropped files share one loader
+  (`AttachmentPrep.load`), off the main actor. The system offers each dragged item in the
+  first form the app takes, in this order: a URL (the Mac's Finder gives file URLs), an
+  image (Photos), text, then any other file (the iPad's Files). A web link or dragged text
+  goes into the draft on a line of its own, not as a file; on iPad a plain-text file from
+  Files arrives the same way, as its text, since Files offers it as text. One drop attaches
+  at most 10 files, as the Photos picker does. A folder, a file over 25 MB or one that cannot
+  be read is refused, and the line under the composer names the first refusal and how many
+  more there were ("photos is a folder; attach the files in it (1 more not attached)").
+  Code: `Chat/ChatDrop.swift`, `Views/ChatDropViews.swift`. Tests: `ChatDropTests`. Design
+  call: the drop uses the `dropDestination(for:action:isTargeted:)` form, because the
+  `DropSession` form's way to see a drag arrive (`onDropSessionUpdated`) needs iOS 27, above
+  the app's 26.1 floor.
 - **Mark up.** iPhone and iPad: tap a thumbnail in the composer. PencilKit's pens, marker,
   eraser, lasso and ruler draw over the image, laid exactly on its fitted frame. Done draws the
   marks into the image at full size; Cancel keeps it as it was. Not built: crop and text.

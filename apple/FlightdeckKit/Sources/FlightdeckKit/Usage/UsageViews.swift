@@ -40,6 +40,7 @@ struct UsageFooter: View {
                                 UsageFooterBar(account: a, online: book.isOnline(a), now: ctx.date)
                             }
                             .buttonStyle(.plain)
+                            .pointerHover()
                         }
                     }
                     .padding(.horizontal, 16)

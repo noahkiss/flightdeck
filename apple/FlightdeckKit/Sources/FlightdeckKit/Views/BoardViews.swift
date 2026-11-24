@@ -518,6 +518,7 @@ struct BoardList: View {
                         CapcomEntryRow(center: capcom, rows: board.rows, now: ctx.date)
                     }
                     .buttonStyle(.plain)
+                    .pointerHover()
                     if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true {
                         Text("Sessions on your habs show here.")
                             .foregroundStyle(.secondary)
@@ -540,6 +541,7 @@ struct BoardList: View {
                                 BoardRowView(row: row, now: ctx.date)
                             }
                             .buttonStyle(.plain)
+                            .pointerHover()
                             .sessionRowActions(row, actions)
                         }
                     }

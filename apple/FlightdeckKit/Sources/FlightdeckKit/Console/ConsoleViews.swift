@@ -255,6 +255,7 @@ struct CommandCardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityHint(expanded ? "Folds the output" : "Shows the output")
             if expanded {
                 output

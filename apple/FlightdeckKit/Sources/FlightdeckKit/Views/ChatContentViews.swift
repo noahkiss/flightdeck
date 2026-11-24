@@ -237,6 +237,7 @@ struct ToolCardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .accessibilityLabel(card.sentence.text + (card.status == .done ? "" : ", " + statusWord))
             .accessibilityHint(open ? "Folds the details" : "Shows the details")
             if open {
@@ -427,6 +428,7 @@ struct FoldedStepsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerHover()
             .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
             .accessibilityLabel(summary)
             .accessibilityHint(open ? "Hides these steps again" : "Shows these steps here")
@@ -524,6 +526,7 @@ struct PinnedBanners: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityLabel(line.text)
         .accessibilityHint("Opens the card")
@@ -559,6 +562,7 @@ struct PinnedSheet: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
+                .pointerHover()
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Close")
             }

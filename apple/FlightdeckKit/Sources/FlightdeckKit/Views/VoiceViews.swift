@@ -243,6 +243,7 @@ struct VoiceControl: View {
             }
         }
         .buttonStyle(.plain)
+        .pointerHover()
         .accessibilityLabel(title)
     }
 }
