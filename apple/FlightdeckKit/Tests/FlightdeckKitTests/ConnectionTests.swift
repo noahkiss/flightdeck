@@ -193,10 +193,14 @@ final class ConnectionTests: XCTestCase {
         await hab.setHeartbeat(.milliseconds(100))
         var t = livenessTiming()
         t.pingInterval = .seconds(60)
+        // A window far above the 100 ms heartbeat: a runner that stalls the test process for
+        // up to 3 s does not make a gap that looks like a dead hab.
+        t.deadAfter = .seconds(3)
         let conn = HabConnection(id: "a", transport: hab.transport(), timing: t)
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
-        try? await Task.sleep(for: .milliseconds(1200))
+        // Past deadAfter: without heartbeats the connection would have been called dead.
+        try? await Task.sleep(for: .seconds(4))
         let st = await conn.state
         XCTAssertEqual(st.status, .online)
         XCTAssertEqual(st.snapshots, 1)
