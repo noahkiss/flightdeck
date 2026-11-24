@@ -293,9 +293,9 @@ Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves th
 timeouts: `-test-timeouts-enabled YES`, 120 seconds a test by default, 300 at most for a test that
 sets its own `executionTimeAllowance`. A test that hangs then fails by name, its log is uploaded,
 and the job does not sit silent until its own timeout (the Kit's simulator tests hung that way
-twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. Compilation caching is
-off: within one job it gave no gain (the builds step took about 25 minutes with it, about 18
-without), and keeping its store between runs needs E9 (5, 11.2). No signing, no
+twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. `apple.yml` passes
+`compilation-cache: true` with a 2G limit, so xcode-ci restores and saves the Xcode compilation
+cache between runs (5, E9 in 11.2). No signing, no
 secrets. Timeout 90 minutes: a branch with several app stages ran past 60 by 2026-11. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
 
@@ -429,7 +429,7 @@ build.
 | libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-<patch id>-<build method>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins and the id of `third_party/ghostty/patches/` (`make ghostty-id`), not on a hash of the whole Makefile, which changes often. A pin or patch change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
 | SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, and every `swift test` `--only-use-versions-from-resolved-file` (3.4), so a graph that drifts from the pins fails instead of floating |
-| Xcode compilation cache | Off | None | Within one job it gave no gain (3.4). Keeping the store between runs needs a restore and a save inside `xcode-ci`: a job that calls a reusable workflow cannot add steps, and the store cannot ride in the SwiftPM entry, which is saved only when its key misses. E9 (11.2) proposes the input. A warm store cut a clean local build from about 10 minutes to about 1 |
+| Xcode compilation cache | xcode-ci's `compilation-cache` input (E9) | One entry per run, restored from the newest | `apple.yml` turns it on with a 2G limit (3.4). Within one job alone it gave no gain. Keeping the store between runs needs a restore and a save inside `xcode-ci`: a job that calls a reusable workflow cannot add steps, and the store cannot ride in the SwiftPM entry, which is saved only when its key misses. E9 (11.2) proposes the input. A warm store cut a clean local build from about 10 minutes to about 1 |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
 | npm (the release's `engine` job) | None | `npm ci` in the job | `setup-node` runs with `package-manager-cache: false`, for the reason fastlane has none: a cache saved on a tag serves that tag only. `capcom-engine.yml` caches through node-ci (3.7) |
@@ -1484,7 +1484,7 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 E4 is needed for `ci.yml`, `nightly.yml` and `macos-go.yml` alike: without it they cancel each
 other's go-ci jobs on `main` (2). E5 and E6 are plan stage 4: noahkiss/workflows#16, with a
 selftest that builds a small XcodeGen fixture through `xcode-ci` and runs both actions with a
-stand-in fastlane. E1 to E8 are approved (section 14); E9 is proposed. Once it merges, `apple.yml`
+stand-in fastlane. E1 to E8 are approved (section 14); E9 merged as noahkiss/workflows#22, and `apple.yml`
 passes `compilation-cache: true`.
 
 ---
