@@ -120,7 +120,7 @@ struct HabRow: View {
     private var line: String {
         var parts = [hab.statusText]
         let n = hab.state.store.sessions.count
-        if hab.state.status == .online { parts.append(n == 1 ? "1 session" : "\(n) sessions") }
+        if hab.state.status == .online { parts.append(inflected("^[\(n) session](inflect: true)")) }
         if let d = hab.state.welcome?.deviceId, d == capcomHome { parts.append("runs Capcom") }
         return parts.joined(separator: " · ")
     }
@@ -236,7 +236,7 @@ struct LevelGroup: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if !state.exceptions.isEmpty {
-                Text(state.exceptions.count == 1 ? "1 setting differs from this level." : "\(state.exceptions.count) settings differ from this level.")
+                Text("\(state.exceptions.count) settings differ from this level.", bundle: #bundle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

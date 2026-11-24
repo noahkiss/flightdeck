@@ -4,6 +4,7 @@ import SwiftUI
 /// Capcom's `hand_off` call: where the message went, how delivery stands, why that agent, the
 /// other candidates and the text sent (app.md 4.8). A record; it asks nothing.
 struct HandOffCardView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let card: HandOffCard
     @State private var fullMessage = false
 
@@ -84,7 +85,7 @@ struct HandOffCardView: View {
                 .textSelection(.enabled)
             if long {
                 Button(fullMessage ? "Show less" : "Show full message") {
-                    withAnimation(.easeOut(duration: 0.15)) { fullMessage.toggle() }
+                    withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { fullMessage.toggle() }
                 }
                 .font(.caption)
             }
@@ -118,13 +119,14 @@ struct HandOffCardView: View {
 /// Capcom's `file_record` call: the record it proposed and whether it waits for review
 /// (app.md 4.8). Review is an approval; this line has no buttons.
 struct ProposalLineView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let line: ProposalLine
     @State private var open = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { open.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     if line.state == .filing {
@@ -149,6 +151,7 @@ struct ProposalLineView: View {
             .buttonStyle(.plain)
             .pointerHover()
             .accessibilityHint(open ? "Folds the proposal" : "Shows the proposal")
+            .disclosureState(open)
             if open {
                 VStack(alignment: .leading, spacing: 6) {
                     if let p = line.project {

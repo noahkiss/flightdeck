@@ -4,6 +4,7 @@ import SwiftUI
 /// The Settings page (app.md 20.7): the level picker, then one group per
 /// area, with search over titles and ids.
 struct SettingsPage: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let center: SettingsCenter
     let board: Board
     var push: PushRegistrar?
@@ -18,7 +19,7 @@ struct SettingsPage: View {
             Form {
                 if query.isEmpty {
                     LevelSection(center: center) { id in
-                        withAnimation { proxy.scrollTo(id, anchor: .center) }
+                        withAnimation(gateMotion(.default, reduce: reduceMotion)) { proxy.scrollTo(id, anchor: .center) }
                     }
                 }
                 ForEach(SettingArea.allCases, id: \.self) { area in
@@ -144,7 +145,7 @@ struct LevelSection: View {
             }
             .disabled(working)
             if let first = state.exceptions.first {
-                Button(state.exceptions.count == 1 ? "1 exception" : "\(state.exceptions.count) exceptions") {
+                Button(inflected("^[\(state.exceptions.count) exception](inflect: true)")) {
                     scrollTo(first.settingID)
                 }
                 .font(.footnote)

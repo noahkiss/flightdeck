@@ -152,6 +152,7 @@ struct InlineImageView: View {
 
 /// An image full size: pinch or scroll to zoom, double tap to fit or zoom in.
 struct ZoomedImage: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: ContentModel
     let item: ContentItem
     let data: Data
@@ -173,7 +174,7 @@ struct ZoomedImage: View {
                     .onChanged { scale = max(1, min(8, base * $0.magnification)) }
                     .onEnded { _ in base = scale })
                 .onTapGesture(count: 2) {
-                    withAnimation { scale = scale > 1 ? 1 : 2.5 }
+                    withAnimation(gateMotion(.default, reduce: reduceMotion)) { scale = scale > 1 ? 1 : 2.5 }
                     base = scale
                 }
             }
@@ -246,6 +247,7 @@ func kindWord(_ k: ContentKind) -> String {
 /// A document in the chat: folded to its title and first lines; tap expands
 /// it in place; a second control opens it full size.
 struct DocumentCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: ContentModel
     let item: ContentItem
     @State private var open = false
@@ -255,7 +257,7 @@ struct DocumentCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                    withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { open.toggle() }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: open ? "chevron.down" : "chevron.right")
@@ -274,6 +276,7 @@ struct DocumentCard: View {
                 .buttonStyle(.plain)
                 .pointerHover()
                 .accessibilityHint(open ? "Folds the document" : "Expands the document")
+                .disclosureState(open)
                 Button("Open", systemImage: "arrow.up.left.and.arrow.down.right") { full = true }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
@@ -519,12 +522,13 @@ func changeColor(_ c: ContentChange?) -> Color {
 /// The session's modified files as one folded card in the chat. It counts
 /// the session's changes so far, never one tool call's (app.md 4.7).
 struct ModifiedFilesCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: ContentModel
 
     /// "1 file changed in this session": the card sits under the last row,
     /// which may be a call still waiting for approval, so it names its scope.
     static func title(_ n: Int) -> String {
-        "\(n) file\(n == 1 ? "" : "s") changed in this session"
+        inflected("^[\(n) file](inflect: true) changed in this session")
     }
     @State private var open = false
     @State private var selected: ContentItem?
@@ -534,7 +538,7 @@ struct ModifiedFilesCard: View {
         if !files.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                    withAnimation(gateMotion(.easeOut(duration: 0.15), reduce: reduceMotion)) { open.toggle() }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: open ? "chevron.down" : "chevron.right")
@@ -547,6 +551,7 @@ struct ModifiedFilesCard: View {
                 }
                 .buttonStyle(.plain)
                 .pointerHover()
+                .disclosureState(open)
                 if open {
                     ForEach(files, id: \.id) { f in
                         Button { selected = f } label: { ModifiedFileRow(item: f, folder: model.folder) }

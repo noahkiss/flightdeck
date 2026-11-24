@@ -1,0 +1,190 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%lld confirmations wait" : {
+      "comment" : "The menu bar's line for confirmation cards waiting for an answer.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld confirmation waits"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld confirmations wait"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld reports wait for the coordinator" : {
+      "comment" : "A group's inbox: reports from its agents that the coordinator has not read.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld report waits for the coordinator"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld reports wait for the coordinator"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld settings differ from this level." : {
+      "comment" : "Settings page: how many settings are set apart from the chosen level.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld setting differs from this level."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld settings differ from this level."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Collapsed" : {
+      "comment" : "VoiceOver value of a row that is folded."
+    },
+    "Every %lld hours" : {
+      "comment" : "A round's schedule, from a cron step on the hour.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every hour"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld hours"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Every %lld minutes" : {
+      "comment" : "A round's schedule, from a cron step on the minute.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every minute"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld minutes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Expanded" : {
+      "comment" : "VoiceOver value of a row that is open."
+    },
+    "Next ^[%lld day](inflect: true)" : {
+      "comment" : "Capcom settings: how many days of the calendar Capcom can read."
+    },
+    "Requests" : {
+      "comment" : "VoiceOver rotor name in the chat: permission prompts, questions and plans the agent asked about."
+    },
+    "Tool calls" : {
+      "comment" : "VoiceOver rotor name in the chat: the agent's tool calls."
+    },
+    "Turns" : {
+      "comment" : "VoiceOver rotor name in the chat: the owner's messages."
+    },
+    "^[%lld agent message](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: messages to or from subagents."
+    },
+    "^[%lld attachment](inflect: true)" : {
+      "comment" : "VoiceOver rotor entry for a message with attachments and no text."
+    },
+    "^[%lld command](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: shell commands."
+    },
+    "^[%lld connector call](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: connector (MCP) calls."
+    },
+    "^[%lld edit](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: file edits."
+    },
+    "^[%lld exception](inflect: true)" : {
+      "comment" : "Settings page button: settings set apart from the chosen level."
+    },
+    "^[%lld file](inflect: true)" : {
+      "comment" : "A tool call's file count."
+    },
+    "^[%lld file](inflect: true) changed in this session" : {
+      "comment" : "The chat's modified-files card title."
+    },
+    "^[%lld host](inflect: true)" : {
+      "comment" : "The hosts menu title while every host is online."
+    },
+    "^[%lld match](inflect: true) in ^[%lld file](inflect: true)" : {
+      "comment" : "A search tool's result: matches and the files they are in."
+    },
+    "^[%lld plan update](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: plan updates."
+    },
+    "^[%lld read](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: file reads."
+    },
+    "^[%lld session](inflect: true)" : {
+      "comment" : "A host's line in Settings: how many sessions it runs."
+    },
+    "^[%lld setting](inflect: true) changed" : {
+      "comment" : "After choosing a level: how many settings changed. Follows the level's name."
+    },
+    "^[%lld step](inflect: true) hidden: %@" : {
+      "comment" : "A folded line in the chat. The argument lists the counts by kind."
+    },
+    "^[%lld thought](inflect: true)" : {
+      "comment" : "Hidden chat steps of one kind: thinking blocks."
+    },
+    "in ^[%lld file](inflect: true)" : {
+      "comment" : "A search tool's result when it lists files only."
+    }
+  },
+  "version" : "1.0"
+}

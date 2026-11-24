@@ -590,9 +590,7 @@ struct BoardRowView: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Circle()
-                .fill(row.stateColor)
-                .frame(width: 9, height: 9)
+            StateDot(row, size: 9)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {

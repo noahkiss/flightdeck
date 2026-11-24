@@ -216,7 +216,9 @@ struct CapcomShareSettings: View {
                     }
                 }
             if prefs.shareCalendar {
-                Stepper("Next \(prefs.calendarDays) \(prefs.calendarDays == 1 ? "day" : "days")", value: $prefs.calendarDays, in: CapcomPrefs.daysRange)
+                Stepper(value: $prefs.calendarDays, in: CapcomPrefs.daysRange) {
+                    Text("Next ^[\(prefs.calendarDays) day](inflect: true)", bundle: #bundle)
+                }
                     .onChange(of: prefs.calendarDays) { _, _ in Task { await reporter.sharesChanged() } }
                 if reporter.calendar.authorization == .denied {
                     Text("Calendars are off for Flightdeck in the system settings.").font(.caption).foregroundStyle(.secondary)

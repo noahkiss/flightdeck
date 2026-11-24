@@ -55,6 +55,7 @@ of Apple platforms, not from a page opened for this spec. A device test must con
 19. [Sources](#19-sources)
 20. [Settings and levels](#20-settings-and-levels)
 21. [Rounds (built)](#21-rounds-built)
+22. [Accessibility and localisation](#22-accessibility-and-localisation)
 
 ---
 
@@ -5125,3 +5126,80 @@ The app side of Capcom jobs (`capcom-service.md` 9.6, 9.8). Code: `Rounds/Capcom
 - **Not built.** The round form edits only `fresh`, `resume` and `fork` rounds; a `capcom`
   round's Edit needs a form of its own.
 
+
+---
+
+## 22. Accessibility and localisation
+
+The app follows the system's accessibility settings the way a system app does. Dynamic Type and
+the VoiceOver labels of each part are in that part's section (3.8, 4.11, 5.5). This section holds
+what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `AccessibilityTests`.
+
+### 22.1 VoiceOver in a long chat
+
+- **Rotors.** The chat adds three rotors to VoiceOver's rotor: **Turns** (the owner's messages,
+  each the start of a turn), **Tool calls** and **Requests** (permission prompts, questions and
+  plans to approve that the agent raised). The entries come from the rows the transcript draws
+  (`ChatRotors.of`), in order. Each entry's id is the row's scroll id, so VoiceOver reaches a
+  row the lazy stack has not drawn yet.
+- **Folded rows.** A folded line of hidden steps (4.11) is one Tool calls entry, read as its
+  summary ("3 steps hidden: 2 reads, 1 command"). The rows inside it have no view until it
+  opens, so they have no entry of their own.
+- **Entry words.** A turn reads "You: " and the message's first line, or "From reviewer: " for a
+  message another agent sent; a message with only files reads "2 attachments". A tool call reads
+  its sentence ("Ran go test ./..."). Words past 80 characters end in an ellipsis.
+- **Headings.** The owner's message bubble carries the header trait, so the system Headings rotor
+  also steps by turn.
+- **Open or folded.** Every control that opens a row in place (a tool card, a fold of hidden
+  steps, a document, the modified-files card, a console command, a Capcom proposal, the spoken
+  summary) reads "expanded" or "collapsed" after its label, as a system disclosure group does.
+- **Picked options.** A question's options carry the selected trait while picked, in the chat's
+  request area and in the approval sheet. The drawn check mark is hidden from VoiceOver.
+- **Not built.** The Capcom thread view (4.10) has no rotors yet. The live request card sits in
+  the composer's bar, not in the transcript, so the Requests rotor lists only the requests in
+  the transcript.
+
+### 22.2 Colour
+
+- **Differentiate Without Color.** The state dot on the board, in the sidebar and on the Capcom
+  row is colour alone. With the setting on it becomes a symbol in the same colour, one per state:
+
+  | State | Symbol |
+  |---|---|
+  | Blocked (waits for the owner) | `exclamationmark.triangle.fill` |
+  | Error | `exclamationmark.octagon.fill` |
+  | Done, not yet seen | `checkmark.circle.fill` |
+  | Done and seen | `checkmark` |
+  | Working | `ellipsis.circle.fill` |
+  | Idle | `circle` |
+  | No agent state | `circle.dashed` |
+
+  A running group's dot uses the Working symbol.
+- **Increase Contrast.** The diff and count colours (4.11) pass 4.5:1 by default. Under Increase
+  Contrast each pair switches to a darker pair in light mode and a lighter pair in dark mode that
+  passes 7:1: removed and added text on their line colour, the gutter on both, the counts on the
+  system background. The system colours (orange, teal, green) carry their own high-contrast
+  variants, so they stay as they are.
+
+### 22.3 Strings
+
+- **String Catalogs.** English is the only language. The app targets share
+  `apple/App/Localizable.xcstrings`; the FlightdeckKit package has its own in its resources, with
+  `defaultLocalization: "en"`. Each build extracts the targets' strings (`SWIFT_EMIT_LOC_STRINGS`).
+- **The package's bundle.** SwiftUI looks a literal up in the main bundle unless told otherwise.
+  Package code that needs its catalog passes `bundle: #bundle`: through `Text(_:bundle:)` in a
+  view, or through `inflected(_:)` and `localized(_:)` for a `String`. Older package literals
+  still resolve against the main bundle and show their English key; moving them is open work.
+- **Counts.** A count with a noun uses automatic grammar agreement: `^[\(n) file](inflect: true)`
+  reads "1 file" or "3 files". `String(localized:)` leaves that markup in place, so `inflected(_:)`
+  resolves it through an attributed string. A count whose verb or whole phrase changes uses a
+  plural variation in the catalog instead: "1 confirmation waits", "Every minute" and
+  "Every 5 minutes". No code builds a plural by hand with `n == 1`.
+
+### 22.4 Reduce Motion
+
+With Reduce Motion on, every expand, fold, zoom or scroll the app animates happens at once: the
+tool card, fold and document toggles, the files panel, the image zoom, the jump to the newest
+message, the jump button, the composer's send button, the Settings jump to a setting and the
+voice level meter. The views read `accessibilityReduceMotion` and pass their animation through
+`gateMotion(_:reduce:)`. Fades stay: the drop highlight and the key bar's hint.

@@ -27,6 +27,8 @@ targets:
       # Third-party notices, written by `make notices`; the Acknowledgements page in Settings reads it.
       - path: App/Acknowledgements.txt
         buildPhase: resources
+      # The app targets' String Catalog (app.md 22.3); the package has its own.
+      - path: App/Localizable.xcstrings
       - path: ../design/icons/AppIcon.icon
     dependencies:
       - package: FlightdeckKit
@@ -59,6 +61,7 @@ targets:
         buildPhase: resources
       - path: App/Acknowledgements.txt
         buildPhase: resources
+      - path: App/Localizable.xcstrings
       - path: Shared
       - path: ../design/icons/AppIcon.icon
     dependencies:

@@ -5,6 +5,7 @@ import SwiftUI
 /// (`ChatFollow`), not a marker row. Scrolled up, it shows a jump-to-latest button with the count
 /// of new rows, and a thread opened again marks where the owner left off with a "New" divider.
 struct ChatScroll<Content: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The rows' ids, in order. Rows that only come and go (the typing mark, messages on their way)
     /// stay out: they follow by the geometry.
     let rowIDs: [String]
@@ -14,6 +15,8 @@ struct ChatScroll<Content: View>: View {
     let sent: Int
     /// The rows that are messages: only they count as new on the jump button.
     var messageIDs: Set<String> = []
+    /// The VoiceOver rotors over the rows (app.md 22.1).
+    var rotors = ChatRotors()
     /// The rows; the argument is the row the "New" divider goes above.
     @ViewBuilder var content: (_ divider: String?) -> Content
 
@@ -40,6 +43,10 @@ struct ChatScroll<Content: View>: View {
             .scrollTargetLayout()
             .padding(12)
         }
+        // Each entry's id is a row's `.id`: VoiceOver scrolls a row the lazy stack has not drawn.
+        .accessibilityRotor(Text("Turns", bundle: #bundle), entries: rotors.turns, entryID: \.id, entryLabel: \.label)
+        .accessibilityRotor(Text("Tool calls", bundle: #bundle), entries: rotors.tools, entryID: \.id, entryLabel: \.label)
+        .accessibilityRotor(Text("Requests", bundle: #bundle), entries: rotors.requests, entryID: \.id, entryLabel: \.label)
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         // A streaming reply or a growing tool card keeps the bottom in view.
@@ -117,7 +124,7 @@ struct ChatScroll<Content: View>: View {
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
         }
-        .animation(.smooth(duration: 0.2), value: follow.showsJump)
+        .animation(gateMotion(.smooth(duration: 0.2), reduce: reduceMotion), value: follow.showsJump)
         // The first rows and the bars settle over a few frames after the thread opens.
         .task {
             try? await Task.sleep(for: .milliseconds(250))
@@ -139,7 +146,7 @@ struct ChatScroll<Content: View>: View {
         case .none: break
         case .toBottom:
             if animated {
-                withAnimation(.smooth(duration: 0.3)) { position.scrollTo(edge: .bottom) }
+                withAnimation(gateMotion(.smooth(duration: 0.3), reduce: reduceMotion)) { position.scrollTo(edge: .bottom) }
             } else {
                 position.scrollTo(edge: .bottom)
                 // Once more after this layout pass: the lazy rows measure only when laid out,

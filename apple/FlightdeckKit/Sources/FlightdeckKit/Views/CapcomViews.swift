@@ -30,9 +30,7 @@ struct CapcomEntryRow: View {
                     Spacer(minLength: 8)
                     if let row {
                         HStack(spacing: 5) {
-                            Circle()
-                                .fill(row.stateColor)
-                                .frame(width: 8, height: 8)
+                            StateDot(row, size: 8)
                                 .accessibilityHidden(true)
                             Text(row.stateText(now: now))
                                 .lineLimit(1)

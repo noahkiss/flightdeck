@@ -349,7 +349,7 @@ struct HostsMenu: View {
 
     private var title: String {
         let n = board.habs.count
-        if allOnline { return n == 1 ? "1 host" : "\(n) hosts" }
+        if allOnline { return inflected("^[\(n) host](inflect: true)") }
         return "\(board.onlineCount) of \(n) online"
     }
 
@@ -527,7 +527,7 @@ struct StateMark: View {
             case .done?:
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.orange)
             default:
-                Circle().fill(row.stateColor).frame(width: 10, height: 10)
+                StateDot(row)
             }
         }
         .font(.subheadline)
@@ -850,7 +850,7 @@ struct GroupRow: View {
                 if group.over {
                     Image(systemName: "checkmark").foregroundStyle(.green).fontWeight(.bold)
                 } else {
-                    Circle().fill(Color.teal).frame(width: 10, height: 10)
+                    StateDot(shape: .working, color: .teal)
                 }
             }
             .font(.subheadline)
