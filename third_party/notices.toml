@@ -255,6 +255,10 @@ identity = "highlightr"
 license = "MIT; highlight.js (BSD-3-Clause), which it bundles with its styles, follows"
 
 [[swift]]
+identity = "keyboardshortcuts"
+license = "MIT"
+
+[[swift]]
 identity = "libghostty-spm"
 license = "MIT; bash-preexec (MIT) and the iTerm2 colour schemes (MIT) follow"
 

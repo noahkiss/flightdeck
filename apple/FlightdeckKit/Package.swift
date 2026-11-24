@@ -27,6 +27,9 @@ let package = Package(
         // On-device Parakeet for voice mode (voice.md): the Core ML runtime.
         // Only the iOS app links it, so the Mac app and the tests stay light.
         .library(name: "FlightdeckParakeet", targets: ["FlightdeckParakeet"]),
+        // Quick entry for Capcom (app.md 3.18): the Mac's floating panel and its system-wide
+        // shortcut. Only the Mac app links it.
+        .library(name: "FlightdeckQuickEntry", targets: ["FlightdeckQuickEntry"]),
     ],
     dependencies: [
         .package(path: "../../swift/HabAPI"),
@@ -48,6 +51,9 @@ let package = Package(
         // The parser MarkdownView uses, for the chat's own reads of a reply (its code blocks,
         // a fold by blocks). Pre-1.0: pinned exactly.
         .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
+        // The quick entry panel's system-wide shortcut and its recorder (app.md 3.18): a Carbon
+        // hot key, no Accessibility permission. macOS only. Pinned exactly.
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", exact: "3.1.0"),
     ],
     targets: [
         .target(
@@ -73,6 +79,14 @@ let package = Package(
             dependencies: [
                 "FlightdeckKit",
                 .product(name: "FluidAudio", package: "FluidAudio"),
+            ],
+            swiftSettings: concurrency
+        ),
+        .target(
+            name: "FlightdeckQuickEntry",
+            dependencies: [
+                "FlightdeckKit",
+                .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts", condition: .when(platforms: [.macOS])),
             ],
             swiftSettings: concurrency
         ),

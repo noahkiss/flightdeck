@@ -1,15 +1,22 @@
 import AppKit
 import FlightdeckKit
+import FlightdeckQuickEntry
 import SwiftUI
 
 @main
 struct FlightdeckApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    /// app.log opens first, so the fleet's first lines reach it (diagnostics.md 4.10).
-    @State private var fleet: Fleet = {
+    @State private var fleet: Fleet
+    /// Quick entry for Capcom (app.md 3.18): its shortcut works with or without a window.
+    @State private var quickEntry: QuickEntryController
+
+    init() {
+        // app.log opens first, so the fleet's first lines reach it (diagnostics.md 4.10).
         AppLogFile.open()
-        return AppFleet.make()
-    }()
+        let fleet = AppFleet.make()
+        _fleet = State(initialValue: fleet)
+        _quickEntry = State(initialValue: QuickEntryController(fleet: fleet))
+    }
     /// The needs-you menu bar extra shows (app.md 3.17).
     @AppStorage(MenuBarSetting.key) private var menuBarShown = true
 
@@ -30,7 +37,7 @@ struct FlightdeckApp: App {
                 }
         }
         .commands {
-            FlightdeckCommands(fleet: fleet)
+            FlightdeckCommands(fleet: fleet, askCapcom: { quickEntry.show() })
             // View › Show Toolbar and Customize Toolbar… (app.md 3.13).
             ToolbarCommands()
         }
@@ -43,11 +50,11 @@ struct FlightdeckApp: App {
         .handlesExternalEvents(matching: [])
         // The Settings window, ⌘, (app.md 3.8).
         Settings {
-            FlightdeckSettings(fleet: fleet)
+            FlightdeckSettings(fleet: fleet) { QuickEntrySettings() }
         }
         // Needs you in the menu bar (app.md 3.17); Settings turns it off.
         MenuBarExtra(isInserted: $menuBarShown) {
-            NeedsYouMenu(fleet: fleet)
+            NeedsYouMenu(fleet: fleet, askCapcom: { quickEntry.show() })
         } label: {
             NeedsYouMenuBarLabel(board: fleet.board)
         }

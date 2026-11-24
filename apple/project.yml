@@ -31,6 +31,9 @@ targets:
     dependencies:
       - package: FlightdeckKit
         product: FlightdeckKit
+      # Quick entry for Capcom (app.md 3.18): the panel and its system-wide shortcut.
+      - package: FlightdeckKit
+        product: FlightdeckQuickEntry
       # A share extension: add its target below and embed it here.
       # - target: ShareExtensionMac
       #   embed: true

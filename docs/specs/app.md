@@ -792,8 +792,9 @@ in the background" setting (20.4, not built).
 
 ### 3.18 Quick entry for Capcom (Mac)
 
-Code: `Chat/QuickEntry.swift` (the send), the `FlightdeckQuickEntry` product (the panel and the
-shortcut, Mac only). Tests: `QuickEntryTests`.
+Code: `Chat/QuickEntry.swift` (the send), `Views/QuickEntryViews.swift` (the panel's content),
+and the `FlightdeckQuickEntry` product (the panel and the shortcut, Mac only). Tests:
+`QuickEntryTests`.
 
 A small floating panel takes a message to Capcom from anywhere on the Mac, as the ChatGPT and
 Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward.
@@ -807,7 +808,8 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
   making Flightdeck the active app, so its windows stay where they were. Esc, a click
   elsewhere, or the shortcut closes it. What was typed stays in the field while the app runs.
 - **What it holds:** a field, "Ask Capcom", that grows to six lines (Return sends,
-  Shift-Return or Option-Return writes a new line, as the composer, 4.2); a line that says
+  Shift-Return or Option-Return writes a new line, as the composer, 4.2, and with a Japanese,
+  Chinese or Korean input method Return stays the input method's); a line that says
   where the message goes ("To Capcom on bench") or why it cannot go yet; Send, and "Send to
   New Chat" (⌘Return); and "Recent": the last five messages sent from the panel, newest
   first, kept on this Mac. A click on one puts it back in the field. Clear empties the list.
@@ -816,9 +818,11 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
   shows the message as if typed in its composer. **Send to New Chat** opens a new
   conversation first (`capcom.open` with `new`), as New conversation does (capcom.md 8.2);
   the Capcom view follows it. The panel waits until the conversation takes a message (its
-  state reaches the app after the open) and until the hab takes the send, then closes. A
-  failure keeps the text and shows the hab's words, or "Capcom did not take the message" when
-  it never got ready.
+  state reaches the app after the open) and until the hab takes the send, up to 15 s each,
+  then closes. A failure keeps the text and says why: a refused open in the hab's words, a
+  refused send in the composer's sentence for it (4.2), or "Capcom did not take the message."
+  when the conversation never got ready. The failed message leaves the Capcom view, since the
+  panel holds it.
 - **Before it can send** the line says why not, and Send is off: "Connecting…" while the habs
   connect or the home is not known yet, "No Capcom host. Choose one in Settings." with no
   home, "<host> is offline" with the home offline, and "Capcom's host is not in this app."
@@ -837,7 +841,7 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
 | Case | Behaviour |
 |---|---|
 | A pane-based Capcom is mid-turn | The message waits as the composer's does ("Sends after this turn") and goes when the turn ends while the app is connected |
-| The hab refuses the send | The panel stays open with the text and the hab's words |
+| The hab refuses the send | The panel stays open with the text and the reason |
 | The shortcut is pressed while a Flightdeck sheet is up | The panel shows over it; the sheet stays |
 
 Design call: no shortcut out of the box, as the KeyboardShortcuts package asks of a public app,
