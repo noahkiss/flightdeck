@@ -75,6 +75,19 @@ final class NotifyLevelTests: XCTestCase {
         XCTAssertEqual(done.interruptionLevel, .active)
         XCTAssertNotNil(done.sound)
 
+        // The hab's late summary: a passive, soundless replacement of a permission banner. With
+        // approvals at their time-sensitive default it must not ring again.
+        let fresh = NotifyLevels(defaults: emptyDefaults())
+        let summary = UNMutableNotificationContent()
+        summary.interruptionLevel = .passive
+        fresh.apply(to: summary, meta: PushMeta(kind: "permission", hab: "h", request: "r1"))
+        XCTAssertEqual(summary.interruptionLevel, .passive)
+        XCTAssertNil(summary.sound)
+        let question = UNMutableNotificationContent()
+        question.interruptionLevel = .passive
+        fresh.apply(to: question, meta: PushMeta(kind: "question", hab: "h"))
+        XCTAssertEqual(question.interruptionLevel, .passive, "never raised")
+
         let error = UNMutableNotificationContent()
         error.interruptionLevel = .active
         levels.apply(to: error, meta: PushMeta(kind: "error", hab: "h"))
@@ -97,6 +110,11 @@ final class NotifyLevelTests: XCTestCase {
                        "a push sent before the hab heard off shows quiet")
         XCTAssertEqual(NotifyPresentation.options(meta: PushMeta(kind: "notice", hab: "h"), remote: true, onScreen: false, levels: levels), [.banner, .list, .sound])
         XCTAssertEqual(NotifyPresentation.options(meta: nil, remote: true, onScreen: false, levels: levels), [.banner, .list, .sound])
+        XCTAssertEqual(NotifyPresentation.options(meta: permission, remote: true, onScreen: false, sent: .passive, levels: levels), [.list],
+                       "a passive replacement is never raised to a banner")
+        levels.set(.normal, for: .finished)
+        XCTAssertEqual(NotifyPresentation.options(meta: PushMeta(kind: "done", hab: "h"), remote: true, onScreen: false, sent: .passive, levels: levels),
+                       [.banner, .list, .sound], "done comes passive from the hab and takes the owner's level")
     }
 
     /// Off leaves the kind out of `push.register`; the hab then sends none.
@@ -243,6 +261,16 @@ final class AppIntentLogicTests: XCTestCase {
         XCTAssertNil(fleet.waitingRequest(hab: "other-host", session: nil))
         XCTAssertFalse(fleet.boardIsCurrent, "the fleet is not active: nothing proves the board current")
         XCTAssertNil(Fleet(board: board(online: false)).waitingRequest(hab: nil, session: nil), "an offline hab's request may be gone")
+    }
+
+    /// Approve Pending's route in the app: open, wait for the board, or say nothing waits.
+    func testPendingRoute() async {
+        let fleet = Fleet(board: board())
+        XCTAssertEqual(fleet.pendingRoute(hab: "studio-host", session: "harbour"), .wait, "not in front: the board may be old")
+        await fleet.setActive(true)
+        if case .open(let r) = fleet.pendingRoute(hab: nil, session: nil) { XCTAssertEqual(r.requestID, "req-1") } else { XCTFail("opens") }
+        XCTAssertEqual(fleet.pendingRoute(hab: "studio-host", session: "harbour"), .nothing, "every hab online, nothing waits there")
+        await fleet.setActive(false)
     }
 
     func testNeedsYouSnapshotCarriesNoCommand() throws {

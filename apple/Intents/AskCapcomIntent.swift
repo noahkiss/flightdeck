@@ -11,6 +11,8 @@ struct AskCapcomIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask Capcom"
     static let description = IntentDescription("Opens Capcom, the conversation that needs no project. With a message, sends it to Capcom.")
     static var supportedModes: IntentModes { .foreground }
+    /// Behind unlock: a message to an agent that can act, from the control too (app.md 3.19).
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     @Parameter(title: "Message", inputOptions: String.IntentInputOptions(multiline: true))
     var message: String?

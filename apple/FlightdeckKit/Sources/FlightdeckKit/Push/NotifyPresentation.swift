@@ -12,15 +12,15 @@ public enum NotifyPresentation {
     ///   - remote: the notification came from a hab's push. The app's own notices (a failed
     ///     answer, a usage alert, the ping test) always show.
     ///   - onScreen: the push names a session the app reports in focus now.
-    public static func options(meta: PushMeta?, remote: Bool, onScreen: Bool, levels: NotifyLevels) -> UNNotificationPresentationOptions {
+    ///   - sent: the push's interruption level as it arrived; a passive one is never raised.
+    public static func options(meta: PushMeta?, remote: Bool, onScreen: Bool, sent: UNNotificationInterruptionLevel = .active,
+                               levels: NotifyLevels) -> UNNotificationPresentationOptions {
         guard remote else { return full }
         // The hab holds banners for a session in focus (8.6); this is the app's backstop for a
         // push that crossed the focus report.
         if onScreen { return [] }
-        guard let l = levels.level(for: meta) else { return full }
-        // Off can meet a push sent before the hab heard the new kinds: it shows quiet, as in the
-        // notification service extension.
-        return (l == .off ? NotifyLevel.quiet : l).foreground
+        // The same rule as the notification service extension.
+        return levels.shown(meta, sent: sent)?.foreground ?? full
     }
 }
 

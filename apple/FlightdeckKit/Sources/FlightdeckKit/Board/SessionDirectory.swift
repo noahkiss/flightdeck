@@ -81,11 +81,6 @@ public final class SessionDirectory {
         return fallback
     }
 
-    /// Forgets every session (demo data must never reach Spotlight).
-    public func clear() {
-        apply([])
-    }
-
     private func apply(_ next: [SessionEntry]) {
         guard next != entries else { return }
         let old = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
@@ -169,6 +164,21 @@ extension Fleet {
             if let session, r.session != session { return false }
             return true
         }
+    }
+
+    /// What Approve Pending's route does now (app.md 3.19).
+    public enum PendingRoute: Equatable, Sendable {
+        /// Open the sheet on this request.
+        case open(OpenRequest)
+        /// Every hab is online and nothing waits: say so.
+        case nothing
+        /// A hab still connects: wait for the board.
+        case wait
+    }
+
+    public func pendingRoute(hab: String?, session: String?) -> PendingRoute {
+        if let r = waitingRequest(hab: hab, session: session) { return .open(r) }
+        return boardIsCurrent ? .nothing : .wait
     }
 
     /// Every hab in the app is online: the board is current, so "nothing waits" is true.

@@ -871,7 +871,7 @@ Spotlight, the Action button and Control Center can reach them.
 | Open Session | Opens a session, as a session link does (3.15). Spotlight runs it for a tapped session | Opens the app |
 | New Session | Opens the New session form (3.10) | Opens the app |
 | Ask Capcom | Opens the Capcom view (4.10); with a message, sends it to Capcom's standing conversation through quick entry's send (3.18), after waiting up to 15 s for Capcom's home to come online. A message that did not go shows in an alert, "Not sent to Capcom", with the reason and Copy Message | Opens the app |
-| Approve Pending Request | Opens the approval sheet on the oldest request that waits, in one session when one is named (7.2) | In the background when the board shows nothing waits; else opens the app |
+| Approve Pending Request | Opens the approval sheet on the oldest request that waits, in one session when one is named (7.2) | Opens the app, unless the app is already in front and nothing waits |
 
 - **The session entity.** A session is known by its link: the hab's host id and the session id
   (3.15), never a connection id, so the id holds across launches and devices. The entity shows the
@@ -885,17 +885,26 @@ Spotlight, the Action button and Control Center can reach them.
   loses its sessions. A hab whose host id is not known yet keeps what it had. Search matches the
   name or the computer's label, ignoring case and accents; names that start with the text come
   first.
-- **Spotlight.** Each session is an indexed entity. The app adds or updates the sessions that
-  changed and deletes the ones that went, and writes the whole list once per launch, so a lost
-  index heals. Demo mode reaches neither the list nor Spotlight.
+- **Spotlight.** Each session is an indexed entity, in a named index of the app's own. On iOS
+  that index uses complete data protection, so session names cannot be read while the device is
+  locked; the Mac has no per-index protection class. The app adds or updates the sessions that
+  changed and deletes the ones that went. The writes run one at a time, in order, so a delete
+  never overtakes the update before it. At each launch the app deletes every session in the index
+  and indexes its whole list, so a lost index heals and an entry the list no longer holds leaves.
+  Demo mode reaches neither the list nor Spotlight.
+- **Unlock.** Every intent needs the device unlocked (`requiresAuthentication`), the control's
+  too: an intent can name a session, open a request or send a message to an agent that can act.
+  Siri on a locked device asks for unlock before it reads a session name.
 - **Routes.** An intent runs in the app's process and posts a route; a board window takes it.
   Open Session goes through the window's link handling, so it waits for the board to list the
   session, within the minute. New Session, Ask Capcom and the approval sheet wait until the
   window has registered its commands (3.13). A route no window took within a minute lapses.
 - **Approve Pending never answers.** Allow stays in the sheet, where the command shows and Allow
   asks for Face ID (7.6), and the sheet names one request by id, so no other command can slip
-  under Allow (8.7). With every hab online and nothing waiting, the intent says "Nothing waits for
-  you." without opening the app.
+  under Allow (8.7). When the app was already in front with every hab online and nothing
+  waiting, the intent answers "Nothing waits for you." without opening the app. Otherwise it opens
+  the app, which waits for every hab to come online: it then opens the sheet, or shows the alert
+  "Nothing waits for you." Within the minute a hab stays offline, the route lapses.
 - **Phrases.** Each phrase names the app, or the system drops it: "Ask Flightdeck", "Talk to
   Capcom in Flightdeck", "Open <session> in Flightdeck", "New session in Flightdeck", "Approve
   pending request in Flightdeck". Voice mode stays separate from Siri (13).
@@ -2981,6 +2990,10 @@ The owner picks how strongly each kind of push interrupts. Settings › Notifica
   passive, no sound; it goes to Notification Center and the screen stays dark. Normal: active,
   with sound. Time sensitive: breaks through a Focus. Approvals have no Off: an approval is never
   dropped silently (8.3).
+- **A passive push is never raised.** The hab sends an approval or question push passive only
+  to replace a banner that already alerted, such as the late summary (16.5). It stays passive,
+  with no sound, whatever the level. `done` is the exception: the hab always sends it passive, so
+  the finished level applies to it.
 - **Where they apply.** The hab still sets each push's level (8.2). The iOS notification service
   extension rewrites `interruptionLevel` and the sound to the owner's level before iOS shows it.
   It reads the levels from the App Group. In the foreground, `willPresent` shows a banner with
@@ -4070,7 +4083,8 @@ never from private files).
 ### 15.4 Needs you and the Capcom control (built)
 
 - **Needs you.** Small: the count and the oldest item. Medium: two items. Large: four. Lock
-  Screen: rectangular (the count and the oldest title) and inline (the count). Each item shows
+  Screen: rectangular (the count, and the oldest title marked privacy-sensitive, so the system
+  hides it while the device is locked) and inline (the count). Each item shows
   what it waits for (a permission, a question, anything else in Needs you), the session's name
   and its computer's label. Requests come first, oldest first, then the other Needs you rows in
   the board's order.

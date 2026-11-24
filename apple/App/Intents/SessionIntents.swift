@@ -25,8 +25,9 @@ enum IntentHost {
             // "Open <session> in Flightdeck" knows the sessions of the last update.
             FlightdeckShortcuts.updateAppShortcutParameters()
         }
-        // The index can be lost (a restore, a reset): write the whole list once per launch.
-        SessionSpotlight.update(upsert: directory.entries, delete: [])
+        // Once per launch, the index is rebuilt from the list: a lost index heals, and sessions
+        // the list no longer holds (its defaults wiped) leave it.
+        SessionSpotlight.reset(directory.entries)
         FlightdeckShortcuts.updateAppShortcutParameters()
     }
 }
@@ -71,16 +72,51 @@ struct SessionQuery: EntityStringQuery {
     }
 }
 
-/// Spotlight's copy of the session list: names and ids only (app.md 3.19).
+/// Spotlight's copy of the session list: names and ids only (app.md 3.19). Writes run one at a
+/// time, in order, so a delete never overtakes the upsert before it.
 enum SessionSpotlight {
+    private enum Write: Sendable {
+        /// Launch: drop every session the index holds, then index the whole list.
+        case reset([SessionEntity])
+        case change(add: [SessionEntity], delete: [String])
+    }
+
+    private static let writes: AsyncStream<Write>.Continuation = {
+        let (stream, continuation) = AsyncStream.makeStream(of: Write.self)
+        Task.detached(priority: .utility) {
+            let index = makeIndex()
+            for await w in stream {
+                switch w {
+                case .reset(let all):
+                    try? await index.deleteAppEntities(ofType: SessionEntity.self)
+                    if !all.isEmpty { try? await index.indexAppEntities(all) }
+                case .change(let add, let delete):
+                    if !delete.isEmpty { try? await index.deleteAppEntities(identifiedBy: delete, ofType: SessionEntity.self) }
+                    if !add.isEmpty { try? await index.indexAppEntities(add) }
+                }
+            }
+        }
+        return continuation
+    }()
+
+    /// A named index. On iOS its items use complete protection: session names stay unreadable
+    /// while the device is locked. The Mac has no per-index protection class.
+    private static func makeIndex() -> CSSearchableIndex {
+        #if os(iOS)
+        CSSearchableIndex(name: "flightdeck.sessions", protectionClass: .complete)
+        #else
+        CSSearchableIndex(name: "flightdeck.sessions")
+        #endif
+    }
+
+    @MainActor
+    static func reset(_ all: [SessionEntry]) {
+        writes.yield(.reset(all.map(SessionEntity.init)))
+    }
+
     @MainActor
     static func update(upsert: [SessionEntry], delete: [String]) {
-        let add = upsert.map(SessionEntity.init)
-        Task.detached {
-            let index = CSSearchableIndex.default()
-            if !delete.isEmpty { try? await index.deleteAppEntities(identifiedBy: delete, ofType: SessionEntity.self) }
-            if !add.isEmpty { try? await index.indexAppEntities(add) }
-        }
+        writes.yield(.change(add: upsert.map(SessionEntity.init), delete: delete))
     }
 }
 
@@ -89,6 +125,8 @@ struct OpenSessionIntent: OpenIntent {
     static let title: LocalizedStringResource = "Open Session"
     static let description = IntentDescription("Opens a session in Flightdeck.")
     static var supportedModes: IntentModes { .foreground }
+    /// Behind unlock, like every Flightdeck intent (app.md 3.19).
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     @Parameter(title: "Session")
     var target: SessionEntity
@@ -111,6 +149,7 @@ struct NewSessionIntent: AppIntent {
     static let title: LocalizedStringResource = "New Session"
     static let description = IntentDescription("Opens the New session form in Flightdeck.")
     static var supportedModes: IntentModes { .foreground }
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     func perform() async throws -> some IntentResult {
         await AppRouteBridge.post(.newSession)
@@ -124,6 +163,7 @@ struct ApprovePendingIntent: AppIntent {
     static let title: LocalizedStringResource = "Approve Pending Request"
     static let description = IntentDescription("Opens the oldest request that waits for you, ready to approve.")
     static var supportedModes: IntentModes { [.background, .foreground(.dynamic)] }
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     @Parameter(title: "Session")
     var session: SessionEntity?

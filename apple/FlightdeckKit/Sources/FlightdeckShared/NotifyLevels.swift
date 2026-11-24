@@ -107,17 +107,21 @@ public struct NotifyLevels {
     }
 
     /// The level a push shows with; nil when no level covers its kind, so it shows as the
-    /// hab sent it.
-    public func level(for meta: PushMeta?) -> NotifyLevel? {
+    /// hab sent it. `sent` is the hab's level.
+    /// - A push the hab sent passive stays quiet: it replaces a banner that already alerted (a
+    ///   late summary, 16.5), and must not ring again. Only `done`, which the hab always sends
+    ///   passive, takes the owner's level.
+    /// - Off can still meet a push the hab sent before it heard the new kinds; it shows quiet.
+    public func shown(_ meta: PushMeta?, sent: UNNotificationInterruptionLevel) -> NotifyLevel? {
         guard let k = meta.flatMap({ NotifyKind.of(pushKind: $0.kind) }) else { return nil }
-        return level(k)
+        if sent == .passive, k != .finished { return .quiet }
+        let l = level(k)
+        return l == .off ? .quiet : l
     }
 
-    /// The notification service extension's step: the push takes the owner's level. A level
-    /// of off can still meet a push the hab sent before it heard the new kinds; it shows quiet.
+    /// The notification service extension's step: the push takes the level `shown` gives.
     public func apply(to content: UNMutableNotificationContent, meta: PushMeta?) {
-        guard let l = level(for: meta) else { return }
-        let shown = l == .off ? NotifyLevel.quiet : l
+        guard let shown = shown(meta, sent: content.interruptionLevel) else { return }
         if let i = shown.interruption { content.interruptionLevel = i }
         content.sound = shown == .quiet ? nil : .default
     }

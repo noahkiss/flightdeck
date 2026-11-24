@@ -117,7 +117,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate {
         let request = notification.request
         let meta = PushMeta(userInfo: request.content.userInfo)
         return NotifyPresentation.options(meta: meta, remote: request.trigger is UNPushNotificationTrigger,
-                                          onScreen: onScreen?(meta) ?? false, levels: levels)
+                                          onScreen: onScreen?(meta) ?? false, sent: request.content.interruptionLevel, levels: levels)
     }
 
     public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

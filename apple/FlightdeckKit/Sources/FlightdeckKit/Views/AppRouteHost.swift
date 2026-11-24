@@ -13,6 +13,8 @@ struct AppRouteHost: ViewModifier {
     let commands: WindowCommands
     /// An Ask Capcom message that did not go.
     @State private var unsent: Unsent?
+    /// Approve Pending found nothing once every hab was online.
+    @State private var nothingWaits = false
 
     struct Unsent: Identifiable {
         let id = UUID()
@@ -27,6 +29,9 @@ struct AppRouteHost: ViewModifier {
                 Button("OK", role: .cancel) {}
             } message: { u in
                 Text("\(u.why)\n\n\(u.message)")
+            }
+            .alert("Nothing waits for you.", isPresented: $nothingWaits) {
+                Button("OK", role: .cancel) {}
             }
             .onChange(of: fleet.routes.serial, initial: true) { _, _ in attempt() }
             .onChange(of: commands.goTargets) { _, _ in attempt() }
@@ -53,7 +58,7 @@ struct AppRouteHost: ViewModifier {
             case .approvals(let hab, let session):
                 // Wait for the request to reach the board; with the board current and nothing
                 // waiting, there is nothing to open.
-                return fleet.waitingRequest(hab: hab, session: session) != nil || fleet.boardIsCurrent
+                return fleet.pendingRoute(hab: hab, session: session) != .wait
             }
         }
         switch route {
@@ -72,7 +77,11 @@ struct AppRouteHost: ViewModifier {
                 }
             }
         case .approvals(let hab, let session)?:
-            guard let r = fleet.waitingRequest(hab: hab, session: session) else { return }
+            // Every hab is online and nothing waits: say so, never open an empty sheet.
+            guard case .open(let r) = fleet.pendingRoute(hab: hab, session: session) else {
+                nothingWaits = true
+                return
+            }
             fleet.approvals?.open(PushMeta(kind: r.kind == .question ? "question" : "permission", hab: r.host ?? hab ?? "",
                                            session: r.session, pane: r.pane, request: r.requestID))
         case .session?, nil:

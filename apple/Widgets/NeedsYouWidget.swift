@@ -60,7 +60,8 @@ struct NeedsYouWidgetView: View {
             VStack(alignment: .leading) {
                 Text(count == 0 ? "Nothing needs you" : "\(count) need you").font(.headline)
                 if let first = items.first {
-                    Text(first.title).lineLimit(1)
+                    // Hidden while the device is locked: a session's name can say what it works on.
+                    Text(first.title).lineLimit(1).privacySensitive()
                 }
             }
         default:
