@@ -397,11 +397,12 @@ struct BoardNewSession: ViewModifier {
         if let fleet {
             content
                 #if os(macOS)
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
+                // Customisable (app.md 3.13): View › Customize Toolbar… adds, removes and moves them.
+                .toolbar(id: "board") {
+                    ToolbarItem(id: "next-needing-you", placement: .primaryAction) {
                         NextNeedingYouButton(board: fleet.board, openedID: openedID, open: open)
                     }
-                    ToolbarItem(placement: .primaryAction) {
+                    ToolbarItem(id: "new-session", placement: .primaryAction) {
                         NewSessionButton(center: fleet.newSessions, draft: $draft)
                     }
                 }

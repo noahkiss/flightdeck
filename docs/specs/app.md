@@ -635,6 +635,7 @@ one that applies.
 | Go | Sessions, Capcom | ⌘1, ⌘2 | Mac: Sessions shows the board with nothing open; Capcom opens the Capcom view. The Mac's Settings is its own window (⌘,) and its rounds sit in the board |
 | Go | Next Needing You | ⌥⌘A | Opens the next session that needs the owner (3.16) |
 | Go | Mark All as Read | | Marks every unread `done` session read (3.16) |
+| View | Show Toolbar, Customize Toolbar… | ⌥⌘T | Mac: the system's toolbar commands (`ToolbarCommands`) for the board and session windows |
 
 - **Enablement.** The Session menu needs an open session in the focused window. Rename,
   Restart, Copy Name and Close follow what the row offers (3.11), so an offline hab's session
@@ -643,6 +644,16 @@ one that applies.
   side by side, or the Mac's Capcom view. Voice Mode follows the session's Voice button.
 - **Close Window** (⌘W) stays the system's. Session › Close… ends or removes the session, after
   its question.
+- **A toolbar the owner arranges (Mac).** The board window's toolbar and a session window's
+  toolbar are customisable (`toolbar(id:)`, each control a `ToolbarItem(id:)`): View ›
+  Customize Toolbar… or a secondary click on the toolbar adds, removes and moves the controls,
+  and the system keeps the arrangement per window kind. The board's items are Next Needing
+  You and New Session. A session window's are the Chat | Terminal switch and New conversation
+  (Capcom sessions only), Voice, Console, Show in chat, Show files and Note friction; a session
+  that never offers a control (Capcom's on an agent session, Console on a console) leaves its
+  item out, and a control whose state changes (Voice while offline) turns off instead. The
+  session beside the board keeps its header row of controls, since the board's toolbar is the
+  window's.
 - **Shortcuts the app already had** stay: ⌥⌘F for Note friction (11), Return and Esc in sheets
   (3.8).
 - **A session window** (3.14) offers the Session menu for its session. New Session, Find
@@ -665,7 +676,8 @@ Code: `Views/SessionWindow.swift`. Tests: `SessionLinkTests`.
   window forward.
 - **The window** shows the session as the board's detail does: chat beside the terminal on the
   Mac and in a wide iPad window, the phone's switch in a narrow one. Its title is the session's
-  title. It waits for the board to list the session, up to a minute, with "Opening <session>";
+  title; its subtitle is the session's line (round, harness, hab, model). On the Mac its
+  controls sit in the window's customisable toolbar (3.13), not in a header row. It waits for the board to list the session, up to a minute, with "Opening <session>";
   after that it says "This session is not on any paired computer."
 - **A removed session** leaves its window open with "This session was removed." The window does
   not close by itself, so a removal never makes a window vanish under the pointer.

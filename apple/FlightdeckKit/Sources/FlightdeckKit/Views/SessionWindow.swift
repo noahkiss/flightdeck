@@ -230,14 +230,13 @@ private struct SessionWindowContent: View {
                 .navigationBarTitleDisplayMode(.inline)
         }
         #else
+        // The session view sets the title, the subtitle and the customisable toolbar.
         session(compact: false)
-            .navigationTitle(row.title)
-            .navigationSubtitle(row.host)
         #endif
     }
 
     private func session(compact: Bool) -> some View {
-        SessionView(model: fleet.chat(for: row.target), compact: compact)
+        SessionView(model: fleet.chat(for: row.target), compact: compact, inWindow: true)
             .id(row.target)
             .sessionHandoff(row, board: fleet.board)
             // session.focus while the session is on screen (app.md 8.6).

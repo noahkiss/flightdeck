@@ -27,7 +27,11 @@ struct FlightdeckApp: App {
                     }
                 }
         }
-        .commands { FlightdeckCommands(fleet: fleet) }
+        .commands {
+            FlightdeckCommands(fleet: fleet)
+            // View › Show Toolbar and Customize Toolbar… (app.md 3.13).
+            ToolbarCommands()
+        }
         // A session in its own window (app.md 3.14); it takes no links.
         WindowGroup(id: FlightdeckScene.session, for: SessionLink.self) { $link in
             SessionWindowRoot(fleet: fleet, link: link)
