@@ -223,10 +223,12 @@ public struct SessionView: View {
                 if inWindow {
                     // A session window (app.md 3.14): the controls in the window's toolbar,
                     // which the owner can customise (app.md 3.13).
-                    macContent
-                        .navigationTitle(model.context.title)
-                        .navigationSubtitle(ChatHeader.line(model.context, round: true))
-                        .toolbar(id: "session") { windowToolbar }
+                    // One toolbar id per window kind, each with fixed items (SessionToolbar).
+                    if model.context.isCapcom {
+                        windowContent.toolbar(id: SessionToolbar.id(capcom: true)) { capcomToolbar }
+                    } else {
+                        windowContent.toolbar(id: SessionToolbar.id(capcom: false)) { agentToolbar }
+                    }
                 } else {
                     VStack(spacing: 0) {
                         macHeader
@@ -427,34 +429,51 @@ public struct SessionView: View {
         }
     }
 
-    /// A session window's toolbar (app.md 3.13, 3.14): each control is its own item, so the
-    /// owner can remove, add and move them (View › Customize Toolbar…). Items a session never
-    /// offers (the Capcom ones on an agent session) are left out; a control whose state
-    /// changes (Voice while offline) turns off instead.
+    /// A session window's content with its title and subtitle (app.md 3.14).
+    private var windowContent: some View {
+        macContent
+            .navigationTitle(model.context.title)
+            .navigationSubtitle(ChatHeader.line(model.context, round: true))
+    }
+
+    private func on(_ item: SessionToolbar.Item) -> Bool {
+        SessionToolbar.enabled(item, context: model.context, session: model.target.session != nil, show: model.show != nil)
+    }
+
+    /// A Capcom window's toolbar (app.md 3.13, 3.14): each control is its own item, so the
+    /// owner can remove, add and move them (View › Customize Toolbar…). The items never change;
+    /// a control that does not apply now turns off (SessionToolbar).
     @ToolbarContentBuilder
-    private var windowToolbar: some CustomizableToolbarContent {
-        if model.context.isCapcom {
-            if !model.context.isCapcomService {
-                ToolbarItem(id: "view", placement: .primaryAction) {
-                    viewPicker
-                }
-            }
-            ToolbarItem(id: "new-conversation", placement: .primaryAction) {
-                newConversationButton
-            }
+    private var capcomToolbar: some CustomizableToolbarContent {
+        ToolbarItem(id: SessionToolbar.Item.view.rawValue, placement: .primaryAction) {
+            viewPicker.disabled(!on(.view))
         }
-        ToolbarItem(id: "voice", placement: .primaryAction) {
+        ToolbarItem(id: SessionToolbar.Item.newConversation.rawValue, placement: .primaryAction) {
+            newConversationButton
+        }
+        sharedToolbar
+    }
+
+    /// An agent session window's toolbar: the Capcom window's without its two Capcom items.
+    @ToolbarContentBuilder
+    private var agentToolbar: some CustomizableToolbarContent {
+        sharedToolbar
+    }
+
+    @ToolbarContentBuilder
+    private var sharedToolbar: some CustomizableToolbarContent {
+        ToolbarItem(id: SessionToolbar.Item.voice.rawValue, placement: .primaryAction) {
             VoiceButton(model: model, shown: $voiceShown)
         }
-        if hasConsole {
-            ToolbarItem(id: "console", placement: .primaryAction) { consoleButton }
+        ToolbarItem(id: SessionToolbar.Item.console.rawValue, placement: .primaryAction) {
+            consoleButton.disabled(!on(.console))
         }
-        if showsChatFilter {
-            ToolbarItem(id: "show-in-chat", placement: .primaryAction) { ChatShowButton(shown: $chatShowShown) }
+        ToolbarItem(id: SessionToolbar.Item.showInChat.rawValue, placement: .primaryAction) {
+            ChatShowButton(shown: $chatShowShown).disabled(!on(.showInChat))
         }
-        ToolbarItem(id: "files", placement: .primaryAction) { filesButton }
-        if model.context.takesFriction {
-            ToolbarItem(id: "friction", placement: .primaryAction) { frictionButton }
+        ToolbarItem(id: SessionToolbar.Item.files.rawValue, placement: .primaryAction) { filesButton }
+        ToolbarItem(id: SessionToolbar.Item.friction.rawValue, placement: .primaryAction) {
+            frictionButton.disabled(!on(.friction))
         }
     }
 
@@ -478,12 +497,12 @@ public struct SessionView: View {
 
     /// The session has a console to open (app.md 6).
     private var hasConsole: Bool {
-        model.target.session != nil && !model.context.isConsole && !model.context.isCapcomService
+        SessionToolbar.enabled(.console, context: model.context, session: model.target.session != nil, show: model.show != nil)
     }
 
     /// Show in chat applies (app.md 4.11).
     private var showsChatFilter: Bool {
-        model.show != nil && !model.context.isCapcomService
+        SessionToolbar.enabled(.showInChat, context: model.context, session: model.target.session != nil, show: model.show != nil)
     }
 
     /// A sheet of this view is up: console, friction, Show in chat, voice, or the phone's files.

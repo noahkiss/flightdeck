@@ -14,23 +14,24 @@ extension KeyboardShortcuts.Name {
 /// app makes one at launch; it lives as long as the app, with or without a window.
 @MainActor
 public final class QuickEntryController {
-    private let fleet: Fleet
     public let entry: QuickEntry
     private var panel: QuickEntryPanel?
-    /// The panel counts as a window for the lifecycle rule while it shows (app.md 12.1).
-    private var counted = false
+    /// The panel's place in the window count (app.md 12.1) and the shortcut's debounce.
+    private let window: QuickEntryWindow
     /// Changes each time the panel shows, so the field takes the keyboard again.
     private var shown = 0
 
     public init(fleet: Fleet) {
-        self.fleet = fleet
         entry = QuickEntry(capcom: fleet.capcom)
+        window = QuickEntryWindow(fleet: fleet, entry: entry)
         // A Carbon hot key: no Accessibility permission and no entitlement.
         KeyboardShortcuts.onKeyUp(for: .quickEntry) { [weak self] in self?.toggle() }
     }
 
-    /// The shortcut: shows the panel, or closes it when it shows.
+    /// The shortcut: shows the panel, or closes it when it shows. A second fire within
+    /// 150 ms is ignored (KeyboardShortcuts issue 243).
     public func toggle() {
+        guard window.acceptsToggle() else { return }
         if panel?.isVisible == true { close() } else { show() }
     }
 
@@ -41,19 +42,14 @@ public final class QuickEntryController {
         shown += 1
         p.contentViewController = host()
         place(p)
-        if !counted {
-            counted = true
-            fleet.windowOpened()
-        }
+        window.shown()
         p.makeKeyAndOrderFront(nil)
     }
 
+    /// Hides the panel. A send it started keeps the habs connected until it ends.
     public func close() {
         panel?.orderOut(nil)
-        if counted {
-            counted = false
-            fleet.windowClosed()
-        }
+        window.hidden()
     }
 
     private func host() -> NSViewController {
@@ -66,8 +62,13 @@ public final class QuickEntryController {
 
     private func make() -> QuickEntryPanel {
         let p = QuickEntryPanel()
-        // A click elsewhere closes it, as Spotlight's panel does.
-        p.onResign = { [weak self] in self?.close() }
+        // A click elsewhere closes it, as Spotlight's panel does, unless a send runs: then the
+        // panel stays to show how the send ended.
+        p.onResign = { [weak self] in
+            guard let self, self.window.closesOnResign else { return }
+            self.close()
+        }
+        p.onCancel = { [weak self] in self?.close() }
         return p
     }
 
@@ -86,6 +87,7 @@ public final class QuickEntryController {
 /// A floating panel that takes the keyboard without activating the app.
 final class QuickEntryPanel: NSPanel {
     var onResign: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 620, height: 120),
@@ -118,7 +120,7 @@ final class QuickEntryPanel: NSPanel {
 
     /// Esc.
     override func cancelOperation(_ sender: Any?) {
-        onResign?()
+        onCancel?()
     }
 }
 

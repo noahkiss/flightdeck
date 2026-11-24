@@ -7,6 +7,8 @@ import SwiftUI
 struct ChatDropTarget: ViewModifier {
     /// The composer takes files now.
     let enabled: Bool
+    /// Reads `enabled` again when a drop finishes reading: the composer may have changed.
+    let takesFiles: @MainActor () -> Bool
     @Binding var draft: String
     @Binding var attachments: [DraftAttachment]
     @Binding var notice: String?
@@ -17,12 +19,13 @@ struct ChatDropTarget: ViewModifier {
             // The overload with `isTargeted`: the DropSession form gives no highlight on iOS
             // before 27 (`onDropSessionUpdated`), and the app's floor is 26.1.
             .dropDestination(for: ChatDropItem.self) { items, _ in
-                guard enabled, !items.isEmpty else { return false }
+                guard enabled, !items.isEmpty else {
+                    ChatDrop.discard(items)
+                    return false
+                }
                 Task { @MainActor in
-                    let out = await ChatDrop.prepare(items)
-                    attachments += out.attachments
-                    draft = ChatDrop.draft(draft, adding: out.text)
-                    notice = out.notice
+                    let out = await ChatDrop.prepare(items, holding: attachments.count)
+                    notice = ChatDrop.land(out, takesFiles: takesFiles(), draft: &draft, attachments: &attachments)
                 }
                 return true
             } isTargeted: { over in

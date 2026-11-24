@@ -913,6 +913,24 @@ public actor FakeHab {
         self.onSend = onSend
     }
 
+    /// While on, each `session.send` waits unanswered until `releaseSends()`, so a test holds
+    /// a send open instead of racing a fixed delay.
+    private var sendsHeld = false
+    private var sendWaiting: [(Conn, Int, SessionSendParams)] = []
+    public func holdSends() { sendsHeld = true }
+    /// Takes every held `session.send` and answers it, and stops holding.
+    public func releaseSends() async {
+        sendsHeld = false
+        let w = sendWaiting
+        sendWaiting = []
+        for (c, id, p) in w {
+            sends.append(p)
+            await reply(c, id: id, result: Empty(seq: c.seq))
+        }
+    }
+    /// The `session.send` calls held unanswered now.
+    public var sendHeldCount: Int { sendWaiting.count }
+
     /// Makes the next `session.send` fail with this error, whatever the state.
     public func failNextSend(kind: ErrorKind, hint: String) {
         nextSendFailure = Failure(kind: kind, hint: hint)
@@ -1211,6 +1229,10 @@ public actor FakeHab {
             let carried = capcomWaiting[p.session] ?? []
             if p.text.isEmpty, (p.attachments ?? []).isEmpty, carried.isEmpty {
                 await fail(c, id: id, kind: .invalid, hint: "empty message")
+                break
+            }
+            if sendsHeld {
+                sendWaiting.append((c, id, p))
                 break
             }
             sends.append(p)

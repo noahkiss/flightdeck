@@ -197,4 +197,76 @@ final class QuickEntryTests: XCTestCase {
         XCTAssertTrue(QuickEntry(capcom: f.capcom, defaults: d).recents.isEmpty)
         await f.setActive(false)
     }
+
+    /// Closing the panel during a send keeps the habs connected until the send ends (app.md
+    /// 3.18, 12.1); the send then succeeds and the habs disconnect.
+    func testClosingDuringASendKeepsTheHabsUntilItEnds() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        let q = QuickEntry(capcom: f.capcom, defaults: defaults())
+        let w = QuickEntryWindow(fleet: f, entry: q)
+        w.shown()
+        XCTAssertTrue(w.counts)
+        await a.holdSends()
+        q.text = "hello"
+        let send = Task { await q.send() }
+        await eventually("send held") { await a.sendHeldCount == 1 }
+        XCTAssertTrue(q.sending)
+        XCTAssertFalse(w.closesOnResign, "a click elsewhere leaves the panel up while a send runs")
+        w.hidden()
+        XCTAssertTrue(w.counts, "the send holds the window count")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(f.isActive, "the habs stay connected")
+        await a.releaseSends()
+        let ok = await send.value
+        XCTAssertTrue(ok, q.failure ?? "")
+        XCTAssertFalse(w.counts)
+        await eventually("habs disconnect once the send ends") { !f.isActive }
+    }
+
+    /// The window count: open while the panel shows or a send runs, once each way.
+    func testWindowCountsOnceEachWay() async {
+        let f = Fleet()
+        let q = QuickEntry(capcom: f.capcom, defaults: defaults())
+        var opens = 0, closes = 0
+        let w = QuickEntryWindow(entry: q, opened: { opens += 1 }, closed: { closes += 1 })
+        w.shown()
+        w.shown()
+        XCTAssertEqual(opens, 1)
+        w.hidden()
+        w.hidden()
+        XCTAssertEqual(closes, 1)
+        XCTAssertTrue(w.closesOnResign)
+    }
+
+    /// The shortcut's double fire (KeyboardShortcuts issue 243): a second call within 150 ms
+    /// is ignored.
+    func testToggleIgnoresADoubleFire() {
+        let f = Fleet()
+        let w = QuickEntryWindow(fleet: f, entry: QuickEntry(capcom: f.capcom, defaults: defaults()))
+        let t0 = ContinuousClock.now
+        XCTAssertTrue(w.acceptsToggle(at: t0))
+        XCTAssertFalse(w.acceptsToggle(at: t0.advanced(by: .milliseconds(40))))
+        XCTAssertTrue(w.acceptsToggle(at: t0.advanced(by: .milliseconds(200))))
+        XCTAssertFalse(w.acceptsToggle(at: t0.advanced(by: .milliseconds(300))))
+    }
+
+    /// No answer in time: the message may still arrive, so the field empties (Return cannot
+    /// send it twice) and Recent keeps it.
+    func testATimeoutDoesNotInviteAResend() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        let q = QuickEntry(capcom: f.capcom, defaults: defaults())
+        q.wait = .milliseconds(600)
+        await a.holdSends()
+        q.text = "hello"
+        let ok = await q.send()
+        XCTAssertFalse(ok)
+        XCTAssertEqual(q.failure, "Capcom has not confirmed it yet. It may still arrive: check Capcom before you send it again.")
+        XCTAssertEqual(q.text, "")
+        XCTAssertFalse(q.canSend)
+        XCTAssertEqual(q.recents, ["hello"])
+        await a.releaseSends()
+        await f.setActive(false)
+    }
 }

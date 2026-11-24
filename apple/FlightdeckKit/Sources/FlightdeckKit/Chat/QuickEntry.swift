@@ -22,10 +22,14 @@ public final class QuickEntry {
     /// The last messages sent from the panel, newest first.
     public private(set) var recents: [String]
     /// A send is on its way.
-    public private(set) var sending = false
+    public private(set) var sending = false {
+        didSet { if sending != oldValue { onSending?(sending) } }
+    }
     /// Why the last send failed; nil after a success or an edit.
     public var failure: String?
 
+    /// Told when a send starts and ends; the panel's window count holds while one runs.
+    @ObservationIgnored var onSending: ((Bool) -> Void)?
     @ObservationIgnored private let capcom: CapcomCenter
     @ObservationIgnored private let defaults: UserDefaults
     /// How long a send waits for the conversation to take a message, and then for the hab.
@@ -111,7 +115,11 @@ public final class QuickEntry {
             failure = why
             return false
         case .sending?:
-            failure = "Capcom did not answer in time. The message may still arrive."
+            // The message may still arrive: the field empties so Return cannot send it twice,
+            // and Recent keeps it.
+            remember(message)
+            text = ""
+            failure = "Capcom has not confirmed it yet. It may still arrive: check Capcom before you send it again."
             return false
         case .queued?:
             // A pane-based Capcom mid-turn: the message would wait in the app, which may
@@ -152,5 +160,68 @@ public final class QuickEntry {
             try? await Task.sleep(for: .milliseconds(50))
         }
         return true
+    }
+}
+
+/// The quick entry panel's place in the Mac's window count (app.md 3.18, 12.1), and the
+/// shortcut's debounce. The panel counts while it shows and while a send it started runs, so
+/// closing it mid-send does not disconnect the habs under that send.
+@MainActor
+public final class QuickEntryWindow {
+    private let opened: () -> Void
+    private let closed: () -> Void
+    /// The panel shows.
+    public private(set) var shows = false
+    /// A send runs.
+    public private(set) var sending = false
+    private var counted = false
+    private var lastToggle: ContinuousClock.Instant?
+
+    /// A second shortcut press within this gap is ignored: KeyboardShortcuts 3.1.0 can fire
+    /// twice while a menu is open (its issue 243).
+    public static let toggleGap: Duration = .milliseconds(150)
+
+    public convenience init(fleet: Fleet, entry: QuickEntry) {
+        self.init(entry: entry, opened: { fleet.windowOpened() }, closed: { fleet.windowClosed() })
+    }
+
+    init(entry: QuickEntry, opened: @escaping () -> Void, closed: @escaping () -> Void) {
+        self.opened = opened
+        self.closed = closed
+        entry.onSending = { [weak self] on in
+            self?.sending = on
+            self?.update()
+        }
+    }
+
+    /// The panel counts while it shows, or while a send runs.
+    public var counts: Bool { counted }
+
+    /// A click elsewhere closes the panel, except while a send runs: the panel stays to show
+    /// how the send ended.
+    public var closesOnResign: Bool { !sending }
+
+    public func shown() {
+        shows = true
+        update()
+    }
+
+    public func hidden() {
+        shows = false
+        update()
+    }
+
+    /// The shortcut fired at `now`: false when it is the second of a double fire.
+    public func acceptsToggle(at now: ContinuousClock.Instant = .now) -> Bool {
+        if let last = lastToggle, now - last < Self.toggleGap { return false }
+        lastToggle = now
+        return true
+    }
+
+    private func update() {
+        let want = shows || sending
+        guard want != counted else { return }
+        counted = want
+        if want { opened() } else { closed() }
     }
 }

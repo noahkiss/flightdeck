@@ -361,7 +361,8 @@ struct CapcomPacingLine: View {
                     .glassEffect(plain ? .regular.interactive() : .identity, in: .capsule)
                 }
                 .buttonStyle(.plain)
-                .pointerHover()
+                // Interactive glass already reacts to the pointer over the composer.
+                .pointerHover(!plain)
                 // Over the composer it sits in the composer's padded glass container.
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .disabled(usage == nil)

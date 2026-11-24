@@ -82,7 +82,7 @@ public struct ChatView: View {
                          openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer, above: aboveComposer)
         }
         // Drop a file on the chat (app.md 4.4): it joins the composer as the attach button's do.
-        .modifier(ChatDropTarget(enabled: takesFiles, draft: draftBinding, attachments: $attachments, notice: $attachNotice))
+        .modifier(ChatDropTarget(enabled: takesFiles, takesFiles: { takesFiles }, draft: draftBinding, attachments: $attachments, notice: $attachNotice))
         // A readable column on a wide iPad: messages and composer stay under 820 pt, centred.
         .frame(maxWidth: readableWidth)
         .frame(maxWidth: .infinity)

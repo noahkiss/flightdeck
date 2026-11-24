@@ -650,10 +650,13 @@ one that applies.
   toolbar are customisable (`toolbar(id:)`, each control a `ToolbarItem(id:)`): View ›
   Customize Toolbar… or a secondary click on the toolbar adds, removes and moves the controls,
   and the system keeps the arrangement per window kind. The board's items are Next Needing
-  You and New Session. A session window's are the Chat | Terminal switch and New conversation
-  (Capcom sessions only), Voice, Console, Show in chat, Show files and Note friction; a session
-  that never offers a control (Capcom's on an agent session, Console on a console) leaves its
-  item out, and a control whose state changes (Voice while offline) turns off instead. The
+  You and New Session. A Capcom window (toolbar `session.capcom`) has the Chat | Terminal
+  switch, New conversation, Voice, Console, Show in chat, Show files and Note friction; an agent
+  session window (`session.agent`) has the same without the first two. Each kind's items never
+  change: a control that does not apply turns off instead of leaving (Console on a console or
+  on the Capcom service, the switch on the Capcom service, Note friction on a hab without
+  friction notes, Voice while offline), since the system adds no item to an arrangement the
+  owner already changed. Code: `Views/SessionToolbar.swift`. Tests: `SessionToolbarTests`. The
   session beside the board keeps its header row of controls, since the board's toolbar is the
   window's.
 - **Shortcuts the app already had** stay: ⌥⌘F for Note friction (11), Return and Esc in sheets
@@ -803,11 +806,14 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
 - **The shortcut.** A system-wide shortcut opens the panel; pressing it again closes it. The
   owner sets it in Settings › This Mac › "Quick entry for Capcom", with a recorder that warns
   when the system or the app's menus use the keys. None is set at first. The menu bar's Ask
-  Capcom… (3.17) and Go › Ask Capcom… open the panel with or without one.
+  Capcom… (3.17) and Go › Ask Capcom… open the panel with or without one. A second press
+  within 150 ms is ignored, since KeyboardShortcuts 3.1.0 can fire twice while a menu is open
+  (its issue 243).
 - **The panel** floats over every app, on every Space and over full-screen apps, centred
   across the screen with the pointer, in its upper third. It takes the keyboard without
   making Flightdeck the active app, so its windows stay where they were. Esc, a click
-  elsewhere, or the shortcut closes it. What was typed stays in the field while the app runs.
+  elsewhere, or the shortcut closes it. While a send runs a click elsewhere leaves it up, so
+  the panel shows how the send ended. What was typed stays in the field while the app runs.
 - **What it holds:** a field, "Ask Capcom", that grows to six lines (Return sends,
   Shift-Return or Option-Return writes a new line, as the composer, 4.2, and with a Japanese,
   Chinese or Korean input method Return stays the input method's); a line that says
@@ -827,9 +833,10 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
 - **Before it can send** the line says why not, and Send is off: "Connecting…" while the habs
   connect or the home is not known yet, "No Capcom host. Choose one in Settings." with no
   home, "<host> is offline" with the home offline, and "Capcom's host is not in this app."
-- **Connections.** The panel counts as a window while it shows (12.1), so with every window
-  closed it connects the habs and waits for the home. Once it closes the lifecycle rule
-  applies again.
+- **Connections.** The panel counts as a window while it shows and while a send it started
+  runs (12.1), so with every window closed it connects the habs and waits for the home, and
+  closing it mid-send (Esc or the shortcut) does not disconnect the habs under the send. Once
+  it is closed and no send runs, the lifecycle rule applies again. Code: `QuickEntryWindow`.
 - **Dictation** is the system's: the Dictation key or the dictation shortcut types into the
   field (the Edit menu is not reachable, since the panel leaves Flightdeck inactive), as in any Mac text field. The panel uses no microphone of its
   own. Not built: a shortcut that opens the panel already listening, and a screenshot drag.
@@ -843,6 +850,7 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
 |---|---|
 | A pane-based Capcom is mid-turn | Nothing is queued: the panel keeps the text and says "Capcom is busy with a turn. Send again when it finishes.", since a queued message could sit in an app that disconnects once the panel closes (12.1) |
 | The hab refuses the send | The panel stays open with the text and the reason |
+| The hab does not answer the send in 15 s | The message may still arrive, so the field empties (Return cannot send it twice) and Recent keeps it: "Capcom has not confirmed it yet. It may still arrive: check Capcom before you send it again." |
 | The shortcut is pressed while a Flightdeck sheet is up | The panel shows over it; the sheet stays |
 
 Design call: no shortcut out of the box, as the KeyboardShortcuts package asks of a public app,
@@ -1091,11 +1099,20 @@ Built choices:
   (`AttachmentPrep.load`), off the main actor. The system offers each dragged item in the
   first form the app takes, in this order: a URL (the Mac's Finder gives file URLs), an
   image (Photos), text, then any other file (the iPad's Files). A web link or dragged text
-  goes into the draft on a line of its own, not as a file. Not verified on a device: the
-  order the system picks on iPad, and whether a plain-text file from Files arrives as text. One drop attaches
-  at most 10 files, as the Photos picker does. A folder, a file over 25 MB or one that cannot
-  be read is refused, and the line under the composer names the first refusal and how many
-  more there were ("photos is a folder; attach the files in it (1 more not attached)").
+  goes into the draft on a line of its own, not as a file. Dropped text over 100 KB is
+  refused ("The dropped text is over 100 KB; attach it as a file"), so a large text file that
+  arrives as text never fills the composer. Not verified on a device: the order the system
+  picks on iPad, and whether a plain-text file from Files arrives as text. Not built:
+  preferring the file over the text when the dragged item has a file name, since
+  `Transferable` does not see the name (it needs an `NSItemProvider` drop). A file the system
+  hands over is copied to the app's temporary folder, keeping its name, and read only when the
+  drop lands; a folder or a file over 25 MB is refused before the copy, and every copy is
+  deleted once the drop is read. A message holds at most 10 files, as the Photos picker
+  allows: a drop counts the files the composer holds already, and a file past the cap is not
+  read. A folder, a file over 25 MB or one that cannot be read is refused, and the line under
+  the composer names the first refusal and how many more there were ("photos is a folder;
+  attach the files in it (1 more not attached)"). A drop that finishes reading after the
+  composer stopped taking files (it now answers a question) adds nothing and says so.
   Code: `Chat/ChatDrop.swift`, `Views/ChatDropViews.swift`. Tests: `ChatDropTests`. Design
   call: the drop uses the `dropDestination(for:action:isTargeted:)` form, because the
   `DropSession` form's way to see a drag arrive (`onDropSessionUpdated`) needs iOS 27, above
