@@ -195,7 +195,8 @@ hab, through its route (3.3), and to the model provider.
   `libexec/capcom/`. The SDKs are not in it: they carry a native binary per platform, and the
   Claude Agent SDK's licence grants no right to redistribute it. Node.js with npm is a runtime
   dependency: the formula depends on it, and an archive user needs `node` on PATH. The version
-  floor is the SDK's (`engines.node` in `package.json`).
+  floor gff-hab checks is the SDK's own `engines.node`; the engine's `package.json` asks for the
+  Node version CI runs (`.node-version`).
 - **Install.** When `[capcom] engine` is set, `gff-hab install` copies `capcom/` into
   `<state>/capcom-engine/<hash>/` (the hash of the three engine files). It runs `npm ci
   --omit=dev --include=optional --ignore-scripts --fetch-retries=1 --fetch-timeout=60000`
