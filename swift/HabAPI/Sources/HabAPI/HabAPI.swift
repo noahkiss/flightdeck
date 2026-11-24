@@ -11014,7 +11014,7 @@ public enum HabMethods {
     public static let paneClose = HabMethod<PaneRef, Empty>(name: "pane.close")
     /// Give a session a new name. A name another session holds is refused with conflict.
     public static let sessionRename = HabMethod<SessionRenameParams, Empty>(name: "session.rename")
-    /// Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.
+    /// Remove the record of a session whose program has ended. One that may still run is refused with conflict; pane.close ends its program first.
     public static let sessionClose = HabMethod<SessionRef, Empty>(name: "session.close")
     /// Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.
     public static let sessionFocus = HabMethod<SessionFocusParams, Empty>(name: "session.focus")

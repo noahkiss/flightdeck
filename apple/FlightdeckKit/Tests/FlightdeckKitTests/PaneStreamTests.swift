@@ -85,7 +85,7 @@ final class PaneStreamTests: XCTestCase {
             if i % 7 == 0 { await Task.yield() }
         }
         let want = await hab.terminals.output("%1")
-        await eventually("caught up", timeout: 10) { await got.screen.count == want.count }
+        await eventually("caught up") { await got.screen.count == want.count }
         let screen = await got.screen
         XCTAssertEqual(screen, want)
         let snaps = await got.snapshots
@@ -193,7 +193,7 @@ final class PaneStreamTests: XCTestCase {
         // One write queues every frame at once, so the window is reached.
         await hab.terminals.write("%1", Data(repeating: 0x42, count: 1 << 20))
         let want = (100 << 10) + (1 << 20)
-        await eventually("all output", timeout: 10) { await got.screen.count == want }
+        await eventually("all output") { await got.screen.count == want }
         let waits = await hab.terminals.creditWaits
         XCTAssertGreaterThan(waits, 0, "the window was reached at least once")
         await stream.close()

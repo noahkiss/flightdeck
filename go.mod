@@ -7,14 +7,14 @@ toolchain go1.27.4
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
-	github.com/dlclark/regexp2/v2 v2.13.1
-	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
+	github.com/dlclark/regexp2/v2 v2.13.2
+	github.com/dop251/goja v0.0.0-20261122185237-35fdc4b88e39
 	github.com/ebitengine/purego v0.11.3
 	go.mitchellh.com/libghostty v0.0.0-20261123035439-5bbe1d0d0990
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.44.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 	rsc.io/qr v0.2.0
 )
 

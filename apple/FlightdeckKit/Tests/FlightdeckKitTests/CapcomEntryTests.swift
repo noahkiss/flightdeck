@@ -161,6 +161,7 @@ final class CapcomEntryTests: XCTestCase {
         await eventually("online") { other.board.habs.first?.state.status == .online }
         let m = other.chat(for: SessionTarget(habID: "h", session: "capcom-s1", pane: "%c1"))
         XCTAssertTrue(m.pending.isEmpty)
+        await eventually("capcom context") { m.context.isCapcom && m.context.online }
         m.start()
         await eventually("chips read") { m.pending.map(\.ref) == ["n7"] }
         let opens = await hab.capcomOpens.count

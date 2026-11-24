@@ -128,6 +128,9 @@ jobs:
       # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5). A test
       # that hangs fails by name after 2 minutes (at most 5 with its own allowance), so the job
       # never sits until its own timeout with nothing in the log (spec 3.4).
+      # The Xcode compilation cache is restored and saved between runs (spec 5).
+      compilation-cache: true
+      compilation-cache-limit: 2G
       xcodebuild-args: |
         -onlyUsePackageVersionsFromResolvedFile
         -test-timeouts-enabled

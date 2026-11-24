@@ -153,6 +153,7 @@ func TestReopenView(t *testing.T) {
 	for _, ss := range a.Sessions() {
 		if ss.Name == "sh-2" {
 			sh2 = ss.ID
+			a.ExitPane(ss.Pane) // session.close takes only an ended program's record
 		}
 	}
 	hst.typ("\x1bl") // sh-2

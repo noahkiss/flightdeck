@@ -777,8 +777,8 @@ func (s *Store) CloseSession(id string) error {
 
 // CloseExitedSession removes a session record only when its program is known to have ended:
 // the state is exited, no resume points it at a new pane, and either the holder reported an
-// exit status, or the pane is gone while the holder list is complete (a pane closed by
-// pane.close leaves no status). A session that shows exited only because its holder was not
+// exit status (a pane released by pane.close gets an empty one), or the pane is gone while
+// the holder list is complete. A session that shows exited only because its holder was not
 // reached yet stays: its program may still run, and the pane's first sight revives it. The
 // check and the removal hold one lock. It reports whether the record went.
 func (s *Store) CloseExitedSession(id string) (bool, error) {
@@ -910,9 +910,15 @@ func (s *Store) apply(n Notice) {
 		}
 		delete(s.panes, n.Pane.ID)
 		var events []Event
-		if ss := s.sessionByPane(n.Pane.ID); ss != nil && ss.State == stateRunning {
+		// A released pane's program ended (pane.close): it gets an empty status, so the
+		// session counts as ended and never revives, even while a holder is not reached.
+		exit := copyExit(ps.exit)
+		if exit == nil && n.Released {
+			exit = &api.ExitStatus{}
+		}
+		if ss := s.sessionByPane(n.Pane.ID); ss != nil && (ss.State == stateRunning || (ss.Exit == nil && exit != nil)) {
 			ss.State = stateExited
-			ss.Exit = copyExit(ps.exit)
+			ss.Exit = exit
 			ss.Revision++
 			events = append(events, s.sessionEvent(ss))
 		}

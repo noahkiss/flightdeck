@@ -780,7 +780,7 @@
     },
     {
       "name": "session.close",
-      "summary": "Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.",
+      "summary": "Remove the record of a session whose program has ended. One that may still run is refused with conflict; pane.close ends its program first.",
       "paramStructure": "by-name",
       "params": [
         {

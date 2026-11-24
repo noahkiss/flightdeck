@@ -425,8 +425,9 @@ func fileExists(p string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-// nodeFloor is the SDK's Node.js floor (its engines field).
-var nodeFloor = [3]int{18, 14, 0}
+// nodeFloor is the engine's Node.js floor (engines.node in capcom-engine/package.json): the oldest
+// LTS line the engine builds for and is tested on.
+var nodeFloor = [3]int{24, 0, 0}
 
 // nodePath finds node on PATH (or $GFF_HAB_NODE) and checks its version against the floor.
 func nodePath() (string, error) {

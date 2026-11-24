@@ -1294,7 +1294,8 @@ func (s *roundsService) prune(roundID string) {
 		// A resume run's session is its target, the user's: only a session the run made goes.
 		// A session another round names as its target stays too.
 		if ss, ok := s.cfg.store.Session(r.SessionID); ok && ss.State == api.SessionStateExited && ss.Round != nil && ss.Round.Run == r.ID && !s.targeted(ss.ID) {
-			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
+			// The check and the removal hold one lock; a session whose holder is not reached stays.
+			if _, err := s.cfg.store.CloseExitedSession(ss.ID); err != nil {
 				s.cfg.logf("rounds: run %s: remove session %s: %v", r.ID, ss.ID, err)
 			}
 		}

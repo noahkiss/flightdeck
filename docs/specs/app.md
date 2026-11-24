@@ -569,7 +569,8 @@ only grow. The actions follow `gff`'s sidebar (`gff-client.md` 6) and call the s
 
 Design call: Close names one control for two calls, as `gff` does, so the owner learns one
 place; the question says which it is. Removing a running session's record (`session.close`
-alone) would leave its program running as an unfiled pane, which no owner wants from a row.
+alone) would leave its program running as an unfiled pane, which no owner wants from a row; the
+hab refuses that call with `conflict` (`hab-logic-api.md` 3.9).
 
 ### 3.12 Reopen where the owner left it
 

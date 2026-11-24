@@ -431,7 +431,7 @@ final class ChatTests: XCTestCase {
         model.start()
         await eventually("demo chat") { model.messages.count == 6 }
         model.send("Thanks")
-        await eventually("demo reply", timeout: 8) { model.messages.last?.kind == .agent && model.messages.count == 8 }
+        await eventually("demo reply") { model.messages.last?.kind == .agent && model.messages.count == 8 }
         XCTAssertTrue(model.outgoing.isEmpty)
         await fleet.setActive(false)
     }

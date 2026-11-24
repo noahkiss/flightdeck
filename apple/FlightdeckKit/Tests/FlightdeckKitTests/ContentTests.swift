@@ -294,12 +294,13 @@ final class ContentLimitTests: XCTestCase {
         let (fleet, hab, content, items) = await setup(files: 1)
         content.busyBackoff = .seconds(2)
         await hab.setCapability("content", false)
-        let start = ContinuousClock.now
         let r = await content.bytes(for: items[0])
         XCTAssertEqual(r, .failed(ContentModel.loadFailed))
         let d = await content.diff(for: items[0])
         XCTAssertEqual(d, .failed(ContentModel.loadFailed))
-        XCTAssertLessThan(ContinuousClock.now - start, .seconds(1), "no retry wait for a hab with no content service")
+        let calls = await hab.contentCalls
+        XCTAssertEqual(calls[HabMethods.contentRead.name], 1, "no retry for a hab with no content service")
+        XCTAssertEqual(calls[HabMethods.contentDiff.name], 1, "no retry for a hab with no content service")
         XCTAssertTrue(ContentModel.isBusy(RPCError(code: 1, message: "", data: ErrorData(hint: "4 content calls already run on this connection", kind: .unavailable, seq: 0))))
         XCTAssertFalse(ContentModel.isBusy(RPCError(code: 1, message: "", data: ErrorData(hint: "/w/a: input/output error", kind: .unavailable, seq: 0))))
         await fleet.setActive(false)
@@ -323,14 +324,16 @@ final class ContentLimitTests: XCTestCase {
     /// N7: a list reply that a later call's reply already replaced is dropped.
     func testOlderListReplyDropped() async {
         let (fleet, hab, content, items) = await setup(files: 1)
+        let gate = Gate()
         await hab.setContentListHook { n in
-            if n == 1 { try? await Task.sleep(for: .milliseconds(300)) }
+            if n == 1 { await gate.wait() }
         }
         let slow = Task { await content.refresh() }
         await eventually("the slow list reached the hab") { await hab.contentLists == 1 }
         await hab.setContent(session: "s1", items: items + [item("f9", size: 5)])
         await content.refresh()
         XCTAssertEqual(content.items.count, 2)
+        await gate.open()
         await slow.value
         XCTAssertEqual(content.items.count, 2, "the older reply must not replace the newer list")
         await fleet.setActive(false)

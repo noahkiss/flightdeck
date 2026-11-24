@@ -88,7 +88,14 @@ final class SSHLiveTests: XCTestCase {
             let n = await t.connectionCount()
             XCTAssertEqual(n, 1, "the data channel shares the control connection")
             await ps.close()
-            _ = try? await conn.call(HabMethods.sessionClose, SessionRef(session: made.session))
+            // session.close refuses a running program: end it with pane.close, then remove the record.
+            _ = try? await conn.call(HabMethods.paneClose, PaneRef(pane: made.pane))
+            var removed = false
+            for _ in 0..<20 {
+                if (try? await conn.call(HabMethods.sessionClose, SessionRef(session: made.session))) != nil { removed = true; break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if !removed { XCTFail("session.close kept refusing; the live hab keeps the nio-live record") }
         }
 
         await conn.stop()

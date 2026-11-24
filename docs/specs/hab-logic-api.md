@@ -186,7 +186,8 @@ Decisions taken in stage 5 (`internal/structure`):
 - A pane's revision is stored too. Linking or unlinking a session raises it, since
   `Pane.session` changed.
 - Deleting a project keeps its sessions, with no project. Closing a session removes the record
-  only; the pane, if live, becomes unfiled.
+  only, and only once its program has ended (3.9, `session.close`); an exited pane that the
+  holder still keeps becomes unfiled.
 - A session whose pane is gone is marked exited with no exit status. If the pane comes back (its
   holder only dropped out), the session runs again. A gone pane keeps a tombstone of its final
   revision, so a returning pane's revision keeps rising.
@@ -871,7 +872,7 @@ the control socket starts to answer moves into the table.
 | `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
 | `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes |
-| `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes |
+| `session.close` | Remove the record of a session whose program has ended; one that may still run is `conflict` (2.2, 3.9) | Yes |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (`capcom.md` 7.6); every other session (`gff-client.md` 6.2) |
 | `session.restart` | Exit an idle or done session's harness and start it again in a new pane, with its resume id | Yes (`instructions-mcp-flight-rules.md` 13.1) |
 | `session.action` | Run a named action on a session, translated per harness: `compact`, `clear`, `restart`, `close`, `recreate` (capability `session-action`, 3.13) | No (A10) |
@@ -973,8 +974,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   for a pane it does not follow yet, which are bounded: bytes past that bound are lost, and the
   screen marks the gap. A picked name (no `name`) that another create filed
   first is picked again, at most twice, before the call answers `conflict`. A `session.close`
-  that lands during the spawn closes the record as usual: the create still answers success with
-  the closed session's id, and the new pane is unfiled. The record carries a spawning mark,
+  that lands during the spawn is refused with `conflict`, as for any session that may still run
+  (below). The record carries a spawning mark,
   saved in the state file and not in the API, which the pane's first sight clears. A gff-hab
   that stops between the record and the spawn leaves a session still marked. The next start
   drops it (`session.deleted`, and the project's `project.updated`, so its name is free) only
@@ -1008,6 +1009,17 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   pane starts in that pane's working folder (its program's folder, else its shell's last OSC 7
   report, else its session's start folder, else the default) and is filed in that pane's
   project unless `project` is given (`gff-client.md` 5.4).
+- **`session.close`** takes `{session}` and returns the seq only. It removes the record only
+  when the program is known to have ended: the session is exited, no spawn or resume is under
+  way, and either the program's end is known (the holder reported an exit status, or gff-hab
+  released the pane for `pane.close`, which records an empty status), or the pane is gone while
+  every registered holder has been reached. Otherwise it answers `conflict` and removes nothing: a running
+  session, and one that shows exited only because its holder was not reached yet, may still run,
+  and a removed record would leave that program unfiled. The hint says which: a live session
+  needs `pane.close` first, after which `session.close` removes it; an exited one waits until
+  every holder is reached again. An unknown session is `not_found`.
+  A failed spawn's clean-up removes its record directly. Rounds retention and a deleted
+  round's watcher apply the same rule and leave a record that may still run.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
   session keeps its id and gets a new pane; it must be exited (else `conflict`). A Capcom
   session resumes through Capcom (`capcom.md` 7.6). Any other session resumes
