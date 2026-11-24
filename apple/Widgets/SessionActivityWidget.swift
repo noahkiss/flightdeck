@@ -9,6 +9,8 @@ struct FlightdeckWidgets: WidgetBundle {
     var body: some Widget {
         SessionActivityWidget()
         UsageWidget()
+        NeedsYouWidget()
+        TalkToCapcomControl()
     }
 }
 

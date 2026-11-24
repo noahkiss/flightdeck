@@ -136,6 +136,21 @@ public final class QuickEntry {
         }
     }
 
+    /// Ask Capcom from Shortcuts or Siri (app.md 3.19): the app may have just launched, so wait
+    /// up to `wait` for Capcom's home, then send. False with `failure` set when it could not go.
+    public func sendWhenReady() async -> Bool {
+        _ = await until { if case .waiting = readiness { false } else { true } }
+        switch readiness {
+        case .waiting(let why), .unavailable(let why):
+            failure = why
+            return false
+        case .ready:
+            let ok = await send()
+            if !ok, failure == nil { failure = "Capcom did not take the message." }
+            return ok
+        }
+    }
+
     /// Puts a recent message back in the field.
     public func pick(_ recent: String) {
         text = recent

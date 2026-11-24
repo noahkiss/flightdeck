@@ -4,6 +4,9 @@ import HabAPI
 #if os(iOS)
 import UIKit
 #endif
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 /// Builds the app's fleet: demo habs with `-FlightdeckDemo YES`, else the
 /// habs from the config file (the Mac), else none.
@@ -45,6 +48,9 @@ public enum AppFleet {
         addSSH(to: fleet, environment: env)
         pruneUsage(fleet)
         addPush(to: fleet, environment: env)
+        // Sessions for Shortcuts and Spotlight, and the needs-you widget (app.md 3.19, 15.4).
+        fleet.directory = SessionDirectory(defaults: defaults)
+        fleet.needsYou = NeedsYouPublisher(reload: reloadNeedsYou)
         addSettings(to: fleet, defaults: defaults)
         addDeviceContext(to: fleet, defaults: defaults)
         return fleet
@@ -200,6 +206,7 @@ public enum AppFleet {
         actions.usage = fleet.usage?.book
         actions.capcom = fleet.capcom
         actions.rounds = fleet.rounds
+        actions.onScreen = { [weak fleet] meta in fleet?.onScreen(meta) ?? false }
         actions.install()
         fleet.keepAlive.append(actions)
         #if os(iOS)
@@ -216,6 +223,19 @@ public enum AppFleet {
     static func activityAnswer(center: ApprovalCenter, tracker: LiveActivityTracker, hab: String, pane: String, request: String, allow: Bool) async {
         guard let o = await center.answerFromActivity(host: hab, pane: pane, request: request, allow: allow) else { return }
         await tracker.answered(pane: pane, request: request, outcome: o)
+        // The needs-you widget's Deny runs here too: an answer that landed, or a request already
+        // closed, leaves the widget at once, though no connection may be up to say so (15.4).
+        switch o {
+        case .answered, .refused, .probablyAnswered: NeedsYouPublisher.drop(request: request, reload: reloadNeedsYou)
+        case .failed, .unreachable: break
+        }
+    }
+
+    /// Asks the needs-you widget to reload.
+    static func reloadNeedsYou() {
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadTimelines(ofKind: NeedsYouSnapshot.widgetKind)
+        #endif
     }
 
     /// With the device locked, whether the key of the hab a push named can

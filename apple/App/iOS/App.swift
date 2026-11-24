@@ -5,11 +5,16 @@ import SwiftUI
 @main
 struct FlightdeckApp: App {
     @UIApplicationDelegateAdaptor(PushDelegate.self) private var pushDelegate
-    /// app.log opens first, so the fleet's first lines reach it (diagnostics.md 4.10).
-    @State private var fleet: Fleet = {
+    @State private var fleet: Fleet
+
+    init() {
+        // app.log opens first, so the fleet's first lines reach it (diagnostics.md 4.10).
         AppLogFile.open()
-        return AppFleet.make()
-    }()
+        let fleet = AppFleet.make()
+        _fleet = State(initialValue: fleet)
+        // Shortcuts, Siri, Spotlight and the controls reach the fleet (app.md 3.19).
+        IntentHost.install(fleet)
+    }
     /// At the App level this phase combines every window: active while any is.
     @Environment(\.scenePhase) private var phase
     /// The push prompt was asked for in this run (app.md 3.9).

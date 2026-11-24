@@ -1,3 +1,4 @@
+import FlightdeckShared
 import Foundation
 import HabAPI
 import Observation
@@ -53,17 +54,27 @@ public final class PushRegistrar {
         }
     }
 
-    /// A passive banner when a turn finishes (app.md 18.5); off by default.
-    public var doneBanners: Bool {
-        didSet {
-            guard doneBanners != oldValue else { return }
-            defaults.set(doneBanners, forKey: Keys.doneBanners)
-            registerAll()
-        }
+    /// The level of each kind (app.md 8.9). Off leaves the kind out of `push.register`; the
+    /// other levels show in the notification service extension and `willPresent`.
+    public private(set) var levels: [NotifyKind: NotifyLevel] = [:]
+
+    /// Sets one kind's level; a change between off and on registers again with every hab.
+    public func setLevel(_ level: NotifyLevel, for kind: NotifyKind) {
+        guard kind.choices.contains(level), levels[kind] != level else { return }
+        let kindsBefore = kinds
+        levelStore.set(level, for: kind)
+        levels[kind] = level
+        if kinds != kindsBefore { registerAll() }
+    }
+
+    /// The level of `kind`.
+    public func level(_ kind: NotifyKind) -> NotifyLevel {
+        levels[kind] ?? kind.defaultLevel
     }
 
     @ObservationIgnored private var online: [String: HabConnection] = [:]
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let levelStore: NotifyLevels
     @ObservationIgnored private var inFlight: [String: Task<Void, Never>] = [:]
     /// Habs whose last `push.register` succeeded. A hab keeps the device's
     /// registration across connections, so a repeat in flight after a new
@@ -74,14 +85,15 @@ public final class PushRegistrar {
     enum Keys {
         static let deviceID = "flightdeck.push.device-id"
         static let hideCommands = "flightdeck.push.hide-commands"
-        static let doneBanners = "flightdeck.push.done-banners"
     }
 
     /// The setup guide a hab without push links to (app.md 8.4).
     public static let setupGuide = URL(string: "https://github.com/noahkiss/flightdeck/blob/main/docs/push.md")!
 
-    public init(defaults: UserDefaults = .standard, environment: PushEnvironment = PushRegistrar.buildEnvironment) {
+    /// `levels` sits in the App Group, where the notification service extension reads it.
+    public init(defaults: UserDefaults = .standard, levels: NotifyLevels = NotifyLevels(), environment: PushEnvironment = PushRegistrar.buildEnvironment) {
         self.defaults = defaults
+        levelStore = levels
         self.environment = environment
         if let id = defaults.string(forKey: Keys.deviceID), !id.isEmpty {
             deviceID = id
@@ -91,7 +103,8 @@ public final class PushRegistrar {
             deviceID = id
         }
         showCommands = !defaults.bool(forKey: Keys.hideCommands)
-        doneBanners = defaults.bool(forKey: Keys.doneBanners)
+        levels.migrate(from: defaults)
+        for k in NotifyKind.allCases { self.levels[k] = levels.level(k) }
     }
 
     /// The APNs environment of this build: the `aps-environment` the build was
@@ -112,8 +125,10 @@ public final class PushRegistrar {
 
     /// The kinds this device asks for.
     public var kinds: [PushKind] {
-        var k: [PushKind] = [.permission, .question, .auth, .error]
-        if doneBanners { k.append(.done) }
+        var k: [PushKind] = [.permission]
+        if level(.questions) != .off { k.append(.question) }
+        k += [.auth, .error]
+        if level(.finished) != .off { k.append(.done) }
         // Round notifications (rounds.md 10.2); the round's own notify setting decides which.
         // A hab that does not know the kind gets the call again without it (`register`).
         k.append(.round)

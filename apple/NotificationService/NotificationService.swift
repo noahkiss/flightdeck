@@ -11,7 +11,8 @@ import UserNotifications
 /// A Capcom message (kind `capcom`, capcom-service.md 7.6) becomes a communication
 /// notification: sender "Capcom" with its avatar. Without the Communication Notifications
 /// capability iOS refuses the update, and the plain banner shows. Any other push passes
-/// through unchanged.
+/// through with only its level changed: approvals, questions and finished turns take the level
+/// the owner picked (app.md 8.9), read from the App Group.
 ///
 /// `didReceive` calls the content handler before it returns, on every path, so
 /// the extension keeps no state between calls. iOS may call its methods on
@@ -29,6 +30,8 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
         content.body = ExpiryText.append(to: content.body, meta: meta)
+        // The owner's level for approvals, questions and finished turns (app.md 8.9).
+        NotifyLevels().apply(to: content, meta: meta)
         contentHandler(content)
     }
 

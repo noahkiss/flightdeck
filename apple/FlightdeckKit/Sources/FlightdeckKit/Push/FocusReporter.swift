@@ -66,6 +66,12 @@ public final class FocusReporter {
         enqueue(keys.map { ($0, true) })
     }
 
+    /// The session is in focus now: shown in an active window, and so reported `active` true.
+    /// The foreground banner check reads it (app.md 8.9).
+    public func reports(habID: String, session: String) -> Bool {
+        reported.contains(Key(hab: habID, session: session))
+    }
+
     /// Waits for the calls queued so far; for tests and for going to the
     /// background after the last false went out.
     public func flush() async {

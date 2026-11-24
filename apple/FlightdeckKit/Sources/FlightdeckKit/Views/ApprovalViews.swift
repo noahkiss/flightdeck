@@ -286,8 +286,8 @@ public struct ApprovalSheet: View {
     }
 }
 
-/// Settings › Notifications: the two push settings and each hab's push status
-/// (app.md 8.3, 8.4, 18.5).
+/// Settings › Notifications: "Show details", the level per kind, and each hab's push status
+/// (app.md 8.3, 8.4, 8.9).
 public struct NotificationSettingsView: View {
     @Bindable var push: PushRegistrar
     let board: Board
@@ -301,7 +301,21 @@ public struct NotificationSettingsView: View {
         Form {
             Section {
                 Toggle("Show details in notifications", isOn: $push.showCommands)
-                Toggle("Notify when a turn finishes", isOn: $push.doneBanners)
+            }
+            // A level per kind (app.md 8.9).
+            Section {
+                ForEach(NotifyKind.allCases, id: \.self) { kind in
+                    Picker(NotifyLevelText.title(kind), selection: Binding(
+                        get: { push.level(kind) },
+                        set: { push.setLevel($0, for: kind) }
+                    )) {
+                        ForEach(kind.choices, id: \.self) { Text($0.title).tag($0) }
+                    }
+                }
+            } header: {
+                Text("Levels")
+            } footer: {
+                Text("Quiet goes to Notification Center with no sound. Time sensitive breaks through a Focus.")
             }
             if push.permission == .denied {
                 Section {

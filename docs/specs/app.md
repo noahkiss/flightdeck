@@ -726,7 +726,8 @@ Code: `Board/SessionLink.swift`, the link handling in `Views/SessionWindow.swift
 - **Handoff.** The open session advertises an activity (`.userActivity`, type
   `<bundle id>.session`) once it has stayed on screen for 3 seconds, so flicking through rows
   advertises nothing. The activity carries the hab's host id and the session id, and no title,
-  text or path. It is eligible for Handoff only: not for search, not for public indexing. The
+  text or path. It is eligible for Handoff only: not for search, not for public indexing; Spotlight
+  finds sessions through their App Intents entity instead (3.19). The
   other device's app takes it (`onContinueUserActivity`) and opens the session as a link does.
   The Capcom view advertises nothing.
 
@@ -859,6 +860,70 @@ Design call: no shortcut out of the box, as the KeyboardShortcuts package asks o
 since a preset global key can take one the owner uses elsewhere. "Recent" lists messages, not
 conversations: Capcom keeps one standing conversation per home, which Send continues and Send
 to New Chat replaces.
+
+### 3.19 Shortcuts, Siri, Spotlight and controls
+
+The app offers its main actions to the system through App Intents, so Shortcuts, Siri,
+Spotlight, the Action button and Control Center can reach them.
+
+| Intent | What it does | Runs |
+|---|---|---|
+| Open Session | Opens a session, as a session link does (3.15). Spotlight runs it for a tapped session | Opens the app |
+| New Session | Opens the New session form (3.10) | Opens the app |
+| Ask Capcom | Opens the Capcom view (4.10); with a message, sends it to Capcom's standing conversation through quick entry's send (3.18), after waiting up to 15 s for Capcom's home to come online. A message that did not go shows in an alert, "Not sent to Capcom", with the reason and Copy Message | Opens the app |
+| Approve Pending Request | Opens the approval sheet on the oldest request that waits, in one session when one is named (7.2) | Opens the app, unless the app is already in front and nothing waits |
+
+- **The session entity.** A session is known by its link: the hab's host id and the session id
+  (3.15), never a connection id, so the id holds across launches and devices. The entity shows the
+  session's own title or name and its computer's label. A request's title never names it: it can
+  quote a command.
+- **What the system sees.** Ids, the session's name and the computer's label. No command, folder,
+  project path, address or transcript text reaches Shortcuts, Siri or Spotlight.
+- **The query works offline.** The app keeps the list on the device (its defaults), so a query
+  answers while the app is closed and every connection is down (12.1). An online hab's sessions
+  replace what was kept for it; an offline hab keeps its last list; a hab removed from the app
+  loses its sessions. A hab whose host id is not known yet keeps what it had. Search matches the
+  name or the computer's label, ignoring case and accents; names that start with the text come
+  first.
+- **Spotlight.** Each session is an indexed entity, in a named index of the app's own. On iOS
+  that index uses complete data protection, so session names cannot be read while the device is
+  locked; the Mac has no per-index protection class. The app adds or updates the sessions that
+  changed and deletes the ones that went. The writes run one at a time, in order, so a delete
+  never overtakes the update before it. At each launch the app deletes every session in the index
+  and indexes its whole list, so a lost index heals and an entry the list no longer holds leaves.
+  Demo mode reaches neither the list nor Spotlight.
+- **Unlock.** Every intent needs the device unlocked (`requiresAuthentication`), the control's
+  too: an intent can name a session, open a request or send a message to an agent that can act.
+  Siri on a locked device asks for unlock before it reads a session name.
+- **Routes.** An intent runs in the app's process and posts a route; a board window takes it.
+  Open Session goes through the window's link handling, so it waits for the board to list the
+  session, within the minute. New Session, Ask Capcom and the approval sheet wait until the
+  window has registered its commands (3.13). A route no window took within a minute lapses.
+- **Approve Pending never answers.** Allow stays in the sheet, where the command shows and Allow
+  asks for Face ID (7.6), and the sheet names one request by id, so no other command can slip
+  under Allow (8.7). When the app was already in front with every hab online and nothing
+  waiting, the intent answers "Nothing waits for you." without opening the app. Otherwise it opens
+  the app, which waits for every hab to come online: it then opens the sheet, or shows the alert
+  "Nothing waits for you." Within the minute a hab stays offline, the route lapses.
+- **Phrases.** Each phrase names the app, or the system drops it: "Ask Flightdeck", "Talk to
+  Capcom in Flightdeck", "Open <session> in Flightdeck", "New session in Flightdeck", "Approve
+  pending request in Flightdeck". Voice mode stays separate from Siri (13).
+- **Controls.** "Talk to Capcom" is a control for Control Center, the Lock Screen and the Action
+  button (iPhone and iPad). It runs Ask Capcom with no message. The needs-you widget is 15.4.
+
+Design call: the intents post routes into the running app rather than opening `flightdeck://`
+links. App Intents can open only universal links by URL, and the custom scheme is not one.
+
+| Case | Behaviour |
+|---|---|
+| The app is not running | The system launches it; the route waits for the first board window |
+| The named session's hab never lists it | The link rule applies: "No paired computer has this session." once every hab has said its host id (3.15) |
+| Siri by voice with nothing on screen | Approve Pending cannot open the app there: it asks the owner to open Flightdeck |
+| Mac with no board window open | The route waits; opening a window takes it, within the minute |
+
+Code: `Board/SessionDirectory.swift` (the list, the routes, the widget snapshot),
+`Views/AppRouteHost.swift`, `FlightdeckShared/AppRoute.swift`, and the app targets'
+`App/Intents` and `Intents` folders. Tests: `AppIntentLogicTests`.
 
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
@@ -2679,6 +2744,9 @@ service.
 | Request answered elsewhere | Replace, quiet | Passive | Update without buttons |
 | A long console command finished | Setting, off by default | Passive | No |
 
+The Level column is what the hab sends. The owner's level per kind (8.9) changes how approvals,
+questions and finished turns show on the device.
+
 ### 8.3 Rules
 
 - **Never drop an approval silently.** If the hab cannot decide whether to hold a push, it sends it.
@@ -2758,11 +2826,11 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 
 - **Registration.** `PushRegistrar` calls `push.register` on every hab whose welcome lists
   `push`, each time a connection reaches online (a new snapshot count), and on every online hab
-  again when the token, "Show details in notifications" or "Notify when a turn finishes"
-  changes. The app disconnects in the background (12.1), so each return to the foreground
+  again when the token, "Show details in notifications" or a level between off and on
+  changes (8.9). The app disconnects in the background (12.1), so each return to the foreground
   registers again; the hab keeps one token per device id. The device id is a random UUID kept in
-  the app's defaults. Kinds: `permission`, `question`, `auth`, `error` and `round` (21.3), plus `done` when
-  that setting is on. A hab without `push`, or one that answers `unavailable`, shows "Push is not set
+  the app's defaults. Kinds: `permission`, `auth`, `error` and `round` (21.3), plus `question` and
+  `done` unless their level is off (8.9). A hab without `push`, or one that answers `unavailable`, shows "Push is not set
   up on <hab>" with a link to `docs/push.md` in Settings › Notifications.
 - **Environment.** The build's `aps-environment` is development for Debug and production for
   Release (`APP_APS_ENVIRONMENT` in `Names.xcconfig`); Info.plist repeats it as
@@ -2797,8 +2865,9 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   its own (18.7).
 - **Notification service extension.** Built: the hab leaves the expiry out of the body, so the
   extension appends " · Expires 14:05" in the device's time zone and clock style to a permission
-  banner whose `expires_at` is still ahead (with the date when it is over 20 hours away). Every
-  other push passes through unchanged. The extension hands the content back before `didReceive`
+  banner whose `expires_at` is still ahead (with the date when it is over 20 hours away). It
+  then sets the owner's level on approvals, questions and finished turns (8.9). Every other push
+  passes through unchanged. The extension hands the content back before `didReceive`
   returns and keeps nothing between calls; when iOS cuts it short, iOS shows the push as it came.
   The Mac has no extension yet. No push carries a badge: the app alone sets it (7.9).
 - **Withdrawal while the app runs.** When a request closes on the board, the app removes
@@ -2906,6 +2975,50 @@ ids). Tests: `CapcomAskTests`; the chips themselves are 4.9.
   changes nothing and shows the hab's text under the composer. Design call: nothing leaves the
   old conversation before it is in the new one, so a failure never loses context; a failed
   detach leaves that chip in both.
+
+### 8.9 Levels per kind and the session on screen (app side)
+
+The owner picks how strongly each kind of push interrupts. Settings › Notifications › Levels:
+
+| Kind | Pushes | Levels | Default |
+|---|---|---|---|
+| Approvals | `permission`, `trust` | Quiet, Normal, Time sensitive | Time sensitive |
+| Questions | `question` | Off, Quiet, Normal, Time sensitive | Time sensitive |
+| When a turn finishes | `done` | Off, Quiet, Normal, Time sensitive | Off |
+
+- **Levels.** Off: the app leaves the kind out of `push.register`, so the hab sends none. Quiet:
+  passive, no sound; it goes to Notification Center and the screen stays dark. Normal: active,
+  with sound. Time sensitive: breaks through a Focus. Approvals have no Off: an approval is never
+  dropped silently (8.3).
+- **A passive push is never raised.** The hab sends an approval or question push passive only
+  to replace a banner that already alerted, such as the late summary (16.5). It stays passive,
+  with no sound, whatever the level. `done` is the exception: the hab always sends it passive, so
+  the finished level applies to it.
+- **Where they apply.** The hab still sets each push's level (8.2). The iOS notification service
+  extension rewrites `interruptionLevel` and the sound to the owner's level before iOS shows it.
+  It reads the levels from the App Group. In the foreground, `willPresent` shows a banner with
+  sound for Normal and Time sensitive and the list only for Quiet. A push of a kind set to Off
+  that the hab sent before it heard the new kinds shows Quiet. Kinds no level covers (sign-in,
+  errors, notices, rounds, Capcom) show as the hab sent them.
+- **The session on screen.** `willPresent` returns no presentation for a hab's push that names a
+  session the app reports in focus now (8.7, Focus), so a push that crossed the focus report never
+  covers the session the owner is reading. The hab's own hold (8.6) stays the first rule. The push
+  names the hab by host id; the app matches it to the connection through the board. The app's
+  own notices (a failed answer, a usage alert, the ping test) are local and always show.
+- **Migration.** The old switch "Notify when a turn finishes" moves once: on becomes Quiet, the
+  level the hab sent for it; off stays Off.
+- **The Mac** asks for no APNs token yet (8.7), so its levels apply in `willPresent` only.
+
+Design call: the app applies the levels and the hab is unchanged. A `levels` field on
+`push.register`, with the hab choosing `interruption-level` per device, would let a Mac with push
+or a phone whose extension iOS cut short show the right level too. Spec for that later change:
+`push.register` takes an optional `levels` object (`approvals`, `questions`, `finished`, each
+`passive`, `active` or `time-sensitive`), and `AlertPayload` uses the device's level for those
+kinds, with sound only above passive. Old clients send none and keep the hab's levels.
+
+Code: `FlightdeckShared/NotifyLevels.swift`, `Push/NotifyPresentation.swift`,
+`Push/PushRegistrar.swift`, `SSH/HabActions.swift`, the `NotificationService` target. Tests:
+`NotifyLevelTests`.
 
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi
 docs, hooks and notifications (which events raise a banner, never drop an approval silently,
@@ -3923,7 +4036,7 @@ never from private files).
 | Widget | Sizes | Shows |
 |---|---|---|
 | Usage | Small, medium | Small: one account as a ring with the used percentage, the window name, the reset countdown, and "Limit reached" or "On pace". Medium: two accounts side by side |
-| Needs you | Small, medium | Small: the count and the top item's title. Medium: the top three rows with project and time |
+| Needs you | Small, medium, large | Small: the count and the top item's title. Medium: the top two items; large: four (15.4) |
 | Lock Screen | Circular, rectangular | Circular: a gauge for the tightest usage window. Rectangular: the needs-you count and the top title |
 
 - **Data path.** Widgets never connect to a hab and hold no key. The app writes a small snapshot
@@ -3951,9 +4064,8 @@ never from private files).
 
 ### 15.3 Built choices
 
-- **Usage widget only.** The Needs-you widgets and the rectangular Lock Screen widget are not
-  built yet. The usage widget lives in the iOS widget extension beside the Live Activity: small,
-  medium and the circular Lock Screen gauge.
+- **Usage widget.** It lives in the iOS widget extension beside the Live Activity: small,
+  medium and the circular Lock Screen gauge. The needs-you widget is 15.4.
 - **Snapshot.** JSON in the App Group defaults (`flightdeck.usage.snapshot`, versioned). The app
   writes it, and asks WidgetKit to reload, only when the readings change.
 - **Configuration** picks the account from the snapshot's accounts; with none chosen, the widget
@@ -3967,6 +4079,42 @@ never from private files).
   reporting", never another account.
 - **Mac.** No Mac widget: the Mac app has no App Group or widget extension yet. Adding one means a
   sandboxed macOS widget extension and the group entitlement on the Mac app.
+
+### 15.4 Needs you and the Capcom control (built)
+
+- **Needs you.** Small: the count and the oldest item. Medium: two items. Large: four. Lock
+  Screen: rectangular (the count, and the oldest title marked privacy-sensitive, so the system
+  hides it while the device is locked) and inline (the count). Each item shows
+  what it waits for (a permission, a question, anything else in Needs you), the session's name
+  and its computer's label. Requests come first, oldest first, then the other Needs you rows in
+  the board's order.
+- **Snapshot.** JSON in the App Group defaults (`flightdeck.needs-you.snapshot`, versioned):
+  ids, session names, computer labels and times. No command, folder or request title, since a
+  title can quote a command. The app writes it only while it is in front with some hab online,
+  and only when what the widget shows changed, then asks WidgetKit to reload. Going to the
+  background stops the habs one by one and leaves every connection down (12.1), so the widget
+  keeps the last list the app saw and shows the time it was written.
+  The extension does not update it from pushes yet (15.1).
+- **Buttons.** A permission request with a request id has Deny, which runs `ActivityDenyIntent`
+  in the app, the same path as the Live Activity's Deny (8.7): no unlock, the live connection or a
+  one-shot one. An answer that landed, or a request already closed, leaves the widget at once.
+  The widget shows no command, so it offers no Allow: a tap opens the approval sheet, where the
+  command shows and Allow asks for Face ID.
+- **Tap.** A request opens the approval sheet (`flightdeck://request`); any other item opens its
+  session.
+- **Talk to Capcom** is a control button (Control Center, the Lock Screen, the Action button) that
+  runs Ask Capcom (3.19) and opens the Capcom view.
+- **Mac.** None yet, as for the usage widget (15.3).
+
+| Case | Behaviour |
+|---|---|
+| Nothing needs the owner | "Nothing needs you" |
+| No snapshot yet | "Open Flightdeck" |
+| Deny on a request answered elsewhere | The hab refuses it; "Already answered" posts, and the item leaves |
+| Deny with the hab unreachable | "Could not reach <hab>" posts, the item stays, and the request rises in the foreground (8.7) |
+
+Code: `apple/Widgets/NeedsYouWidget.swift`, `FlightdeckShared/NeedsYouSnapshot.swift`,
+`NeedsYouPublisher` in `Board/SessionDirectory.swift`. Tests: `AppIntentLogicTests`.
 
 Sources: Moshi App Store screens (Home Screen usage widgets with ring, percentage, reset countdown,
 "Limit reached" and "On pace"); WidgetKit, app groups and notification service extensions as
@@ -4347,7 +4495,8 @@ Decision: as recommended. Paseo also sends nothing to a client focused on the ag
 Recommendation: off by default. The Live Activity shows it. A per-device setting turns it on, as a
 passive banner.
 
-Decision: as recommended. A per-device setting, so a user who wants it turns it on.
+Decision: as recommended. A per-device setting, so a user who wants it turns it on. The
+setting is now the finished level (8.9), off by default.
 
 ### 18.6 How "answered elsewhere" withdraws a banner
 
@@ -4661,7 +4810,9 @@ picker never changes them.
 
 | Id | Title | Area | Type | Default | Stored | Source |
 |---|---|---|---|---|---|---|
-| `notify.done` | Notify when a turn finishes | Notifications | bool | Off | App; push kind `done` on each hab | 8.2, 18.5 |
+| `notify.level.approvals` | Approvals | Notifications | quiet, normal or time sensitive | Time sensitive | App Group; the notification service extension | 8.9 |
+| `notify.level.questions` | Questions | Notifications | off, quiet, normal or time sensitive | Time sensitive | App Group; off drops push kind `question` on each hab | 8.9 |
+| `notify.level.finished` | When a turn finishes | Notifications | off, quiet, normal or time sensitive | Off | App Group; off drops push kind `done` on each hab | 8.2, 8.9, 18.5 |
 | `notify.show_commands` | Show details in notifications | Notifications | bool | On | App; `hide_commands` on `push.register` | 8.3 |
 | `notify.command_done` | Notify when a long command finishes | Notifications | bool | Off | App; push kind `command` on each hab (not built) | 6.1, 8.2 |
 | `notify.tap` | Open a notification in | Notifications | chat, terminal or smart | Smart | App | 9.1 |

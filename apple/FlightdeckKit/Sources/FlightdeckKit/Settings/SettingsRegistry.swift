@@ -1,3 +1,4 @@
+import FlightdeckShared
 import Foundation
 import HabAPI
 
@@ -160,7 +161,9 @@ public enum SettingsRegistry {
     /// The preferences: settings no level changes (app.md 20.4). Those of
     /// kind `.page` keep their rows on the page their area links to.
     public static let preferences: [SettingDef] = [
-        SettingDef(id: "notify.done", title: "Notify when a turn finishes", area: .notifications, kind: .page, store: .app),
+        SettingDef(id: "notify.level.approvals", title: NotifyLevelText.title(.approvals), area: .notifications, kind: .page, store: .app),
+        SettingDef(id: "notify.level.questions", title: NotifyLevelText.title(.questions), area: .notifications, kind: .page, store: .app),
+        SettingDef(id: "notify.level.finished", title: NotifyLevelText.title(.finished), area: .notifications, kind: .page, store: .app),
         SettingDef(id: "notify.show_commands", title: "Show details in notifications", area: .notifications, kind: .page, store: .app),
         SettingDef(id: "notify.command_done", title: "Notify when a long command finishes", area: .notifications, kind: .page, store: .app, built: false),
         SettingDef(id: "notify.tap", title: "Open a notification in", area: .notifications, kind: .page, store: .app, built: false),

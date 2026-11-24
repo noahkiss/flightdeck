@@ -79,6 +79,12 @@ struct SessionLinkHost: ViewModifier {
             .onContinueUserActivity(SessionLink.activityType) { activity in
                 if let link = SessionLink(userInfo: activity.userInfo) { start(link) }
             }
+            // Open Session from Shortcuts, Siri or Spotlight (app.md 3.19) opens as a link does.
+            .onChange(of: fleet.routes.serial, initial: true) { _, _ in
+                if case .session(let hab, let session)? = fleet.routes.take({ if case .session = $0 { true } else { false } }) {
+                    start(SessionLink(hab: hab, session: session))
+                }
+            }
             .onChange(of: fleet.board.rows) { _, _ in attempt() }
             .alert("No paired computer has this session.", isPresented: $unknown) {
                 Button("OK", role: .cancel) {}

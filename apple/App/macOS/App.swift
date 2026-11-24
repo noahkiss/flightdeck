@@ -16,6 +16,8 @@ struct FlightdeckApp: App {
         let fleet = AppFleet.make()
         _fleet = State(initialValue: fleet)
         _quickEntry = State(initialValue: QuickEntryController(fleet: fleet))
+        // Shortcuts, Siri and Spotlight reach the fleet (app.md 3.19).
+        IntentHost.install(fleet)
     }
     /// The needs-you menu bar extra shows (app.md 3.17).
     @AppStorage(MenuBarSetting.key) private var menuBarShown = true
