@@ -12,6 +12,25 @@ enum ComposerKeys {
         modifiers.contains(.shift) || modifiers.contains(.option) ? .newline : .send
     }
 
+    /// Whether a plain Return sends. Not with a Japanese, Chinese or Korean input method among
+    /// the owner's keyboards: there Return commits the composed characters, and SwiftUI shows a
+    /// key press no marked text to check, so a send could leave the composition behind. Those
+    /// owners send with Cmd-Return or the button (app.md 4.2).
+    static func returnSends(languages: [String]) -> Bool {
+        !languages.contains { l in ["ja", "zh", "ko"].contains { l.lowercased().hasPrefix($0) } }
+    }
+
+    /// The languages of the owner's input methods: the enabled keyboards on iPhone and iPad, the
+    /// preferred languages on the Mac.
+    @MainActor
+    static var inputLanguages: [String] {
+        #if os(iOS)
+        UITextInputMode.activeInputModes.compactMap(\.primaryLanguage)
+        #else
+        Locale.preferredLanguages
+        #endif
+    }
+
     /// The text with a line break in place of the selection (at the end with none), and the
     /// caret after it.
     static func insertingNewline(_ text: String, at selection: TextSelection?) -> (String, TextSelection) {

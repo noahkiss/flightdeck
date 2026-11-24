@@ -112,6 +112,10 @@ public struct Outgoing: Identifiable, Equatable, Sendable {
     public var uploadedBytes = 0
     /// The Capcom context chips the send carried (capcom.md 8.4); set when it goes out.
     public var context: [CapcomContextItem] = []
+    /// Times the hab refused it as busy while the app saw the agent at its prompt (after the
+    /// owner's interrupt the hab waits for the harness itself to report). It waits for the next
+    /// state change, up to `busyRetryLimit` times.
+    public var busyRefusals = 0
 
     /// Bytes of every attachment.
     public var attachmentBytes: Int { attachments.reduce(0) { $0 + $1.data.count } }
@@ -635,9 +639,13 @@ public final class ChatModel {
                 try? await Task.sleep(for: window)
                 self?.readBackExpired(id)
             }
-        } catch let e as RPCError where e.kind == .conflict && context.agentStatus == .working {
-            // The hab does not queue: keep the text and send it when the turn ends.
+        } catch let e as RPCError where e.kind == .conflict
+                    && (context.agentStatus == .working || (outgoing.first { $0.id == id }?.busyRefusals ?? 0) < Self.busyRetryLimit) {
+            // The hab does not queue: keep the text and send it when the turn ends. A refusal
+            // while the app sees the agent at its prompt (the hab waits after the owner's
+            // interrupt until the harness reports) waits for the next state change.
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
+            if context.agentStatus != .working { outgoing[j].busyRefusals += 1 }
             outgoing[j].status = .queued
         } catch {
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
@@ -683,6 +691,9 @@ public final class ChatModel {
     }
 
     /// A refused send in plain words (app.md 4.11); the hab's hint stays out of the chat.
+    /// How many busy refusals at the prompt a message waits through before it fails.
+    static let busyRetryLimit = 3
+
     static func sendRefusal(_ error: Error) -> String {
         if let e = error as? AttachmentRefused { return e.hint }
         if let e = error as? RPCError {
@@ -753,7 +764,9 @@ public final class ChatModel {
                 outgoing[i].status = .delivered
             }
         }
-        guard gate == .now, old.agentStatus != now || !old.online else { return }
+        // A message the hab held as busy at the prompt goes again on any new agent state.
+        let heldByHab = old.agent != context.agent && outgoing.contains { $0.status == .queued && $0.busyRefusals > 0 }
+        guard gate == .now, old.agentStatus != now || !old.online || heldByHab else { return }
         // The turn that took them is over; the transcript holds them.
         outgoing.removeAll { $0.status == .delivered }
         if let q = outgoing.firstIndex(where: { $0.status == .queued }) {

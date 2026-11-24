@@ -3,16 +3,28 @@ import SwiftUI
 
 // Markdown in the chat (app.md 4.6): MarkdownView renders an agent's reply, a Capcom message and a
 // Markdown file with native SwiftUI views. This file is the only one that imports it; the rest of
-// the app uses `MarkdownBody`. Our own pieces: the type scale, the code block, and images that
-// load nothing.
+// the app uses `MarkdownBody`. Our own pieces: the type scale, the code block, images that load
+// nothing, raw HTML shown as text, and links limited to web and mail addresses.
+//
+// `MarkdownReader` parses once per text and keeps the result for the view, so a row that redraws
+// for another reason does not parse again; the HTML is rewritten in that result before rendering.
 
 /// An agent's Markdown, rendered natively.
 struct MarkdownBody: View {
     let text: String
 
     var body: some View {
-        MarkdownView(text)
-            .markdownStyle()
+        MarkdownReader(text) { parsed in
+            MarkdownView(Self.inert(parsed))
+        }
+        .markdownStyle()
+    }
+
+    /// The parse with its raw HTML as text (app.md 4.6): it never reaches a web view.
+    static func inert(_ parsed: MarkdownParseResult) -> MarkdownParseResult {
+        var p = parsed
+        p.document = ChatMarkdown.withoutHTML(p.document)
+        return p
     }
 }
 
@@ -21,8 +33,10 @@ struct SelectableMarkdown: View {
     let text: String
 
     var body: some View {
-        MarkdownText(text)
-            .markdownStyle()
+        MarkdownReader(text) { parsed in
+            MarkdownText(MarkdownBody.inert(parsed))
+        }
+        .markdownStyle()
     }
 }
 
@@ -41,6 +55,11 @@ extension View {
             // Agent text is not trusted: an image in it never loads by itself (app.md 4.6).
             .markdownElementRenderer(.image(LinkOnlyImage(), urlScheme: "http"))
             .markdownElementRenderer(.image(LinkOnlyImage(), urlScheme: "https"))
+            // A link opens only a web or mail address, never this app's own scheme, a file or
+            // another app's action.
+            .environment(\.openURL, OpenURLAction { url in
+                ChatMarkdown.opensLink(url) ? .systemAction : .discarded
+            })
     }
 }
 

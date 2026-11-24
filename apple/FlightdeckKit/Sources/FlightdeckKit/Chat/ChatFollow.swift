@@ -38,8 +38,32 @@ public struct ChatFollow: Equatable, Sendable {
     /// The jump-to-latest button shows while the owner reads further up.
     public var showsJump: Bool { !following }
 
-    /// The scroll geometry changed: `distance` is how far the visible bottom is above the
-    /// content's end, insets included.
+    /// What the scroll geometry reads, rounded to points.
+    public struct Sample: Equatable, Sendable {
+        /// How far the visible bottom is above the content's end, insets included.
+        public var distance: CGFloat
+        public var contentHeight: CGFloat
+        public var bottomInset: CGFloat
+
+        public init(distance: CGFloat, contentHeight: CGFloat, bottomInset: CGFloat) {
+            self.distance = distance
+            self.contentHeight = contentHeight
+            self.bottomInset = bottomInset
+        }
+    }
+
+    /// The scroll geometry changed from `old` to `new`.
+    ///
+    /// The owner's scroll is a finger (motion `.user`), or any move away from the end while the
+    /// content and the bars keep their size: a tap on the status bar, Page Up, Home or Cmd-Up,
+    /// a VoiceOver scroll, the Mac's scroller or a mouse wheel. Only content or bars that change
+    /// size move the end without the owner.
+    public mutating func scrolled(from old: Sample?, to new: Sample, motion: Motion) -> Action {
+        let movedAway = old.map { new.distance > $0.distance + 1 && new.contentHeight == $0.contentHeight && new.bottomInset == $0.bottomInset } ?? false
+        return scrolled(distance: new.distance, motion: movedAway ? .user : motion)
+    }
+
+    /// The scroll geometry reads `distance`, with no earlier reading to compare.
     public mutating func scrolled(distance: CGFloat, motion: Motion) -> Action {
         if distance <= Self.tolerance {
             // At the bottom, or back at it.
@@ -67,8 +91,9 @@ public struct ChatFollow: Equatable, Sendable {
         following && motion != .user ? .toBottom : .none
     }
 
-    /// The rows changed: `old` and `new` are the row ids before and after, in order.
-    public mutating func rowsChanged(from old: [String], to new: [String]) -> Action {
+    /// The rows changed: `old` and `new` are the row ids before and after, in order. Only rows
+    /// that `counts` accepts (messages, not tool cards or event lines) add to the unread count.
+    public mutating func rowsChanged(from old: [String], to new: [String], counts: (String) -> Bool = { _ in true }) -> Action {
         guard let oldLast = old.last else {
             following = true
             unread = 0
@@ -81,7 +106,7 @@ public struct ChatFollow: Equatable, Sendable {
         if lastChanged, let i = new.lastIndex(of: oldLast) {
             // Rows appended after the old last row.
             if following { return .toBottom }
-            unread += new.count - 1 - i
+            unread += new[(i + 1)...].filter(counts).count
             return .none
         }
         if lastChanged {

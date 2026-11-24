@@ -1,3 +1,4 @@
+import Markdown
 import SwiftUI
 import XCTest
 @testable import FlightdeckKit
@@ -57,6 +58,80 @@ final class ChatFollowTests: XCTestCase {
         XCTAssertTrue(f.following, "back at the bottom by hand")
     }
 
+    /// A scroll that is not a finger (status-bar tap, Page Up, Home, VoiceOver, the Mac's scroller
+    /// or wheel) moves away while content and bars keep their size: the owner's, in any phase.
+    func testScrollsWithoutAFingerStopFollowing() {
+        typealias S = ChatFollow.Sample
+        var f = ChatFollow()
+        let rest = S(distance: 0, contentHeight: 2000, bottomInset: 120)
+        // A status-bar tap animates to the top, then the phase goes idle: no snap back.
+        XCTAssertEqual(f.scrolled(from: rest, to: S(distance: 900, contentHeight: 2000, bottomInset: 120), motion: .animating), .none)
+        XCTAssertFalse(f.following)
+        XCTAssertEqual(f.scrolled(distance: 1500, motion: .idle), .none)
+
+        // Page Up with no phase at all.
+        var g = ChatFollow()
+        XCTAssertEqual(g.scrolled(from: rest, to: S(distance: 600, contentHeight: 2000, bottomInset: 120), motion: .idle), .none)
+        XCTAssertFalse(g.following)
+
+        // Content that grows, or a bar that grows, is not the owner: back to the end.
+        var h = ChatFollow()
+        XCTAssertEqual(h.scrolled(from: rest, to: S(distance: 300, contentHeight: 2300, bottomInset: 120), motion: .idle), .toBottom)
+        XCTAssertEqual(h.scrolled(from: rest, to: S(distance: 300, contentHeight: 2000, bottomInset: 420), motion: .idle), .toBottom)
+        XCTAssertTrue(h.following)
+    }
+
+    /// Only messages count as new: tool cards and event lines do not.
+    func testUnreadCountsMessagesOnly() {
+        var f = ChatFollow()
+        _ = f.rowsChanged(from: [], to: tail)
+        _ = f.scrolled(distance: 500, motion: .user)
+        _ = f.rowsChanged(from: tail, to: tail + ["tool1", "reply", "event"]) { $0 == "reply" }
+        XCTAssertEqual(f.unread, 1)
+    }
+
+    /// Raw HTML in agent text or a Markdown file never reaches the renderer (app.md 4.6): an HTML
+    /// block becomes a code block and inline HTML a code span, with the markup kept as text.
+    func testHTMLBecomesText() {
+        let md = """
+        <p align="center"><img src="https://example.com/x.png"></p>
+
+        Before <img src="https://example.com/?d=1"> after, and a <br> break.
+
+        <script>location='https://example.com'</script>
+
+        Plain `code` and **bold**.
+        """
+        let doc = Markdown.Document(parsing: md)
+        XCTAssertTrue(ChatMarkdown.containsHTML(doc))
+        let inert = ChatMarkdown.withoutHTML(doc)
+        XCTAssertFalse(ChatMarkdown.containsHTML(inert))
+        let codes = ChatMarkdown.codeBlocks(inert.format())
+        XCTAssertTrue(codes.contains { $0.contains("<p align=\"center\">") }, "the block shows as code: \(codes)")
+        XCTAssertTrue(codes.contains { $0.contains("<script>") })
+        XCTAssertTrue(inert.format().contains("`<img src=\"https://example.com/?d=1\">`"), inert.format())
+        let plain = Markdown.Document(parsing: "No HTML, only `a < b`.")
+        XCTAssertFalse(ChatMarkdown.containsHTML(plain))
+    }
+
+    /// Links in agent text open only web and mail addresses (app.md 4.6).
+    func testLinkSchemes() {
+        for ok in ["https://example.com", "http://example.com", "mailto:someone@example.com", "HTTPS://example.com"] {
+            XCTAssertTrue(ChatMarkdown.opensLink(URL(string: ok)!), ok)
+        }
+        for no in ["flightdeck://pair?code=1", "file:///Applications/App.app", "shortcuts://run-shortcut?name=x", "javascript:alert(1)"] {
+            XCTAssertFalse(ChatMarkdown.opensLink(URL(string: no)!), no)
+        }
+    }
+
+    /// A CJK input method keeps plain Return for itself; Cmd-Return still sends.
+    func testReturnSendsLanguages() {
+        XCTAssertTrue(ComposerKeys.returnSends(languages: ["en-US", "de-DE"]))
+        XCTAssertFalse(ComposerKeys.returnSends(languages: ["en-US", "ja-JP"]))
+        XCTAssertFalse(ComposerKeys.returnSends(languages: ["zh-Hans"]))
+        XCTAssertFalse(ComposerKeys.returnSends(languages: ["ko-KR"]))
+    }
+
     func testJumpAndSend() {
         var f = ChatFollow()
         _ = f.rowsChanged(from: [], to: tail)
@@ -109,6 +184,9 @@ final class ChatFollowTests: XCTestCase {
         XCTAssertEqual(plain.text, "Done.", "the folded summary stays out")
 
         XCTAssertNil(MessageMenu.content(.agent(id: "c", text: "  ", summary: nil, sender: nil)))
+        // Indented code has no fence: the menu does not offer it (a scan, not a parse, per redraw).
+        let indented = try! XCTUnwrap(MessageMenu.content(.agent(id: "d", text: "Run:\n\n    make", summary: nil, sender: nil)))
+        XCTAssertFalse(MessageMenu.actions(indented).contains(.copyLastCode))
         XCTAssertNil(MessageMenu.content(.event(id: "e", event: .compaction, text: "Compacted")))
         let user = try! XCTUnwrap(MessageMenu.content(.user(id: "u", text: "hi", sender: nil, attachments: [])))
         XCTAssertEqual(MessageMenu.actions(user), [.copy, .selectText, .share, .readAloud])

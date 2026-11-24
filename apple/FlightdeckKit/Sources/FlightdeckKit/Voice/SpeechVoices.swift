@@ -130,7 +130,13 @@ final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
 
     private func release() {
         #if os(iOS)
-        guard ownsSession, !synthesizer.isSpeaking, VoiceAudio.sessionUsers == 0 else { return }
+        guard ownsSession, !synthesizer.isSpeaking else { return }
+        // Voice mode or dictation took the session meanwhile: it deactivates the session when it
+        // ends, so this player no longer owns it.
+        guard VoiceAudio.sessionUsers == 0 else {
+            ownsSession = false
+            return
+        }
         ownsSession = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif

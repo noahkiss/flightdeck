@@ -26,6 +26,54 @@ public enum ChatMarkdown {
         return (Document(kids.prefix(blocks)).format(), true)
     }
 
+    /// The document with its raw HTML made inert (app.md 4.6): an HTML block becomes a code
+    /// block and inline HTML a code span, both showing the markup as text. MarkdownView would
+    /// render an HTML block in a web view and inline HTML through the system HTML importer, and
+    /// agent text and files are not trusted.
+    public static func withoutHTML(_ doc: Document) -> Document {
+        guard containsHTML(doc) else { return doc }
+        var r = HTMLAsText()
+        return r.visit(doc) as? Document ?? Document()
+    }
+
+    /// Whether any HTML block or inline HTML is left.
+    public static func containsHTML(_ doc: Document) -> Bool {
+        var w = FindsHTML()
+        w.visit(doc)
+        return w.found
+    }
+
+    /// Whether the text has a fenced code block, by a scan with no parse: what the message menu
+    /// needs to show Copy Last Code Block on a row that redraws on every streamed token.
+    public static func mayHaveCodeBlock(_ markdown: String) -> Bool {
+        markdown.contains("```") || markdown.contains("~~~")
+    }
+
+    /// Links in agent text open only web and mail addresses; any other scheme (this app's own,
+    /// `file:`, `shortcuts:`) is dropped.
+    public static func opensLink(_ url: URL) -> Bool {
+        ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "")
+    }
+
+    private struct HTMLAsText: MarkupRewriter {
+        func visitHTMLBlock(_ html: HTMLBlock) -> (any Markdown.Markup)? {
+            var code = html.rawHTML
+            if code.hasSuffix("\n") { code.removeLast() }
+            return CodeBlock(language: "html", code)
+        }
+
+        func visitInlineHTML(_ inlineHTML: InlineHTML) -> (any Markdown.Markup)? {
+            InlineCode(inlineHTML.rawHTML)
+        }
+    }
+
+    private struct FindsHTML: MarkupWalker {
+        var found = false
+
+        mutating func visitHTMLBlock(_ html: HTMLBlock) { found = true }
+        mutating func visitInlineHTML(_ inlineHTML: InlineHTML) { found = true }
+    }
+
     private struct CodeBlocks: MarkupWalker {
         var found: [String] = []
 

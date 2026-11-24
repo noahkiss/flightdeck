@@ -11,6 +11,7 @@ final class ReadAloud {
     @ObservationIgnored private let player = VoicePreviewer()
 
     private init() {
+        VoiceAudio.willTakeSession = { ReadAloud.shared.stop() }
         player.onEnd = { [weak self] in
             guard let self, !self.player.isSpeaking else { return }
             self.speaking = nil
@@ -69,11 +70,14 @@ struct MessageMenuModifier: ViewModifier {
                     selecting = SelectText(text: (current?() ?? c).text)
                 }
             case .share:
-                ShareLink(item: c.text) {
+                ShareLink(item: (current?() ?? c).text) {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
             case .readAloud:
-                if ReadAloud.shared.speaking == id {
+                if VoiceAudio.sessionUsers > 0 {
+                    // Voice mode or dictation holds the audio: no Read Aloud meanwhile.
+                    EmptyView()
+                } else if ReadAloud.shared.speaking == id {
                     Button("Stop Reading", systemImage: "stop.circle") { ReadAloud.shared.stop() }
                 } else {
                     Button("Read Aloud", systemImage: "speaker.wave.2") {
@@ -86,7 +90,7 @@ struct MessageMenuModifier: ViewModifier {
 
     private func button(_ title: String, _ symbol: String, _ a: MessageMenu.Action) -> some View {
         Button(title, systemImage: symbol) {
-            guard let text = MessageMenu.copied(a, current?() ?? content ?? MessageMenu.Content(text: "", speech: "")) else { return }
+            guard let text = MessageMenu.copied(a, current?() ?? content ?? MessageMenu.Content(text: "", speaks: false)) else { return }
             copyToPasteboard(text)
             copied += 1
         }

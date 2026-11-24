@@ -189,13 +189,28 @@ final class ChatTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// "Stop and Send Now" (app.md 4.2): after the owner's interrupt the hab refuses a send as
+    /// busy until the harness reports, while the app already sees idle. The message waits and
+    /// goes on the next agent state, never failing.
+    func testBusyAtThePromptWaitsForTheNextState() async {
+        let (fleet, hab, model) = await setup(state: .idle)
+        model.start()
+        // The real hab's words (internal/harness/input.go, CheckSend with ownerStop), kind conflict.
+        await hab.failNextSend(kind: .conflict, hint: "the agent is busy: the owner interrupted claude; send when it reports it is at its prompt")
+        model.send("do this instead")
+        await eventually("held") { model.outgoing.first?.status == .queued && model.outgoing.first?.busyRefusals == 1 }
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle))
+        await eventually("sent on the next state") { await hab.sends.count == 1 }
+        await fleet.setActive(false)
+    }
+
     /// The hab's refusal shows with its kind and hint; the app does not type instead.
     func testRefusalShowsHabReason() async {
         let (fleet, hab, model) = await setup(state: .idle)
         model.start()
-        await hab.failNextSend(kind: .conflict, hint: "another message is starting its turn")
+        await hab.failNextSend(kind: .invalid, hint: "the text is not valid")
         model.send("hello")
-        await eventually("refused") { model.outgoing.first?.status == .failed("the agent is busy or waiting for an answer") }
+        await eventually("refused") { model.outgoing.first?.status == .failed("the hab refused it") }
         let inputs = await hab.inputs
         XCTAssertTrue(inputs.isEmpty)
         model.retry(model.outgoing[0].id)

@@ -273,7 +273,8 @@ struct ChatTranscript: View {
         let items = model.items
         let rows = ChatFold.rows(items, hidden: model.show?.hidden(for: model.target) ?? [])
         let placed = ContentPlacement.of(items: model.content.items, messages: model.messages, rowIDs: Set(items.map(\.id)))
-        ChatScroll(rowIDs: rows.map(\.id), readKey: Self.readKey(model.target), sent: model.outgoing.count) { divider in
+        ChatScroll(rowIDs: rows.map(\.id), readKey: Self.readKey(model.target), sent: model.outgoing.count,
+                   messageIDs: Set(items.filter(\.isMessage).map(\.id))) { divider in
             if model.hasOlder {
                 HStack {
                     Spacer()
@@ -849,6 +850,11 @@ struct ComposerView: View {
                 .onKeyPress(.return, phases: .down) { press in
                     switch ComposerKeys.returnKey(press.modifiers) {
                     case .send:
+                        // With a CJK input method a plain Return is the input method's (M3 in
+                        // app.md 4.12); Cmd-Return still sends.
+                        guard press.modifiers.contains(.command) || ComposerKeys.returnSends(languages: ComposerKeys.inputLanguages) else {
+                            return .ignored
+                        }
                         send()
                     case .newline:
                         (draft, selection) = ComposerKeys.insertingNewline(draft, at: selection)

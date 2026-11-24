@@ -661,8 +661,10 @@ tab bar minimising on scroll, settings split by area).
   group.
 - **Long-press Send** while the agent works offers "Send After This Turn" (what a tap does) and
   "Stop and Send Now": the message waits as usual, Stop ends the turn (`session.interrupt`), and
-  the message goes out at the next prompt. The Capcom thread keeps its own "Send now" (capcom-service.md
-  10.1). Not built: a model or effort per message; no hab call takes one.
+  the message goes out at the next prompt. After the owner's interrupt the hab refuses a send
+  as busy until the harness itself reports, while the app may already show idle: the message
+  then waits for the next agent state (After this turn, 4.6). The Capcom thread keeps its own
+  "Send now" (capcom-service.md 10.1). Not built: a model or effort per message; no hab call takes one.
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Drafts survive.** The composer's text is kept per session on the device
   (`Board/DraftStore.swift`, tests `DraftStoreTests`). Going back to the list, opening another
@@ -901,7 +903,10 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   until the next hook) still sends, and the hab's answer shows.
 - **After this turn.** The hab does not queue. While the agent works, the app keeps the message
   ("Sends after this turn", with Cancel) and sends one at the next `idle`, `done` or `error`. A
-  `conflict` while the agent works puts the message back in that queue.
+  `conflict` while the agent works puts the message back in that queue. So does a `conflict`
+  while the app sees the agent at its prompt (the hab holds sends after the owner's interrupt
+  until the harness reports): the message goes again on the next agent state, any change,
+  up to three times; a fourth refusal shows it as not sent.
 - **Refusals** show plain words for the hab's error kind on the message ("Not sent: the agent
   is busy or waiting for an answer"), with Retry and Dismiss; the hint stays out (4.11).
 - **Send path.** The composer calls `session.send`. Only when the hab answers `unavailable` for
@@ -924,10 +929,21 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   scale (heading 1 `title3` bold, heading 2 `headline`, the rest `subheadline` bold), the code
   block (no soft wrap, the side-scroll cue of 4.11, a language label and a Copy button), and
   images. Not built: syntax colours in code blocks. Our code block style replaces the library's
-  highlighted one, so Highlightr is linked but unused; colours would come from it. Agent text is not trusted, so an `http` or `https` image never loads by itself: it
-  shows as a link with its alt text, and a tap opens it in the browser. The chat reads code
+  highlighted one, so Highlightr is linked but unused: SwiftPM cannot drop a dependency's
+  dependency, so the app carries highlight.js (about 1 MB of JavaScript) and its 271 style
+  sheets for nothing; colours would come from it. Agent text is not trusted:
+  - An `http` or `https` image never loads by itself: it shows as a link with its alt text, and
+    a tap opens it in the browser.
+  - Raw HTML never renders. MarkdownView would draw an HTML block in a web view with scripts on
+    and inline HTML through the system HTML importer, both able to fetch from the network, so
+    the app rewrites the parse first: an HTML block becomes a code block and inline HTML a code
+    span, showing the markup as text.
+  - A link opens only an `http`, `https` or `mailto` address; any other scheme (the app's own,
+    `file:`, another app's actions) does nothing. The chat reads code
   blocks and folds by blocks with swift-markdown, the same parser, so a code block it copies is
-  the one on screen. A row parses its whole text on each change. The library's streaming
+  the one on screen. A row parses its text once per change and keeps the result for its view
+  (`MarkdownReader`), and the message menu reads nothing more on a redraw: it finds a code block
+  by a scan for a fence, and works out the speech and the last code block only when tapped. The library's streaming
   reader is not used: its first frame is empty, which would jump the list. Claude Code and Codex
   transcripts hold whole messages, so their replies arrive whole; an opencode part can grow
   over a few updates, each parsed whole.
@@ -1541,8 +1557,8 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
 | T2 | A "New" divider marks where the owner left off | `ChatReadMarks` | Built |
 | H1 | Light haptics on send, an answered request, a failure | `sensoryFeedback` | Built (4.2) |
 | M1 | Mac: Return sends; Shift-Return and Option-Return break the line | `onKeyPress` | Built |
-| M2 | iPad with a hardware keyboard: the same; the on-screen keyboard's Return is a new line | `onKeyPress` (key presses come only from a hardware keyboard) | Built, not verified on hardware |
-| M3 | Cmd-Down jumps to the newest row; Esc stops the agent | `keyboardShortcut` | Cmd-Down built (while the jump button shows); Esc not built |
+| M2 | iPad with a hardware keyboard: the same; the on-screen keyboard's Return is a new line | `onKeyPress` (key presses come only from a hardware keyboard) | Built, not verified on hardware. With a Japanese, Chinese or Korean keyboard enabled (the Mac: a preferred language), a plain Return is the input method's, which commits the composition; Cmd-Return sends. SwiftUI shows no marked text to check; a composition on a device is to verify |
+| M3 | Cmd-Down jumps to the newest row; Esc stops the agent | `keyboardShortcut` | Not built: Cmd-Down would take the Mac field's "caret to end" |
 | M4 | The Mac field shows the focus ring and takes focus when a thread opens | `focused`, `defaultFocus` | Not built: focus comes from a tap |
 
 - **One list on every device.** The study proposed ChatLayout (a UIKit collection view layout)
@@ -1555,8 +1571,10 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
 - **At the bottom** is a distance from the scroll geometry: content height plus the bottom inset
   (the composer, the keyboard and any card above the field sit in the inset) less the visible
   bottom. Within 48 pt counts as at the bottom. No marker row.
-- **Following is sticky.** Only the owner's own scroll (phase interacting or decelerating) past
-  48 pt stops it. Content that grows, and insets that change, never stop it: once no finger moves
+- **Following is sticky.** Only the owner's own scroll past 48 pt stops it: a finger (phase
+  interacting or decelerating), or any move away from the end while the content and the bars
+  keep their size, in any phase (a status-bar tap, Page Up, Home, Cmd-Up, a VoiceOver scroll,
+  the Mac's scroller or wheel). Content that grows, and insets that change, never stop it: once no finger moves
   the thread and nothing animates, a following thread goes back to the bottom. A change of the
   bottom inset (the keyboard, a request card) scrolls a following thread to its end too: the
   size-change anchor does not see the inset, and in the simulator the rows stayed under a newly
@@ -1566,8 +1584,9 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
   takes the keyboard away never meets a scroll, and a tall tool card that lands at once is
   followed.
 - **New rows while reading** count up on the jump button ("3 new messages"; an arrow alone with
-  none counted). The button is a glass control over the bottom of the thread; a tap, or
-  Cmd-Down, scrolls to the newest row with a short animation. Rows the owner sends always show
+  none counted). Only messages count, not tool cards or event lines. The button is a glass
+  control over the bottom of the thread, at least 44 pt to tap; a tap scrolls to the newest row
+  with a short animation. Rows the owner sends always show
   and clear the count. An older page and a row that changes in place count nothing.
 - **Debug builds** take `-FlightdeckShowFollow YES`: a line over the thread shows the distance
   from the bottom and the follow state, and the jump button stays on, so a screenshot shows what
@@ -1575,7 +1594,9 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
 - **The unread divider.** The app remembers, per thread, the last row the thread showed at its
   bottom, for as long as the app runs. Opening the thread again draws "New" above the first row
   after it, at the row level, so the rows themselves do not change. The divider stays for the
-  visit and goes when the owner sends. A new tail (another conversation) shows none.
+  visit and goes when the owner sends. A new tail (another conversation) shows none. The thread
+  still opens at the newest row, so a divider more than a screen up is above the fold; opening
+  at the divider, as Messages does, is not built.
 - **The message menu.** A long press on iPhone and iPad, a right click on the Mac, on a user
   message, an agent reply, a Capcom message or report, and a tool card. Each action reads the
   row's text when tapped, so the menu works while a reply streams.
@@ -1586,7 +1607,9 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
   - Share hands the text to the share sheet.
   - Read Aloud reads the message with the system voice chosen for voice mode (13.5): Markdown
     marks dropped, code as one placeholder, as voice mode speaks (13.2), up to 2,000 words. One
-    message at a time; the menu offers Stop Reading while it reads.
+    message at a time; the menu offers Stop Reading while it reads. Voice mode and dictation
+    stop it when they take the audio, and the menu hides it while they run, so the microphone
+    never hears it.
   - Copy Last Code Block shows when the message holds a code block.
   - A tool card offers Copy Command and Copy Output.
   - A message on its way offers Cancel (queued) or Retry (failed, not delivered), and Copy.

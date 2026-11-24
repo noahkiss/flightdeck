@@ -12,6 +12,8 @@ struct ChatScroll<Content: View>: View {
     let readKey: String
     /// Grows when the owner sends: the thread shows the newest row.
     let sent: Int
+    /// The rows that are messages: only they count as new on the jump button.
+    var messageIDs: Set<String> = []
     /// The rows; the argument is the row the "New" divider goes above.
     @ViewBuilder var content: (_ divider: String?) -> Content
 
@@ -63,15 +65,18 @@ struct ChatScroll<Content: View>: View {
                 + "insets \(Int(g.contentInsets.top))/\(Int(g.contentInsets.bottom)) visible \(Int(g.visibleRect.minY))-\(Int(g.visibleRect.maxY)) bounds \(Int(g.bounds.height))"
         } action: { _, t in shownGeometry = t }
         #endif
-        .onScrollGeometryChange(for: CGFloat.self) { g in
-            ChatFollow.distance(contentHeight: g.contentSize.height, visibleMaxY: g.visibleRect.maxY,
-                                bottomInset: g.contentInsets.bottom).rounded()
-        } action: { _, d in
-            last.value = d
+        .onScrollGeometryChange(for: ChatFollow.Sample.self) { g in
+            ChatFollow.Sample(
+                distance: ChatFollow.distance(contentHeight: g.contentSize.height, visibleMaxY: g.visibleRect.maxY,
+                                              bottomInset: g.contentInsets.bottom).rounded(),
+                contentHeight: g.contentSize.height.rounded(),
+                bottomInset: g.contentInsets.bottom.rounded())
+        } action: { old, new in
+            last.value = new.distance
             #if DEBUG
-            if Self.showFollow { shownDistance = d }
+            if Self.showFollow { shownDistance = new.distance }
             #endif
-            update { $0.scrolled(distance: d, motion: motion) }
+            update { $0.scrolled(from: old, to: new, motion: motion) }
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom.rounded() } action: { old, new in
             guard old != new else { return }
@@ -82,7 +87,7 @@ struct ChatScroll<Content: View>: View {
                 dividerDecided = true
                 divider = ChatReadMarks.divider(rows: new, seen: ChatReadMarks.shared.seen(in: readKey))
             }
-            update { $0.rowsChanged(from: old == new ? [] : old, to: new) }
+            update { $0.rowsChanged(from: old == new ? [] : old, to: new) { messageIDs.contains($0) } }
         }
         .onChange(of: sent) { old, new in
             guard new > old else { return }
@@ -178,13 +183,13 @@ struct JumpToLatest: View {
                 }
             }
             .padding(.horizontal, unread > 0 ? 6 : 0)
-            .frame(minWidth: 28, minHeight: 28)
+            // With the glass padding, at least 44 pt to tap.
+            .frame(minWidth: 32, minHeight: 32)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(unread > 0 ? .capsule : .circle)
         .padding(.bottom, 8)
         .accessibilityLabel(ChatFollow.jumpLabel(unread))
-        .keyboardShortcut(.downArrow, modifiers: .command)
     }
 }
 

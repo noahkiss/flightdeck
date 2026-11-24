@@ -18,7 +18,8 @@ struct CapcomThreadView: View {
     var body: some View {
         let rows = thread.rows
         let lastUser = rows.last { if case .user = $0 { return true }; return false }?.id
-        ChatScroll(rowIDs: rows.map(\.id), readKey: "capcom|" + ChatTranscript.readKey(model.target), sent: model.outgoing.count) { divider in
+        ChatScroll(rowIDs: rows.map(\.id), readKey: "capcom|" + ChatTranscript.readKey(model.target), sent: model.outgoing.count,
+                   messageIDs: Set(rows.filter(\.isMessage).map(\.id))) { divider in
             if !earlier.isEmpty {
                 CapcomEarlierSection(earlier: earlier, images: model.images)
             }
