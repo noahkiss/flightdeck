@@ -1,7 +1,31 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@" : {
+
+    },
+    "%lld sessions" : {
+
+    },
     "Allow a request" : {
+
+    },
+    "Approve Pending" : {
+
+    },
+    "Approve Pending Request" : {
+
+    },
+    "Approve the pending request in ${session}" : {
+
+    },
+    "Ask Capcom" : {
+
+    },
+    "Ask Capcom ${message}" : {
+
+    },
+    "Computer" : {
 
     },
     "Deny a request" : {
@@ -10,10 +34,46 @@
     "Hab" : {
 
     },
+    "Message" : {
+
+    },
+    "Name" : {
+
+    },
+    "New Session" : {
+
+    },
+    "Nothing waits for you." : {
+
+    },
+    "Open Flightdeck to see the request." : {
+
+    },
+    "Open Session" : {
+
+    },
+    "Opening the request." : {
+
+    },
+    "Opens a session in Flightdeck." : {
+
+    },
+    "Opens Capcom, the conversation that needs no project. With a message, sends it to Capcom." : {
+
+    },
+    "Opens the New session form in Flightdeck." : {
+
+    },
+    "Opens the oldest request that waits for you, ready to approve." : {
+
+    },
     "Pane" : {
 
     },
     "Request" : {
+
+    },
+    "Session" : {
 
     }
   },
