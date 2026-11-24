@@ -63,6 +63,44 @@ final class QuickEntryTests: XCTestCase {
         await f.setActive(false)
     }
 
+    /// The Capcom service (capcom-service.md 7): a thread with no pane, which takes every message.
+    func testSendGoesToTheServiceThread() async throws {
+        let a = await hab("bench")
+        await a.setCapcomService(true)
+        let f = await fleet([a])
+        let q = QuickEntry(capcom: f.capcom, defaults: defaults())
+        q.text = "remind me at six"
+        let ok = await q.send()
+        XCTAssertTrue(ok, q.failure ?? "")
+        let sends = await a.sends
+        XCTAssertEqual(sends.map(\.text), ["remind me at six"])
+        let m = try XCTUnwrap(f.capcom.standing)
+        XCTAssertTrue(m.context.isCapcomService)
+        XCTAssertEqual(m.target.session, sends.first?.session)
+        await f.setActive(false)
+    }
+
+    /// A pane-based Capcom mid-turn: the message stays in the panel, not queued in the app.
+    func testBusyCapcomKeepsTheText() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        await f.capcom.openStanding()
+        let m = try XCTUnwrap(f.capcom.standing)
+        let pane = try XCTUnwrap(m.target.pane)
+        await a.put(Fixture.agent(pane: pane, harness: "claude", state: .working))
+        await eventually("working") { m.context.agentStatus == .working }
+        let q = QuickEntry(capcom: f.capcom, defaults: defaults())
+        q.text = "later"
+        let ok = await q.send()
+        XCTAssertFalse(ok)
+        XCTAssertEqual(q.failure, "Capcom is busy with a turn. Send again when it finishes.")
+        XCTAssertEqual(q.text, "later")
+        XCTAssertTrue(m.outgoing.isEmpty, "nothing waits in the app")
+        let sends = await a.sends
+        XCTAssertTrue(sends.isEmpty)
+        await f.setActive(false)
+    }
+
     func testSendToNewChatOpensANewConversation() async throws {
         let a = await hab("bench")
         let f = await fleet([a])
@@ -115,7 +153,7 @@ final class QuickEntryTests: XCTestCase {
         await f.setActive(false)
     }
 
-    func testNotConnectedYetWaits() {
+    func testNoPairedComputer() {
         let f = Fleet()
         let q = QuickEntry(capcom: f.capcom, defaults: defaults())
         XCTAssertEqual(q.readiness, .unavailable("No paired computer."))

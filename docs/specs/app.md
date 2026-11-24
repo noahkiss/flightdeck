@@ -636,7 +636,7 @@ one that applies.
 | Go | Sessions, Capcom | ⌘1, ⌘2 | Mac: Sessions shows the board with nothing open; Capcom opens the Capcom view. The Mac's Settings is its own window (⌘,) and its rounds sit in the board |
 | Go | Next Needing You | ⌥⌘A | Opens the next session that needs the owner (3.16) |
 | Go | Mark All as Read | | Marks every unread `done` session read (3.16) |
-| Go | Ask Capcom… | the owner's (3.18) | Mac: opens the quick entry panel |
+| Go | Ask Capcom… | | Mac: opens the quick entry panel (3.18); the menu shows no key, the owner's global shortcut works anywhere |
 | View | Show Toolbar, Customize Toolbar… | ⌥⌘T | Mac: the system's toolbar commands (`ToolbarCommands`) for the board and session windows |
 
 - **Enablement.** The Session menu needs an open session in the focused window. Rename,
@@ -756,7 +756,8 @@ Tests: `MenuBarNeedsTests`.
 
 - **The icon.** A bell in the menu bar (`MenuBarExtra`, menu style). While something needs the
   owner, the bell fills and the count shows beside it: the sessions the menu lists plus the
-  confirmations that wait, the same count as the Dock badge (7.9). At 0 the bell is empty with
+  confirmations that wait, the same count as the Dock badge (7.9) while connected; the Dock
+  keeps its last count when the app disconnects. At 0 the bell is empty with
   no number.
 - **The menu.** "Needs You": the sessions Next Needing You moves through (3.16: blocked, error,
   done unseen, on online habs, in the board's order), each with its title, what it waits for
@@ -829,8 +830,8 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
 - **Connections.** The panel counts as a window while it shows (12.1), so with every window
   closed it connects the habs and waits for the home. Once it closes the lifecycle rule
   applies again.
-- **Dictation** is the system's: Edit › Start Dictation, the Dictation key or the dictation
-  shortcut types into the field, as in any Mac text field. The panel uses no microphone of its
+- **Dictation** is the system's: the Dictation key or the dictation shortcut types into the
+  field (the Edit menu is not reachable, since the panel leaves Flightdeck inactive), as in any Mac text field. The panel uses no microphone of its
   own. Not built: a shortcut that opens the panel already listening, and a screenshot drag.
 - **The reply** shows in the Capcom view and in Capcom's notifications, not in the panel.
 - **Permissions.** The shortcut is a Carbon hot key (`RegisterEventHotKey`, through the
@@ -840,7 +841,7 @@ Claude Mac apps' quick entry does, without bringing Flightdeck's windows forward
 
 | Case | Behaviour |
 |---|---|
-| A pane-based Capcom is mid-turn | The message waits as the composer's does ("Sends after this turn") and goes when the turn ends while the app is connected |
+| A pane-based Capcom is mid-turn | Nothing is queued: the panel keeps the text and says "Capcom is busy with a turn. Send again when it finishes.", since a queued message could sit in an app that disconnects once the panel closes (12.1) |
 | The hab refuses the send | The panel stays open with the text and the reason |
 | The shortcut is pressed while a Flightdeck sheet is up | The panel shows over it; the sheet stays |
 
@@ -1090,8 +1091,8 @@ Built choices:
   (`AttachmentPrep.load`), off the main actor. The system offers each dragged item in the
   first form the app takes, in this order: a URL (the Mac's Finder gives file URLs), an
   image (Photos), text, then any other file (the iPad's Files). A web link or dragged text
-  goes into the draft on a line of its own, not as a file; on iPad a plain-text file from
-  Files arrives the same way, as its text, since Files offers it as text. One drop attaches
+  goes into the draft on a line of its own, not as a file. Not verified on a device: the
+  order the system picks on iPad, and whether a plain-text file from Files arrives as text. One drop attaches
   at most 10 files, as the Photos picker does. A folder, a file over 25 MB or one that cannot
   be read is refused, and the line under the composer names the first refusal and how many
   more there were ("photos is a folder; attach the files in it (1 more not attached)").

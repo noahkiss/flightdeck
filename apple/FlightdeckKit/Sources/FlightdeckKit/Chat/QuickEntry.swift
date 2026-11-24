@@ -75,8 +75,8 @@ public final class QuickEntry {
     }
 
     /// Sends the text to the standing conversation, or to a new one with `new`. Returns true
-    /// once the hab took it (or it waits for the turn, as the composer's does); the field then
-    /// empties and the text joins the recents. On failure the text stays and `failure` says why.
+    /// once the hab took it; the field then empties and the text joins the recents. On failure,
+    /// a pane-based Capcom mid-turn included, the text stays and `failure` says why.
     @discardableResult
     public func send(new: Bool = false) async -> Bool {
         guard canSend, case .ready(let habID, let label) = readiness else { return false }
@@ -112,6 +112,12 @@ public final class QuickEntry {
             return false
         case .sending?:
             failure = "Capcom did not answer in time. The message may still arrive."
+            return false
+        case .queued?:
+            // A pane-based Capcom mid-turn: the message would wait in the app, which may
+            // disconnect once the panel closes (12.1). Keep it in the panel instead.
+            model.dismiss(id)
+            failure = "Capcom is busy with a turn. Send again when it finishes."
             return false
         default:
             remember(message)
