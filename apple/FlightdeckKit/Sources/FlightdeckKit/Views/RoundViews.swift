@@ -277,6 +277,8 @@ struct RunRowView: View {
 struct RoundFormSheet: View {
     let center: RoundCenter
     @State var draft: RoundDraft
+    /// The form as it opened: a swipe closes it only while nothing changed.
+    private let original: RoundDraft
     let close: () -> Void
     @State private var error: String?
     @State private var saving = false
@@ -285,6 +287,7 @@ struct RoundFormSheet: View {
     init(center: RoundCenter, draft: RoundDraft, close: @escaping () -> Void) {
         self.center = center
         _draft = State(initialValue: draft)
+        original = draft
         self.close = close
     }
 
@@ -404,8 +407,8 @@ struct RoundFormSheet: View {
                 }
             }
         }
-        // A typed name or prompt is work a stray swipe would lose (app.md 3.8).
-        .interactiveDismissDisabled(saving || !draft.name.isEmpty || !draft.prompt.isEmpty)
+        // A changed form is work a stray swipe would lose (app.md 3.8).
+        .interactiveDismissDisabled(saving || draft != original)
     }
 
     private var projects: [Project] { (store?.projects.values.map { $0 } ?? []).sorted { $0.name < $1.name } }

@@ -20,8 +20,8 @@ public enum AppFleet {
         if demo {
             log.info("demo mode")
             fleet.isDemo = true
-            // Nothing of a demo run is saved (app.md 3.9), drafts included.
-            fleet.drafts = DraftStore(defaults: nil)
+            // Nothing of a demo run is saved (app.md 3.9), drafts included: the fleet's store
+            // stays in memory.
             addDemoCenters(to: fleet, defaults: defaults)
             Task { await DemoFleet.populate(fleet) }
             return fleet
@@ -41,6 +41,7 @@ public enum AppFleet {
                 log.notice("hab \(i + 1) skipped: \(kind: error) \(error)")
             }
         }
+        fleet.drafts = DraftStore(defaults: defaults)
         addSSH(to: fleet, environment: env)
         pruneUsage(fleet)
         addPush(to: fleet, environment: env)

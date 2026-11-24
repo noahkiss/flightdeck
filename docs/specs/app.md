@@ -173,7 +173,7 @@ Its long-running command cards are the closest match.
 | Device key | Made on first start | Secure Enclave (phone, iPad) or Keychain (Mac) |
 | Imported SSH keys | The owner's own key files (10.4) | Keychain, this device only, never in backups |
 | Push tokens | APNs | Sent to each hab that has push set up |
-| Composer drafts | The owner (4.2) | Yes, per session, until sent |
+| Composer drafts | The owner (4.2) | Yes, per session, until sent. In the app's own defaults: they go into device backups, and on the Mac (no sandbox) any program of the user can read them, so a pasted secret in a draft is not protected |
 | Open tab and session | The owner (3.12) | Yes, per window |
 
 The hab owns structure. The app owns presentation (`hab-logic-api.md` 2.2). No layout, split or
@@ -338,10 +338,11 @@ Code: `Board/BoardSearch.swift`, the search in `Views/ShellViews.swift` (iPhone 
   All, then each hab by label (`searchScopes`). On iPhone and iPad they show while the search
   is open, and closing the search returns the scope to All, so no hidden scope keeps filtering.
   On the Mac they stay under the field.
-- The filter applies to session rows. On iPhone and iPad, confirmation cards and group rows match
-  on their title and hab. The Mac board shows only the matching session rows while it searches:
-  the Capcom row, confirmations, groups and rounds step aside. The sections keep their order and
-  their counts follow the filter. The query outlives opening a session.
+- The filter applies to session rows. Confirmation cards match on their title and hab, and on
+  iPhone and iPad group rows do too. While words are typed, the Mac board's Capcom row, groups
+  and rounds step aside; a host scope with no words hides none of them, so nothing that waits
+  for the owner goes unseen. The sections keep their order and their counts follow the filter.
+  The query outlives opening a session.
 - **Later:** branches (the hab sends them with the sidebar, 3.5); a Pinned scope and a pin
   action on rows; a Cmd-K palette over sessions and commands (the Mac and iPad stage); full-text
   search over chat messages, run on each hab by its transcript reader (`chat.search`, 17).
@@ -526,7 +527,9 @@ only grow. The actions follow `gff`'s sidebar (`gff-client.md` 6) and call the s
     says "<name> has ended."
   - An exited session asks "Remove <name> from <hab>?", with "It leaves the list. Its
     transcript stays on the computer." and Remove (red) and Cancel. Remove sends
-    `session.close`, which removes the record.
+    `session.close`, which removes the record. It reads the row again first: a session that
+    runs again meanwhile (another client resumed it) gets no call, and the app says "<name> is
+    running again." A removed record of a running session would leave its program unfiled.
   - An unfiled pane asks "End this pane's program on <hab>?" and sends `pane.close`.
 - **Rename** opens an alert with the name in a text field, and Cancel and Rename. Rename sends
   `session.rename`. The hab checks the name (1 to 64 of A-Z a-z 0-9 . _ -, unique on the host,
@@ -535,11 +538,16 @@ only grow. The actions follow `gff`'s sidebar (`gff-client.md` 6) and call the s
 - **Restart** sends `session.restart`: the hab exits the harness and starts it again with its
   resume id in a new pane, so it loads its instructions anew. It shows only while the hab's
   welcome lists `session-restart`, the session runs, and the agent is idle or done. An open
-  session follows the restart to the new pane once the board lists it.
+  session follows the restart to the new pane once the board lists it, in every window that
+  shows it. The call waits up to 75 s, past the hab's own 60 s; when it times out, the hab may
+  still finish, so an open session follows the session to its next pane all the same.
 - **Copy name** puts the session's name on the clipboard.
 - **What a row offers.** An offline hab's row offers Copy name only (3.1). An unfiled pane
   offers Close only. A Capcom session and a round's watcher session offer Copy name only: Capcom
-  and the round own them. Calls run off the main thread; the row stays usable meanwhile.
+  and the round own them. Calls run off the main thread. While a row's call runs, its actions
+  are off, so a second Close or Restart sends nothing.
+- **Per window.** Each window (an iPad or Mac window) asks its own questions and shows its own
+  alerts; the outcome (a removal, a restart) reaches every window.
 - **A failure** shows an alert, "Couldn't <action> <name>", with the hab's words as a sentence
   ("A session named "docs" exists.").
 - **An open session that is removed** closes: the list shows, or "Choose a session" in the split
@@ -570,7 +578,8 @@ Code: `Board/SessionRestore.swift`, the scene storage in `Views/ShellViews.swift
 - The open session opens again as a tap on its row opens it, once the board lists the row,
   within one minute. A row that comes later opens nothing.
 - **Any other open wins.** A notification, a round, a group member, a sent file, a started
-  session or the owner's own tap before the row arrives cancels the restore. The restore never
+  session, an approval sheet, another tab, the Capcom view (Mac) or the owner's tap on any row
+  before the row arrives cancels the restore. The restore never
   moves the tab: a session open under Sessions while the owner left on Capcom stays under
   Sessions.
 - The Mac keeps the Capcom view the same way.
@@ -653,7 +662,9 @@ tab bar minimising on scroll, settings split by area).
   place. Send clears it. The Capcom composer keeps its draft the same way, per conversation;
   New conversation carries it to the new one. A draft of a session that its hab no longer
   lists goes when that hab next comes online. Attachments are not kept. Demo mode keeps
-  drafts in memory only.
+  drafts in memory only. A keystroke redraws only the composer that shows that draft; the
+  drafts are written half a second after typing pauses, and at once when the app goes to the
+  background.
 - **Send follows the hab's input rules** (`harness-adapters.md`, Input delivery):
 
 | Pane state | What the owner sees |
@@ -2553,10 +2564,13 @@ The connection follows `transport.md`. This section says what the app does.
 - On a lost connection, the app retries with backoff and jitter (first try at once, up to 30 s
   apart). A network change retries at once: the app watches the network path
   (`NWPathMonitor`, `Connection/NetworkWatch.swift`, tests `NetworkWatchTests`). A path that
-  becomes usable, or a usable path on other interfaces (Wi-Fi to cellular), retries every hab
-  at once while the app is visible. The monitor's first reading at start retries nothing.
+  becomes usable, or a usable path on other interfaces (Wi-Fi to cellular), cuts every hab's
+  retry wait short while the app is visible. A connection that still looks online pings at
+  once; with no answer within five seconds it ends and reconnects on the new path. The
+  monitor's first reading at start retries nothing.
 - **Pull to refresh.** Pulling the Sessions list down retries every hab at once and waits, up
-  to five seconds, until each is online.
+  to five seconds, for the habs that were connecting. A hab already offline before the pull is
+  not waited for.
 - It sends its reconnect token. Within 60 s and the same epoch, it keeps its client id and size
   ownership (`hab-logic-api.md` 3.7).
 - A new epoch means a fresh snapshot (3.5). Data streams resume by offset.

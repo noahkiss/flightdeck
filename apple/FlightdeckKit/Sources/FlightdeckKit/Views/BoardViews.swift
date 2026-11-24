@@ -324,7 +324,9 @@ struct BoardSessionActions: ViewModifier {
             content
                 .modifier(SessionActionsHost(center: fleet.sessionActions))
                 .modifier(SessionActionFollow(center: fleet.sessionActions, board: fleet.board, opened: $opened))
-                .modifier(RestoreOpenSession(board: fleet.board, opened: $opened, saved: saved))
+                // The Capcom view, an approval sheet or a tap on any row cancels the restore (app.md 3.12).
+                .modifier(RestoreOpenSession(board: fleet.board, opened: $opened, saved: saved,
+                                             interrupt: "\(capcomShown)|\(fleet.approvals?.presenting ?? false)|\(fleet.board.opens)"))
                 .onChange(of: capcomShown) { _, on in saved = on ? SessionRestore.capcom : (opened?.id ?? "") }
                 .onChange(of: opened) { _, r in saved = r?.id ?? (capcomShown ? SessionRestore.capcom : "") }
                 // The Mac keeps the Capcom view the same way (app.md 3.12).
@@ -439,6 +441,16 @@ struct BoardList: View {
     @State private var searchShown = false
 
     private var searching: Bool { BoardSearch.isActive(query: query, scope: scope) }
+    /// Words typed: the Capcom row, groups and rounds step aside. A host scope alone hides
+    /// none of them, so nothing that waits for the owner goes unseen.
+    private var typed: Bool { !BoardSearch.words(query).isEmpty }
+
+    /// The confirmations the search keeps: by scope, and by title while words are typed.
+    private func confirmCards(_ all: [ConfirmCard]) -> [ConfirmCard] {
+        let s = BoardSearch.fit(scope, habs: board.habs.map(\.id))
+        let w = BoardSearch.words(query)
+        return all.filter { BoardSearch.matches(.confirm($0), words: w, scope: s) }
+    }
 
     /// The board's sections with run sessions left out when the filter hides them. A run
     /// session that needs the owner always shows (app.md 21.2). The search filters the rest.
@@ -472,7 +484,7 @@ struct BoardList: View {
                         .foregroundStyle(.orange)
                 }
                 // The standing Capcom conversation (app.md 4.10), above every section.
-                if showsCapcom, !searching, let capcom, let openCapcom {
+                if showsCapcom, !typed, let capcom, let openCapcom {
                     Button(action: openCapcom) {
                         CapcomEntryRow(center: capcom, rows: board.rows, now: ctx.date)
                     }
@@ -483,7 +495,7 @@ struct BoardList: View {
                     }
                 }
                 // The approvals area's confirmations (capcom.md 6.1): starts other agents ask for.
-                if let confirms, !searching, case let cards = confirms.approvals, !cards.isEmpty {
+                if let confirms, case let cards = confirmCards(confirms.approvals), !cards.isEmpty {
                     Section("Confirm") {
                         ForEach(cards) { ConfirmCardView(center: confirms, card: $0) }
                     }
@@ -504,11 +516,11 @@ struct BoardList: View {
                     }
                 }
                 // The group cards (groups.md 5.4), below the sessions.
-                if let groups, !searching {
+                if let groups, !typed {
                     BoardGroupsSection(center: groups, now: ctx.date)
                 }
                 // The Rounds list per hab (rounds.md 10.3), below the sessions.
-                if let rounds, rounds.any, !searching {
+                if let rounds, rounds.any, !typed {
                     BoardRoundsSections(center: rounds, now: ctx.date)
                 }
             }
@@ -522,7 +534,7 @@ struct BoardList: View {
             .onChange(of: searchShown) { _, on in if !on { scope = .all } }
             #endif
             .overlay {
-                if searching, sections.isEmpty {
+                if searching, sections.isEmpty, confirmCards(confirms?.approvals ?? []).isEmpty {
                     ContentUnavailableView("No matches", systemImage: "magnifyingglass",
                                            description: Text("Try other words, or check the host scope."))
                 } else if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom, !(rounds?.any ?? false),

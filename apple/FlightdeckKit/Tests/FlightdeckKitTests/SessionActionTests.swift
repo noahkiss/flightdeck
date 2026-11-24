@@ -63,47 +63,48 @@ final class SessionActionTests: XCTestCase {
     func testRename() async throws {
         let (f, hab) = await setup()
         let c = f.sessionActions
-        await c.rename(try XCTUnwrap(row(f, "s1")), to: " tide-fix ")
-        XCTAssertNil(c.failure)
+        var fail = await c.rename(try XCTUnwrap(row(f, "s1")), to: " tide-fix ")
+        XCTAssertNil(fail)
         await eventually("renamed") { self.row(f, "s1")?.name == "tide-fix" }
 
         // The hab's refusals come back in its words, as a sentence.
-        await c.rename(try XCTUnwrap(row(f, "s1")), to: "docs")
-        XCTAssertEqual(c.failure?.title, "Couldn't rename tide-fix")
-        XCTAssertEqual(c.failure?.message, "A session named \"docs\" exists.")
-        c.failure = nil
-        await c.rename(try XCTUnwrap(row(f, "s1")), to: "two words")
-        XCTAssertEqual(c.failure?.message, "Session name \"two words\": use 1 to 64 of A-Z a-z 0-9 . _ -.")
-        c.failure = nil
-        await c.rename(try XCTUnwrap(row(f, "s1")), to: "capcom-x")
-        XCTAssertTrue(c.failure?.message?.contains("kept for the Capcom service") ?? false)
-        c.failure = nil
+        fail = await c.rename(try XCTUnwrap(row(f, "s1")), to: "docs")
+        XCTAssertEqual(fail?.title, "Couldn't rename tide-fix")
+        XCTAssertEqual(fail?.message, "A session named \"docs\" exists.")
+        fail = await c.rename(try XCTUnwrap(row(f, "s1")), to: "two words")
+        XCTAssertEqual(fail?.message, "Session name \"two words\": use 1 to 64 of A-Z a-z 0-9 . _ -.")
+        fail = await c.rename(try XCTUnwrap(row(f, "s1")), to: "capcom-x")
+        XCTAssertTrue(fail?.message?.contains("kept for the Capcom service") ?? false)
 
         // A blank or unchanged name sends nothing.
         let before = await hab.sessionActions.count
-        await c.rename(try XCTUnwrap(row(f, "s1")), to: "  ")
-        await c.rename(try XCTUnwrap(row(f, "s1")), to: "tide-fix")
+        fail = await c.rename(try XCTUnwrap(row(f, "s1")), to: "  ")
+        XCTAssertNil(fail)
+        fail = await c.rename(try XCTUnwrap(row(f, "s1")), to: "tide-fix")
+        XCTAssertNil(fail)
         let after = await hab.sessionActions.count
         XCTAssertEqual(after, before)
+        XCTAssertTrue(c.running.isEmpty, "no row stays marked running")
         await f.setActive(false)
     }
 
     func testCloseEndsARunningSessionAndRemovesAnExitedOne() async throws {
         let (f, hab) = await setup()
         let c = f.sessionActions
-        await c.close(try XCTUnwrap(row(f, "s2")))
-        XCTAssertNil(c.failure)
+        let fail = await c.close(try XCTUnwrap(row(f, "s2")))
+        XCTAssertNil(fail)
         await eventually("exited") { self.row(f, "s2")?.sessionExited == true }
-        XCTAssertNil(c.removed, "an ended session stays, exited")
+        XCTAssertNil(c.removal, "an ended session stays, exited")
         var calls = await hab.sessionActions
         XCTAssertEqual(calls, ["pane.close %2"])
 
-        // Close again: the record goes.
+        // Close again: the record goes, and every window hears of it.
         let exited = try XCTUnwrap(row(f, "s2"))
         XCTAssertEqual(SessionActionCenter.closeKind(exited), .remove)
-        await c.close(exited)
+        let again = await c.close(exited)
+        XCTAssertNil(again)
         await eventually("removed") { self.row(f, "s2") == nil }
-        XCTAssertEqual(c.removed, exited.id)
+        XCTAssertEqual(c.removal?.rowID, exited.id)
         calls = await hab.sessionActions
         XCTAssertEqual(calls.last, "close s2")
         await f.setActive(false)
@@ -116,27 +117,45 @@ final class SessionActionTests: XCTestCase {
         // The program ends while the question is up.
         await hab.endPane("%1")
         await eventually("exited") { self.row(f, "s1")?.sessionExited == true }
-        await c.close(asked)
-        XCTAssertEqual(c.failure?.title, "tides has ended.")
+        let fail = await c.close(asked)
+        XCTAssertEqual(fail?.title, "tides has ended.")
         let calls = await hab.sessionActions
         XCTAssertEqual(calls, [])
+        await f.setActive(false)
+    }
+
+    func testRemoveAfterTheSessionRunsAgainSendsNothing() async throws {
+        let (f, hab) = await setup()
+        let c = f.sessionActions
+        let asked = try XCTUnwrap(row(f, "s3"))
+        XCTAssertEqual(SessionActionCenter.closeKind(asked), .remove)
+        // Another client resumes the session while the question is up.
+        await hab.put(Fixture.pane("%7", session: "s3"))
+        await hab.put(Fixture.session("s3", name: "old", pane: "%7", project: "p1"))
+        await eventually("running") { self.row(f, "s3")?.sessionExited == false }
+        let fail = await c.close(asked)
+        XCTAssertEqual(fail?.title, "old is running again.")
+        XCTAssertNil(c.removal)
+        let calls = await hab.sessionActions
+        XCTAssertEqual(calls, [], "no session.close for a running session: its program would be left unfiled")
         await f.setActive(false)
     }
 
     func testRestartMovesToTheNewPane() async throws {
         let (f, hab) = await setup()
         let c = f.sessionActions
-        await c.restart(try XCTUnwrap(row(f, "s1")))
-        XCTAssertNil(c.failure)
-        let t = try XCTUnwrap(c.restarted)
+        var fail = await c.restart(try XCTUnwrap(row(f, "s1")))
+        XCTAssertNil(fail)
+        let t = try XCTUnwrap(c.restart?.target)
         XCTAssertEqual(t.session, "s1")
         XCTAssertNotEqual(t.pane, "%1")
         await eventually("the new pane") { self.row(f, "s1")?.target.pane == t.pane }
 
         // The hab refuses while the agent works; the alert shows its words.
-        await c.restart(try XCTUnwrap(row(f, "s2")))
-        XCTAssertEqual(c.failure?.title, "Couldn't restart docs")
-        XCTAssertEqual(c.failure?.message, "Session docs: the agent is working; a restart waits until it is idle or done.")
+        fail = await c.restart(try XCTUnwrap(row(f, "s2")))
+        XCTAssertEqual(fail?.title, "Couldn't restart docs")
+        XCTAssertEqual(fail?.message, "Session docs: the agent is working; a restart waits until it is idle or done.")
+        XCTAssertEqual(c.restart?.target, t, "a refusal is no restart to follow")
         let calls = await hab.sessionActions
         XCTAssertEqual(calls, ["restart s1", "restart s2"])
         await f.setActive(false)
@@ -146,8 +165,21 @@ final class SessionActionTests: XCTestCase {
         let (f, _) = await setup()
         let r = try XCTUnwrap(row(f, "s1"))
         await f.setActive(false)
-        await f.sessionActions.rename(r, to: "elsewhere")
-        XCTAssertEqual(f.sessionActions.failure?.title, "Couldn't rename tides")
-        XCTAssertNotNil(f.sessionActions.failure?.message)
+        let fail = await f.sessionActions.rename(r, to: "elsewhere")
+        XCTAssertEqual(fail?.title, "Couldn't rename tides")
+        XCTAssertNotNil(fail?.message)
+    }
+
+    func testAskShowsItsFailureInItsOwnWindow() async {
+        let a = SessionAsk(), b = SessionAsk()
+        let r = boardRow("bench/s/s1")
+        a.askClose(r)
+        XCTAssertTrue(a.closingShown)
+        XCTAssertFalse(b.closingShown, "a question shows only in the window that asked")
+        await a.run { SessionActionFailure(title: "claude has ended.") }
+        XCTAssertFalse(a.closingShown)
+        XCTAssertEqual(a.closing?.id, r.id, "the question keeps its row while it dismisses")
+        XCTAssertEqual(a.failure?.title, "claude has ended.")
+        XCTAssertNil(b.failure)
     }
 }

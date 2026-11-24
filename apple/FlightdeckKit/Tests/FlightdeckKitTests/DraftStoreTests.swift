@@ -18,17 +18,33 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(store[SessionTarget(habID: "bench", session: "s1", pane: "%9")], "half a thought")
         XCTAssertEqual(store[SessionTarget(habID: "other", session: "s1", pane: "%1")], "", "per hab")
 
+        // Saves wait for typing to pause; the app going to the background writes at once.
+        XCTAssertNil(d.object(forKey: DraftStore.key))
+        store.flush()
         // A new store on the same defaults is the app after iOS ended it.
         XCTAssertEqual(DraftStore(defaults: d)[a], "half a thought")
 
         // Send clears it, and an empty draft leaves no key behind.
         store[a] = ""
         XCTAssertTrue(store.drafts.isEmpty)
+        store.flush()
         XCTAssertNil(d.object(forKey: DraftStore.key))
 
         // Whitespace is kept while typing: a draft that starts with a space is a draft.
         store[a] = " "
         XCTAssertEqual(store[a], " ")
+    }
+
+    func testSavesWaitForAPause() async {
+        let name = "flightdeck.test.drafts.debounce"
+        let d = emptySuite(name)
+        defer { d.removePersistentDomain(forName: name) }
+        let store = DraftStore(defaults: d)
+        store.saveDelay = .milliseconds(50)
+        let a = SessionTarget(habID: "bench", session: "s1", pane: nil)
+        for c in "typing" { store[a] += String(c) }
+        XCTAssertNil(d.object(forKey: DraftStore.key), "no write per keystroke")
+        await eventually("saved") { (d.dictionary(forKey: DraftStore.key) as? [String: String])?["bench/s/s1"] == "typing" }
     }
 
     func testPruneDropsSessionsTheHabNoLongerLists() {

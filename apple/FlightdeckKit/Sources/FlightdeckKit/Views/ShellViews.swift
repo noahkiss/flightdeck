@@ -41,7 +41,9 @@ struct AppShell: View {
             // Close, rename and restart from a row (app.md 3.11).
             .modifier(SessionActionsHost(center: fleet.sessionActions))
             .modifier(SessionActionFollow(center: fleet.sessionActions, board: board, opened: $opened))
-            .modifier(RestoreOpenSession(board: board, opened: $opened, saved: savedOpen) { restoring = true })
+            // Another tab, an approval sheet or a tap on any row cancels the restore (app.md 3.12).
+            .modifier(RestoreOpenSession(board: board, opened: $opened, saved: savedOpen,
+                                         interrupt: "\(tab.rawValue)|\(fleet.approvals?.presenting ?? false)|\(board.opens)") { restoring = true })
             .onChange(of: opened) { _, r in
                 savedOpen = r?.id ?? ""
                 guard r != nil else { return }

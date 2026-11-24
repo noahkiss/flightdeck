@@ -51,18 +51,21 @@ extension Fleet {
                 last = r
                 guard retry, let self, self.isActive else { continue }
                 self.log.info("network change: retrying \(self.connections.count) habs")
-                await self.retryAll()
+                await self.retryAll(probe: true)
             }
         }
     }
 
-    /// Pull to refresh (app.md 10.2): retries every hab at once, then waits up to `limit` until
-    /// each is online.
+    /// Pull to refresh (app.md 10.2): retries every hab at once, then waits up to `limit` for
+    /// the habs that were connecting to come online. A hab already offline before the pull is
+    /// not waited for.
     public func refresh(limit: Duration = .seconds(5)) async {
+        let waiting = Set(board.habs.filter { $0.state.status == .connecting }.map(\.id))
         await retryAll()
         let clock = ContinuousClock()
         let end = clock.now + limit
-        while clock.now < end, !Task.isCancelled, board.habs.contains(where: { $0.state.status != .online && !$0.needsUpdate }) {
+        while clock.now < end, !Task.isCancelled,
+              board.habs.contains(where: { waiting.contains($0.id) && $0.state.status == .connecting }) {
             try? await Task.sleep(for: .milliseconds(100))
         }
     }

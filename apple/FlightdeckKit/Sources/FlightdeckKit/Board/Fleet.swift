@@ -129,10 +129,14 @@ public final class Fleet {
     /// How many times every hab was retried at once (a network change, pull to refresh).
     public private(set) var retries = 0
 
-    /// Retries every hab's connection now, skipping its backoff wait (app.md 10.2).
-    public func retryAll() async {
+    /// Retries every hab's connection now, skipping its backoff wait (app.md 10.2). With
+    /// `probe`, a connection that looks online pings and reconnects when the ping goes unanswered.
+    public func retryAll(probe: Bool = false) async {
         retries += 1
-        for c in connections { await c.retryNow() }
+        for c in connections {
+            await c.retryNow()
+            if probe { await c.probe() }
+        }
     }
 
     /// How long after going to the background the open-stream check runs.
@@ -309,6 +313,8 @@ public final class Fleet {
                 // connections close; a hab that misses it drops the focus
                 // with the connection anyway.
                 focus.setActive(false)
+                // iOS may end the app in the background: write what was typed now.
+                drafts.flush()
                 await Self.within(.seconds(1)) { await self.focus.flush() }
                 terminals.setActive(false)
                 for c in connections where voiceHolds[c.id] == nil { await c.stop() }
@@ -398,8 +404,9 @@ public final class Fleet {
 
     /// What the chat views show (app.md 4.11), kept on the device.
     public private(set) lazy var chatShow = ChatShowStore()
-    /// The composer's draft per session (app.md 4.2). Demo mode sets one with no defaults.
-    public lazy var drafts = DraftStore(defaults: .standard)
+    /// The composer's draft per session (app.md 4.2). In memory until the app gives it its
+    /// defaults (`AppFleet.make`), so a test never writes the runner's own.
+    public var drafts = DraftStore(defaults: nil)
 
     private func refreshChats(habID: String) {
         guard let h = board.habs.first(where: { $0.id == habID }) else { return }
