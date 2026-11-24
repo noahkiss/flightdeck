@@ -43,9 +43,14 @@ struct FlightdeckApp: App {
 }
 
 /// Writes what was typed before the app quits (app.md 4.2): the draft store saves after a
-/// pause, which a quit would cut short.
+/// pause, which a quit would cut short. A logout or force quit may skip the quit call, so the
+/// app also writes when it goes to the background.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var fleet: Fleet?
+
+    func applicationWillResignActive(_ notification: Notification) {
+        fleet?.drafts.flush()
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         fleet?.drafts.flush()

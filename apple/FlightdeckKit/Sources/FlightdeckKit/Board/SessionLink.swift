@@ -101,6 +101,29 @@ public struct SessionLink: Codable, Hashable, Sendable {
     }
 }
 
+/// What a link from outside the app is (app.md 3.15). Only these reach a handler; anything
+/// else, a malformed session link too, is ignored.
+public enum AppLink: Equatable, Sendable {
+    case file
+    case session(SessionLink)
+    case usage
+    case request
+    case pair
+    case unknown
+
+    public static func kind(_ url: URL) -> AppLink {
+        if url.isFileURL { return .file }
+        guard url.scheme == "flightdeck" else { return .unknown }
+        switch url.host {
+        case "session": return SessionLink(url: url).map(AppLink.session) ?? .unknown
+        case "usage": return .usage
+        case "request": return .request
+        case "pair": return .pair
+        default: return .unknown
+        }
+    }
+}
+
 /// A link or Handoff that waits for the board to list its session, within the restore's
 /// minute (app.md 3.15).
 public struct PendingLink: Equatable, Sendable {

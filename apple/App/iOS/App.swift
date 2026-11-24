@@ -20,6 +20,8 @@ struct FlightdeckApp: App {
         // the handler with the Mac (app.md 3.15).
         WindowGroup(id: FlightdeckScene.board) {
             FlightdeckRoot(fleet: fleet)
+                // An open board window takes a link, not a new scene.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .task {
                     pushDelegate.start(fleet.push)
                     if fleet.badge == nil {

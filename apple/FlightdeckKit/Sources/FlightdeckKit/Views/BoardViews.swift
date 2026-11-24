@@ -264,6 +264,7 @@ public struct BoardScreen: View {
         // What this window offers the menus (app.md 3.13).
         .onChange(of: opened?.id, initial: true) { _, id in commands?.openRowID = id }
         .onAppear(perform: registerCommands)
+        .onChange(of: newSession != nil) { _, up in commands?.setSheet("newSession", up) }
         // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
         .onChange(of: fleet?.rounds.openRequest) { _, t in
             guard let t else { return }
@@ -882,9 +883,12 @@ struct ApprovalSheetHost: ViewModifier {
     func body(content: Content) -> some View {
         if let center {
             let mine = center.presenter == nil || center.presenter == commands?.id
-            content.sheet(isPresented: Binding(get: { center.presenting && mine }, set: { center.presenting = $0 })) {
-                ApprovalSheet(model: center.sheet, openChat: openChat) { center.presenting = false }
-            }
+            content
+                // Closing the window that raised the sheet ends it (app.md 3.12).
+                .onDisappear { center.windowClosed(commands?.id) }
+                .sheet(isPresented: Binding(get: { center.presenting && mine }, set: { center.presenting = $0 })) {
+                    ApprovalSheet(model: center.sheet, openChat: openChat) { center.presenting = false }
+                }
         } else {
             content
         }

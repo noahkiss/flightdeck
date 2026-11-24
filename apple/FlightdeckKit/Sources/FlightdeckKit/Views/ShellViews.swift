@@ -57,6 +57,7 @@ struct AppShell: View {
             // What this window offers the menus (app.md 3.13).
             .onAppear(perform: registerCommands)
             .onChange(of: commands?.finds ?? 0) { _, _ in tab = .sessions }
+            .onChange(of: newSession != nil) { _, up in commands?.setSheet("newSession", up) }
             .onChange(of: opened) { _, r in
                 commands?.openRowID = r?.id
                 savedOpen = r?.id ?? ""

@@ -5,15 +5,23 @@ extension Fleet {
     /// or a pairing link here; a session link goes back to the window that received it, which
     /// opens the session. The iOS and Mac apps share it.
     public func open(url: URL) -> SessionLink? {
-        if url.isFileURL {
+        switch AppLink.kind(url) {
+        case .file:
             // Any file from the share sheet or Files goes to the send sheet (app.md 4.4); a key
             // file goes to key import (app.md 10.4).
             if !files.open(url) { ssh?.openKeyFile(url) }
-            return nil
+        case .session(let link):
+            return link
+        case .usage:
+            _ = usage?.open(url: url)
+        case .request:
+            approvals?.open(url: url)
+        case .pair:
+            ssh?.open(url: url)
+        case .unknown:
+            // A malformed or unknown link is ignored (app.md 3.15).
+            break
         }
-        if let link = SessionLink(url: url) { return link }
-        if usage?.open(url: url) == true { return nil }
-        if approvals?.open(url: url) != true { ssh?.open(url: url) }
         return nil
     }
 }
@@ -142,6 +150,7 @@ public struct SessionWindowRoot: View {
     private let fleet: Fleet
     private let link: SessionLink?
     @State private var commands = WindowCommands(kind: .session)
+    @Environment(\.openWindow) private var openWindow
     /// The minute to wait for the row is over.
     @State private var expired = false
     /// The board listed the session once: a later absence is a removal.
@@ -154,6 +163,16 @@ public struct SessionWindowRoot: View {
 
     private var resolution: SessionLink.Resolution? { link?.resolve(in: fleet.board) }
 
+    /// The approval sheet's chat button: this window shows its own session; another session
+    /// opens in its own window.
+    private func openChat(_ t: SessionTarget) {
+        fleet.approvals?.presenting = false
+        guard t.session != row?.target.session || t.habID != row?.target.habID,
+              let r = fleet.board.rows.first(where: { $0.target == t }),
+              let l = SessionLink.of(r, board: fleet.board) else { return }
+        openWindow(value: l)
+    }
+
     private var row: BoardRow? {
         if case .row(let r) = resolution { return r }
         return nil
@@ -162,6 +181,9 @@ public struct SessionWindowRoot: View {
     public var body: some View {
         content
             .modifier(SessionActionsHost(center: fleet.sessionActions))
+            // An approval sheet from outside shows here too, so a notification tap never
+            // shows nothing (app.md 3.14).
+            .modifier(ApprovalSheetHost(center: fleet.approvals, openChat: openChat))
             .modifier(FleetEnvironment(fleet: fleet))
             .modifier(PublishCommands(fleet: fleet, commands: commands))
             .modifier(CountsWindow(fleet: fleet))

@@ -27,11 +27,21 @@ struct PublishCommands: ViewModifier {
     let commands: WindowCommands
     @Environment(\.supportsMultipleWindows) private var multipleWindows
 
+    /// The fleet's sheets that show in this window: an approval, usage, a sent file, and the
+    /// window's Rename and Close questions. The views add their own (`setSheet`).
+    private var sheetUp: Bool {
+        if let a = fleet.approvals, a.presenting, a.presenter == nil || a.presenter == commands.id { return true }
+        if fleet.usage?.book.presented != nil || fleet.files.incoming != nil { return true }
+        if let ask = commands.ask, ask.closingShown || ask.renaming != nil || ask.failure != nil { return true }
+        return false
+    }
+
     func body(content: Content) -> some View {
         content
             .environment(\.windowCommands, commands)
             .focusedSceneValue(\.windowCommands, commands)
-            .focusedSceneValue(\.commandState, commands.state(board: fleet.board, actions: fleet.sessionActions, multipleWindows: multipleWindows))
+            .focusedSceneValue(\.commandState, commands.state(board: fleet.board, actions: fleet.sessionActions,
+                                                              multipleWindows: multipleWindows, sheetUp: sheetUp))
     }
 }
 

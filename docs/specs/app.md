@@ -585,9 +585,11 @@ Code: `Board/SessionRestore.swift`, the scene storage in `Views/ShellViews.swift
 - **Any other open in the window wins.** A notification, a round, a group member, a sent file,
   a started session, an approval sheet, another tab, the Capcom view (Mac) or the owner's tap on
   any row before the row arrives cancels the restore. Each window counts its own opens: a tap
-  or an approval sheet raised from a row in one window leaves another window's restore alone. An
-  approval sheet raised from outside (a notification, the Live Activity, a link) cancels every
-  window's restore, since every window shows it. The restore never
+  or an approval sheet raised from a row in one window leaves another window's restore alone,
+  and that sheet shows in that window only. An approval sheet raised from outside (a
+  notification, the Live Activity, a link, a chat card) shows in every window, session windows
+  (3.14) too, so it never goes unseen, and it cancels every window's restore. Closing the window
+  that raised a sheet ends the sheet, so a later request can show. The restore never
   moves the tab: a session open under Sessions while the owner left on Capcom stays under
   Sessions.
 - The Mac keeps the Capcom view the same way.
@@ -607,7 +609,9 @@ offers and the enablement rule). Tests: `WindowCommandTests`.
 The Mac menu bar, the iPadOS menu bar and the iPad's Cmd-hold overlay list the same commands
 (`.commands` on the app's scenes). Each command acts on the focused window: its open session,
 its tab, its search. The window publishes what it offers (`focusedSceneValue`); a command the
-focused window cannot do is off, not hidden.
+focused window cannot do is off. Two exceptions: Go › Rounds and Settings show only on iPad,
+where those tabs exist, and Mark as Read and Mark as Unread share one place, which shows the
+one that applies.
 
 | Menu | Command | Keys | Does |
 |---|---|---|---|
@@ -617,7 +621,7 @@ focused window cannot do is off, not hidden.
 | Edit | Find Sessions | ⌘F | Puts the cursor in the board's search field (3.6); on iPad it moves to the Sessions tab first |
 | Session | Show Chat, Show Terminal | ⌥⌘1, ⌥⌘2 | The Chat \| Terminal switch, while the window shows one |
 | Session | Voice Mode | ⌥⌘V | Opens voice mode (13) |
-| Session | Stop | ⌘. | Stops the agent's turn, as the composer's Stop does. On while the agent works and the hab is online |
+| Session | Stop | ⌘. | Stops the agent's turn, as the composer's Stop does. On while the agent works and the hab is online, and off while the window has a sheet or alert up, so ⌘. cancels the sheet |
 | Session | Console | ⌥⌘K | Opens the session's console (6) |
 | Session | Rename…, Restart, Copy Name, Copy Link, Close… | | The row actions (3.11) and Copy Link (3.15), with the same rules and questions |
 | Session | Mark as Read, Mark as Unread | ⇧⌘U | For a `done` session (3.16) |
@@ -664,8 +668,9 @@ Code: `Views/SessionWindow.swift`. Tests: `SessionLinkTests`.
   allows several windows (`supportsMultipleWindows`), so not on iPhone.
 - **Connections.** On the Mac a session window counts as a window for the lifecycle rule
   (12.1): the habs stay connected while any window is open.
-- **Approvals.** A session window has no approval sheet. The chat's request card answers in
-  place (4.2).
+- **Approvals.** The chat's request card answers in place (4.2). A session window shows an
+  approval sheet raised from outside, as every window does (3.12). The sheet's chat button
+  opens another session in its own window.
 
 | Case | Behaviour |
 |---|---|
@@ -691,7 +696,9 @@ Code: `Board/SessionLink.swift`, the link handling in `Views/SessionWindow.swift
   hab does not list within the minute opens nothing.
 - **The Mac registers `flightdeck://`** (`CFBundleURLTypes`), as iOS does, and both apps share
   one handler for every link: pairing, usage, a request (7), a session, and files. On the Mac a
-  link goes to an open board window, not a new one (`handlesExternalEvents`).
+  link goes to an open board window, not a new one (`handlesExternalEvents`); iPad does the
+  same. Only a `flightdeck://pair` link reaches pairing. A request link for a hab that no
+  connection in the app is (every one has said its host id) is dropped, not kept to raise later.
 - **Handoff.** The open session advertises an activity (`.userActivity`, type
   `<bundle id>.session`) once it has stayed on screen for 3 seconds, so flicking through rows
   advertises nothing. The activity carries the hab's host id and the session id, and no title,
@@ -702,7 +709,7 @@ Code: `Board/SessionLink.swift`, the link handling in `Views/SessionWindow.swift
 | Case | Behaviour |
 |---|---|
 | A link to a session that was removed | Nothing opens after the minute |
-| A link with no `hab` or `session` | Ignored, as any unknown link is |
+| A link with no `hab` or `session` | Ignored, as any unknown link is: no sheet, no error |
 | Handoff from a device paired with a hab this one lacks | "No paired computer has this session." |
 | The link opens while another session is open | The linked session replaces it, as a tap does |
 

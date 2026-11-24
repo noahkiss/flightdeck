@@ -99,9 +99,21 @@ public final class ApprovalCenter {
                 if !presenting, sheet.show(host: m.hab, pane: m.pane, request: m.request) { present(from: nil) }
                 continue
             }
-            if !habOnline { keep.append(m) }
+            // A hab no connection in the app is (every one has said its host id) never comes:
+            // a crafted request link for it is dropped, not kept for ever (app.md 3.15).
+            let hosts = board.habs.map { $0.state.welcome?.host.id ?? $0.state.store.host }
+            let unknown = !hosts.contains(m.hab) && !hosts.contains { $0 == nil || $0?.isEmpty == true }
+            if !habOnline, !unknown { keep.append(m) }
         }
         pending = keep
+    }
+
+    /// A window closed (app.md 3.12): a sheet it raised went with it, so the center stops
+    /// presenting and a later request can show.
+    public func windowClosed(_ window: UUID?) {
+        guard presenting, let window, presenter == window else { return }
+        presenting = false
+        presenter = nil
     }
 
     // MARK: - The chat view's request card

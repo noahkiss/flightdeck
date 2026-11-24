@@ -80,6 +80,23 @@ final class SessionLinkTests: XCTestCase {
         let l = SessionLink(hab: "h", session: "s")
         XCTAssertEqual(fleet.open(url: l.url), l)
         XCTAssertNil(fleet.open(url: URL(string: "flightdeck://usage?account=x")!), "other links stay with their handlers")
+        XCTAssertNil(fleet.open(url: URL(string: "flightdeck://session?hab=h")!), "a malformed session link is ignored")
+    }
+
+    /// Only known links reach a handler; a malformed session link and an unknown host are
+    /// ignored, never handed to pairing (app.md 3.15).
+    func testLinkKinds() {
+        func kind(_ s: String) -> AppLink { AppLink.kind(URL(string: s)!) }
+        XCTAssertEqual(kind("flightdeck://session?hab=h&session=s"), .session(SessionLink(hab: "h", session: "s")))
+        XCTAssertEqual(kind("flightdeck://session?hab=h"), .unknown)
+        XCTAssertEqual(kind("flightdeck://session"), .unknown)
+        XCTAssertEqual(kind("flightdeck://anything?x=1"), .unknown)
+        XCTAssertEqual(kind("flightdeck://"), .unknown)
+        XCTAssertEqual(kind("https://example.com/pair"), .unknown)
+        XCTAssertEqual(kind("flightdeck://pair?v=1"), .pair)
+        XCTAssertEqual(kind("flightdeck://usage?account=x"), .usage)
+        XCTAssertEqual(kind("flightdeck://request?hab=h"), .request)
+        XCTAssertEqual(AppLink.kind(URL(fileURLWithPath: "/tmp/x.txt")), .file)
     }
 }
 

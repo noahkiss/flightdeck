@@ -57,12 +57,20 @@ public final class WindowCommands {
     public private(set) var finds = 0
     @ObservationIgnored public var openRow: (BoardRow) -> Void = { _ in }
     /// The window's questions for Rename and Close (app.md 3.11).
-    @ObservationIgnored var ask: SessionAsk?
+    var ask: SessionAsk?
     /// Opens a session in its own window; nil where the system allows one window only.
     @ObservationIgnored public var openWindow: ((SessionLink) -> Void)?
 
+    /// Sheets up in this window, by name. While any is up, Stop is off, so ⌘. cancels the
+    /// sheet instead (app.md 3.13).
+    public private(set) var sheets: Set<String> = []
+
     public init(kind: Kind) {
         self.kind = kind
+    }
+
+    public func setSheet(_ name: String, _ up: Bool) {
+        if up { sheets.insert(name) } else { sheets.remove(name) }
     }
 
     public func find() {
@@ -89,6 +97,8 @@ public struct CommandState: Equatable, Sendable {
     /// Another session needs the owner (app.md 3.16).
     public var nextNeedingYou = false
     public var unread = 0
+    /// A sheet or alert is up in the window.
+    public var sheetUp = false
 
     public init() {}
 
@@ -101,7 +111,7 @@ public struct CommandState: Equatable, Sendable {
         case .showChat: return hasControls && mode != nil && mode != .chat
         case .showTerminal: return hasControls && mode != nil && mode != .terminal
         case .voice: return hasControls && voiceAllowed
-        case .stop: return hasControls && working
+        case .stop: return hasControls && working && !sheetUp
         case .console: return hasControls && hasConsole
         case .rename: return offers.contains(.rename)
         case .restart: return offers.contains(.restart)
@@ -122,8 +132,9 @@ public struct CommandState: Equatable, Sendable {
 
 extension WindowCommands {
     /// The state the menus read, from the window and the fleet.
-    public func state(board: Board, actions: SessionActionCenter, multipleWindows: Bool) -> CommandState {
+    public func state(board: Board, actions: SessionActionCenter, multipleWindows: Bool, sheetUp: Bool = false) -> CommandState {
         var s = CommandState()
+        s.sheetUp = sheetUp || !sheets.isEmpty
         s.board = kind == .board
         s.habsOnline = board.onlineCount
         s.multipleWindows = multipleWindows

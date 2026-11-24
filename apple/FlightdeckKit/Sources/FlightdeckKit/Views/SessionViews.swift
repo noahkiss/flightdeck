@@ -310,7 +310,10 @@ public struct SessionView: View {
         .onAppear { registerControls() }
         .onDisappear {
             if commands?.session?.target == model.target { commands?.session = nil }
+            commands?.setSheet("session", false)
         }
+        // The session's own sheets keep ⌘. for Cancel (app.md 3.13).
+        .onChange(of: ownSheetUp) { _, up in commands?.setSheet("session", up) }
         .sheet(isPresented: $chatShowShown) {
             if let store = model.show {
                 ChatShowSheet(store: store, target: model.target)
@@ -415,6 +418,11 @@ public struct SessionView: View {
         model.show != nil && !model.context.isCapcomService
     }
     #endif
+
+    /// A sheet of this view is up: console, friction, Show in chat, voice, or the phone's files.
+    private var ownSheetUp: Bool {
+        consoleShown || frictionShown || chatShowShown || voiceShown || voiceDenied || (compact && showFiles)
+    }
 
     /// What the Session menu needs to know (app.md 3.13); a change registers the controls again.
     private struct ControlsKey: Equatable {
