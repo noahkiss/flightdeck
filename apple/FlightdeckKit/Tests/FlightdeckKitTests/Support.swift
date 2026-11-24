@@ -31,13 +31,17 @@ func livenessTiming() -> HabTiming {
     return t
 }
 
-/// Polls `cond` until it holds or `timeout` passes.
-func eventually(_ what: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line, _ cond: () async -> Bool) async {
+/// Polls `cond` until it holds or `timeout` passes. The timeout only bounds a failing test, so
+/// it is long: a loaded CI runner can stall a test process for seconds. The condition is
+/// checked once more after the deadline, so a stall across it does not fail a test whose
+/// condition holds.
+func eventually(_ what: String, timeout: TimeInterval = 30, file: StaticString = #filePath, line: UInt = #line, _ cond: () async -> Bool) async {
     let end = Date().addingTimeInterval(timeout)
     while Date() < end {
         if await cond() { return }
         try? await Task.sleep(for: .milliseconds(10))
     }
+    if await cond() { return }
     XCTFail("timed out waiting for: \(what)", file: file, line: line)
 }
 
