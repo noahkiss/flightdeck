@@ -75,6 +75,7 @@ One workflow file per concern. Each row is one file in `.github/workflows/`.
 | `apple.yml` (Swift and Xcode, macOS) | `push` to `main`, `pull_request`, `workflow_dispatch` | `paths`: the Apple group (section 3.1) | Same as `ci.yml` |
 | `macos-go.yml` (Go on macOS) | `push` to `main`, `pull_request` on the holder group; `schedule` nightly | `paths`: the holder group (section 3.1) | Same; the nightly run never cancels. Holder group: owner decision, Q2 |
 | `capcom-engine.yml` (TypeScript, Linux) | `push` to `main`, `pull_request`, `workflow_dispatch` | `paths`: the Engine group (3.1) | Same as `ci.yml` |
+| `renovate-notices.yml` | `pull_request` from a `renovate/` branch of this repo (a job `if:` on the head branch) | `paths`: `go.mod`, `go.sum`, `apple/FlightdeckKit/Package.resolved`, `Makefile`, `mise.toml` | Group per head branch; cancel superseded runs. Section 7.8 |
 | `hygiene.yml` | `push` to any branch, `pull_request`, tags | None: docs are where leaks happen most | Group per ref; cancel superseded runs |
 | `nightly.yml` | `schedule` (one daily slot, UTC), `workflow_dispatch` | None | One group; never cancels |
 | `release.yml` (Go binaries) | `push` of a `v*` tag; `workflow_dispatch` with a `tag` input | None (path filters never apply to tags) | Group per tag; never cancels |
@@ -292,7 +293,10 @@ Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves th
 timeouts: `-test-timeouts-enabled YES`, 120 seconds a test by default, 300 at most for a test that
 sets its own `executionTimeAllowance`. A test that hangs then fails by name, its log is uploaded,
 and the job does not sit silent until its own timeout (the Kit's simulator tests hung that way
-twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. No signing, no
+twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. Every `xcodebuild`
+also passes `COMPILATION_CACHE_ENABLE_CACHING=YES`, with the default store under DerivedData, so
+the three builds can reuse each other's compiles within the job; nothing keeps the store between
+runs yet (5, E9 in 11.2). No signing, no
 secrets. Timeout 90 minutes: a branch with several app stages ran past 60 by 2026-11. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
 
@@ -426,6 +430,7 @@ build.
 | libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-<patch id>-<build method>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins and the id of `third_party/ghostty/patches/` (`make ghostty-id`), not on a hash of the whole Makefile, which changes often. A pin or patch change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
 | SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, and every `swift test` `--only-use-versions-from-resolved-file` (3.4), so a graph that drifts from the pins fails instead of floating |
+| Xcode compilation cache | None between runs yet | The default store under DerivedData | `apple.yml` turns it on (3.4), so the job's three `xcodebuild`s share one store. Keeping the store between runs needs a restore and a save inside `xcode-ci`: a job that calls a reusable workflow cannot add steps, and the store cannot ride in the SwiftPM entry, which is saved only when its key misses. E9 (11.2) proposes the input. A warm store cut a clean local build from about 10 minutes to about 1 |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
 | npm (the release's `engine` job) | None | `npm ci` in the job | `setup-node` runs with `package-manager-cache: false`, for the reason fastlane has none: a cache saved on a tag serves that tag only. `capcom-engine.yml` caches through node-ci (3.7) |
@@ -852,9 +857,27 @@ both files and `Package.resolved` (2). `go test ./internal/notices/` checks the 
 the repository too, and `AcknowledgementsTests` in the Kit (`apple.yml`) checks that it names
 every pinned package. A Renovate bump of a Go module or a Swift package therefore fails CI until
 someone runs `make notices` and commits the result.
-Renovate changes `Package.swift` but not `Package.resolved`, so a Swift bump also fails
-`apple.yml` (3.4) until someone runs `swift package resolve` in `apple/FlightdeckKit` and commits
-`Package.resolved`, then runs `make notices`.
+
+**Renovate pull requests.** Renovate updates `go.mod`, `go.sum`, `Package.swift` and
+`Package.resolved`, but it does not run `make notices`. `renovate-notices.yml` does, on a pull
+request from a `renovate/` branch of this repo whose notice inputs changed (2):
+
+1. Check out the head branch (not the merge commit), set up Go from `go.mod` with the module
+   cache keyed on `go.sum`, and run `make notices`. It needs no cgo, libghostty or Swift: it
+   reads the committed inputs, `Package.resolved` and the module cache, which `go mod download`
+   fills.
+2. When `NOTICE` or `apple/App/Acknowledgements.txt` changed, commit both as the Actions bot and
+   push to the branch with the job token (`contents: write`). The token reaches only this step.
+3. A push with the job token starts no workflow, so the new head would carry no checks. The job
+   dispatches `ci.yml` on the branch, and `apple.yml` too when the app file changed
+   (`actions: write`): those are the workflows whose path filters hold the two files. A dispatch
+   by the job token does start a run, and it runs on the new head. The runs that the pull request
+   started on the earlier head still finish; read the checks of the new head. A dispatch runs
+   `ci.yml` and `apple.yml` in full (3.3), and its success lets the merge push skip, as a pull
+   request run does.
+
+`renovate.json` lists the Actions bot in `gitIgnoredAuthors`. Without it, Renovate sees a commit
+by another author and stops rebasing and updating the branch.
 
 **Where it is checked in an artifact.** `make release-build` copies `LICENSE` and `NOTICE` into
 the release folder; `scripts/macos-bundle.sh` puts both in each bundle's `Contents/Resources`
@@ -1457,11 +1480,13 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 | E6 | new composite actions | `actions/xcode-match-signing` (throwaway keychain, match read-only per type, platform and id list, a check that each profile arrived, a manual-signing xcconfig that looks up each target's profile by bundle id, outputs `xcconfig` and `profiles`; `cleanup: 'true'` in an `if: always()` step deletes the keychain and keys, since a composite action has no post step) and `actions/xcode-archive-upload` (archive with that xcconfig and the versions, export with a `provisioningProfiles` map for `app-store-connect` upload or export, or for `developer-id` with notarize and staple; it writes and deletes the API key file itself). Composite, run as steps in the caller's job, because environment secrets do not reach a reusable workflow from another repo | New files |
 | E7 | tap `bump.yml` | `tag_prefix` input (8.2) | `v` |
 | E8 | tap `bump.yml` | Per-platform formula: every url's sha from its `.sha256` asset, the top-level fallback included; a url with no such asset hashed directly (8.2) | Single-url path unchanged |
+| E9 | `xcode-ci.yml` | `compilation-cache` (boolean) and `compilation-cache-limit` (string, passed as `COMPILATION_CACHE_LIMIT_SIZE`): every `xcodebuild` gains `COMPILATION_CACHE_ENABLE_CACHING=YES` and `COMPILATION_CACHE_CAS_PATH=$RUNNER_TEMP/xcode-ci-cas`. The store is restored before the builds and saved after them, as the SwiftPM cache is (not after an earlier failure, never from a tag). Its key is the runner OS and arch, the Xcode build version, the hash of `spm-cache-key-file` and the run id, so every run saves a fresh store; the restore keys drop the run id, then the hash | `false` (no step, no flag) |
 
 E4 is needed for `ci.yml`, `nightly.yml` and `macos-go.yml` alike: without it they cancel each
 other's go-ci jobs on `main` (2). E5 and E6 are plan stage 4: noahkiss/workflows#16, with a
 selftest that builds a small XcodeGen fixture through `xcode-ci` and runs both actions with a
-stand-in fastlane. All eight are approved (section 14).
+stand-in fastlane. E1 to E8 are approved (section 14); E9 is proposed. Once it merges, `apple.yml`
+passes `compilation-cache: true` and drops the flag from `xcodebuild-args`.
 
 ---
 

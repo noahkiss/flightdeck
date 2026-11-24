@@ -1,0 +1,75 @@
+# Regenerate the third-party notices on a Renovate pull request (docs/specs/ci-release.md 7.8).
+# A Go module or Swift package bump changes NOTICE or apple/App/Acknowledgements.txt, and
+# Renovate does not run `make notices`, so ci.yml's check failed until someone did. This job runs
+# it on the pull request's branch and pushes the result as one commit.
+# A push with the job token starts no workflow, so the new head would carry no checks. The job
+# therefore dispatches the workflows whose path filters hold the changed files: ci.yml for both
+# files, apple.yml for the app file. Their runs attach to the new head commit.
+name: Renovate notices
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths: ['go.mod', 'go.sum', 'apple/FlightdeckKit/Package.resolved', 'Makefile', 'mise.toml']
+
+concurrency:
+  group: renovate-notices-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  notices:
+    name: Regenerate notices
+    # The branch filter of pull_request matches the base branch, so the head is checked here.
+    # Only a branch of this repo: a fork's pull request gets no write token anyway.
+    if: startsWith(github.head_ref, 'renovate/') && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      # The branch itself, not the merge commit, so the commit lands on top of Renovate's.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: make notices
+        run: make notices
+
+      # The token reaches only this step. The author is the Actions bot, which renovate.json lists
+      # in gitIgnoredAuthors, so Renovate still rebases and updates the branch.
+      - name: Commit, push and start CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          files=(NOTICE apple/App/Acknowledgements.txt)
+          if git diff --quiet -- "${files[@]}"; then
+            echo "The notices are current."
+            exit 0
+          fi
+          git --no-pager diff --stat -- "${files[@]}"
+          app=false
+          git diff --quiet -- apple/App/Acknowledgements.txt || app=true
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${files[@]}"
+          git commit -q -m 'Regenerate the third-party notices'
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
+          if [ "$app" = true ]; then
+            gh workflow run apple.yml -R "$REPO" --ref "$BRANCH"
+          fi
+          echo "Pushed the notices and started CI on the new head of $BRANCH."
