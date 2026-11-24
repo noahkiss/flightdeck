@@ -65,9 +65,10 @@ jobs:
           git diff --quiet -- apple/App/Acknowledgements.txt || app=true
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # The earlier step ran the branch's code; a hook it planted must not run with the token.
           git add -- "${files[@]}"
-          git commit -q -m 'Regenerate the third-party notices'
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          git -c core.hooksPath=/dev/null commit -q -m 'Regenerate the third-party notices'
+          git -c core.hooksPath=/dev/null push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${BRANCH}"
           gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
           if [ "$app" = true ]; then
             gh workflow run apple.yml -R "$REPO" --ref "$BRANCH"
