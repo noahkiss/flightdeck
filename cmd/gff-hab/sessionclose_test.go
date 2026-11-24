@@ -79,9 +79,11 @@ func TestSessionCloseRefusesALiveProgram(t *testing.T) {
 	// An exit status ends the program: the record goes, and the exited pane stays, unfiled.
 	h.Exit("done", api.ExitStatus{})
 	closes("an exited", done)
-	// pane.close leaves no status; the pane is gone with every holder reached.
-	h.Remove("closed")
-	closes("a closed pane's", closed)
+	// pane.close releases the pane: the program ended, even while a holder is not reached.
+	h.SetPartial(true)
+	h.Release("closed")
+	closes("a released pane's", closed)
+	h.SetPartial(false)
 
 	if err := a.CloseSession("nope"); errKind(err) != api.ErrorKindNotFound {
 		t.Errorf("close an unknown session: %v, want not_found", err)

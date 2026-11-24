@@ -1011,14 +1011,15 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   project unless `project` is given (`gff-client.md` 5.4).
 - **`session.close`** takes `{session}` and returns the seq only. It removes the record only
   when the program is known to have ended: the session is exited, no spawn or resume is under
-  way, and either the holder reported an exit status, or the pane is gone while every registered
-  holder has been reached. Otherwise it answers `conflict` and removes nothing: a running
+  way, and either the program's end is known (the holder reported an exit status, or gff-hab
+  released the pane for `pane.close`, which records an empty status), or the pane is gone while
+  every registered holder has been reached. Otherwise it answers `conflict` and removes nothing: a running
   session, and one that shows exited only because its holder was not reached yet, may still run,
   and a removed record would leave that program unfiled. The hint says which: a live session
   needs `pane.close` first, after which `session.close` removes it; an exited one waits until
   every holder is reached again. An unknown session is `not_found`.
-  The hab's own clean-ups (a failed spawn, rounds retention, a deleted round's watcher) remove
-  records directly and are not refused.
+  A failed spawn's clean-up removes its record directly. Rounds retention and a deleted
+  round's watcher apply the same rule and leave a record that may still run.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
   session keeps its id and gets a new pane; it must be exited (else `conflict`). A Capcom
   session resumes through Capcom (`capcom.md` 7.6). Any other session resumes

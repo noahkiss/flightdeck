@@ -389,7 +389,8 @@ func (w *watchSup) removeSession(id string) {
 	if !ok || ss.State != api.SessionStateExited {
 		return
 	}
-	if err := w.s.cfg.store.CloseSession(ss.ID); err != nil {
+	// Only a program known to have ended: a session whose holder is not reached stays.
+	if _, err := w.s.cfg.store.CloseExitedSession(ss.ID); err != nil {
 		w.s.cfg.logf("rounds: round %s: remove its watcher session %s: %v", id, ss.ID, err)
 	}
 }
