@@ -36,6 +36,10 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate {
     public weak var capcom: CapcomCenter?
     /// Opens the session a notification names, such as a round's run session (rounds.md 10.2).
     public weak var rounds: RoundCenter?
+    /// The push names the session on screen (app.md 8.9); set once the fleet is built.
+    public var onScreen: (@MainActor (PushMeta?) -> Bool)?
+    /// The level per kind, from the App Group.
+    public var levels = NotifyLevels()
 
     public init(keys: DeviceKeys?, listURL: URL?) {
         self.keys = keys
@@ -108,8 +112,12 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Delegate
 
+    /// No banner for the session on screen, and the owner's level per kind (app.md 8.9).
     public func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        let request = notification.request
+        let meta = PushMeta(userInfo: request.content.userInfo)
+        return NotifyPresentation.options(meta: meta, remote: request.trigger is UNPushNotificationTrigger,
+                                          onScreen: onScreen?(meta) ?? false, levels: levels)
     }
 
     public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

@@ -29,10 +29,15 @@ targets:
         buildPhase: resources
       # The app targets' String Catalog (app.md 22.3); the package has its own.
       - path: App/Localizable.xcstrings
+      # App Intents, Shortcuts and Spotlight (app.md 3.19); Intents is shared with the widget.
+      - path: App/Intents
+      - path: Intents
       - path: ../design/icons/AppIcon.icon
     dependencies:
       - package: FlightdeckKit
         product: FlightdeckKit
+      - package: FlightdeckKit
+        product: FlightdeckShared
       # Quick entry for Capcom (app.md 3.18): the panel and its system-wide shortcut.
       - package: FlightdeckKit
         product: FlightdeckQuickEntry
@@ -63,6 +68,9 @@ targets:
         buildPhase: resources
       - path: App/Localizable.xcstrings
       - path: Shared
+      # App Intents, Shortcuts and Spotlight (app.md 3.19); Intents is shared with the widget.
+      - path: App/Intents
+      - path: Intents
       - path: ../design/icons/AppIcon.icon
     dependencies:
       - package: FlightdeckKit
@@ -118,7 +126,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         APPLICATION_EXTENSION_API_ONLY: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
-  # The session's Live Activity and Dynamic Island (app.md 9).
+  # The session's Live Activity and Dynamic Island (app.md 9), the widgets and the controls (15).
   FlightdeckWidgets:
     type: app-extension
     platform: iOS
@@ -128,6 +136,8 @@ targets:
       - path: Widgets/PrivacyInfo.xcprivacy
         buildPhase: resources
       - path: Shared
+      # The intents the controls and widgets name (app.md 3.19, 15.4).
+      - path: Intents
     dependencies:
       - package: FlightdeckKit
         product: FlightdeckShared

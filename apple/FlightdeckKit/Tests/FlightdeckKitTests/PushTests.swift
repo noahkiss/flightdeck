@@ -71,7 +71,8 @@ final class PushRegistrationTests: XCTestCase {
     private func rig(push: Bool = true) async -> (FakeHab, Fleet, PushRegistrar) {
         let hab = await blockedHab(push: push)
         let fleet = Fleet()
-        let reg = PushRegistrar(defaults: emptyDefaults(), environment: .development)
+        let d = emptyDefaults()
+        let reg = PushRegistrar(defaults: d, levels: NotifyLevels(defaults: d), environment: .development)
         fleet.push = reg
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming(), clientLabel: "phone"), label: "desk")
         return (hab, fleet, reg)
@@ -109,7 +110,7 @@ final class PushRegistrationTests: XCTestCase {
         let calls = await hab.pushRegisters
         XCTAssertEqual(calls.map(\.kinds), [[.permission, .question, .auth, .error]])
         // A setting change asks for round again, and falls back again.
-        reg.doneBanners = true
+        reg.setLevel(.quiet, for: .finished)
         await eventually("done kind") { await hab.pushRegisters.last?.kinds == [.permission, .question, .auth, .error, .done] }
         await reg.settle()
         XCTAssertEqual(reg.status["h"], .registered)
@@ -153,7 +154,7 @@ final class PushRegistrationTests: XCTestCase {
         await hab.dropConnections()
         await eventually("reconnect registers") { await hab.pushRegisters.count == 3 }
 
-        reg.doneBanners = true
+        reg.setLevel(.quiet, for: .finished)
         await eventually("done kind") { await hab.pushRegisters.last?.kinds.contains(.done) == true }
         reg.showCommands = false
         await eventually("hide commands") { await hab.pushRegisters.last?.hideCommands == true }

@@ -20,6 +20,8 @@ public struct FlightdeckRoot: View {
             .modifier(FleetEnvironment(fleet: fleet))
             .sshSheets(fleet.ssh)
             .modifier(PublishCommands(fleet: fleet, commands: commands))
+            // Shortcuts, Siri, Spotlight and the controls (app.md 3.19).
+            .modifier(AppRouteHost(fleet: fleet, commands: commands))
             .modifier(CountsWindow(fleet: fleet))
             #if os(macOS)
             .onAppear { fleet.boardWindowOpened() }

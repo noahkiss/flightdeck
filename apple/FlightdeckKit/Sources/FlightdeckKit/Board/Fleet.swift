@@ -39,6 +39,12 @@ public final class Fleet {
     public var settings: SettingsCenter?
     /// Confirmation cards (capcom.md 6.1).
     public var confirms: ConfirmCenter?
+    /// The sessions App Intents and Spotlight know (app.md 3.19); nil in demo mode.
+    public var directory: SessionDirectory?
+    /// The needs-you widget's snapshot (app.md 15.4); nil in demo mode.
+    public var needsYou: NeedsYouPublisher?
+    /// Routes from App Intents, until a window takes them (app.md 3.19).
+    public let routes = AppRoutes()
     /// Opens Capcom with context attached (capcom.md 8.2, 8.4).
     public private(set) lazy var capcom = CapcomCenter(habs: .init(
         connection: { [weak self] id in self?.connections.first { $0.id == id } },
@@ -192,6 +198,7 @@ public final class Fleet {
                 self?.rounds.boardChanged()
                 self?.activities?.boardChanged()
                 self?.badgeChanged()
+                self?.publishSessions()
             }
         })
         if isActive {
@@ -213,6 +220,7 @@ public final class Fleet {
         capcom.forget(habID: id)
         drafts.forget(habID: id)
         badgeChanged()
+        publishSessions()
     }
 
     /// A connection reached online: note its host id for background answers,
