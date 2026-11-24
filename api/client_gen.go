@@ -818,7 +818,7 @@ func (c Client) SessionRename(ctx context.Context, params SessionRenameParams) (
 	return result, err
 }
 
-// SessionClose calls session.close. Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.
+// SessionClose calls session.close. Remove the record of a session whose program has ended. One that may still run is refused with conflict; pane.close ends its program first.
 func (c Client) SessionClose(ctx context.Context, params SessionRef) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "session.close", params, &result)

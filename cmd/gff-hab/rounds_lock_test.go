@@ -423,6 +423,7 @@ func TestRoundLockTargetGone(t *testing.T) {
 	tgt := startTarget(t, e, c, repo, work, "claude", "old")
 	addLockRound(t, c, "orphan", api.RoundModeResume, tgt.Session, nil)
 	addLockRound(t, c, "orphan-fork", api.RoundModeFork, tgt.Session, nil)
+	call(t, c, "pane.close", api.PaneRef{Pane: tgt.Pane}, nil)
 	call(t, c, "session.close", api.SessionRef{Session: tgt.Session}, nil)
 	for _, name := range []string{"orphan", "orphan-fork"} {
 		runRound(t, c, name)

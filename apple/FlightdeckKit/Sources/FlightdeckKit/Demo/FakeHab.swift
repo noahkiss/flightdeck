@@ -1611,7 +1611,10 @@ public actor FakeHab {
             guard let p = try? params.decode(SessionRef.self) else { throw Failure(kind: .invalid, hint: "bad session.close params") }
             sessionActions.append("close \(p.session)")
             guard let s = sessions[p.session] else { throw Failure(kind: .notFound, hint: "not_found: session \(p.session)") }
-            // The record goes; a live pane keeps running, unfiled.
+            // Only an ended program's record goes; the hab refuses one that may still run.
+            if s.state != .exited {
+                throw Failure(kind: .conflict, hint: "session \(p.session) may still be running: pane.close ends its program, then session.close removes the record")
+            }
             await deleteSession(s.id)
             if let pid = s.project, var pr = projects[pid] {
                 pr.sessions.removeAll { $0 == s.id }

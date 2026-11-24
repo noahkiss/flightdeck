@@ -383,6 +383,13 @@ func TestSessionCreateAndClose(t *testing.T) {
 		return err == nil
 	})
 	waitUntil(t, "the short program exited", func() bool { return session(structureNow(), ended.Session).State == api.SessionStateExited })
+	// session.close refuses a running session: its program would be left running, unfiled.
+	if kind := callErr(t, sock, "session.close", api.SessionRef{Session: running.Session}); kind != "conflict" {
+		t.Errorf("close a running session: %s, want conflict", kind)
+	}
+	if s := session(structureNow(), running.Session); s.State != api.SessionStateRunning {
+		t.Errorf("the running session after a refused close: %+v", s)
+	}
 	for _, c := range []api.SessionCreated{running, ended} {
 		run(t, "api", "call", "-socket", sock, "pane.close", `{"pane":"`+c.Pane+`"}`)
 	}
@@ -414,6 +421,11 @@ func TestSessionCreateAndClose(t *testing.T) {
 	}
 	if kind := callErr(t, sock, "session.close", api.SessionRef{Session: ended.Session}); kind != "not_found" {
 		t.Errorf("close a closed session: %s, want not_found", kind)
+	}
+	// After pane.close, the once-running session's record goes too.
+	run(t, "api", "call", "-socket", sock, "session.close", `{"session":"`+running.Session+`"}`)
+	if slices.ContainsFunc(structureNow().Sessions, func(s api.Session) bool { return s.ID == running.Session }) {
+		t.Error("the ended session still listed after session.close")
 	}
 }
 

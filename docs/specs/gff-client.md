@@ -2154,7 +2154,7 @@ their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 | `session.resume {session}` | Start the harness again with its resume id | App |
 | `pane.close {pane}` | End a program, after the client confirms | App (close an exited session) |
 | `session.rename {session, name}` | Rename a session from the sidebar; a taken name is `conflict` | App |
-| `session.close {session}` | Remove an exited session's record; a live pane stays, unfiled | App (close an exited session) |
+| `session.close {session}` | Remove an exited session's record; one that may still run is `conflict` | App (close an exited session) |
 | `session.focus {session, active}` | Mark `done` seen | App (`app.md` 17) |
 | `approval.answer {pane, request, choice}` | Answer a pending request by id | App (`app.md` 17) |
 | event `pane.bell` | A pane rang the bell; throttled | App (optional) |

@@ -610,7 +610,16 @@ func TestGroupPeerStallAndClose(t *testing.T) {
 	})
 	ui, apiLead := g.Members[0], g.Members[1]
 
-	// The user closes the ui lead's session on b: the item stalls and the coordinator hears it.
+	// The user ends the ui lead's session on b and removes it: the item stalls and the
+	// coordinator hears it.
+	bc := m.b.control()
+	var uiPane string
+	for _, s := range structureOf(t, bc).Sessions {
+		if s.ID == ui.Session {
+			uiPane = s.Pane
+		}
+	}
+	call(t, bc, "pane.close", api.PaneRef{Pane: uiPane}, &api.Empty{})
 	call(t, m.b.control(), "session.close", api.SessionRef{Session: ui.Session}, &api.Empty{})
 	waitUntil(t, "the ui item stalled", func() bool {
 		g = getGroup(t, m.a, gid)

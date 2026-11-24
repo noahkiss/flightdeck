@@ -594,11 +594,18 @@ func (a *actions) RenameSession(session, name string) error {
 	return nil
 }
 
-// CloseSession removes a session record (session.close). A live pane keeps running, unfiled
-// (hab-logic-api.md 2.2).
+// CloseSession removes a session record (session.close) only when its program is known to have
+// ended (structure.CloseExitedSession). A session that may still run, including one that shows
+// exited only because its holder was not reached yet, is refused with conflict: removing its
+// record would leave the program running unfiled. pane.close ends the program first
+// (hab-logic-api.md 3.9).
 func (a *actions) CloseSession(session string) error {
-	if err := a.store.CloseSession(session); err != nil {
+	closed, err := a.store.CloseExitedSession(session)
+	if err != nil {
 		return storeErr(err)
+	}
+	if !closed {
+		return control.Errorf(api.ErrorKindConflict, "session %s may still be running: pane.close ends its program, then session.close removes the record", session)
 	}
 	return nil
 }
