@@ -1124,7 +1124,7 @@ request, docs included.
   pull request may cancel the older run, because every run scans the pull request's whole range.
   It also runs when a pull request's title or body is edited.
 - **Locally:** the same script, from a pre-commit and a commit-msg hook that
-  `scripts/hygiene-scan.sh --install-hooks` installs (the README says how). Rule 10 says the
+  `scripts/hygiene-scan.sh --install-hooks` installs (CONTRIBUTING.md says how). Rule 10 says the
   checks pass on the dev machine before a push.
 
 The stage task asked for the scan inside the first job of `ci.yml` (rule 11). It is a workflow of
@@ -1436,8 +1436,8 @@ signed bundles from the matching `v*` release's darwin asset, unchanged, and sig
 The first CI upload to App Store Connect faces outward, so the owner approves it (a plan
 decision). The workflow has no switch for this: pushing the first non-dry `app-v*` tag is the
 approval. Before it, prove the pipeline with an `app-v<version>-dry.<n>` tag (7.6), which signs
-and exports everything and uploads nothing. The manual path (`apple/scripts/testflight.sh`, the
-README) stays as the fallback, for a build that must go out while CI is down.
+and exports everything and uploads nothing. The manual path (`apple/scripts/testflight.sh`,
+CONTRIBUTING.md) stays as the fallback, for a build that must go out while CI is down.
 
 ### 10.5 The app's acknowledgements
 

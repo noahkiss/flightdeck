@@ -1,77 +1,111 @@
-# Flightdeck
+<p align="center">
+  <img src="design/readme/mark.png" width="80" height="80" alt="The Flightdeck app icon: a cyan prompt chevron and a white cursor over a dark horizon">
+</p>
 
-One place to run and watch coding agents across all of your machines.
+<h1 align="center">Flightdeck</h1>
 
-Flightdeck is a native iPhone, iPad and Mac app with a terminal client and a small server on
-each host. It works with Claude Code, Codex and opencode. Agents keep running when you close
-the app, and every session stays resumable from a plain terminal.
+<p align="center">Your coding agents, on every machine, in one app.</p>
 
-## Build the app
+<p align="center">
+  <a href="https://github.com/noahkiss/flightdeck/releases?q=app-v&expanded=true"><b>Download for Mac</b></a> ·
+  <a href="#iphone-and-ipad">iPhone and iPad</a> ·
+  <a href="#the-hab-on-each-computer">Install the hab</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="https://github.com/noahkiss/flightdeck/releases">Releases</a>
+</p>
 
-You need a Mac with Xcode. The app project lives in `apple/` and is generated with XcodeGen.
+<p align="center">
+  <img src="docs/images/hero.webp" alt="Flightdeck on an iPad and an iPhone. The iPad shows the status board with sessions on two computers. The iPhone shows a Claude Code chat with tool cards and a permission request waiting for an answer.">
+</p>
 
-```sh
-apple/scripts/generate.sh
-xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS \
-  -destination 'generic/platform=iOS Simulator' build
-xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckMac \
-  -destination 'generic/platform=macOS' build
-```
+You run coding agents on more than one computer, in more than one terminal. One of them stops
+to ask a question, and you find out an hour later. Flightdeck puts every agent on every machine
+on one board. It tells you which one needs you, and lets you answer from your phone.
 
-Builds sign ad hoc by default. To sign with your own team, copy
-`apple/Config/Local.example.xcconfig` to `apple/Config/Local.xcconfig` and fill it in. Git
-ignores that file.
+Flightdeck works with Claude Code, Codex and opencode. Your agents keep running when you close
+the app. Each one keeps its own transcripts, so you can still resume any session from a plain
+terminal.
 
-## Ship an iPhone build to TestFlight
+## What you get
 
-CI uploads app builds. Push a tag `app-v<x.y.z>` (or `app-v<x.y.z>-rc.<n>`) on a commit on
-`main`. The `app-release.yml` workflow runs the app tests on that commit, then archives
-FlightdeckiOS with the tag's version and the UTC time as the build number, signs it and uploads
-it. App Store Connect processes the build in a few minutes. Testers in the internal group can
-then install it from the TestFlight app.
+- **Every agent in one place.** The status board shows each session on each computer, sorted by
+  what needs you first.
+- **Know who needs you.** A notification tells you when an agent waits for approval, asks a
+  question or hits an error.
+- **Approve from anywhere.** Allow or deny a tool call from your iPhone, iPad or Mac, even from
+  the lock screen.
+- **A real chat view.** Read the conversation with formatted text, code and tool cards, and type
+  your reply. Switch to the terminal view when you want the raw screen.
+- **Sessions that survive.** Closing the app or updating the server never stops a running agent.
+- **Your tools stay yours.** Flightdeck reads each agent's own files and runs it in its own
+  terminal. Nothing gets locked in.
+- **Capcom.** Ask a question or start work without picking a project folder first. Capcom
+  answers, or hands the work to the right session.
 
-To prove the pipeline without an upload, push `app-v<x.y.z>-dry.<n>` instead. That run signs and
-exports everything, uploads nothing, and may run on a commit off `main`. Delete the tag after.
+## Install
 
-The signing jobs read their secrets from the repo's `release` environment, listed in
-`docs/specs/ci-release.md` (sections 6 and 10). On the same tag CI also builds the Mac app and
-signs it with Developer ID, but does not notarize or publish it yet.
+Flightdeck has two parts. The app runs on your Mac, iPhone and iPad. The hab is a small
+server that runs on each computer where your agents work.
 
-### From a Mac, when CI cannot
+### Mac app
 
-You need the Apple Distribution identity and an App Store profile for each iOS bundle ID (the
-app, the notification service, the widgets), installed on that Mac.
+Download `Flightdeck-<version>-macos-arm64.zip` from the latest
+[app release](https://github.com/noahkiss/flightdeck/releases?q=app-v&expanded=true), unzip it
+and move Flightdeck to Applications. The app is signed with Developer ID and notarized by Apple.
 
-1. In `apple/Config/Local.xcconfig`, set `DEVELOPMENT_TEAM`, the iOS identity, and
-   `APP_IOS_PROFILE`, `APP_NSE_PROFILE` and `APP_WIDGET_PROFILE` (step 2 of
-   `Local.example.xcconfig`).
-2. Copy `apple/Config/Local.example.env` to `apple/Config/Local.env`. Set the App Store
-   Connect API key ID, and a command that prints each secret. Git ignores both files.
-3. Run `apple/scripts/testflight.sh`. It archives FlightdeckiOS with the UTC time as the build
-   number, then uploads it.
+### iPhone and iPad
 
-The app declares only standard encryption (SSH and TLS), so `ITSAppUsesNonExemptEncryption`
-is `false` and no upload asks the export question. Sale on the App Store in France needs a
-French encryption declaration first. The Mac app ships outside TestFlight, signed with
-Developer ID and notarized. Until CI notarizes it, notarize a local build with
-`apple/scripts/notarize.sh`.
+The iPhone and iPad app ships through TestFlight.
 
-## Check for leaks before you commit
+### The hab on each computer
 
-The repo is public. `scripts/hygiene-scan.sh` refuses private addresses, tailnet addresses and
-names, home paths, and any private patterns you give it. CI runs it with gawk on every push and
-pull request, commit by commit. It uses your `awk` locally; set `GFF_HYGIENE_AWK=gawk` to match
-CI. To run it on each commit, install its hooks:
+Install the hab and the `gff` terminal client with Homebrew, on macOS or Linux:
 
 ```sh
-scripts/hygiene-scan.sh --install-hooks
+brew install noahkiss/tap/gff
+gff-hab install
 ```
 
-If git's `core.hooksPath` is set, the installer prints the two lines to add to those hooks
-instead. Keep your own patterns outside the repo, one `<name><TAB><regex>` per line, and point
-`GFF_HYGIENE_PATTERNS_FILE` at that file. A hit prints the file, the line and the rule name, never
-the matched text. `scripts/hygiene-scan.sh --tree` checks every tracked file.
+Run `gff-hab install` again after each `brew upgrade gff`.
+
+### Pair the app
+
+On the computer, run:
+
+```sh
+gff-hab pair
+```
+
+It shows a QR code for 10 minutes. On your iPhone or iPad, scan it. On a Mac, run
+`gff-hab pair -link` instead, choose "Type the code" and paste the link.
+To look around first, choose "Look around with demo data".
+
+### You also need
+
+- A coding agent installed and signed in on the computer: Claude Code, Codex or opencode.
+- SSH on the computer (on a Mac, turn on Remote Login), and a network path from your devices
+  to it: the same local network, or a private network such as a VPN.
+- macOS 26 for the Mac app; iOS 26.1 or iPadOS 26.1 for the iPhone and iPad app.
+- Apple silicon for the Mac app and for the hab on macOS. The hab on Linux runs on x86-64 and
+  arm64.
+
+## Documentation
+
+- [The app](docs/specs/app.md): the status board, chat, terminal, approvals and notifications
+- [The `gff` terminal client](docs/specs/gff-client.md)
+- [Capcom](docs/specs/capcom.md)
+- [Pairing and connections](docs/specs/transport.md)
+- [Supported agents](docs/specs/harness-adapters.md)
+
+All specs are in [docs/specs/](docs/specs/).
+
+## Contributing
+
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build
+from source, run the tests and cut a release. [docs/layout.md](docs/layout.md) gives the
+architecture and the repo layout.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Third-party notices for what the releases and the app contain are in [NOTICE](NOTICE) and [apple/App/Acknowledgements.txt](apple/App/Acknowledgements.txt).
+MIT. See [LICENSE](LICENSE). Third-party notices are in [NOTICE](NOTICE) and
+[apple/App/Acknowledgements.txt](apple/App/Acknowledgements.txt).
