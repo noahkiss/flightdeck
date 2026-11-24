@@ -101,9 +101,9 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertEqual(split.body, "All pass.\n```\nok link 0.3s\n```")
         XCTAssertEqual(split.summary, "The link tests pass. Nothing else changed.")
         let items = ChatRender.items([msg("a", .agent, md)])
-        guard case .agent(_, let blocks, _)? = items.first else { return XCTFail("no agent row") }
-        XCTAssertEqual(blocks.last, .spokenSummary("The link tests pass. Nothing else changed."))
-        XCTAssertFalse(blocks.contains(.paragraph("**Spoken summary:** The link tests pass. Nothing else changed.")))
+        guard case .agent(_, let text, let summary, _)? = items.first else { return XCTFail("no agent row") }
+        XCTAssertEqual(summary, "The link tests pass. Nothing else changed.")
+        XCTAssertFalse(text.contains("Spoken summary"))
         XCTAssertEqual(SpokenText.speakable(md), "The link tests pass. Nothing else changed.")
 
         // No marker, an empty marker, or code after the marker: the text stays whole.

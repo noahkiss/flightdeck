@@ -112,7 +112,7 @@ final class ChatFilterTests: XCTestCase {
         }
         XCTAssertNil(ChatKindMap.kind(.user(id: "u", text: "hi", sender: nil, attachments: [])), "the owner's messages always show")
         XCTAssertEqual(ChatKindMap.kind(.user(id: "u", text: "hi", sender: "web-codex", attachments: [])), .agents)
-        XCTAssertNil(ChatKindMap.kind(.agent(id: "a", blocks: [], sender: nil)), "replies always show")
+        XCTAssertNil(ChatKindMap.kind(.agent(id: "a", text: "", summary: nil, sender: nil)), "replies always show")
         XCTAssertEqual(ChatKindMap.kind(.plan(id: "p", steps: [], latest: true)), .plans)
         XCTAssertNil(ChatKindMap.kind(.event(id: "e", event: .permission, text: "Allowed")))
         XCTAssertNil(ChatKindMap.kind(item("t", tool("Bash", ["command": .string("x")], status: .error))), "a failed call is an error")
@@ -140,7 +140,7 @@ final class ChatFilterTests: XCTestCase {
             item("r3", tool("Glob", ["pattern": .string("*")])),
             item("e2", tool("Write", ["file_path": .string("b"), "content": .string("z")])),
             item("m1", tool("mcp__claude_ai_Linear__get_issue", ["id": .string("TIDE-41")])),
-            .agent(id: "a1", blocks: [.paragraph("done")], sender: nil),
+            .agent(id: "a1", text: "done", summary: nil, sender: nil),
             item("c2", tool("Bash", ["command": .string("x")], status: .error)),
         ]
         let rows = ChatFold.rows(items, hidden: [.reads, .edits, .commands])

@@ -251,8 +251,20 @@ identity = "fluidaudio"
 license = "Apache-2.0; its third-party licences follow"
 
 [[swift]]
+identity = "highlightr"
+license = "MIT; highlight.js (BSD-3-Clause), which it bundles with its styles, follows"
+
+[[swift]]
 identity = "libghostty-spm"
 license = "MIT; bash-preexec (MIT) and the iTerm2 colour schemes (MIT) follow"
+
+[[swift]]
+identity = "markdownview"
+license = "MIT"
+
+[[swift]]
+identity = "richtext"
+license = "MIT"
 
 [[swift]]
 identity = "swift-asn1"
@@ -263,11 +275,19 @@ identity = "swift-atomics"
 license = "Apache-2.0"
 
 [[swift]]
+identity = "swift-cmark"
+license = "BSD-2-Clause; the licences of the code it includes follow"
+
+[[swift]]
 identity = "swift-collections"
 license = "Apache-2.0"
 
 [[swift]]
 identity = "swift-crypto"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-markdown"
 license = "Apache-2.0"
 
 [[swift]]

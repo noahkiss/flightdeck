@@ -91,8 +91,8 @@ public final class ContentModel {
     /// Decoded images, by hab, session, item, version and pixel size: one cache for the device,
     /// bounded by bitmap bytes.
     @ObservationIgnored let decoded = ImageCache.shared
-    /// Parsed Markdown, by item and version.
-    @ObservationIgnored private var markdownCache: [VersionKey: [MarkdownBlock]] = [:]
+    /// A Markdown file's text and its folded preview, by item and version.
+    @ObservationIgnored private var markdownCache: [VersionKey: MarkdownPreview] = [:]
     /// A diff file's parse and a text file's line runs, by item, version and byte count, so a
     /// redraw does not parse or split the bytes again.
     @ObservationIgnored private var diffCache: [VersionKey: ParsedDiff] = [:]
@@ -363,14 +363,30 @@ public final class ContentModel {
         "\(target.habID)|\(target.session ?? "")|\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(data.count)|\(maxPixel)"
     }
 
-    /// An item's Markdown, parsed once per version.
-    public func markdown(for it: ContentItem, data: Data) -> [MarkdownBlock] {
+    /// An item's Markdown and its fold to the first `MarkdownPreview.foldedBlocks` blocks,
+    /// worked out once per version.
+    public func markdown(for it: ContentItem, data: Data) -> MarkdownPreview {
         let key = VersionKey(key: ByteCache.Key(it), count: data.count)
         if let b = markdownCache[key] { return b }
-        let blocks = MarkdownBlock.parse(ContentText.preview(data).text)
+        let preview = MarkdownPreview(ContentText.preview(data).text)
         if markdownCache.count > 32 { markdownCache.removeAll() }
-        markdownCache[key] = blocks
-        return blocks
+        markdownCache[key] = preview
+        return preview
+    }
+
+    /// A Markdown file's text, and its first blocks for the folded card.
+    public struct MarkdownPreview: Hashable, Sendable {
+        /// The blocks a folded card shows.
+        public static let foldedBlocks = 4
+        public var text: String
+        public var folded: String
+        /// More blocks follow the folded ones.
+        public var cut: Bool
+
+        public init(_ text: String) {
+            self.text = text
+            (folded, cut) = ChatMarkdown.prefix(text, blocks: Self.foldedBlocks)
+        }
     }
 
     /// Whether an item's Markdown renders cut: only its first `ContentText.previewLimit` bytes

@@ -1,119 +1,6 @@
 import Foundation
 import HabAPI
 
-/// One block of an agent's Markdown, split by lines. Inline Markdown
-/// (emphasis, code spans, links) stays in `text`; SwiftUI renders it with
-/// `AttributedString(markdown:)`.
-public enum MarkdownBlock: Hashable, Sendable {
-    case paragraph(String)
-    case heading(level: Int, text: String)
-    case code(language: String?, text: String)
-    /// A list item: its marker ("•" or "1.") and indent level.
-    case item(marker: String, level: Int, text: String)
-    case quote(String)
-    case rule
-    /// The reply's closing "Spoken summary:" line (app.md 13.7): a quiet
-    /// caption the owner can open, so the answer does not read twice.
-    case spokenSummary(String)
-
-    /// Splits Markdown into blocks. Unclosed code fences run to the end.
-    public static func parse(_ md: String) -> [MarkdownBlock] {
-        var out: [MarkdownBlock] = []
-        var para: [String] = []
-        var code: [String]?
-        var lang: String?
-        func flush() {
-            if !para.isEmpty {
-                out.append(.paragraph(para.joined(separator: "\n")))
-                para = []
-            }
-        }
-        for raw in md.components(separatedBy: "\n") {
-            let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if code != nil {
-                if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                    out.append(.code(language: lang, text: code!.joined(separator: "\n")))
-                    code = nil
-                } else {
-                    code!.append(line)
-                }
-                continue
-            }
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                flush()
-                let l = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
-                lang = l.isEmpty ? nil : l
-                code = []
-                continue
-            }
-            if trimmed.isEmpty {
-                flush()
-                continue
-            }
-            if let h = heading(trimmed) {
-                flush()
-                out.append(h)
-                continue
-            }
-            if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-                flush()
-                out.append(.rule)
-                continue
-            }
-            if trimmed.hasPrefix(">") {
-                flush()
-                let t = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-                if case .quote(let prev)? = out.last {
-                    out[out.count - 1] = .quote(prev + "\n" + t)
-                } else {
-                    out.append(.quote(t))
-                }
-                continue
-            }
-            if let i = item(line) {
-                flush()
-                out.append(i)
-                continue
-            }
-            para.append(trimmed)
-        }
-        if let c = code { out.append(.code(language: lang, text: c.joined(separator: "\n"))) }
-        flush()
-        return out
-    }
-
-    private static func heading(_ t: String) -> MarkdownBlock? {
-        var n = 0
-        for ch in t {
-            if ch == "#" { n += 1 } else { break }
-        }
-        guard (1...6).contains(n), t.count > n, t[t.index(t.startIndex, offsetBy: n)] == " " else { return nil }
-        return .heading(level: n, text: String(t.dropFirst(n + 1)).trimmingCharacters(in: .whitespaces))
-    }
-
-    private static func item(_ line: String) -> MarkdownBlock? {
-        let indent = line.prefix { $0 == " " }.count
-        let t = line.dropFirst(indent)
-        let level = indent / 2
-        for b in ["- ", "* ", "+ "] where t.hasPrefix(b) {
-            var rest = String(t.dropFirst(2))
-            var marker = "•"
-            if rest.hasPrefix("[ ] ") { marker = "☐"; rest = String(rest.dropFirst(4)) }
-            if rest.hasPrefix("[x] ") || rest.hasPrefix("[X] ") { marker = "☑"; rest = String(rest.dropFirst(4)) }
-            return .item(marker: marker, level: level, text: rest)
-        }
-        let digits = t.prefix { $0.isNumber }
-        if !digits.isEmpty, digits.count <= 3 {
-            let after = t.dropFirst(digits.count)
-            if after.hasPrefix(". ") || after.hasPrefix(") ") {
-                return .item(marker: digits + ".", level: level, text: String(after.dropFirst(2)))
-            }
-        }
-        return nil
-    }
-}
-
 /// A tool call card (app.md 4.1, 4.11): a one-sentence header, and a body that is folded by default.
 public struct ToolCard: Hashable, Sendable {
     public enum Detail: Hashable, Sendable {
@@ -150,7 +37,9 @@ public indirect enum ChatItem: Hashable, Sendable, Identifiable {
     /// A user message to Capcom that carried context blocks (capcom.md 8.4): the blocks as
     /// chips, then the user's own text (empty for context alone).
     case capcomUser(id: String, context: [CapcomContextBlock], text: String, attachments: [String])
-    case agent(id: String, blocks: [MarkdownBlock], sender: String?)
+    /// An agent's reply: its Markdown, and the closing "Spoken summary:" line (app.md 13.7)
+    /// apart, which the chat folds into a quiet caption so the answer does not read twice.
+    case agent(id: String, text: String, summary: String?, sender: String?)
     case tool(id: String, card: ToolCard)
     case event(id: String, event: ChatEvent, text: String)
     /// A plan checklist. Only the latest plan shows its steps; earlier ones fold.
@@ -164,7 +53,7 @@ public indirect enum ChatItem: Hashable, Sendable, Identifiable {
 
     public var id: String {
         switch self {
-        case .user(let id, _, _, _), .capcomUser(let id, _, _, _), .agent(let id, _, _), .tool(let id, _), .event(let id, _, _),
+        case .user(let id, _, _, _), .capcomUser(let id, _, _, _), .agent(let id, _, _, _), .tool(let id, _), .event(let id, _, _),
              .plan(let id, _, _), .handOff(let id, _), .proposal(let id, _), .unsupported(let id, _):
             return id
         }
@@ -223,7 +112,7 @@ public enum ChatRender {
                 }
             case .agent:
                 let split = SpokenText.splittingSummary(m.text ?? "")
-                item = .agent(id: m.id, blocks: MarkdownBlock.parse(split.body) + (split.summary.map { [.spokenSummary($0)] } ?? []), sender: m.sender)
+                item = .agent(id: m.id, text: split.body, summary: split.summary, sender: m.sender)
             case .tool:
                 if kids.isEmpty, let t = m.tool, let h = HandOffCard.from(t) {
                     item = .handOff(id: m.id, card: h)
@@ -424,19 +313,10 @@ public enum ChatRender {
             add("USER" + (att.isEmpty ? "" : " [\(att.count) attachments]"))
             for c in context { body("[context \(c.kind) \(c.ref) on \(c.host)] \(c.title)") }
             if !text.isEmpty { body(text) }
-        case .agent(_, let blocks, let sender):
+        case .agent(_, let text, let summary, let sender):
             add("AGENT" + (sender.map { " from \($0)" } ?? ""))
-            for b in blocks {
-                switch b {
-                case .paragraph(let t): body(t)
-                case .heading(let l, let t): body(String(repeating: "#", count: l) + " " + t)
-                case .code(let lang, let t): body("```" + (lang ?? "")); body(t); body("```")
-                case .item(let m, let l, let t): body(String(repeating: "  ", count: l) + m + " " + t)
-                case .quote(let t): body("> " + t)
-                case .rule: body("---")
-                case .spokenSummary(let t): body("(spoken summary, folded) " + t)
-                }
-            }
+            body(text)
+            if let summary { body("(spoken summary, folded) " + summary) }
         case .tool(_, let c):
             add("TOOL \(c.name) [\(statusWord(c.status))]" + (c.target.map { " \($0)" } ?? "") + (c.oneLine ? " (one line)" : "") + " (folded)")
             body("says: " + c.sentence.text + " [\(c.kind.rawValue)]")

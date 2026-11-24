@@ -25,6 +25,9 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     private var speakConverter: AVAudioConverter?
     /// Open microphones across windows; the last to stop ends the audio session.
     static var sessionUsers = 0
+    /// Runs before voice mode or dictation takes the audio session: Read Aloud stops, so the
+    /// microphone never hears it and two voices never overlap (app.md 4.12).
+    static var willTakeSession: (@MainActor () -> Void)?
     /// The format the player renders in: the mixer's, mono.
     private var playFormat: AVAudioFormat?
     /// Whether the speaker side is used (voice mode) or only the microphone (dictation).
@@ -57,6 +60,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         guard await Self.requestPermission() else {
             throw SpeechEngineError.unavailable("microphone access is off", sticky: true)
         }
+        Self.willTakeSession?()
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         // Another window's microphone already set the session: keep its mode.

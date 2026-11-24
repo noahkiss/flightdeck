@@ -161,7 +161,7 @@ struct ProposalLineView: View {
                             .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 2) }
                     }
                     if let b = line.body {
-                        MarkdownView(blocks: MarkdownBlock.parse(b))
+                        MarkdownBody(text: b)
                     }
                     if let a = line.answer {
                         Text(a).font(.caption.monospaced()).foregroundStyle(.secondary)

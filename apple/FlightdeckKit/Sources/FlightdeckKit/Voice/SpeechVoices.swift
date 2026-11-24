@@ -103,6 +103,15 @@ final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
         synthesizer.delegate = self
     }
 
+    /// Runs when speech ends, finished or stopped.
+    var onEnd: (() -> Void)?
+
+    var isSpeaking: Bool { synthesizer.isSpeaking }
+
+    func stop() {
+        synthesizer.stopSpeaking(at: .immediate)
+    }
+
     func play(_ text: String, voice: AVSpeechSynthesisVoice?) {
         synthesizer.stopSpeaking(at: .immediate)
         #if os(iOS)
@@ -121,17 +130,29 @@ final class VoicePreviewer: NSObject, AVSpeechSynthesizerDelegate {
 
     private func release() {
         #if os(iOS)
-        guard ownsSession, !synthesizer.isSpeaking, VoiceAudio.sessionUsers == 0 else { return }
+        guard ownsSession, !synthesizer.isSpeaking else { return }
+        // Voice mode or dictation took the session meanwhile: it deactivates the session when it
+        // ends, so this player no longer owns it.
+        guard VoiceAudio.sessionUsers == 0 else {
+            ownsSession = false
+            return
+        }
         ownsSession = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.release() }
+        Task { @MainActor in
+            self.release()
+            self.onEnd?()
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.release() }
+        Task { @MainActor in
+            self.release()
+            self.onEnd?()
+        }
     }
 }

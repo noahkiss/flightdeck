@@ -360,8 +360,8 @@ struct CapcomPacingLine: View {
                     .glassEffect(plain ? .regular.interactive() : .identity, in: .capsule)
                 }
                 .buttonStyle(.plain)
+                // Over the composer it sits in the composer's padded glass container.
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, plain ? 10 : 0)
                 .disabled(usage == nil)
                 .accessibilityHint(usage == nil ? "" : "Opens usage")
             }

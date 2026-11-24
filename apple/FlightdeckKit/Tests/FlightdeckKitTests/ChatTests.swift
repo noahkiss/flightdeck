@@ -189,13 +189,28 @@ final class ChatTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// "Stop and Send Now" (app.md 4.2): after the owner's interrupt the hab refuses a send as
+    /// busy until the harness reports, while the app already sees idle. The message waits and
+    /// goes on the next agent state, never failing.
+    func testBusyAtThePromptWaitsForTheNextState() async {
+        let (fleet, hab, model) = await setup(state: .idle)
+        model.start()
+        // The real hab's words (internal/harness/input.go, CheckSend with ownerStop), kind conflict.
+        await hab.failNextSend(kind: .conflict, hint: "the agent is busy: the owner interrupted claude; send when it reports it is at its prompt")
+        model.send("do this instead")
+        await eventually("held") { model.outgoing.first?.status == .queued && model.outgoing.first?.busyRefusals == 1 }
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle))
+        await eventually("sent on the next state") { await hab.sends.count == 1 }
+        await fleet.setActive(false)
+    }
+
     /// The hab's refusal shows with its kind and hint; the app does not type instead.
     func testRefusalShowsHabReason() async {
         let (fleet, hab, model) = await setup(state: .idle)
         model.start()
-        await hab.failNextSend(kind: .conflict, hint: "another message is starting its turn")
+        await hab.failNextSend(kind: .invalid, hint: "the text is not valid")
         model.send("hello")
-        await eventually("refused") { model.outgoing.first?.status == .failed("the agent is busy or waiting for an answer") }
+        await eventually("refused") { model.outgoing.first?.status == .failed("the hab refused it") }
         let inputs = await hab.inputs
         XCTAssertTrue(inputs.isEmpty)
         model.retry(model.outgoing[0].id)
@@ -237,20 +252,6 @@ final class ChatTests: XCTestCase {
         await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle, session: "native-2"))
         await eventually("new tail") { model.messages.map(\.id) == ["m10"] }
         await fleet.setActive(false)
-    }
-
-    /// Must-fix 2: the list keeps its place on a prepend, and follows new rows
-    /// only from the bottom.
-    func testScrollFollow() {
-        typealias E = ScrollFollow.Ends
-        let tail = E(first: "m16", last: "m25")
-        XCTAssertEqual(ScrollFollow.action(from: E(first: nil, last: nil), to: tail, atBottom: true), .toBottom, "first load")
-        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m6", last: "m25"), atBottom: false), .keep("m16"), "older page")
-        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m6", last: "m25"), atBottom: true), .keep("m16"), "older page at the bottom")
-        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m16", last: "m26"), atBottom: false), .none, "reading history")
-        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m16", last: "m26"), atBottom: true), .toBottom, "following")
-        XCTAssertEqual(ScrollFollow.action(from: tail, to: tail, atBottom: true), .none, "a change in place")
-        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "x1", last: "x9"), atBottom: false), .toBottom, "a new conversation")
     }
 
     /// The seq rule during a tail load: an event older than the page is dropped,
@@ -405,19 +406,20 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(ChatRender.items(changed), second)
     }
 
-    func testMarkdownBlocks() {
-        let md = "# Title\n\nSome *text*\nmore.\n\n- one\n  - nested\n1. first\n- [x] done\n\n```swift\nlet x = 1\n```\n> quoted\n---"
-        XCTAssertEqual(MarkdownBlock.parse(md), [
-            .heading(level: 1, text: "Title"),
-            .paragraph("Some *text*\nmore."),
-            .item(marker: "•", level: 0, text: "one"),
-            .item(marker: "•", level: 1, text: "nested"),
-            .item(marker: "1.", level: 0, text: "first"),
-            .item(marker: "☑", level: 0, text: "done"),
-            .code(language: "swift", text: "let x = 1"),
-            .quote("quoted"),
-            .rule,
-        ])
+    /// The chat's reads of a reply use MarkdownView's parser: fenced and indented code blocks
+    /// in order, without fences; a fold keeps whole blocks (app.md 4.6).
+    func testMarkdownCodeBlocksAndFold() {
+        let md = "# Title\n\nSome *text*\n\n```swift\nlet x = 1\n```\n\n    indented()\n\n- one\n- two\n\n~~~\nlast\n~~~"
+        XCTAssertEqual(ChatMarkdown.codeBlocks(md), ["let x = 1", "indented()", "last"])
+        XCTAssertEqual(ChatMarkdown.lastCodeBlock(md), "last")
+        XCTAssertNil(ChatMarkdown.lastCodeBlock("No code, only `inline` code."))
+        // An unclosed fence, as a reply mid-stream has, is still a block.
+        XCTAssertEqual(ChatMarkdown.codeBlocks("Run:\n```sh\nmake test"), ["make test"])
+        let fold = ChatMarkdown.prefix(md, blocks: 3)
+        XCTAssertTrue(fold.cut)
+        XCTAssertEqual(ChatMarkdown.codeBlocks(fold.text), ["let x = 1"], "the fence closes in the fold")
+        XCTAssertEqual(ChatMarkdown.prefix("one\n\ntwo", blocks: 3).cut, false)
+        XCTAssertEqual(ChatMarkdown.prefix("one\n\ntwo", blocks: 3).text, "one\n\ntwo")
     }
 
     func testDemoServesChatAndAnswersSend() async {

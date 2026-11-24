@@ -438,7 +438,7 @@ final class ContentLimitTests: XCTestCase {
         let shownWhileLoading = ContentModel.version(v1, of: .data(a, changedWhileLoading: false))
         XCTAssertEqual(shownWhileLoading, v1)
         XCTAssertEqual(m.parsedDiff(for: shownWhileLoading, data: a).files.first?.hunks.first?.lines.last?.text, "b")
-        XCTAssertEqual(m.markdown(for: shownWhileLoading, data: a).isEmpty, false)
+        XCTAssertEqual(m.markdown(for: shownWhileLoading, data: a).text.isEmpty, false)
         let loaded = ContentModel.version(v2, of: .data(b, changedWhileLoading: false))
         XCTAssertEqual(m.parsedDiff(for: loaded, data: b).files.first?.hunks.first?.lines.last?.text, "d", "v2 shows v2's bytes")
         // A Markdown parse keys on the byte count too.
@@ -460,8 +460,9 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertTrue(ContentModel.markdownCut(big))
         XCTAssertFalse(ContentModel.markdownCut(Data(para.utf8)))
         XCTAssertFalse(ContentModel.markdownCut(Data(count: ContentText.previewLimit)), "exactly the limit renders whole")
-        let blocks = m.markdown(for: it, data: big)
-        XCTAssertLessThan(blocks.count, 3000, "only the first part is parsed")
+        let md = m.markdown(for: it, data: big)
+        XCTAssertLessThan(md.text.utf8.count, big.count, "only the first part is parsed")
+        XCTAssertTrue(md.cut, "the folded card shows the first blocks")
         XCTAssertTrue(DocumentBody.size(ContentText.previewLimit).hasPrefix("256"), "the cut line reads 256, not 262: \(DocumentBody.size(ContentText.previewLimit))")
         // One long line with no newline: the cut never splits a character.
         let long = Data(("ab" + String(repeating: "é", count: 10)).utf8) // é is 2 bytes

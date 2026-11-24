@@ -68,10 +68,10 @@ public struct ChatView: View {
             }
         }
         .safeAreaBar(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if let aboveComposer { aboveComposer }
-                ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
-            }
+            // One glass container holds the whole bar (app.md 4.2): the pacing line, the Capcom
+            // thread's lines and the composer.
+            ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice,
+                         focusRequest: focusComposer, above: aboveComposer)
         }
         // A readable column on a wide iPad: messages and composer stay under 820 pt, centred.
         .frame(maxWidth: readableWidth)
@@ -125,27 +125,6 @@ struct DismissesKeyboard: ViewModifier {
         #else
         content
         #endif
-    }
-}
-
-/// Keeps the newest row in view when the bars over the thread change height: the keyboard, a
-/// growing draft, a request card. The bars sit in the scroll view's inset, not its frame, so the
-/// bottom anchor for size changes does not see them (app.md 4.2). Only while at the bottom, and
-/// never while a finger moves the thread: during the drag that takes the keyboard away the inset
-/// changes on every frame, and a scroll then would fight the finger.
-struct FollowsBottomInset: ViewModifier {
-    let atBottom: Bool
-    let proxy: ScrollViewProxy
-    let bottom: String
-    @State private var phase: ScrollPhase = .idle
-
-    func body(content: Content) -> some View {
-        content
-            .onScrollPhaseChange { _, new in phase = new }
-            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentInsets.bottom }) { old, new in
-                guard new != old, atBottom, phase == .idle || phase == .animating else { return }
-                proxy.scrollTo(bottom, anchor: .bottom)
-            }
     }
 }
 
@@ -282,43 +261,11 @@ struct ChatBanners: View {
     }
 }
 
-/// Where the list scrolls when its rows change.
-public enum ScrollFollow: Equatable {
-    case none
-    case toBottom
-    /// Keep this row where it was: older rows went in above it.
-    case keep(String)
-
-    /// The first and last row ids before and after a change.
-    public struct Ends: Equatable {
-        public var first: String?
-        public var last: String?
-        public init(first: String?, last: String?) {
-            self.first = first
-            self.last = last
-        }
-    }
-
-    /// A prepend keeps the old first row in place. A new last row follows
-    /// only while the owner is at the bottom. A first load or a replaced
-    /// conversation goes to the bottom.
-    public static func action(from old: Ends, to new: Ends, atBottom: Bool) -> ScrollFollow {
-        if old.last == nil { return new.last == nil ? .none : .toBottom }
-        let firstChanged = old.first != new.first
-        let lastChanged = old.last != new.last
-        if firstChanged && !lastChanged, let f = old.first { return .keep(f) }
-        if firstChanged && lastChanged { return .toBottom }
-        if lastChanged && atBottom { return .toBottom }
-        return .none
-    }
-}
-
 /// The scrolling list of messages. It opens at the tail; older pages load
 /// when the top row appears. Hidden kinds fold into one line (app.md 4.11).
 struct ChatTranscript: View {
     let model: ChatModel
     var openTerminal: (() -> Void)?
-    @State private var atBottom = true
     /// Folded lines the owner opened, by row id.
     @State private var openFolds: Set<String> = []
 
@@ -326,71 +273,53 @@ struct ChatTranscript: View {
         let items = model.items
         let rows = ChatFold.rows(items, hidden: model.show?.hidden(for: model.target) ?? [])
         let placed = ContentPlacement.of(items: model.content.items, messages: model.messages, rowIDs: Set(items.map(\.id)))
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if model.hasOlder {
-                        HStack {
-                            Spacer()
-                            if model.loadingOlder { ProgressView().controlSize(.small) } else { Text("Earlier messages").font(.caption).foregroundStyle(.secondary) }
-                            Spacer()
-                        }
-                        .onAppear { Task { await model.loadOlder() } }
-                    }
-                    ForEach(rows) { row in
-                        switch row {
-                        case .item(let item):
-                            ChatItemView(item: item, images: model.images)
-                                .id(item.id)
-                            ForEach(placed.byRow[item.id] ?? [], id: \.id) { c in
-                                InlineContentView(model: model.content, item: c)
-                            }
-                        case .folded(let id, let hidden, let summary):
-                            let open = Binding(get: { openFolds.contains(id) }, set: { if $0 { openFolds.insert(id) } else { openFolds.remove(id) } })
-                            FoldedStepsView(summary: summary, items: hidden, open: open, images: model.images)
-                                .id(id)
-                            if openFolds.contains(id) {
-                                ForEach(hidden.flatMap { placed.byRow[$0.id] ?? [] }, id: \.id) { c in
-                                    InlineContentView(model: model.content, item: c)
-                                }
-                            }
-                        }
-                    }
-                    ForEach(placed.trailing, id: \.id) { c in
+        ChatScroll(rowIDs: rows.map(\.id), readKey: Self.readKey(model.target), sent: model.outgoing.count,
+                   messageIDs: Set(items.filter(\.isMessage).map(\.id))) { divider in
+            if model.hasOlder {
+                HStack {
+                    Spacer()
+                    if model.loadingOlder { ProgressView().controlSize(.small) } else { Text("Earlier messages").font(.caption).foregroundStyle(.secondary) }
+                    Spacer()
+                }
+                .onAppear { Task { await model.loadOlder() } }
+            }
+            ForEach(rows) { row in
+                if row.id == divider { UnreadDivider() }
+                switch row {
+                case .item(let item):
+                    ChatItemView(item: item, images: model.images, actions: actions)
+                        .id(item.id)
+                    ForEach(placed.byRow[item.id] ?? [], id: \.id) { c in
                         InlineContentView(model: model.content, item: c)
                     }
-                    ModifiedFilesCard(model: model.content)
-                    ForEach(model.outgoing) { o in
-                        OutgoingView(outgoing: o, model: model)
-                            .id("out-\(o.id)")
+                case .folded(let id, let hidden, let summary):
+                    let open = Binding(get: { openFolds.contains(id) }, set: { if $0 { openFolds.insert(id) } else { openFolds.remove(id) } })
+                    FoldedStepsView(summary: summary, items: hidden, open: open, images: model.images)
+                        .id(id)
+                    if openFolds.contains(id) {
+                        ForEach(hidden.flatMap { placed.byRow[$0.id] ?? [] }, id: \.id) { c in
+                            InlineContentView(model: model.content, item: c)
+                        }
                     }
-                    Color.clear.frame(height: 1).id(Self.bottom)
-                        .onAppear { atBottom = true }
-                        .onDisappear { atBottom = false }
-                }
-                .padding(12)
-            }
-            .defaultScrollAnchor(.bottom)
-            // The request card or answer line above the composer never hides the newest rows.
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            .overlay { placeholder }
-            .modifier(DismissesKeyboard())
-            .modifier(FollowsBottomInset(atBottom: atBottom, proxy: proxy, bottom: Self.bottom))
-            .onChange(of: ScrollFollow.Ends(first: rows.first?.id, last: rows.last?.id)) { old, new in
-                switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
-                case .none: break
-                case .toBottom: proxy.scrollTo(Self.bottom, anchor: .bottom)
-                case .keep(let id): proxy.scrollTo(id, anchor: .top)
                 }
             }
-            .onChange(of: model.outgoing.count) { old, new in
-                // The owner just sent: show it.
-                if new > old { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+            ForEach(placed.trailing, id: \.id) { c in
+                InlineContentView(model: model.content, item: c)
+            }
+            ModifiedFilesCard(model: model.content)
+            ForEach(model.outgoing) { o in
+                OutgoingView(outgoing: o, model: model)
+                    .id("out-\(o.id)")
             }
         }
+        .overlay { placeholder }
     }
 
-    static let bottom = "chat-bottom"
+    /// A thread's key for its read mark.
+    static func readKey(_ t: SessionTarget) -> String { "\(t.habID)|\(t.session ?? t.pane ?? "")" }
+
+    private var actions: MessageActions { MessageActions(model: model) }
+
 
     @ViewBuilder private var placeholder: some View {
         // Shown content and the modified-files card fill the list too: no placeholder over them.
@@ -430,17 +359,26 @@ public struct ChatItemView: View {
     let item: ChatItem
     /// Loads attachment thumbnails; nil shows them as file chips.
     var images: AttachmentImages?
+    /// The message menu's lookups; nil reads the row as drawn.
+    var actions: MessageActions?
 
     public init(item: ChatItem) {
         self.item = item
     }
 
-    init(item: ChatItem, images: AttachmentImages?) {
+    init(item: ChatItem, images: AttachmentImages?, actions: MessageActions? = nil) {
         self.item = item
         self.images = images
+        self.actions = actions
     }
 
     public var body: some View {
+        let id = item.id
+        row
+            .messageMenu(id: id, content: MessageMenu.content(item), current: actions.map { a in { a.current(id) } })
+    }
+
+    @ViewBuilder private var row: some View {
         switch item {
         case .user(_, let text, let sender, let att):
             HStack {
@@ -456,7 +394,6 @@ public struct ChatItemView: View {
                     }
                     if !text.isEmpty || att.isEmpty {
                         Text(text)
-                            .textSelection(.enabled)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(sender == nil ? Color.accentColor.opacity(0.18) : Color.purple.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
@@ -480,23 +417,25 @@ public struct ChatItemView: View {
                     }
                     if !text.isEmpty {
                         Text(text)
-                            .textSelection(.enabled)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
                     }
                 }
             }
-        case .agent(_, let blocks, let sender):
+        case .agent(_, let text, let summary, let sender):
             VStack(alignment: .leading, spacing: 6) {
                 if let sender {
                     Label("From \(sender)", systemImage: "arrow.turn.down.right")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                MarkdownView(blocks: blocks)
+                MarkdownBody(text: text)
+                if let summary { SpokenSummaryCaption(text: summary) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // The whole row takes the long press, not only its words.
+            .contentShape(Rectangle())
         case .tool(_, let card):
             ToolCardView(card: card)
         case .event(_, let event, let text):
@@ -510,58 +449,6 @@ public struct ChatItemView: View {
         case .unsupported(_, let kind):
             EventLine(event: .unknown, text: "Unsupported message (\(kind))")
         }
-    }
-}
-
-/// Markdown blocks, rendered with native text.
-struct MarkdownView: View {
-    let blocks: [MarkdownBlock]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
-                block(b)
-            }
-        }
-        .textSelection(.enabled)
-    }
-
-    @ViewBuilder private func block(_ b: MarkdownBlock) -> some View {
-        switch b {
-        case .paragraph(let t):
-            Text(inline(t))
-        case .heading(let level, let t):
-            Text(inline(t)).font(level <= 1 ? .title3.bold() : level == 2 ? .headline : .subheadline.bold())
-        case .code(_, let t):
-            // No soft wrap: the block scrolls sideways, with a cue while more lies to the right (app.md 4.11).
-            SideScroll { width in
-                Text(t)
-                    .font(.callout.monospaced())
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(10)
-                    .frame(minWidth: width, alignment: .leading)
-            }
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        case .item(let marker, let level, let t):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(marker).foregroundStyle(.secondary)
-                Text(inline(t))
-            }
-            .padding(.leading, CGFloat(level) * 16)
-        case .quote(let t):
-            Text(inline(t))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 10)
-                .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3) }
-        case .rule:
-            Divider()
-        case .spokenSummary(let t):
-            SpokenSummaryCaption(text: t)
-        }
-    }
-
-    private func inline(_ t: String) -> AttributedString {
-        (try? AttributedString(markdown: t, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(t)
     }
 }
 
@@ -701,6 +588,20 @@ struct OutgoingView: View {
                 .buttonStyle(.borderless)
             }
         }
+        // The long-press menu of a message on its way (app.md 4.12): Retry where it failed.
+        .contextMenu {
+            switch outgoing.status {
+            case .notDelivered, .failed:
+                Button("Retry", systemImage: "arrow.clockwise") { model.retry(outgoing.id) }
+            case .queued:
+                Button("Cancel", systemImage: "xmark") { model.cancel(outgoing.id) }
+            default:
+                EmptyView()
+            }
+            if !outgoing.text.isEmpty {
+                Button("Copy", systemImage: "doc.on.doc") { copyToPasteboard(outgoing.text) }
+            }
+        }
     }
 
     private var statusText: String {
@@ -777,6 +678,8 @@ struct ComposerView: View {
     let openTerminal: (() -> Void)?
     var openVoice: (() -> Void)?
     var focusRequest = 0
+    /// A line over the composer, in its glass container (the Capcom tab's pacing line).
+    var above: AnyView?
     @FocusState private var focused: Bool
     @Environment(\.voiceKit) private var voiceKit
     @Environment(\.habConnections) private var habs
@@ -794,6 +697,11 @@ struct ComposerView: View {
     @State private var attachNotice: String?
     /// Ties the field, Send and Stop together, so Send morphs out of the field (app.md 4.2).
     @Namespace private var glass
+    /// Where the caret is, so Shift-Return writes the new line there.
+    @State private var selection: TextSelection?
+    /// Haptics (app.md 4.12): a light tap on send, a success when an answer lands, a warning when
+    /// a message fails.
+    @State private var sentTaps = 0
 
     var body: some View {
         let gate = model.gate
@@ -805,6 +713,8 @@ struct ComposerView: View {
         // and Send morphs in beside the field.
         GlassEffectContainer(spacing: Self.spacing) {
         VStack(alignment: .leading, spacing: Self.spacing) {
+            if let above { above }
+            if let thread = model.thread { CapcomThreadBar(thread: thread) }
             if gate == .blocked, let a = model.context.agent {
                 if a.kind == .trust {
                     TrustCardView(model: model, openTerminal: openTerminal)
@@ -872,10 +782,16 @@ struct ComposerView: View {
         }
         }
         .animation(.smooth(duration: 0.25), value: hasDraft)
+        .sensoryFeedback(.impact(weight: .light), trigger: sentTaps)
+        .sensoryFeedback(.success, trigger: model.answerNote) { _, new in new != nil }
+        .sensoryFeedback(.warning, trigger: model.failedCount) { old, new in new > old }
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .padding(.bottom, 10)
         .onChange(of: focusRequest) { _, _ in focused = true }
+        // "Tell it what to do" on a request card (app.md 4.11): the denial landed; the composer
+        // takes the owner's instructions.
+        .onChange(of: model.composeRequest) { _, _ in focused = true }
         #if DEBUG
         // Debug builds only: `-FlightdeckFocusComposer YES` raises the keyboard at launch, so
         // the keyboard's way out can be screenshotted (app.md 4.2).
@@ -918,7 +834,7 @@ struct ComposerView: View {
     /// The field on glass, with the microphone inside it while there is nothing to send.
     private func field(_ mode: ChatAnswer.ComposerMode, gate: SendGate) -> some View {
         HStack(alignment: .bottom, spacing: 0) {
-            TextField(ChatAnswer.placeholder(mode, gate: gate, agent: model.context.agent, capcom: model.context.isCapcom), text: $draft, axis: .vertical)
+            TextField(ChatAnswer.placeholder(mode, gate: gate, agent: model.context.agent, capcom: model.context.isCapcom), text: $draft, selection: $selection, axis: .vertical)
                 .lineLimit(1...8)
                 .textFieldStyle(.plain)
                 .focused($focused)
@@ -928,7 +844,25 @@ struct ComposerView: View {
                 .padding(.vertical, 11)
                 .frame(minHeight: 44)
                 .accessibilityLabel("Message")
+                // A hardware keyboard, as in Messages (app.md 4.2): Return sends; Shift-Return and
+                // Option-Return start a new line. The on-screen keyboard's Return is not a key
+                // press, so it still writes a new line on a phone.
+                .onKeyPress(.return, phases: .down) { press in
+                    switch ComposerKeys.returnKey(press.modifiers) {
+                    case .send:
+                        // With a CJK input method a plain Return is the input method's (M3 in
+                        // app.md 4.12); Cmd-Return still sends.
+                        guard press.modifiers.contains(.command) || ComposerKeys.returnSends(languages: ComposerKeys.inputLanguages) else {
+                            return .ignored
+                        }
+                        send()
+                    case .newline:
+                        (draft, selection) = ComposerKeys.insertingNewline(draft, at: selection)
+                    }
+                    return .handled
+                }
                 #if os(macOS)
+                // The field's own Return, should a key press not reach the handler above.
                 .onSubmit { send() }
                 #endif
             if showsDictation {
@@ -986,11 +920,16 @@ struct ComposerView: View {
                 if model.context.isCapcomService {
                     Button("Send now", systemImage: "bolt") { send(now: true) }
                 }
+                // While the agent works (app.md 4.2): wait for the turn, or stop it and send.
+                if !model.context.isCapcomService, model.gate == .afterTurn {
+                    Button("Send After This Turn", systemImage: "clock") { send() }
+                    Button("Stop and Send Now", systemImage: "stop.circle") { send(interrupt: true) }
+                }
             }
         }
     }
 
-    private func send(now: Bool = false) {
+    private func send(now: Bool = false, interrupt: Bool = false) {
         let card = approvals?.card(for: model.target)
         if ChatAnswer.composerMode(gate: model.gate, agent: model.context.agent, card: card) == .answer {
             // A question with options is open: the text answers it (app.md 4.11).
@@ -1004,10 +943,13 @@ struct ComposerView: View {
             }
             return
         }
-        guard model.takesMessage else { return }
+        guard model.takesMessage, hasDraft else { return }
         model.send(draft, attachments: attachments, sendNow: now)
         // A refusal (a file over the limit) keeps the draft as it was.
         guard model.notice == nil else { return }
+        sentTaps += 1
+        // The message waits for the turn; the interrupt ends the turn, and it goes out.
+        if interrupt { Task { await model.interrupt() } }
         // Send while dictating ends the dictation: its later words would write the sent text back.
         dictationDraft.end()
         if let d = dictation {
@@ -1015,6 +957,7 @@ struct ComposerView: View {
             Task { await d.cancel() }
         }
         draft = ""
+        selection = nil
         attachments = []
         attachNotice = nil
     }
@@ -1193,6 +1136,18 @@ struct RequestArea: View {
                 HStack(spacing: 8) { answerButtons(r, state) }
                 VStack(spacing: 8) { answerButtons(r, state) }
             }
+            if !r.form.isPlan {
+                // Deny, then the composer takes what the agent should do instead (app.md 4.11).
+                Button {
+                    answer(allow: false, r) { model.askForInstructions() }
+                } label: {
+                    Label("Tell it what to do", systemImage: "text.bubble")
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!state.canAnswer)
+                .accessibilityHint("Denies, then opens the message field")
+            }
         } else if r.offline {
             Text("\(r.habLabel) is offline.").font(.footnote).foregroundStyle(.secondary)
         } else {
@@ -1300,11 +1255,12 @@ struct RequestArea: View {
         }
     }
 
-    private func answer(allow: Bool, _ r: OpenRequest) {
+    private func answer(allow: Bool, _ r: OpenRequest, then: (@MainActor () -> Void)? = nil) {
         guard let approvals else { return }
         Task {
             if await approvals.answer(target, allow: allow) {
                 model.noteAnswer(ChatAnswer.note(allow: allow, request: r))
+                then?()
             }
         }
     }
