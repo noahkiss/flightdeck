@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -69,6 +70,9 @@ func TestSessionCloseRefusesALiveProgram(t *testing.T) {
 		t.Fatalf("the lost session: %+v", ss)
 	}
 	refused("an unreached holder's", lost)
+	if err := a.CloseSession(lost.ID); err == nil || !strings.Contains(err.Error(), "holder is not reached") {
+		t.Errorf("the unreached holder's refusal says why: %v", err)
+	}
 	h.SetPartial(false)
 	closes("a gone pane's", lost) // every holder reached: the pane is gone for good
 

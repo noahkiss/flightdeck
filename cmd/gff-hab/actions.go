@@ -605,6 +605,11 @@ func (a *actions) CloseSession(session string) error {
 		return storeErr(err)
 	}
 	if !closed {
+		// A session that shows exited got there with no exit status while a holder is not
+		// reached yet: waiting helps, not pane.close.
+		if ss, ok := a.store.Session(session); ok && ss.State == api.SessionStateExited {
+			return control.Errorf(api.ErrorKindConflict, "session %s shows exited, but a holder is not reached yet and its program may still run: try again once every holder is back", session)
+		}
 		return control.Errorf(api.ErrorKindConflict, "session %s may still be running: pane.close ends its program, then session.close removes the record", session)
 	}
 	return nil

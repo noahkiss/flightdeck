@@ -1014,8 +1014,9 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   way, and either the holder reported an exit status, or the pane is gone while every registered
   holder has been reached. Otherwise it answers `conflict` and removes nothing: a running
   session, and one that shows exited only because its holder was not reached yet, may still run,
-  and a removed record would leave that program unfiled. `pane.close` ends the program first; the
-  session is then exited, and `session.close` removes it. An unknown session is `not_found`.
+  and a removed record would leave that program unfiled. The hint says which: a live session
+  needs `pane.close` first, after which `session.close` removes it; an exited one waits until
+  every holder is reached again. An unknown session is `not_found`.
   The hab's own clean-ups (a failed spawn, rounds retention, a deleted round's watcher) remove
   records directly and are not refused.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
