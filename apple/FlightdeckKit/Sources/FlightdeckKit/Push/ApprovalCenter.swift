@@ -15,6 +15,9 @@ public final class ApprovalCenter {
     public let sheet: ApprovalSheetModel
     /// The view shows the sheet while this is true.
     public var presenting = false
+    /// The window whose row raised the sheet; nil when it came from outside (a notification,
+    /// the Live Activity, a link, a chat card).
+    public private(set) var presenter: UUID?
 
     @ObservationIgnored private let board: Board
     @ObservationIgnored public let answerer: ApprovalAnswerer
@@ -43,9 +46,20 @@ public final class ApprovalCenter {
 
     // MARK: - Opening the sheet
 
-    /// The owner tapped a rank 1 row (app.md 7.2).
-    public func open(_ row: BoardRow) {
-        if sheet.show(habID: row.target.habID, pane: row.target.pane) { presenting = true }
+    /// The owner tapped a rank 1 row (app.md 7.2) in `window`.
+    public func open(_ row: BoardRow, window: UUID? = nil) {
+        if sheet.show(habID: row.target.habID, pane: row.target.pane) { present(from: window) }
+    }
+
+    private func present(from window: UUID?) {
+        presenter = window
+        presenting = true
+    }
+
+    /// The sheet cancels `window`'s restore (app.md 3.12): a sheet raised from a row in
+    /// another window leaves it alone; one from outside shows in every window and cancels each.
+    public func interrupts(window: UUID?) -> Bool {
+        presenting && (presenter == nil || presenter == window)
     }
 
     /// The owner tapped a notification, or the Live Activity. A request whose
@@ -53,7 +67,7 @@ public final class ApprovalCenter {
     public func open(_ meta: PushMeta) {
         guard meta.kind == "permission" || meta.kind == "question" || meta.request != nil else { return }
         if sheet.show(host: meta.hab, pane: meta.pane, request: meta.request) {
-            presenting = true
+            present(from: nil)
         } else {
             addPending(meta)
         }
@@ -82,12 +96,24 @@ public final class ApprovalCenter {
         for m in pending {
             let habOnline = board.habs.contains { ($0.state.welcome?.host.id ?? $0.state.store.host) == m.hab && $0.state.status == .online }
             if let r = m.request, open.contains(r) {
-                if !presenting, sheet.show(host: m.hab, pane: m.pane, request: m.request) { presenting = true }
+                if !presenting, sheet.show(host: m.hab, pane: m.pane, request: m.request) { present(from: nil) }
                 continue
             }
-            if !habOnline { keep.append(m) }
+            // A hab no connection in the app is (every one has said its host id) never comes:
+            // a crafted request link for it is dropped, not kept for ever (app.md 3.15).
+            let hosts = board.habs.map { $0.state.welcome?.host.id ?? $0.state.store.host }
+            let unknown = !hosts.contains(m.hab) && !hosts.contains { $0 == nil || $0?.isEmpty == true }
+            if !habOnline, !unknown { keep.append(m) }
         }
         pending = keep
+    }
+
+    /// A window closed (app.md 3.12): a sheet it raised went with it, so the center stops
+    /// presenting and a later request can show.
+    public func windowClosed(_ window: UUID?) {
+        guard presenting, let window, presenter == window else { return }
+        presenting = false
+        presenter = nil
     }
 
     // MARK: - The chat view's request card
@@ -123,7 +149,7 @@ public final class ApprovalCenter {
     /// A tap on the card: the approval sheet at the session's request.
     public func open(_ target: SessionTarget) {
         guard let r = card(for: target)?.request else { return }
-        if sheet.show(id: r.id) { presenting = true }
+        if sheet.show(id: r.id) { present(from: nil) }
     }
 
     /// Allow or Deny from the card. It answers through the sheet's path,

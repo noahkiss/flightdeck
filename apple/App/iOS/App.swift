@@ -16,18 +16,12 @@ struct FlightdeckApp: App {
     @State private var pushAsked = false
 
     var body: some Scene {
-        WindowGroup {
+        // Links, files and Handoff open in the window that received them; the root shares
+        // the handler with the Mac (app.md 3.15).
+        WindowGroup(id: FlightdeckScene.board) {
             FlightdeckRoot(fleet: fleet)
-                .onOpenURL { url in
-                    if url.isFileURL {
-                        // Any file from the share sheet or Files goes to the send sheet
-                        // (app.md 4.4); a key file goes to key import (app.md 10.4).
-                        if !fleet.files.open(url) { fleet.ssh?.openKeyFile(url) }
-                        return
-                    }
-                    if fleet.usage?.open(url: url) == true { return }
-                    if fleet.approvals?.open(url: url) != true { fleet.ssh?.open(url: url) }
-                }
+                // An open board window takes a link, not a new scene.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .task {
                     pushDelegate.start(fleet.push)
                     if fleet.badge == nil {
@@ -43,8 +37,15 @@ struct FlightdeckApp: App {
                     pushDelegate.askPermission()
                 }
         }
+        // The iPadOS menu bar and the Cmd-hold overlay (app.md 3.13).
+        .commands { FlightdeckCommands(fleet: fleet) }
         .onChange(of: phase, initial: true) { _, p in
             fleet.apply(p)
         }
+        // A session in its own window (app.md 3.14); it takes no links.
+        WindowGroup(id: FlightdeckScene.session, for: SessionLink.self) { $link in
+            SessionWindowRoot(fleet: fleet, link: link)
+        }
+        .handlesExternalEvents(matching: [])
     }
 }

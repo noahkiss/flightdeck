@@ -60,18 +60,55 @@ public final class Board {
         rebuild()
     }
 
-    /// How many rows were opened, so a waiting restore sees any open (app.md 3.12).
-    public private(set) var opens = 0
+    /// How many rows each window opened, so a waiting restore sees any open in its own window
+    /// (app.md 3.12). Opens with no window count under nil.
+    public private(set) var opensByWindow: [UUID?: Int] = [:]
 
-    /// Opens a row: marks a `done` seen, then calls `onOpen`.
-    public func open(_ row: BoardRow) {
-        opens += 1
-        if row.state == .done, let k = row.seenKey {
-            seen.insert(k)
-            rebuild()
-        }
+    /// How many rows `window` opened.
+    public func opens(in window: UUID?) -> Int { opensByWindow[window] ?? 0 }
+
+    /// Opens a row: marks a `done` seen, then calls `onOpen`. `window` is the window it opens
+    /// in, for that window's restore.
+    public func open(_ row: BoardRow, window: UUID? = nil) {
+        noteOpen(window: window)
+        markSeen(row)
         onOpen?(row.target)
     }
+
+    /// Counts an open in `window` that opened no row (a row's approval sheet).
+    public func noteOpen(window: UUID?) {
+        opensByWindow[window, default: 0] += 1
+    }
+
+    // MARK: - Read and unread (app.md 3.16)
+
+    /// A `done` row: unseen ones are unread.
+    public func canMark(_ row: BoardRow) -> Bool { row.state == .done && row.seenKey != nil }
+
+    /// Marks a `done` row read, as opening it does.
+    public func markSeen(_ row: BoardRow) {
+        guard canMark(row), let k = row.seenKey, !seen.contains(k) else { return }
+        seen.insert(k)
+        rebuild()
+    }
+
+    /// Puts a read `done` row back in Needs you.
+    public func markUnseen(_ row: BoardRow) {
+        guard canMark(row), let k = row.seenKey, seen.contains(k) else { return }
+        seen.remove(k)
+        rebuild()
+    }
+
+    /// Marks every unread `done` row read.
+    public func markAllSeen() {
+        let keys = rows.filter { $0.rank == .doneUnseen }.compactMap(\.seenKey)
+        guard !keys.isEmpty else { return }
+        seen.formUnion(keys)
+        rebuild()
+    }
+
+    /// Unread `done` rows on the board.
+    public var unreadCount: Int { rows.filter { $0.rank == .doneUnseen }.count }
 
     public var rows: [BoardRow] { sections.flatMap(\.rows) }
 

@@ -414,8 +414,10 @@ The root is a stock tab view with four tabs, in this order:
     computer, Notifications, Voice, Usage warnings, Help) in the detail column, as the system's
     Settings app does.
   A compact width (Slide Over, a narrow window) uses the phone layout in every tab.
-- **Mac.** The window keeps the board and session split with the connections column. The Mac's own
-  chrome (a Settings window, a sidebar) is a later stage.
+- **Mac.** The window keeps the board and session split with the connections column. Settings is
+  the Mac's own Settings window (⌘, or Flightdeck › Settings…), which holds the full Settings
+  page (20.7); the connections column's Settings button opens that window. A sidebar is a later
+  stage. Menus and shortcuts are in 3.13, session windows in 3.14.
 - **Deployment.** The app targets iOS 26.1, iPadOS 26.1 and macOS 26.0 at minimum (`Tab` items,
   the sidebar-adaptable style, the bottom accessory and the minimise-on-scroll behaviour need
   26.1). The code has no fallback for an earlier version.
@@ -552,7 +554,10 @@ only grow. The actions follow `gff`'s sidebar (`gff-client.md` 6) and call the s
   ("A session named "docs" exists.").
 - **An open session that is removed** closes: the list shows, or "Choose a session" in the split
   view. An ended session stays open and shows exited.
-- **Later:** Open in new window (the Mac and iPad stage) and Pin.
+- **More in the menu.** Above those: Open in New Window (3.14, where the system allows several
+  windows) and Mark as Read or Mark as Unread (3.16, a `done` session). After Copy name: Copy
+  Link (3.15), for every session row. The Session menu (3.13) holds the same actions.
+- **Later:** Pin.
 
 | Case | Behaviour |
 |---|---|
@@ -578,9 +583,14 @@ Code: `Board/SessionRestore.swift`, the scene storage in `Views/ShellViews.swift
   restores the window itself (the "Close windows when quitting an app" setting off).
 - The open session opens again as a tap on its row opens it, once the board lists the row,
   within one minute. A row that comes later opens nothing.
-- **Any other open wins.** A notification, a round, a group member, a sent file, a started
-  session, an approval sheet, another tab, the Capcom view (Mac) or the owner's tap on any row
-  before the row arrives cancels the restore. The restore never
+- **Any other open in the window wins.** A notification, a round, a group member, a sent file,
+  a started session, an approval sheet, another tab, the Capcom view (Mac) or the owner's tap on
+  any row before the row arrives cancels the restore. Each window counts its own opens: a tap
+  or an approval sheet raised from a row in one window leaves another window's restore alone,
+  and that sheet shows in that window only. An approval sheet raised from outside (a
+  notification, the Live Activity, a link, a chat card) shows in every window, session windows
+  (3.14) too, so it never goes unseen, and it cancels every window's restore. Closing the window
+  that raised a sheet ends the sheet, so a later request can show. The restore never
   moves the tab: a session open under Sessions while the owner left on Capcom stays under
   Sessions.
 - The Mac keeps the Capcom view the same way.
@@ -591,6 +601,134 @@ Code: `Board/SessionRestore.swift`, the scene storage in `Views/ShellViews.swift
 |---|---|
 | The session was removed meanwhile | Nothing opens; the list shows |
 | The hab is slow to come online | The session opens when its row arrives, within the minute; after that the list stays |
+
+### 3.13 Menus and keyboard shortcuts (Mac and iPad)
+
+Code: `Views/AppCommands.swift` (the menus), `Board/WindowCommands.swift` (what each window
+offers and the enablement rule). Tests: `WindowCommandTests`.
+
+The Mac menu bar, the iPadOS menu bar and the iPad's Cmd-hold overlay list the same commands
+(`.commands` on the app's scenes). Each command acts on the focused window: its open session,
+its tab, its search. The window publishes what it offers (`focusedSceneValue`); a command the
+focused window cannot do is off. Two exceptions: Go › Rounds and Settings show only on iPad,
+where those tabs exist, and Mark as Read and Mark as Unread share one place, which shows the
+one that applies.
+
+| Menu | Command | Keys | Does |
+|---|---|---|---|
+| File | New Session | ⌘N | Opens the New session form (3.10). Off while no hab is online |
+| File | New Window | ⌥⌘N | Opens another board window |
+| File | Open in New Window | ⇧⌘N | Opens the window's open session in its own window (3.14) |
+| Edit | Find Sessions | ⌘F | Puts the cursor in the board's search field (3.6); on iPad it moves to the Sessions tab first |
+| Session | Show Chat, Show Terminal | ⌥⌘1, ⌥⌘2 | The Chat \| Terminal switch, while the window shows one |
+| Session | Voice Mode | ⌥⌘V | Opens voice mode (13) |
+| Session | Stop | ⌘. | Stops the agent's turn, as the composer's Stop does. On while the agent works and the hab is online, and off while the window has a sheet or alert up, so ⌘. cancels the sheet |
+| Session | Console | ⌥⌘K | Opens the session's console (6) |
+| Session | Rename…, Restart, Copy Name, Copy Link, Close… | | The row actions (3.11) and Copy Link (3.15), with the same rules and questions |
+| Session | Mark as Read, Mark as Unread | ⇧⌘U | For a `done` session (3.16) |
+| Go | Sessions, Capcom, Rounds, Settings | ⌘1 to ⌘4 | iPad: the four tabs (3.8) |
+| Go | Sessions, Capcom | ⌘1, ⌘2 | Mac: Sessions shows the board with nothing open; Capcom opens the Capcom view. The Mac's Settings is its own window (⌘,) and its rounds sit in the board |
+| Go | Next Needing You | ⌥⌘A | Opens the next session that needs the owner (3.16) |
+| Go | Mark All as Read | | Marks every unread `done` session read (3.16) |
+
+- **Enablement.** The Session menu needs an open session in the focused window. Rename,
+  Restart, Copy Name and Close follow what the row offers (3.11), so an offline hab's session
+  offers Copy Name and Copy Link only. Copy Link needs a session (an unfiled pane has none).
+  Show Chat and Show Terminal need the switch: the phone layout, an iPad column narrower than
+  side by side, or the Mac's Capcom view. Voice Mode follows the session's Voice button.
+- **Close Window** (⌘W) stays the system's. Session › Close… ends or removes the session, after
+  its question.
+- **Shortcuts the app already had** stay: ⌥⌘F for Note friction (11), Return and Esc in sheets
+  (3.8).
+- **A session window** (3.14) offers the Session menu for its session. New Session, Find
+  Sessions and the Go menu act on a board window, so they are off while a session window is
+  focused.
+
+Design call: ⌘N is New Session, as a new message or a new document is in other apps, so New
+Window moves to ⌥⌘N. ⌘. is the Mac's own "stop" key. ⇧⌘U is Mail's Mark as Unread. ⌥⌘A follows
+the chat apps' "next unread" key.
+
+### 3.14 A session in its own window (Mac and iPad)
+
+Code: `Views/SessionWindow.swift`. Tests: `SessionLinkTests`.
+
+- **Open in New Window** in a row's context menu (3.11) and in the File menu (⇧⌘N) opens the
+  session in a window of its own (`WindowGroup(for:)` and `openWindow(value:)`). The window's
+  value holds ids only, the hab and the session, the same as a link (3.15), so the window
+  follows a restart to the new pane and the system can restore it.
+- **One window per session.** Opening a session that already has its own window brings that
+  window forward.
+- **The window** shows the session as the board's detail does: chat beside the terminal on the
+  Mac and in a wide iPad window, the phone's switch in a narrow one. Its title is the session's
+  title. It waits for the board to list the session, up to a minute, with "Opening <session>";
+  after that it says "This session is not on any paired computer."
+- **A removed session** leaves its window open with "This session was removed." The window does
+  not close by itself, so a removal never makes a window vanish under the pointer.
+- **iPad.** The app allows several windows (Stage Manager, Split View) and sizes them freely, as
+  iPadOS 26 does for any app with multiple scenes. The menu item shows only where the system
+  allows several windows (`supportsMultipleWindows`), so not on iPhone.
+- **Connections.** On the Mac a session window counts as a window for the lifecycle rule
+  (12.1): the habs stay connected while any window is open.
+- **Approvals.** The chat's request card answers in place (4.2). A session window shows an
+  approval sheet raised from outside, as every window does (3.12). The sheet's chat button
+  opens another session in its own window.
+
+| Case | Behaviour |
+|---|---|
+| The session restarts | The window shows the new pane once the board lists it |
+| The hab goes offline | The window stays, and the session shows offline as its row does |
+| The same session open in the board and in a window | Allowed; each view opens its own stream (11) |
+| The Mac app quits with session windows open | The system restores them at the next launch when it restores windows |
+
+### 3.15 Links to a session and Handoff
+
+Code: `Board/SessionLink.swift`, the link handling in `Views/SessionWindow.swift`. Tests:
+`SessionLinkTests`.
+
+- **The link.** `flightdeck://session?hab=<host id>&session=<session id>`. The host id is the
+  hab's own (its welcome's `host.id`), not this device's name for the connection, so the link
+  opens on any device paired with that hab. A hab whose host id the app has not seen yet uses
+  the app's connection id, which only this device knows.
+- **Copy Link** in a row's context menu (3.11) and the Session menu puts the link on the
+  clipboard. Every session row offers it, offline ones too; an unfiled pane has no link.
+- **Opening a link** (from another app, a note, a Shortcut) opens the session in the window
+  that received it, as a tap on its row does, once the board lists the row, within one minute.
+  A hab no paired computer matches shows "No paired computer has this session." A session the
+  hab does not list within the minute opens nothing.
+- **The Mac registers `flightdeck://`** (`CFBundleURLTypes`), as iOS does, and both apps share
+  one handler for every link: pairing, usage, a request (7), a session, and files. On the Mac a
+  link goes to an open board window, not a new one (`handlesExternalEvents`); iPad does the
+  same. Only a `flightdeck://pair` link reaches pairing. A request link for a hab that no
+  connection in the app is (every one has said its host id) is dropped, not kept to raise later.
+- **Handoff.** The open session advertises an activity (`.userActivity`, type
+  `<bundle id>.session`) once it has stayed on screen for 3 seconds, so flicking through rows
+  advertises nothing. The activity carries the hab's host id and the session id, and no title,
+  text or path. It is eligible for Handoff only: not for search, not for public indexing. The
+  other device's app takes it (`onContinueUserActivity`) and opens the session as a link does.
+  The Capcom view advertises nothing.
+
+| Case | Behaviour |
+|---|---|
+| A link to a session that was removed | Nothing opens after the minute |
+| A link with no `hab` or `session` | Ignored, as any unknown link is: no sheet, no error |
+| Handoff from a device paired with a hab this one lacks | "No paired computer has this session." |
+| The link opens while another session is open | The linked session replaces it, as a tap does |
+
+### 3.16 Next needing you and unread
+
+Code: `Board/NextNeedingYou.swift`, the marks in `Board/Board.swift`. Tests:
+`NextNeedingYouTests`.
+
+- **Next Needing You** (⌥⌘A, and a toolbar button on the Mac board and the iPad Sessions list)
+  opens the next session in the Needs you section (3.1: blocked, error, done unseen), on an
+  online hab, in the board's order. From an open session it takes the one after it and wraps
+  round; with none open, the first. The button is off when no other session needs the owner. It
+  opens the session, not the approval sheet: the chat's request card answers there.
+- **Mark as Unread** puts a seen `done` session back in Needs you; **Mark as Read** moves an
+  unseen one to Done, as opening it would. **Mark All as Read** does that for every unseen
+  `done` session. They show in the row's context menu and the Session menu, for `done` sessions
+  only: once the hab turns `done` into `idle` (a client focused the pane), there is nothing to
+  mark. The marks stay on this device and last while the app runs, as seen does (3.1).
 
 Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
 previews; connections list; sidebar by project and branch with shells; context percentage on
@@ -3099,7 +3237,7 @@ The hab sends one structure. Each device presents it its own way. No layout reac
 | Divider | — | Draggable; snaps to 50/50, chat only, terminal only | Same as iPad |
 | Keyboard | System keyboard plus keyboard bar | Hardware keyboard, bar when no hardware keyboard | Hardware keyboard |
 | Thumbnails | No | Optional, on the board | Optional, on the board |
-| Windows | One | Several windows (Stage Manager, Split View) | Several windows, one session each |
+| Windows | One | Several windows (Stage Manager, Split View); a session in its own window (3.14) | Board windows, and a window per session (3.14) |
 
 Rules:
 
@@ -4578,7 +4716,7 @@ On iPhone and iPad, Settings is a tab (3.8) with four groups:
 On iPad the four groups are the sidebar column of a split view and each page opens in the detail
 column (3.8).
 
-The full page ("All settings" on iOS, the Settings sheet on the Mac):
+The full page ("All settings" on iOS, the Settings window on the Mac, 3.8):
 
 - **One page, grouped by area:** Agents (with the Capcom host picker, 4.10), Approvals,
   Notifications, Voice, Usage, Widgets, Connection, Security, and Habs (each hab's push status
@@ -4623,7 +4761,8 @@ The page is `Views/SettingsViews.swift`.
   write's answer updates the row at once, so fast taps on a stepper send fresh revisions. A
   connect that arrives during a step runs after it, with the view current then.
 - **The exception count** is a button under the picker; it scrolls to the first exception's row.
-- **The entry point.** The connections list has one Settings button, which opens the page. The
+- **The entry point.** The connections list has one Settings button, which opens the page; on the
+  Mac it opens the Settings window. The
   old Notifications, Voice and SSH buttons show only when there is no settings center.
 - **Voice settings saved by an older app** keep every value: a missing field takes its default.
 

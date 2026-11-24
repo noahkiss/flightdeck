@@ -18,14 +18,32 @@ struct SessionRowActions: ViewModifier {
     let row: BoardRow
     let center: SessionActionCenter?
     @Environment(\.sessionAsk) private var ask
+    @Environment(\.windowCommands) private var commands
 
     func body(content: Content) -> some View {
-        if let center, let ask, case let offers = center.offers(row), !offers.isEmpty {
+        if let center, let ask, case let offers = center.offers(row), !offers.isEmpty || row.target.session != nil {
             let busy = center.running.contains(row.id)
+            let link = SessionLink.of(row, board: center.board)
             content
                 .contextMenu {
-                    ForEach(offers, id: \.self) { button($0, center, ask) }
+                    // Above the row actions: a window of its own and the read marks (app.md 3.11).
+                    if let link, let open = commands?.openWindow {
+                        Button("Open in New Window", systemImage: "macwindow.badge.plus") { open(link) }
+                    }
+                    if center.board.canMark(row) {
+                        if row.rank == .doneUnseen {
+                            Button("Mark as Read", systemImage: "envelope.open") { center.board.markSeen(row) }
+                        } else {
+                            Button("Mark as Unread", systemImage: "envelope.badge") { center.board.markUnseen(row) }
+                        }
+                    }
+                    if link != nil || center.board.canMark(row) { Divider() }
+                    ForEach(offers, id: \.self) { button($0, center, ask, link: link) }
                         .disabled(busy)
+                    // A row whose offers hold no Copy name still gets its link.
+                    if let link, !offers.contains(.copyName) {
+                        Button("Copy Link", systemImage: "link") { Self.copy(link.url.absoluteString) }
+                    }
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     // No destructive role: the list would take the row out before the question answers.
@@ -45,7 +63,7 @@ struct SessionRowActions: ViewModifier {
     }
 
     @ViewBuilder
-    private func button(_ a: SessionAction, _ center: SessionActionCenter, _ ask: SessionAsk) -> some View {
+    private func button(_ a: SessionAction, _ center: SessionActionCenter, _ ask: SessionAsk, link: SessionLink?) -> some View {
         switch a {
         case .rename:
             Button("Rename…", systemImage: "pencil") { ask.askRename(row) }
@@ -55,6 +73,9 @@ struct SessionRowActions: ViewModifier {
             }
         case .copyName:
             Button("Copy name", systemImage: "doc.on.doc") { Self.copy(row.name ?? row.title) }
+            if let link {
+                Button("Copy Link", systemImage: "link") { Self.copy(link.url.absoluteString) }
+            }
         case .close:
             Divider()
             Button("Close…", systemImage: "xmark.circle", role: .destructive) { ask.askClose(row) }
@@ -84,12 +105,15 @@ extension View {
 struct SessionActionsHost: ViewModifier {
     let center: SessionActionCenter
     @State private var ask = SessionAsk()
+    /// The menus ask through this window's questions too (app.md 3.13).
+    @Environment(\.windowCommands) private var commands
 
     func body(content: Content) -> some View {
         @Bindable var ask = ask
         let q = ask.closing.map(SessionActionCenter.question)
         content
             .environment(\.sessionAsk, ask)
+            .onAppear { commands?.ask = ask }
             .confirmationDialog(q?.title ?? "", isPresented: $ask.closingShown, titleVisibility: .visible, presenting: ask.closing) { row in
                 Button(SessionActionCenter.question(row).button, role: .destructive) {
                     Task { await ask.run { await center.close(row) } }
@@ -172,6 +196,8 @@ struct RestoreOpenSession<Interrupt: Equatable>: ViewModifier {
     @Binding var opened: BoardRow?
     /// The scene's saved row id.
     let saved: String
+    /// The window the restore runs in; its opens count there (app.md 3.12).
+    var window: UUID? = nil
     let interrupt: Interrupt
     /// Called just before the restore opens the row.
     var willOpen: () -> Void = {}
@@ -198,7 +224,7 @@ struct RestoreOpenSession<Interrupt: Equatable>: ViewModifier {
         guard let row = r.row(in: rows, now: .now) else { return }
         restore = nil
         willOpen()
-        board.open(row)
+        board.open(row, window: window)
         opened = row
     }
 

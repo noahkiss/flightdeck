@@ -24,8 +24,13 @@ struct AppShell: View {
     /// Debug builds: the Capcom jobs list opened at launch.
     @State private var capcomJobsShown = false
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// The window's commands (app.md 3.13); its id counts this window's opens (app.md 3.12).
+    @Environment(\.windowCommands) private var commands
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.supportsMultipleWindows) private var multipleWindows
 
     private var board: Board { fleet.board }
+    private var window: UUID? { commands?.id }
 
     var body: some View {
         content
@@ -34,7 +39,7 @@ struct AppShell: View {
             .modifier(CapcomHost(center: fleet.capcom, board: board, opened: $opened))
             // A started session opens once the board lists it (app.md 3.10).
             .modifier(NewSessionHost(center: fleet.newSessions, board: board, draft: $newSession) { row in
-                board.open(row)
+                board.open(row, window: window)
                 opened = row
             })
             .usageSheet(fleet.usage, governor: fleet.capcom)
@@ -42,9 +47,19 @@ struct AppShell: View {
             .modifier(SessionActionsHost(center: fleet.sessionActions))
             .modifier(SessionActionFollow(center: fleet.sessionActions, board: board, opened: $opened))
             // Another tab, an approval sheet or a tap on any row cancels the restore (app.md 3.12).
-            .modifier(RestoreOpenSession(board: board, opened: $opened, saved: savedOpen,
-                                         interrupt: "\(tab.rawValue)|\(fleet.approvals?.presenting ?? false)|\(board.opens)") { restoring = true })
+            .modifier(RestoreOpenSession(board: board, opened: $opened, saved: savedOpen, window: window,
+                                         interrupt: "\(tab.rawValue)|\(fleet.approvals?.interrupts(window: window) ?? false)|\(board.opens(in: window))") { restoring = true })
+            // Links and Handoff open here, in the window that received them (app.md 3.15).
+            .modifier(SessionLinkHost(fleet: fleet) { row in
+                board.open(row, window: window)
+                opened = row
+            })
+            // What this window offers the menus (app.md 3.13).
+            .onAppear(perform: registerCommands)
+            .onChange(of: commands?.finds ?? 0) { _, _ in tab = .sessions }
+            .onChange(of: newSession != nil) { _, up in commands?.setSheet("newSession", up) }
             .onChange(of: opened) { _, r in
+                commands?.openRowID = r?.id
                 savedOpen = r?.id ?? ""
                 guard r != nil else { return }
                 if restoring {
@@ -89,9 +104,31 @@ struct AppShell: View {
 
     private func open(habID: String, session: String?) {
         if let row = board.rows.first(where: { $0.target.habID == habID && $0.target.session == session }) {
-            board.open(row)
+            board.open(row, window: window)
             opened = row
         }
+    }
+
+    /// The shell's part of the menus (app.md 3.13): New Session, the four tabs, Next Needing
+    /// You and Open in New Window. Find Sessions moves to the Sessions tab.
+    private func registerCommands() {
+        guard let commands else { return }
+        commands.openRowID = opened?.id
+        commands.goTargets = [.sessions, .capcom, .rounds, .settings]
+        commands.go = { t in
+            switch t {
+            case .sessions: tab = .sessions
+            case .capcom: tab = .capcom
+            case .rounds: tab = .rounds
+            case .settings: tab = .settings
+            }
+        }
+        commands.newSession = { newSession = fleet.newSessions.draft() }
+        commands.openRow = { row in
+            board.open(row, window: window)
+            opened = row
+        }
+        commands.openWindow = multipleWindows ? { openWindow(value: $0) } : nil
     }
 
     /// The sheet's chat button: open the session at the request.
@@ -221,8 +258,16 @@ struct SessionsTab: View {
     @State private var query = ""
     @State private var scope: BoardSearchScope = .all
     @State private var searchShown = false
+    @Environment(\.windowCommands) private var commands
 
     var body: some View {
+        tabBody
+            // Find Sessions (app.md 3.13) opens the search.
+            .onChange(of: commands?.finds ?? 0) { _, _ in searchShown = true }
+    }
+
+    @ViewBuilder
+    private var tabBody: some View {
         if sizeClass == .compact {
             NavigationStack {
                 list
@@ -265,6 +310,14 @@ struct SessionsTab: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HostsMenu(board: fleet.board, openSettings: openSettings)
                 }
+                if sizeClass != .compact {
+                    ToolbarItem(placement: .primaryAction) {
+                        NextNeedingYouButton(board: fleet.board, openedID: opened?.id) { row in
+                            fleet.board.open(row, window: commands?.id)
+                            opened = row
+                        }
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     NewSessionButton(center: fleet.newSessions, draft: $newSession)
                 }
@@ -277,6 +330,7 @@ struct SessionsTab: View {
     private func session(_ row: BoardRow, compact: Bool) -> some View {
         SessionView(model: fleet.chat(for: row.target), compact: compact, close: { opened = nil })
             .id(row.target)
+            .sessionHandoff(row, board: fleet.board)
             // session.focus while the session is on screen (app.md 8.6).
             .onAppear {
                 fleet.focus.show(row.target)
@@ -335,6 +389,7 @@ struct SessionsListView: View {
     var scope: BoardSearchScope = .all
 
     private var board: Board { fleet.board }
+    @Environment(\.windowCommands) private var commands
 
     /// The list as the search filters it.
     private func filtered(_ all: [SessionsSection]) -> [SessionsSection] {
@@ -402,7 +457,7 @@ struct SessionsListView: View {
     }
 
     private func open(_ row: BoardRow) {
-        board.open(row)
+        board.open(row, window: commands?.id)
         opened = row
     }
 
