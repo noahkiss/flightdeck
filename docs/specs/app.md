@@ -870,7 +870,7 @@ Spotlight, the Action button and Control Center can reach them.
 |---|---|---|
 | Open Session | Opens a session, as a session link does (3.15). Spotlight runs it for a tapped session | Opens the app |
 | New Session | Opens the New session form (3.10) | Opens the app |
-| Ask Capcom | Opens the Capcom view (4.10); with a message, sends it to Capcom's standing conversation, as quick entry does (3.18) | Opens the app |
+| Ask Capcom | Opens the Capcom view (4.10); with a message, sends it to Capcom's standing conversation through quick entry's send (3.18), after waiting up to 15 s for Capcom's home to come online. A message that did not go shows in an alert, "Not sent to Capcom", with the reason and Copy Message | Opens the app |
 | Approve Pending Request | Opens the approval sheet on the oldest request that waits, in one session when one is named (7.2) | In the background when the board shows nothing waits; else opens the app |
 
 - **The session entity.** A session is known by its link: the hab's host id and the session id
@@ -2735,6 +2735,9 @@ service.
 | Request answered elsewhere | Replace, quiet | Passive | Update without buttons |
 | A long console command finished | Setting, off by default | Passive | No |
 
+The Level column is what the hab sends. The owner's level per kind (8.9) changes how approvals,
+questions and finished turns show on the device.
+
 ### 8.3 Rules
 
 - **Never drop an approval silently.** If the hab cannot decide whether to hold a push, it sends it.
@@ -4020,7 +4023,7 @@ never from private files).
 | Widget | Sizes | Shows |
 |---|---|---|
 | Usage | Small, medium | Small: one account as a ring with the used percentage, the window name, the reset countdown, and "Limit reached" or "On pace". Medium: two accounts side by side |
-| Needs you | Small, medium | Small: the count and the top item's title. Medium: the top three rows with project and time |
+| Needs you | Small, medium, large | Small: the count and the top item's title. Medium: the top two items; large: four (15.4) |
 | Lock Screen | Circular, rectangular | Circular: a gauge for the tightest usage window. Rectangular: the needs-you count and the top title |
 
 - **Data path.** Widgets never connect to a hab and hold no key. The app writes a small snapshot
@@ -4073,9 +4076,10 @@ never from private files).
   the board's order.
 - **Snapshot.** JSON in the App Group defaults (`flightdeck.needs-you.snapshot`, versioned):
   ids, session names, computer labels and times. No command, folder or request title, since a
-  title can quote a command. The app writes it only while some hab is online, and only when what
-  the widget shows changed, then asks WidgetKit to reload. In the background every connection is
-  down (12.1), so the widget keeps the last list the app saw and shows the time it was written.
+  title can quote a command. The app writes it only while it is in front with some hab online,
+  and only when what the widget shows changed, then asks WidgetKit to reload. Going to the
+  background stops the habs one by one and leaves every connection down (12.1), so the widget
+  keeps the last list the app saw and shows the time it was written.
   The extension does not update it from pushes yet (15.1).
 - **Buttons.** A permission request with a request id has Deny, which runs `ActivityDenyIntent`
   in the app, the same path as the Live Activity's Deny (8.7): no unlock, the live connection or a

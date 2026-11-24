@@ -155,7 +155,9 @@ extension Fleet {
     func publishSessions() {
         guard !isDemo else { return }
         directory?.update(board)
-        needsYou?.update(board)
+        // Going to the background stops the habs one at a time: a write between two stops would
+        // drop the stopped habs' items. The widget keeps what it had while the app is away.
+        if isActive { needsYou?.update(board) }
     }
 
     /// The oldest request that waits, in one session when one is named (app.md 3.19): the

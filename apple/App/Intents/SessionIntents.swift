@@ -22,9 +22,12 @@ enum IntentHost {
         guard let directory = fleet.directory else { return }
         directory.onChange = { upsert, delete in
             SessionSpotlight.update(upsert: upsert, delete: delete)
+            // "Open <session> in Flightdeck" knows the sessions of the last update.
+            FlightdeckShortcuts.updateAppShortcutParameters()
         }
         // The index can be lost (a restore, a reset): write the whole list once per launch.
         SessionSpotlight.update(upsert: directory.entries, delete: [])
+        FlightdeckShortcuts.updateAppShortcutParameters()
     }
 }
 

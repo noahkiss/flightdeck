@@ -268,6 +268,45 @@ final class AppIntentLogicTests: XCTestCase {
         XCTAssertEqual(reloads, 1, "an unknown request changes nothing")
     }
 
+    /// With two habs, the stop of one on the way to the background must not drop its items.
+    func testNeedsYouWritesOnlyWhileTheAppIsInFront() async {
+        let b = board()
+        var st = HabState()
+        st.status = .online
+        let req = Fixture.request(title: "Edit?", tool: "Edit", id: "req-2")
+        st.store.reset(StructureResult(
+            agents: [Fixture.agent(pane: "%9", harness: "codex", state: .blocked, kind: .permission, request: req)],
+            host: HostInfo(id: "bench-host"), panes: [Fixture.pane("%9", session: "reef")], projects: [], seq: 0,
+            sessions: [Fixture.session("reef", name: "reef", pane: "%9", project: nil)]))
+        b.register(id: "conn-2", label: "Bench", endpoint: "fake")
+        b.update("conn-2", st)
+        let d = emptyDefaults()
+        let fleet = Fleet(board: b)
+        fleet.needsYou = NeedsYouPublisher(defaults: d) {}
+        fleet.publishSessions()
+        XCTAssertNil(NeedsYouSnapshot.load(d), "not in front: nothing written")
+        await fleet.setActive(true)
+        fleet.publishSessions()
+        XCTAssertEqual(Set(NeedsYouSnapshot.load(d)?.items.map(\.hab) ?? []), ["studio-host", "bench-host"])
+        await fleet.setActive(false)
+        st.status = .offline
+        b.update("conn-2", st)
+        fleet.publishSessions()
+        XCTAssertEqual(NeedsYouSnapshot.load(d)?.items.count, 2, "a hab stopped on the way out keeps its items")
+    }
+
+    /// Ask Capcom with a message when it cannot go: the reason is set, so the app shows it with
+    /// the text; nothing is dropped silently.
+    func testAskCapcomFailureKeepsAReason() async {
+        let entry = QuickEntry(capcom: Fleet().capcom, defaults: emptyDefaults())
+        entry.wait = .milliseconds(100)
+        entry.text = "check the build"
+        let ok = await entry.sendWhenReady()
+        XCTAssertFalse(ok)
+        XCTAssertNotNil(entry.failure)
+        XCTAssertEqual(entry.text, "check the build")
+    }
+
     func testNeedsYouKeepsTheLastListWhileDisconnected() {
         let d = emptyDefaults()
         var reloads = 0
