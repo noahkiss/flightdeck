@@ -1900,7 +1900,7 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
 |---|---|---|---|
 | K1 | Dragging the thread down hides the keyboard; the keyboard follows the finger and the composer rides on it | `scrollDismissesKeyboard(.interactively)`, the composer in `safeAreaBar` | The dismissal is built. The ride has no code of its own: it rests on the system's keyboard safe area, not verified on a device (4.2) |
 | K2 | Scrolling up to read does not hide the keyboard by surprise | The same modifier | Built |
-| S1 | The thread opens at the newest message | `defaultScrollAnchor(.bottom)` | Built |
+| S1 | The thread opens at the newest message | `defaultScrollAnchor(.bottom)`, and a scroll to the end when the rows rest above the bars (`onGeometryChange`) | Built |
 | S2 | At the bottom, streamed text and growing tool cards stay pinned | `defaultScrollAnchor(.bottom, for: .sizeChanges)`, and `ChatFollow` going back to the bottom once no finger moves the thread | Built, both threads |
 | S3 | Scrolled up, new output never moves the view | `onScrollGeometryChange` and `onScrollPhaseChange` feed `ChatFollow` | Built |
 | S4 | A jump-to-latest button with the count of new rows | `ScrollPosition.scrollTo(edge: .bottom)` | Built |
@@ -1939,10 +1939,16 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
   bottom inset (the keyboard, a request card) scrolls a following thread to its end too: the
   size-change anchor does not see the inset, and in the simulator the rows stayed under a newly
   shown request card while the geometry read "at the bottom". For the same reason a scroll to
-  the end runs once more after the layout pass, and once 250 ms after the thread opens, while it
-  follows: the lazy rows measure only when laid out. So the drag that
+  the end runs once more after the layout pass, while it follows: the lazy rows measure only
+  when laid out. So the drag that
   takes the keyboard away never meets a scroll, and a tall tool card that lands at once is
   followed.
+- **No gap under the rows.** The thread also measures where its rows really end, against the
+  view between the bars. After a late change of the rows' height (the lazy rows measuring
+  themselves as the thread opens) the rows can rest a whole bottom inset too high, an empty band
+  above the request card or composer, while the scroll geometry still reads "at the bottom". A
+  following thread with a band over 4 pt scrolls to its end once nothing moves it. Rows that fit
+  the view rest at its top and leave no band. A thread scrolled up is never moved.
 - **New rows while reading** count up on the jump button ("3 new messages"; an arrow alone with
   none counted). Only messages count, not tool cards or event lines. The button is a glass
   control over the bottom of the thread, at least 44 pt to tap; a tap scrolls to the newest row

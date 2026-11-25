@@ -23,8 +23,9 @@ struct ChatScroll<Content: View>: View {
     @State private var position = ScrollPosition(idType: String.self)
     @State private var follow = ChatFollow()
     @State private var motion: ChatFollow.Motion = .idle
-    /// The last distance from the bottom, kept out of the view's state: it changes every frame.
-    @State private var last = LastDistance()
+    /// The last distance from the bottom and gap under the rows, kept out of the view's state:
+    /// they change every frame.
+    @State private var last = Last()
     @State private var divider: String?
     @State private var dividerDecided = false
     #if DEBUG
@@ -42,6 +43,15 @@ struct ChatScroll<Content: View>: View {
             }
             .scrollTargetLayout()
             .padding(12)
+            // Where the rows really sit: after a late change of their height the scroll geometry
+            // can read "at the bottom" while they rest a whole bottom inset too high.
+            .onGeometryChange(for: CGFloat.self) { g in
+                guard let visible = g.bounds(of: .scrollView) else { return 0 }
+                return ChatFollow.gap(contentHeight: g.size.height, visible: visible).rounded()
+            } action: { gap in
+                last.gap = gap
+                update { $0.placed(gap: gap, motion: motion) }
+            }
         }
         // Each entry's id is a row's `.id`: VoiceOver scrolls a row the lazy stack has not drawn.
         .accessibilityRotor(Text("Turns", bundle: #bundle), entries: rotors.turns, entryID: \.id, entryLabel: \.label)
@@ -57,7 +67,8 @@ struct ChatScroll<Content: View>: View {
             case .idle:
                 motion = .idle
                 // The content may have grown while the finger held the thread.
-                update { $0.scrolled(distance: last.value, motion: .idle) }
+                update { $0.scrolled(distance: last.distance, motion: .idle) }
+                update { $0.placed(gap: last.gap, motion: .idle) }
             case .animating: motion = .animating
             default: motion = .user
             }
@@ -80,7 +91,7 @@ struct ChatScroll<Content: View>: View {
                 bottomInset: g.contentInsets.bottom.rounded(),
                 containerHeight: g.containerSize.height.rounded())
         } action: { old, new in
-            last.value = new.distance
+            last.distance = new.distance
             #if DEBUG
             if Self.showFollow { shownDistance = new.distance }
             #endif
@@ -125,11 +136,6 @@ struct ChatScroll<Content: View>: View {
             }
         }
         .animation(gateMotion(.smooth(duration: 0.2), reduce: reduceMotion), value: follow.showsJump)
-        // The first rows and the bars settle over a few frames after the thread opens.
-        .task {
-            try? await Task.sleep(for: .milliseconds(250))
-            if follow.following { position.scrollTo(edge: .bottom) }
-        }
         .onDisappear {
             if follow.following { ChatReadMarks.shared.saw(rowIDs.last, in: readKey) }
         }
@@ -170,8 +176,9 @@ struct ChatScroll<Content: View>: View {
         #endif
     }
 
-    private final class LastDistance {
-        var value: CGFloat = 0
+    private final class Last {
+        var distance: CGFloat = 0
+        var gap: CGFloat = 0
     }
 }
 

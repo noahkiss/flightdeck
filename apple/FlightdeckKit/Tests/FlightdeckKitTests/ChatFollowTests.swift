@@ -87,6 +87,26 @@ final class ChatFollowTests: XCTestCase {
         XCTAssertTrue(k.following)
     }
 
+    /// Rows left a bottom inset too high, with the scroll geometry reading "at the bottom",
+    /// go back to the end while the thread follows, and only then.
+    func testGapUnderTheRows() {
+        // Read from the simulator: a phone thread, 1260 pt of rows, a 387 pt view between the
+        // bars. At rest at its end, and stuck 371 pt (the request card and composer) too high.
+        XCTAssertEqual(ChatFollow.gap(contentHeight: 1260, visible: CGRect(x: 0, y: 873, width: 402, height: 387)), 0)
+        XCTAssertEqual(ChatFollow.gap(contentHeight: 1260, visible: CGRect(x: 0, y: 1244, width: 402, height: 387)), 371)
+        XCTAssertEqual(ChatFollow.gap(contentHeight: 1260, visible: CGRect(x: 0, y: 200, width: 402, height: 387)), 0, "scrolled up")
+        XCTAssertEqual(ChatFollow.gap(contentHeight: 300, visible: CGRect(x: 0, y: 0, width: 402, height: 387)), 0, "rows that fit the view")
+
+        var f = ChatFollow()
+        XCTAssertEqual(f.placed(gap: 371, motion: .idle), .toBottom)
+        XCTAssertEqual(f.placed(gap: ChatFollow.gapTolerance, motion: .idle), .none)
+        XCTAssertEqual(f.placed(gap: 371, motion: .user), .none, "the finger pulls past the end")
+        XCTAssertEqual(f.placed(gap: 371, motion: .animating), .none, "the app's own scroll")
+
+        _ = f.scrolled(distance: 500, motion: .user)
+        XCTAssertEqual(f.placed(gap: 371, motion: .idle), .none, "reading: nothing pulls the owner down")
+    }
+
     /// Only messages count as new: tool cards and event lines do not.
     func testUnreadCountsMessagesOnly() {
         var f = ChatFollow()

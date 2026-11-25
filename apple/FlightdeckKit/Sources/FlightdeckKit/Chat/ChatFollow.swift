@@ -96,6 +96,25 @@ public struct ChatFollow: Equatable, Sendable {
         following && motion != .user ? .toBottom : .none
     }
 
+    /// How large an empty band under the rows may be before a following thread moves.
+    public static let gapTolerance: CGFloat = 4
+
+    /// The rows were placed, leaving `gap` points of empty view between the last row and the
+    /// bars (`gap(contentHeight:visible:)`). The scroll geometry can read "at the bottom" while
+    /// the rows sit a whole bottom inset too high, after a late change of the rows' height: a
+    /// following thread scrolls to its end, unless a finger or an animation moves it.
+    public func placed(gap: CGFloat, motion: Motion) -> Action {
+        following && motion == .idle && gap > Self.gapTolerance ? .toBottom : .none
+    }
+
+    /// The empty band below the last row, in points. `visible` is the scroll view less its
+    /// insets, in the rows' own coordinates (`GeometryProxy.bounds(of: .scrollView)`). Rows that
+    /// fit the view rest at its top and leave no gap.
+    public static func gap(contentHeight: CGFloat, visible: CGRect) -> CGFloat {
+        guard contentHeight > visible.height else { return 0 }
+        return max(0, visible.maxY - contentHeight)
+    }
+
     /// The rows changed: `old` and `new` are the row ids before and after, in order. Only rows
     /// that `counts` accepts (messages, not tool cards or event lines) add to the unread count.
     public mutating func rowsChanged(from old: [String], to new: [String], counts: (String) -> Bool = { _ in true }) -> Action {
