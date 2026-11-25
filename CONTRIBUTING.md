@@ -27,7 +27,8 @@ xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckMac \
 
 Builds sign ad hoc by default. To sign with your own team, copy
 `apple/Config/Local.example.xcconfig` to `apple/Config/Local.xcconfig` and fill it in. Git
-ignores that file.
+ignores that file. Then open `apple/Flightdeck.xcodeproj` in Xcode, pick your iPhone, iPad or
+Mac as the run destination, and run the `FlightdeckiOS` or `FlightdeckMac` scheme.
 
 To look around without a hab, launch the app with `-FlightdeckDemo YES`, or tap "Look
 around with demo data" on the first screen. Demo mode loads two invented hosts

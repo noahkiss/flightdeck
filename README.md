@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/hero.webp" alt="Flightdeck on an iPad and an iPhone. The iPad shows the status board with sessions on two computers. The iPhone shows a Claude Code chat with tool cards and a permission request waiting for an answer.">
+  <img src="docs/images/hero.webp" width="560" alt="Flightdeck on an iPad and an iPhone. The iPad shows sessions on two computers beside an open chat. The iPhone shows a chat with a permission request waiting for an answer.">
 </p>
 
 You run coding agents on more than one computer, in more than one terminal. One of them stops
@@ -42,6 +42,11 @@ terminal.
 - **Capcom.** Ask a question or start work without picking a project folder first. Capcom
   answers, or hands the work to the right session.
 
+<p align="center">
+  <img src="docs/images/ipad-terminal.webp" width="420" alt="Flightdeck on an iPad: the session list beside the terminal view of a running agent.">
+  <img src="docs/images/iphone-chat.webp" width="210" alt="Flightdeck on an iPhone: a chat with formatted text and a permission request with Deny and Allow buttons.">
+</p>
+
 ## Install
 
 Flightdeck has two parts. The app runs on your Mac, iPhone and iPad. The hab is a small
@@ -55,7 +60,9 @@ and move Flightdeck to Applications. The app is signed with Developer ID and not
 
 ### iPhone and iPad
 
-The iPhone and iPad app ships through TestFlight.
+There is no public App Store or TestFlight build. Build the app from source and install it on
+your own devices with your own Apple developer team. [CONTRIBUTING.md](CONTRIBUTING.md#the-app-swift)
+shows how.
 
 ### The hab on each computer
 
@@ -83,8 +90,11 @@ To look around first, choose "Look around with demo data".
 ### You also need
 
 - A coding agent installed and signed in on the computer: Claude Code, Codex or opencode.
-- SSH on the computer (on a Mac, turn on Remote Login), and a network path from your devices
-  to it: the same local network, or a private network such as a VPN.
+- SSH on each computer you reach from another device (on a Mac, turn on Remote Login). The app
+  connects through it, and pairing adds the device's key for you. The Mac app needs no SSH for
+  the hab on its own Mac.
+- A network path from your devices to each computer: the same local network, or a private
+  network such as a VPN.
 - macOS 26 for the Mac app; iOS 26.1 or iPadOS 26.1 for the iPhone and iPad app.
 - Apple silicon for the Mac app and for the hab on macOS. The hab on Linux runs on x86-64 and
   arm64.
