@@ -96,23 +96,25 @@ public struct ChatFollow: Equatable, Sendable {
         following && motion != .user ? .toBottom : .none
     }
 
-    /// How large an empty band under the rows may be before a following thread moves.
-    public static let gapTolerance: CGFloat = 4
+    /// How far the rows' end may sit from the bars before a following thread moves.
+    public static let bandTolerance: CGFloat = 4
 
-    /// The rows were placed, leaving `gap` points of empty view between the last row and the
-    /// bars (`gap(contentHeight:visible:)`). The scroll geometry can read "at the bottom" while
-    /// the rows sit a whole bottom inset too high, after a late change of the rows' height: a
+    /// The rows were placed with their end `band` points from the bars (`band(contentHeight:
+    /// visible:)`). After a late change of the rows' height the scroll geometry can read "at the
+    /// bottom" while the rows rest a whole bottom inset too high (a positive band, an empty gap)
+    /// or end a little under the bars (a negative band, within the distance's tolerance). A
     /// following thread scrolls to its end, unless a finger or an animation moves it.
-    public func placed(gap: CGFloat, motion: Motion) -> Action {
-        following && motion == .idle && gap > Self.gapTolerance ? .toBottom : .none
+    public func placed(band: CGFloat, motion: Motion) -> Action {
+        following && motion == .idle && abs(band) > Self.bandTolerance ? .toBottom : .none
     }
 
-    /// The empty band below the last row, in points. `visible` is the scroll view less its
-    /// insets, in the rows' own coordinates (`GeometryProxy.bounds(of: .scrollView)`). Rows that
-    /// fit the view rest at its top and leave no gap.
-    public static func gap(contentHeight: CGFloat, visible: CGRect) -> CGFloat {
+    /// How far the rows' end sits above the bars, in points: positive is an empty gap under the
+    /// last row, negative is rows still under the bars. `visible` is the scroll view less its
+    /// insets, in the rows' own coordinates (`GeometryProxy.bounds(of: .scrollView)`). Rows
+    /// shorter than the view leave no band to close.
+    public static func band(contentHeight: CGFloat, visible: CGRect) -> CGFloat {
         guard contentHeight > visible.height else { return 0 }
-        return max(0, visible.maxY - contentHeight)
+        return visible.maxY - contentHeight
     }
 
     /// The rows changed: `old` and `new` are the row ids before and after, in order. Only rows

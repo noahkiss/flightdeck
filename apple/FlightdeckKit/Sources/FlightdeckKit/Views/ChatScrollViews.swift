@@ -23,7 +23,7 @@ struct ChatScroll<Content: View>: View {
     @State private var position = ScrollPosition(idType: String.self)
     @State private var follow = ChatFollow()
     @State private var motion: ChatFollow.Motion = .idle
-    /// The last distance from the bottom and gap under the rows, kept out of the view's state:
+    /// The last distance from the bottom and band under the rows, kept out of the view's state:
     /// they change every frame.
     @State private var last = Last()
     @State private var divider: String?
@@ -33,6 +33,8 @@ struct ChatScroll<Content: View>: View {
     /// over the thread and keeps the jump button on, so a screenshot shows what the geometry reads.
     private static var showFollow: Bool { UserDefaults.standard.bool(forKey: "FlightdeckShowFollow") }
     @State private var shownDistance: CGFloat = 0
+    @State private var shownBand: CGFloat = 0
+    private static var log: AppLog { AppLog(category: "chat-scroll") }
     @State private var shownGeometry = ""
     #endif
 
@@ -43,14 +45,19 @@ struct ChatScroll<Content: View>: View {
             }
             .scrollTargetLayout()
             .padding(12)
-            // Where the rows really sit: after a late change of their height the scroll geometry
-            // can read "at the bottom" while they rest a whole bottom inset too high.
+            // Where the rows really end: after a late change of their height the scroll geometry
+            // can read "at the bottom" while they rest a whole bottom inset too high, or a little
+            // under the bars.
             .onGeometryChange(for: CGFloat.self) { g in
                 guard let visible = g.bounds(of: .scrollView) else { return 0 }
-                return ChatFollow.gap(contentHeight: g.size.height, visible: visible).rounded()
-            } action: { gap in
-                last.gap = gap
-                update { $0.placed(gap: gap, motion: motion) }
+                return ChatFollow.band(contentHeight: g.size.height, visible: visible).rounded()
+            } action: { band in
+                last.band = band
+                #if DEBUG
+                Self.log.debug("band \(Int(band)) following \(follow.following)")
+                if Self.showFollow { shownBand = band }
+                #endif
+                update { $0.placed(band: band, motion: motion) }
             }
         }
         // Each entry's id is a row's `.id`: VoiceOver scrolls a row the lazy stack has not drawn.
@@ -67,8 +74,11 @@ struct ChatScroll<Content: View>: View {
             case .idle:
                 motion = .idle
                 // The content may have grown while the finger held the thread.
-                update { $0.scrolled(distance: last.distance, motion: .idle) }
-                update { $0.placed(gap: last.gap, motion: .idle) }
+                // So may the rows' end have moved from the bars: one scroll for both.
+                update { f in
+                    let a = f.scrolled(distance: last.distance, motion: .idle)
+                    return a == .none ? f.placed(band: last.band, motion: .idle) : a
+                }
             case .animating: motion = .animating
             default: motion = .user
             }
@@ -119,7 +129,7 @@ struct ChatScroll<Content: View>: View {
         #if DEBUG
         .overlay(alignment: .top) {
             if Self.showFollow {
-                Text("distance \(Int(shownDistance)) · \(follow.following ? "following" : "reading") · unread \(follow.unread)\n\(shownGeometry)")
+                Text("distance \(Int(shownDistance)) · band \(Int(shownBand)) · \(follow.following ? "following" : "reading") · unread \(follow.unread)\n\(shownGeometry)")
                     .font(.caption.monospaced())
                     .padding(6)
                     .background(.yellow.opacity(0.8), in: Capsule())
@@ -178,7 +188,7 @@ struct ChatScroll<Content: View>: View {
 
     private final class Last {
         var distance: CGFloat = 0
-        var gap: CGFloat = 0
+        var band: CGFloat = 0
     }
 }
 

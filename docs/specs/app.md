@@ -1946,16 +1946,17 @@ Claude app do. Code in `Views/ChatScrollViews.swift`, `Views/MessageMenuViews.sw
 - **No gap under the rows.** The thread also measures where its rows really end, against the
   view between the bars. After a late change of the rows' height (the lazy rows measuring
   themselves as the thread opens) the rows can rest a whole bottom inset too high, an empty band
-  above the request card or composer, while the scroll geometry still reads "at the bottom". A
-  following thread with a band over 4 pt scrolls to its end once nothing moves it. Rows that fit
-  the view rest at its top and leave no band. A thread scrolled up is never moved.
+  above the request card or composer, or end a little under the bars, while the scroll geometry
+  still reads "at the bottom". A following thread whose rows end more than 4 pt from the bars,
+  either way, scrolls to its end once nothing moves it. Rows shorter than the view leave no band
+  to close. A thread scrolled up is never moved.
 - **New rows while reading** count up on the jump button ("3 new messages"; an arrow alone with
   none counted). Only messages count, not tool cards or event lines. The button is a glass
   control over the bottom of the thread, at least 44 pt to tap; a tap scrolls to the newest row
   with a short animation. Rows the owner sends always show
   and clear the count. An older page and a row that changes in place count nothing.
 - **Debug builds** take `-FlightdeckShowFollow YES`: a line over the thread shows the distance
-  from the bottom and the follow state, and the jump button stays on, so a screenshot shows what
+  from the bottom, the band under the rows and the follow state, and the jump button stays on, so a screenshot shows what
   the geometry reads.
 - **The unread divider.** The app remembers, per thread, the last row the thread showed at its
   bottom, for as long as the app runs. Opening the thread again draws "New" above the first row
