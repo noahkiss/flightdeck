@@ -96,6 +96,27 @@ public struct ChatFollow: Equatable, Sendable {
         following && motion != .user ? .toBottom : .none
     }
 
+    /// How far the rows' end may sit from the bars before a following thread moves.
+    public static let bandTolerance: CGFloat = 4
+
+    /// The rows were placed with their end `band` points from the bars (`band(contentHeight:
+    /// visible:)`). After a late change of the rows' height the scroll geometry can read "at the
+    /// bottom" while the rows rest a whole bottom inset too high (a positive band, an empty gap)
+    /// or end a little under the bars (a negative band, within the distance's tolerance). A
+    /// following thread scrolls to its end, unless a finger or an animation moves it.
+    public func placed(band: CGFloat, motion: Motion) -> Action {
+        following && motion == .idle && abs(band) > Self.bandTolerance ? .toBottom : .none
+    }
+
+    /// How far the rows' end sits above the bars, in points: positive is an empty gap under the
+    /// last row, negative is rows still under the bars. `visible` is the scroll view less its
+    /// insets, in the rows' own coordinates (`GeometryProxy.bounds(of: .scrollView)`). Rows
+    /// shorter than the view leave no band to close.
+    public static func band(contentHeight: CGFloat, visible: CGRect) -> CGFloat {
+        guard contentHeight > visible.height else { return 0 }
+        return visible.maxY - contentHeight
+    }
+
     /// The rows changed: `old` and `new` are the row ids before and after, in order. Only rows
     /// that `counts` accepts (messages, not tool cards or event lines) add to the unread count.
     public mutating func rowsChanged(from old: [String], to new: [String], counts: (String) -> Bool = { _ in true }) -> Action {
