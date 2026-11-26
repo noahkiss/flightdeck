@@ -44,6 +44,8 @@ public protocol ActivityHost: AnyObject {
     var enabled: Bool { get }
     /// Sessions with an activity that has not ended.
     func running() -> [String]
+    /// What the session's activity shows now: the hab's pushes change it too.
+    func content(session: String) -> SessionActivityAttributes.ContentState?
     /// Starts an activity and returns its push tokens as they come.
     func start(_ attributes: SessionActivityAttributes, _ state: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data>
     func update(session: String, _ state: SessionActivityAttributes.ContentState) async
@@ -96,15 +98,16 @@ public final class LiveActivityTracker {
     /// A request a running activity offers closed on the board: answered on another device, in
     /// the terminal, or its session ended. Its buttons go now, while the app runs, without
     /// waiting for the hab's push (app.md 9.1). Only a hab online in this process can say so.
+    /// It reads what the activity shows now, since the hab's pushes change it after the app's
+    /// last write, and changes only the buttons of the request it still shows.
     func dropClosed() async {
         guard let host else { return }
         let open = OpenRequest.collect(board.habs).filter { !$0.offline }
         for (session, a) in live {
-            guard let request = a.state.request,
+            guard var s = host.content(session: session), s.buttons, let request = s.request,
                   board.habs.contains(where: { $0.state.welcome?.host.id == a.host && $0.state.status == .online }),
                   !open.contains(where: { $0.host == a.host && $0.requestID == request })
             else { continue }
-            var s = a.state
             s.buttons = false
             s.request = nil
             live[session]?.state = s
@@ -211,6 +214,10 @@ public final class SystemActivities: ActivityHost {
     }
 
     public func running() -> [String] { Self.all().map(\.attributes.session) }
+
+    public func content(session: String) -> SessionActivityAttributes.ContentState? {
+        Self.all().first { $0.attributes.session == session }?.content.state
+    }
 
     public func start(_ attributes: SessionActivityAttributes, _ state: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data> {
         let a = try Activity.request(attributes: attributes, content: .init(state: state, staleDate: nil), pushType: .token)

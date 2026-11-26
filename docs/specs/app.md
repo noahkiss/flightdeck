@@ -2924,7 +2924,9 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   one. Opening the session in the app ends it and drops its token. An answer from the activity
   that landed or was refused drops its buttons at once, before the hab's push. So does a request
   that closes on the board while the app runs (answered on another device or in the terminal,
-  or its session ended), when the activity's hab is online.
+  or its session ended), when the activity's hab is online. The app reads what the activity
+  shows now, since the hab's pushes change it, and drops only the buttons of the request it
+  still shows.
 - **Live Activity buttons and unlock** (owner ruling 2026-11-01). The intents are compiled into
   both the app and the widget (App Intents reads metadata per target) and run in the app. Allow
   asks for Face ID or the passcode (`authenticationPolicy` `requiresAuthentication`); Deny runs
@@ -4115,7 +4117,7 @@ never from private files).
   the widget on the same event. While it is suspended, the notification service extension
   drops the request a withdrawal push names (kind `answered`: answered on another device or in
   the terminal, the session ended, the pane closed) from the snapshot and reloads the widget:
-  by request id, or by pane for a question with no id, only on that push's hab. A new request
+  by request id, or by pane for a request with no id (a question, a trust prompt), only on that push's hab. A new request
   never enters the snapshot from a push: a banner carries no session name.
 - **Limit.** The hab withdraws only the banners it sent. A request that came while the app was
   in front (no banner, 8.6) and closed after the app went to the background stays in the

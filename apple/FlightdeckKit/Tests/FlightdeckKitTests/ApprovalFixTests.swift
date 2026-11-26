@@ -18,6 +18,14 @@ final class FakeActivities: ActivityHost {
 
     func running() -> [String] { live }
 
+    /// What the activity shows: the last update, else the start. A test sets `pushed` for what
+    /// the hab's push wrote since.
+    var pushed: [String: SessionActivityAttributes.ContentState] = [:]
+    func content(session: String) -> SessionActivityAttributes.ContentState? {
+        guard live.contains(session) else { return nil }
+        return pushed[session] ?? updates.last { $0.0 == session }?.1 ?? started.last { $0.0.session == session }?.1
+    }
+
     func start(_ a: SessionActivityAttributes, _ s: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data> {
         started.append((a, s))
         live.append(a.session)
@@ -169,6 +177,24 @@ final class LiveActivityFixTests: XCTestCase {
         let n = host.updates.count
         await tracker.dropClosed()
         XCTAssertEqual(host.updates.count, n, "dropped once")
+        await fleet.setActive(false)
+    }
+
+    /// The hab's push moved the activity on after the app's last write: a board change leaves
+    /// that content alone, and never writes back what the app started it with.
+    func testActivityKeepsWhatTheHabPushed() async {
+        let (hab, fleet, tracker, host) = await rig()
+        await tracker.start()
+        var pushed = host.started[0].1
+        pushed.state = "working"
+        pushed.buttons = false
+        pushed.request = nil
+        pushed.title = "Working"
+        host.pushed["s1"] = pushed
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .working))
+        await eventually("board saw it") { fleet.board.rows.first?.state == .working }
+        await tracker.dropClosed()
+        XCTAssertTrue(host.updates.isEmpty, "nothing to drop: the hab's push already did")
         await fleet.setActive(false)
     }
 

@@ -311,6 +311,10 @@ final class AppIntentLogicTests: XCTestCase {
         ]
         let d = emptyDefaults()
         XCTAssertTrue(NeedsYouSnapshot(writtenAt: Date(timeIntervalSince1970: 1_000), count: 6, items: items).save(d))
+        // A trust prompt or a permission with no id: a request item of kind other, with its pane.
+        let trust = NeedsYouSnapshot(writtenAt: Date(timeIntervalSince1970: 1_000), count: 1, items: [item(.other, pane: "%3", request: nil)])
+        XCTAssertTrue(trust.withdrawing(hab: "desk-host", request: "", pane: "%3").items.isEmpty)
+        XCTAssertEqual(trust.withdrawing(hab: "desk-host", request: "", pane: "%3").count, 0)
 
         XCTAssertFalse(NeedsYouSnapshot.withdraw(PushMeta(kind: "permission", hab: "desk-host", pane: "%1", request: "req-1"), defaults: d),
                        "a new request is no withdrawal")

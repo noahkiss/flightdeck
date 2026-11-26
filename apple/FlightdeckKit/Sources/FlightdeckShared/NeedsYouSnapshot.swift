@@ -83,11 +83,12 @@ public struct NeedsYouSnapshot: Codable, Equatable, Sendable {
     }
 
     /// The snapshot without the requests a hab reported resolved (app.md 15.4): the request
-    /// with that id, or, when the report names none (a question carries no id), the request
-    /// items of that pane with no id. Only items of `hab` go. The count drops by what left.
+    /// with that id, or, when the report names none (a question, a trust prompt, a permission
+    /// with no id), the items of that pane with no id. Only request items carry a pane; a
+    /// board row's item has none. Only items of `hab` go. The count drops by what left.
     public func withdrawing(hab: String, request: String?, pane: String?) -> NeedsYouSnapshot {
         let gone: (Item) -> Bool = { it in
-            guard it.hab == hab, it.kind != .other else { return false }
+            guard it.hab == hab else { return false }
             if let request, !request.isEmpty { return it.request == request }
             guard let pane, !pane.isEmpty else { return false }
             return it.pane == pane && (it.request ?? "").isEmpty

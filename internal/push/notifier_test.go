@@ -393,6 +393,31 @@ func TestNotifierLiveActivity(t *testing.T) {
 	}
 }
 
+// TestNotifierActivityStartedWhileBlocked: the app starts an activity on a session that is
+// already blocked, and the hab has sent that token nothing. The update that leaves blocked still
+// goes at high priority: it takes away Allow and Deny for a request answered elsewhere.
+func TestNotifierActivityStartedWhileBlocked(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, nil, false)
+	r.n.State(blocked("r1", "make test"))
+	r.n.Sync()
+	r.store.RegisterActivity("dev-phone", "s1", phoneLA)
+	r.n.State(state(api.AgentStatusIdle))
+	r.n.Sync()
+	var a []fakeReq
+	for _, q := range r.prod.requests() {
+		if q.Token == phoneLA {
+			a = append(a, q)
+		}
+	}
+	if len(a) != 1 || a[0].Header.Get("apns-priority") != "10" {
+		t.Fatalf("leave-blocked update: %d, priority %v", len(a), a)
+	}
+	if c := a[0].Body["aps"].(map[string]any)["content-state"].(map[string]any); c["buttons"] != false || c["state"] != "idle" {
+		t.Errorf("content %v", c)
+	}
+}
+
 // TestNotifierRaise: a notice goes to every device with a token, under the presence tiers.
 func TestNotifierRaise(t *testing.T) {
 	r := newNotifierRig(t)
