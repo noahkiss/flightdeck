@@ -1579,7 +1579,8 @@ Built (stage 4): `fresh` runs with a harness and a prompt
   refusal, fails the run, "the prompt was not delivered". A run that ends while its prompt is
   being sent (the timeout, a take over) cancels the send, so it never pastes the prompt
   later.
-- **Turn end.** No `session.turn_end` event is sent yet, so the agent state is the turn end:
+- **Turn end.** The run reads the agent state, not the `session.turn_end` event, which comes
+  after a bounded read of the final message (`hab-logic-api.md` 3.9): the turn end is
   the first `done` or `error` after the send began. Read back is `working` or `blocked` after
   the send. Before the read back, only a change of state or of turn ends the turn: a
   republish of a `done` the agent already showed when the send began changes other fields

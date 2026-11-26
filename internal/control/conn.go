@@ -447,6 +447,12 @@ func (c *conn) handleLine(line []byte) {
 		c.handleHello(m)
 		return
 	}
+	if api.PeerOnly(m.Method) && c.peer == nil {
+		// Off the client surface (spec 3.9, Peer-link methods): only another hab calls these,
+		// over a peer link. The handlers check the link again.
+		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "%s comes over a peer link only: client.kind hab with the hello's peer field", m.Method))
+		return
+	}
 	if m.Method == "events.subscribe" {
 		c.handleSubscribe(m)
 		return
@@ -489,6 +495,10 @@ func (c *conn) handleLine(line []byte) {
 	}
 	if m.Method == "flightrules.list" || m.Method == "flightrules.text" {
 		c.handleFlightRules(m)
+		return
+	}
+	if strings.HasPrefix(m.Method, "devices.") {
+		c.handleDevices(m)
 		return
 	}
 	if m.Method == "diag.friction" {
@@ -610,6 +620,10 @@ func (c *conn) handleInput(m message) {
 	if c.s.cfg.Size != nil {
 		c.s.cfg.Size.Typed(c.clientID, p.Pane) // input counts for size ownership (spec 3.8, 6.2)
 	}
+	c.mu.Lock()
+	label := c.label
+	c.mu.Unlock()
+	c.s.typedBy(c.clientID, label, p.Pane) // who else is typing (spec 7.1)
 	if !running {
 		go c.runLane(p.Pane, ln)
 		return
@@ -1347,7 +1361,6 @@ func (c *conn) decodeUp(m message, v any) *Error {
 }
 
 const (
-	hintNoDevices = "%s needs pairing, which this build does not have yet; the devices capability is absent"
 	hintNoActions = "%s needs the holder link, which this hab is running without"
 	hintNoChat    = "%s needs the transcript reader, which this hab is running without"
 	hintNoPeers   = "%s needs the peer list, which this hab is running without; the mesh capability is absent"
@@ -1460,8 +1473,6 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return api.Empty{Seq: s}, nil
 	case "push.register", "push.register_activity", "push.unregister", "session.focus", "notice.raise":
 		return c.dispatchPush(m, s)
-	case "devices.pair", "devices.list", "devices.revoke":
-		return nil, appErr(api.ErrorKindUnavailable, hintNoDevices, m.Method)
 	case "usage.list":
 		var p api.UsageListParams
 		if e := c.decodeUp(m, &p); e != nil {

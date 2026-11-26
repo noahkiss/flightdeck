@@ -244,6 +244,15 @@ func withSeq(res any, seq uint64) any {
 	case api.ReviewVerdictTaken:
 		r.Seq = s
 		return r
+	case api.DeviceList:
+		r.Seq = s
+		return r
+	case api.PairingOffer:
+		r.Seq = s
+		return r
+	case api.DevicePairing:
+		r.Seq = s
+		return r
 	}
 	return res
 }

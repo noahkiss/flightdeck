@@ -41,6 +41,9 @@ func Swift(d *Document) []byte {
 	p("}\n\n")
 	p("public enum HabMethods {\n")
 	for _, m := range d.Methods {
+		if m.PeerOnly {
+			continue // a hab-to-hab call: no app calls it
+		}
 		_, pname := d.Resolve(m.ParamsType)
 		p("    /// %s\n", m.Summary)
 		p("    public static let %s = HabMethod<%s, %s>(name: %q)\n", camel(m.Name, false), pname, swiftType(d, m.Result.Schema), m.Name)

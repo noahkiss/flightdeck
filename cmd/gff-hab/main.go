@@ -93,6 +93,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -555,6 +556,7 @@ func serve(args []string) error {
 	// Teammates report their turns to their spawner (teammates.go): it follows agent states.
 	mates := openTeammates(dir, logger.Printf)
 	defer mates.Close()
+	var turnsRef atomic.Pointer[turnEnds] // session.turn_end (turnend.go), set once the store is open
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
@@ -647,6 +649,9 @@ func serve(args []string) error {
 			if st, ok := e.Data.(api.AgentState); ok {
 				resumes.agent(st)    // never blocks
 				mates.agentState(st) // never blocks
+				if t := turnsRef.Load(); t != nil {
+					t.agentState(st) // never blocks
+				}
 			}
 			if e.Type == api.EventAgentState {
 				pokeCatalog() // pokes channels too
@@ -1534,6 +1539,24 @@ func serve(args []string) error {
 		defer repairStop()
 		finishSwaps(repairCtx, store, swapsToFinish, chSvc.Move, chSvc.Unhold, closePane, logger.Printf)
 	}
+	// session.turn_end: the final message comes from the chat view's reader, its newest page.
+	var readTail func(context.Context, string) ([]api.ChatMessage, error)
+	if chats != nil {
+		readTail = func(ctx context.Context, session string) ([]api.ChatMessage, error) {
+			page, err := chats.ChatPage(ctx, api.ChatPageParams{Session: session, Limit: 20})
+			return page.Messages, err
+		}
+	}
+	turns := newTurnEnds(func(pane string) (string, bool) {
+		ss, ok := store.SessionByPane(pane)
+		return ss.ID, ok
+	}, readTail, func(e structure.Event) {
+		if s := srv.Load(); s != nil {
+			s.Publish(e)
+		}
+	})
+	defer turns.Close()
+	turnsRef.Store(turns)
 	mates.agent = agents.Get
 	mates.name = func(id string) (string, bool) {
 		ss, ok := store.Session(id)
@@ -1930,6 +1953,21 @@ func serve(args []string) error {
 	if input != nil {
 		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
+	// The devices.* methods (transport.md 6.1.7): the device list, revoke, and a pairing window
+	// that one of the owner's clients opens and confirms.
+	var devicesCtl control.Devices
+	if fc, err := connectCommand(*sock); err != nil {
+		logger.Printf("devices: the devices.* methods are off: %v", err)
+	} else {
+		login := ""
+		if u, err := user.Current(); err == nil {
+			login = u.Username
+		}
+		devs := newDeviceService(deviceConfig{state: dir, hostKey: key.Private, command: fc, user: login, logf: logger.Printf})
+		defer devs.Close()
+		devicesCtl = devs
+		caps = append(caps, "devices")
+	}
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	s := control.New(control.Config{
 		Epoch:    epoch,
@@ -1987,6 +2025,7 @@ func serve(args []string) error {
 		FlightRules:  flightRules,
 		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
 		Debug:        debugSw,
+		Devices:      devicesCtl,
 		Tally:        controlTally(tl),
 	})
 	srv.Store(s)
@@ -2389,6 +2428,16 @@ func printJSON(v any) error {
 
 // apiCall says hello, sends one request and prints its result as one JSON line. Calling
 // hab.hello prints the welcome.
+// ownerCall reports whether a method is the owner's own answer or trust decision, which
+// `gff-hab api call` refuses to send from an agent's pane.
+func ownerCall(method string) bool {
+	switch method {
+	case "confirm.answer", "trust.answer", "devices.pair", "devices.confirm", "devices.revoke":
+		return true
+	}
+	return false
+}
+
 func apiCall(args []string) error {
 	fs := flag.NewFlagSet("api call", flag.ExitOnError)
 	sock := socketFlag(fs)
@@ -2399,8 +2448,9 @@ func apiCall(args []string) error {
 		return errors.New("api call needs a method and optional JSON params")
 	}
 	method := fs.Arg(0)
-	if (method == "confirm.answer" || method == "trust.answer") && os.Getenv(hook.Env) != "" {
-		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10).
+	if ownerCall(method) && os.Getenv(hook.Env) != "" {
+		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10;
+		// transport.md 6.1.7).
 		return fmt.Errorf("%s is the owner's answer; it does not run in an agent's pane", method)
 	}
 	var params any = struct{}{}

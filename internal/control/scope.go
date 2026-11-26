@@ -164,6 +164,9 @@ func (f *filter) pass(e structure.Event) bool {
 		// A compaction names its session; its id is the compaction id.
 		c, ok := e.Data.(api.Compaction)
 		return ok && (f.sessions[c.Session] || f.panes[c.Pane])
+	case api.EventSessionTurnEnd:
+		// A turn end's id is its session (spec 3.9).
+		return f.sessions[e.ID]
 	case EventChatMessage:
 		// A chat message names its session; its id is the message id.
 		m, ok := e.Data.(api.ChatMessage)

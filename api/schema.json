@@ -392,12 +392,12 @@
     },
     {
       "name": "devices.pair",
-      "summary": "Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.",
+      "summary": "Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). One window at a time; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "label",
-          "description": "Label for the device that will pair.",
+          "description": "The hab's label in the code. Default: the host name up to the first dot.",
           "schema": {
             "type": "string"
           }
@@ -411,6 +411,36 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/DevicesPairParams"
+      }
+    },
+    {
+      "name": "devices.confirm",
+      "summary": "Wait for the device that presented the open window's token, or answer it: the last 4 characters of its key fingerprint pair it, decline refuses it (transport.md 6.1.7). Only the connection that opened the window. Needs the devices capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "code",
+          "description": "The last 4 characters of the device's key fingerprint, as the device shows them. A match pairs it; the third wrong code declines it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "decline",
+          "description": "Refuse the waiting device. The window closes and its token is spent.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DevicePairing"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DevicesConfirmParams"
       }
     },
     {
@@ -430,12 +460,12 @@
     },
     {
       "name": "devices.revoke",
-      "summary": "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.",
+      "summary": "Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops. Not over a peer link or the pane route. Needs the devices capability.",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "id",
-          "description": "Device id to revoke.",
+          "description": "Device id to revoke, or its label when one device has it.",
           "required": true,
           "schema": {
             "type": "string"
@@ -1721,7 +1751,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/CatalogPutParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "catalog.list",
@@ -2366,7 +2397,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/MailPushParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "mail.pull",
@@ -2392,7 +2424,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/MailPullParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "logbook.pull",
@@ -2445,7 +2478,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/LogbookPullParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "logbook.push",
@@ -2473,7 +2507,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/LogbookPushParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "worktree.list",
@@ -4995,7 +5030,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupMessageParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.sync",
@@ -5041,7 +5077,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupSyncParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.move",
@@ -5118,7 +5155,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupAdoptParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.adopt_commit",
@@ -5156,7 +5194,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupAdoptCommitParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.tell",
@@ -5195,7 +5234,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupTellParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "diag.friction",
@@ -5341,7 +5381,7 @@
     },
     {
       "type": "pane.activity",
-      "summary": "A client sent input; at most once per second per client (spec 7.1).",
+      "summary": "A client sent input to the pane; at most once per second per client and pane; the id is the pane id (spec 7.1). Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/PaneActivity"
       }
@@ -5376,7 +5416,7 @@
     },
     {
       "type": "session.turn_end",
-      "summary": "The agent's turn ended; the id is the session id. Ephemeral.",
+      "summary": "The agent's turn ended: its state left working or blocked for done or error; the id is the session id (spec 3.9). Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/TurnEnd"
       }
@@ -9566,6 +9606,7 @@
         "x-known-values": [
           "hab",
           "phone",
+          "tablet",
           "desktop",
           "gff"
         ]
@@ -9627,12 +9668,60 @@
           "time"
         ]
       },
+      "DevicePairing": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "$ref": "#/components/schemas/PairingDevice",
+            "description": "With waiting, paired and declined: the device."
+          },
+          "paired": {
+            "$ref": "#/components/schemas/Device",
+            "description": "With paired: its record."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the window closed, or why the code did not match, in one line."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PairingState",
+            "description": "waiting: a device waits for the code; paired: it is in the trust store; declined, expired, failed (the key could not be saved), closed (the hab stopped): the window is closed and nothing paired."
+          },
+          "tries_left": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With waiting after a wrong code: the codes left before it is declined."
+          }
+        },
+        "required": [
+          "seq",
+          "state"
+        ]
+      },
       "DeviceState": {
         "type": "string",
         "x-known-values": [
           "paired",
           "revoked"
         ]
+      },
+      "DevicesConfirmParams": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The last 4 characters of the device's key fingerprint, as the device shows them. A match pairs it; the third wrong code declines it."
+          },
+          "decline": {
+            "type": "boolean",
+            "description": "Refuse the waiting device. The window closes and its token is spent."
+          }
+        }
       },
       "DevicesListParams": {
         "type": "object"
@@ -9642,7 +9731,7 @@
         "properties": {
           "label": {
             "type": "string",
-            "description": "Label for the device that will pair."
+            "description": "The hab's label in the code. Default: the host name up to the first dot."
           }
         }
       },
@@ -9651,7 +9740,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Device id to revoke."
+            "description": "Device id to revoke, or its label when one device has it."
           }
         },
         "required": [
@@ -13341,6 +13430,37 @@
           "seq"
         ]
       },
+      "PairingDevice": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "The key fingerprint with its last 4 characters hidden as ????: the owner reads them off the device."
+          },
+          "from": {
+            "type": "string",
+            "description": "The device's source address."
+          },
+          "key_type": {
+            "type": "string",
+            "description": "The SSH key type, such as ecdsa-sha2-nistp256."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DeviceKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name the device sent, cleaned."
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "key_type",
+          "fingerprint",
+          "from"
+        ]
+      },
       "PairingOffer": {
         "type": "object",
         "properties": {
@@ -13350,7 +13470,7 @@
           },
           "endpoints": {
             "type": "array",
-            "description": "Embedded SSH server addresses, host:port.",
+            "description": "The pairing window's addresses, host:port, in the order to try.",
             "items": {
               "type": "string"
             }
@@ -13375,6 +13495,17 @@
           "endpoints",
           "token",
           "expires_in_ms"
+        ]
+      },
+      "PairingState": {
+        "type": "string",
+        "x-known-values": [
+          "waiting",
+          "paired",
+          "declined",
+          "expired",
+          "failed",
+          "closed"
         ]
       },
       "Pane": {
@@ -13426,7 +13557,12 @@
         "type": "object",
         "properties": {
           "client": {
-            "type": "string"
+            "type": "string",
+            "description": "The id of the client that sent input."
+          },
+          "label": {
+            "type": "string",
+            "description": "That client's label: the hello's label, else its client name."
           }
         },
         "required": [

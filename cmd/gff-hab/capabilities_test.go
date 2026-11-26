@@ -18,7 +18,6 @@ import (
 // notSentYet are the capability words the API table declares that no hab sends yet, with the
 // reason. A word here that a hab starts to send fails the test, so the list only shrinks.
 var notSentYet = map[string]string{
-	"devices":          "the embedded SSH server and devices.* are not built (hab-logic-api.md 3.4)",
 	"snapshot-ghostty": "data streams offer only snapshot-vt so far (hab-logic-api.md 5.5, Q6)",
 }
 

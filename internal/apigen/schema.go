@@ -44,6 +44,8 @@ type MethodDoc struct {
 	Params         []ContentDescriptor `json:"params"`
 	Result         ContentDescriptor   `json:"result"`
 	ParamsType     *Schema             `json:"x-params"`
+	// PeerOnly marks a method only a peer link calls (api.PeerMethods): no client calls it.
+	PeerOnly bool `json:"x-peer-only,omitempty"`
 }
 
 type NotificationDoc struct {
@@ -143,6 +145,7 @@ func (b *builder) build() {
 			Params:         []ContentDescriptor{},
 			Result:         ContentDescriptor{Name: "result", Schema: b.schemaFor(reflect.TypeOf(m.Result))},
 			ParamsType:     pref,
+			PeerOnly:       api.PeerOnly(m.Name),
 		}
 		for _, name := range sortedKeys(obj.Properties) {
 			p := obj.Properties[name]
