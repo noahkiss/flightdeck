@@ -179,6 +179,23 @@ func TestOwnerInterrupt(t *testing.T) {
 		t.Fatal("Esc changed nothing")
 	}
 
+	// Claude's OSC idle came before the key landed, within the grace after its last hook, so
+	// precedence dropped it; Claude reports nothing more. The interrupt shows idle and the gate
+	// stays open: the harness already said it is at its prompt.
+	s = newTestStore(&events)
+	s.Hook("p", claudeHook("SessionStart", 1000, `{"session_id":"a","hook_event_name":"SessionStart"}`))
+	s.Hook("p", claudeHook("UserPromptSubmit", 2000, `{"session_id":"a","hook_event_name":"UserPromptSubmit","prompt_id":"t2"}`))
+	s.Report("p", progstatus.Report{State: "idle", App: "claude"}, 2200, true)
+	if st, _ := s.Get("p"); st.State != api.AgentStatusWorking {
+		t.Fatalf("an OSC idle inside the grace ended the turn: %+v", st)
+	}
+	if !s.Interrupt("p", []byte("\x1b")) {
+		t.Fatal("Esc changed nothing")
+	}
+	if _, err := s.CheckSend("p"); err != nil {
+		t.Fatalf("send after an interrupt the harness already confirmed: %v", err)
+	}
+
 	s = newTestStore(&events)
 	req := claudeTurn(t, s)
 	if s.Interrupt("p", []byte("\x1b")) {

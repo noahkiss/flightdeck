@@ -70,6 +70,9 @@ type pane struct {
 	// The permission read-back uses them to see the turn go on.
 	oscN    uint64
 	oscLast api.AgentStatus
+	// oscAt is the newest report's client clock, accepted or not: Interrupt reads whether the
+	// harness already reported its prompt after the turn's last stronger report.
+	oscAt int64
 
 	answering string // the request an approval.answer is answering now
 	answered  string // the request an answer was sent to: no second answer
@@ -206,7 +209,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		p.served = harness
 	}
 	if src == api.StateSourceOsc && harness == p.st.Harness {
-		p.oscN, p.oscLast = p.oscN+1, u.State
+		p.oscN, p.oscLast, p.oscAt = p.oscN+1, u.State, t
 		s.wakeLocked(p) // the permission read-back watches for the turn to go on
 	}
 
@@ -494,11 +497,15 @@ func (s *Store) Interrupt(paneID string, data []byte) bool {
 	if p == nil || p.st.Revision == 0 || p.st.State != api.AgentStatusWorking || p.open != "" || !InterruptKey(p.st.Harness, data) {
 		return false
 	}
+	// The harness may have reported its prompt before the key landed, within the grace after
+	// its last hook, so precedence dropped that idle. It will not report again: the gate stays
+	// open, since the harness itself said it is at its prompt.
+	reported := p.oscLast == api.AgentStatusIdle && p.turnSource != "" && p.oscAt >= p.lastT[p.turnSource]
 	next := p.st
 	next.State, next.Last, next.Kind, next.Request = api.AgentStatusIdle, "", "", nil
 	next.Source = api.StateSourceServer
 	p.turnSource = ""
-	p.ownerStop = true
+	p.ownerStop = !reported
 	s.commitLocked(p, next)
 	return true
 }

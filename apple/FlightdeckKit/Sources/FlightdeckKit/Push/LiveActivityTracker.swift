@@ -99,7 +99,8 @@ public final class LiveActivityTracker {
     /// the terminal, or its session ended. Its buttons go now, while the app runs, without
     /// waiting for the hab's push (app.md 9.1). Only a hab online in this process can say so.
     /// It reads what the activity shows now, since the hab's pushes change it after the app's
-    /// last write, and changes only the buttons of the request it still shows.
+    /// last write, and changes only the buttons of the request it still shows. When the pane
+    /// already waits on a newer request, the activity shows that one, as its first content does.
     func dropClosed() async {
         guard let host else { return }
         let open = OpenRequest.collect(board.habs).filter { !$0.offline }
@@ -108,8 +109,14 @@ public final class LiveActivityTracker {
                   board.habs.contains(where: { $0.state.welcome?.host.id == a.host && $0.state.status == .online }),
                   !open.contains(where: { $0.host == a.host && $0.requestID == request })
             else { continue }
-            s.buttons = false
-            s.request = nil
+            if let next = open.first(where: { $0.host == a.host && $0.pane == s.pane && $0.answerable }) {
+                s.request = next.requestID
+                s.title = next.title
+                s.buttons = true
+            } else {
+                s.buttons = false
+                s.request = nil
+            }
             live[session]?.state = s
             await host.update(session: session, s)
         }

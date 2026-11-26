@@ -180,6 +180,21 @@ final class LiveActivityFixTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// Two requests in a row on one pane: when the first closes and the second is open, the
+    /// activity shows the second with its buttons, never a blank.
+    func testActivityMovesToTheNextRequest() async {
+        let (hab, fleet, tracker, host) = await rig()
+        await tracker.start()
+        let req = PermissionRequest(command: "make lint", id: "req-2", title: "Run make lint?", tool: "Bash")
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission, request: req, at: Date()))
+        await eventually("next request shown") { host.updates.last?.1.request == "req-2" }
+        let s = host.updates.last?.1
+        XCTAssertEqual(s?.buttons, true)
+        XCTAssertEqual(s?.title, "Run make lint?")
+        XCTAssertFalse(host.updates.contains { $0.1.request == nil }, "never blanked in between")
+        await fleet.setActive(false)
+    }
+
     /// The hab's push moved the activity on after the app's last write: a board change leaves
     /// that content alone, and never writes back what the app started it with.
     func testActivityKeepsWhatTheHabPushed() async {

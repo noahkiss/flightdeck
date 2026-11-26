@@ -1003,7 +1003,8 @@ tab bar minimising on scroll, settings split by area).
   the message goes out at the next prompt. After the owner's interrupt the hab refuses a send
   as busy until the harness itself reports, while the app may already show idle: the message
   then waits for the next agent state (After this turn, 4.6). The harness's report that opens
-  the gate is always a new agent state, even when it says idle again, so the message goes then. The Capcom thread keeps its own
+  the gate is always a new agent state, even when it says idle again, so the message goes then.
+  When the harness reported its prompt before the key landed, the hab holds nothing. The Capcom thread keeps its own
   "Send now" (capcom-service.md 10.1). Not built: a model or effort per message; no hab call takes one.
 - **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Drafts survive.** The composer's text is kept per session on the device
@@ -2826,8 +2827,9 @@ relies on:
   "show details in notifications" setting turned off.
 - **Live Activity content.** The content state keys are listed in `hab-logic-api.md` 3.9, Push.
   `done`, `error` and an exit end the activity with a ten-minute dismissal; the app starts a new
-  one for the next turn. The update that leaves `blocked` goes at high priority, as the request
-  did: it takes Allow and Deny away from a request answered elsewhere.
+  one for the next turn. The update that leaves a permission with Allow and Deny goes at high
+  priority, as the request did: it takes the buttons away from a request answered elsewhere.
+  Leaving any other blocked kind goes at low priority, to keep the update budget.
 - **Left for the app half.** Registration, the notification service extension, the categories,
   the widget, push-to-start, and showing "push broken" (the hab logs it; no API field yet).
   8.7 covers what the app half built.
@@ -2926,7 +2928,8 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   that closes on the board while the app runs (answered on another device or in the terminal,
   or its session ended), when the activity's hab is online. The app reads what the activity
   shows now, since the hab's pushes change it, and drops only the buttons of the request it
-  still shows.
+  still shows. When the pane already waits on a newer permission, the activity shows that one
+  with Allow and Deny instead.
 - **Live Activity buttons and unlock** (owner ruling 2026-11-01). The intents are compiled into
   both the app and the widget (App Intents reads metadata per target) and run in the app. Allow
   asks for Face ID or the passcode (`authenticationPolicy` `requiresAuthentication`); Deny runs
@@ -3080,7 +3083,7 @@ in 1.5 *(gk)*.
 | iOS ends it after eight hours | The next event starts a new one if the session is still active |
 | The tracked hab goes offline | The activity freezes on its last state. The app, when it next runs, marks it "hab offline" and ends it |
 | Live Activities are off in iOS Settings | Settings shows a warning with a link. Banners still work |
-| Update budget runs low | `working` updates drop first. Approval and finish updates go out at high priority, and so does the update that leaves an approval |
+| Update budget runs low | `working` updates drop first. Approval and finish updates go out at high priority, and so does the update that takes an approval's Allow and Deny away; leaving a question, sign-in or trust prompt goes at low priority |
 | Push not set up | The app updates the activity only while it runs. The activity ends when the app is suspended, so it never shows stale state |
 
 Sources: Moshi docs, live-activity (one session, styles, withdrawn buttons, ten-minute finish,
@@ -4122,7 +4125,10 @@ never from private files).
 - **Limit.** The hab withdraws only the banners it sent. A request that came while the app was
   in front (no banner, 8.6) and closed after the app went to the background stays in the
   widget until the app is next in front. An expired request stays too: it is still open in the
-  terminal (7.4).
+  terminal (7.4). A withdrawn request beyond the four items the snapshot keeps lowers nothing:
+  the count stays one too high until the app is next in front. The app and the extension each
+  write the whole snapshot to the App Group: when both write at once, the last writer wins, and
+  the app's next write in front sets it right.
 - **Buttons.** A permission request with a request id has Deny, which runs `ActivityDenyIntent`
   in the app, the same path as the Live Activity's Deny (8.7): no unlock, the live connection or a
   one-shot one. An answer that landed, or a request already closed, leaves the widget at once.
@@ -5340,7 +5346,8 @@ what runs across the parts. Code: `Accessibility/` in FlightdeckKit. Tests: `Acc
 - **Capcom thread.** The Capcom thread view (4.10) has the same three rotors: **Turns** (the
   owner's messages, read as above; one with only context chips reads their titles), **Tool
   calls** (each turn's quiet line, read as it shows: "read 2 transcripts, searched the web")
-  and **Requests** (the approval, confirmation and grant cards, read as the card's first line).
+  and **Requests** (the approval, confirmation and grant cards, and calendar and reminder cards
+  that offer choices; read as the card's first line, or a grant's job name).
   The owner's bubble carries the header trait there too. Code: `ChatRotors.of` over
   `CapcomRow`.
 - **Not built.** The live request card sits in

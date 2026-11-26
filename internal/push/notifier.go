@@ -657,7 +657,10 @@ func (n *Notifier) process(st api.AgentState) {
 	if changed && !(!seen && st.Source == api.StateSourceScreen && st.Kind != api.BlockedKindTrust) {
 		n.banner(st, w)
 	}
-	n.activity(st, w, changed, seen && prev.State == api.AgentStatusBlocked && st.State != api.AgentStatusBlocked)
+	// The update that takes Allow and Deny away goes at high priority; other exits from blocked
+	// carried no buttons and keep the update budget (app.md 9.2).
+	hadButtons := seen && prev.State == api.AgentStatusBlocked && prev.Kind == api.BlockedKindPermission && requestID(prev) != ""
+	n.activity(st, w, changed, hadButtons && st.State != api.AgentStatusBlocked)
 }
 
 // anyActivity reports whether some device has a Live Activity token.
@@ -784,7 +787,8 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 // activity updates the Live Activity of each device that tracks the pane's session (app.md
 // 9.1). A change of state goes out at once; a repeated working state at most every
 // workingEvery; other repeats not at all. done and error end the activity, which lingers.
-// leftBlocked says the pane was blocked before this state: the update withdraws the request.
+// leftBlocked says the pane showed a permission with Allow and Deny before this state: the
+// update withdraws them.
 func (n *Notifier) activity(st api.AgentState, w Where, changed, leftBlocked bool) {
 	if w.Session == "" {
 		return
@@ -808,8 +812,8 @@ func (n *Notifier) activity(st api.AgentState, w Where, changed, leftBlocked boo
 			Others:  n.othersBlocked(st.Pane),
 		}
 		end := st.State == api.AgentStatusDone || st.State == api.AgentStatusError || st.State == api.AgentStatusExited
-		// Leaving blocked goes at high priority too: the update withdraws the request (and its
-		// Allow and Deny), which iOS may otherwise hold back for a while (app.md 9.2). It reads
+		// Leaving a permission goes at high priority too: the update withdraws its Allow and
+		// Deny, which iOS may otherwise hold back for a while (app.md 9.2). It reads
 		// the pane's last state, not this token's last update: the app starts an activity on a
 		// session already blocked, and the hab has sent that token nothing yet.
 		prio := 10

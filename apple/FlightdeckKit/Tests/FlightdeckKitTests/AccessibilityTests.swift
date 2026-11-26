@@ -58,8 +58,8 @@ final class AccessibilityTests: XCTestCase {
     /// The Capcom thread has the same rotors: the owner's messages, each turn's tool line, and
     /// the cards that ask the owner. Every entry names a row the thread draws.
     func testCapcomThreadRotors() {
-        func card(_ id: String, _ type: String, _ text: String?) -> CapcomRow {
-            .card(CapcomItem(author: CapcomAuthor(kind: .capcom), card: CapcomCard(choices: ["allow", "deny"], type: type),
+        func card(_ id: String, _ type: String, _ text: String?, choices: [String] = ["allow", "deny"], grant: CapcomCardGrant? = nil) -> CapcomRow {
+            .card(CapcomItem(author: CapcomAuthor(kind: .capcom), card: CapcomCard(choices: choices, grant: grant, type: type),
                              id: id, kind: CapcomItemKind(rawValue: "card"), text: text, time: "2026-11-01T12:00:00Z"))
         }
         let rows: [CapcomRow] = [
@@ -67,8 +67,11 @@ final class AccessibilityTests: XCTestCase {
             .capcom(id: "c1", text: "Checking.", wroteFirst: false),
             .tools(id: "t1", line: "read 2 transcripts, searched the web", calls: []),
             card("k1", "approval", "Fetch example.com?"),
-            card("k2", "calendar", "Dentist on Friday"),
+            card("k2", "calendar", "Dentist on Friday", choices: ["add"]),
             card("k3", "grant", nil),
+            card("k4", "reminder", "Water the plants", choices: []),
+            card("k5", "memory", "Remembered: tea, no sugar", choices: ["undo"]),
+            card("k6", "grant", nil, choices: ["grant"], grant: CapcomCardGrant(actions: [], name: "Morning mail", prompt: "", revision: 1, round: "r1", trigger: "")),
             .note(id: "n1", text: "Capcom restarted"),
             .user(id: "u2", text: "", attachments: [], context: [CapcomContextItem(host: "h", kind: .session, ref: "s1", title: "fix-login")], read: false),
             .user(id: "u3", text: "", attachments: ["a"], context: [], read: false),
@@ -80,7 +83,8 @@ final class AccessibilityTests: XCTestCase {
             ChatRotorEntry(id: "u3", label: "You: 1 attachment"),
         ])
         XCTAssertEqual(r.tools, [ChatRotorEntry(id: "t1", label: "read 2 transcripts, searched the web")])
-        XCTAssertEqual(r.requests, [ChatRotorEntry(id: "k1", label: "Fetch example.com?"), ChatRotorEntry(id: "k3", label: "Capcom asks")])
+        XCTAssertEqual(r.requests, [ChatRotorEntry(id: "k1", label: "Fetch example.com?"), ChatRotorEntry(id: "k2", label: "Dentist on Friday"),
+                                    ChatRotorEntry(id: "k3", label: "Capcom asks"), ChatRotorEntry(id: "k6", label: "Morning mail")])
         let ids = Set(rows.map(\.id))
         XCTAssertTrue((r.turns + r.tools + r.requests).allSatisfy { ids.contains($0.id) })
     }

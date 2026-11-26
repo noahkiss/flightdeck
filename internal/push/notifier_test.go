@@ -416,6 +416,23 @@ func TestNotifierActivityStartedWhileBlocked(t *testing.T) {
 	if c := a[0].Body["aps"].(map[string]any)["content-state"].(map[string]any); c["buttons"] != false || c["state"] != "idle" {
 		t.Errorf("content %v", c)
 	}
+
+	// A question had no buttons: leaving it keeps the update budget, at low priority.
+	q := state(api.AgentStatusBlocked)
+	q.Kind = api.BlockedKindQuestion
+	r.n.State(q)
+	r.n.Sync()
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	a = a[:0]
+	for _, x := range r.prod.requests() {
+		if x.Token == phoneLA {
+			a = append(a, x)
+		}
+	}
+	if len(a) != 3 || a[2].Header.Get("apns-priority") != "5" {
+		t.Fatalf("leaving a question: %d updates, last priority %q", len(a), a[len(a)-1].Header.Get("apns-priority"))
+	}
 }
 
 // TestNotifierRaise: a notice goes to every device with a token, under the presence tiers.

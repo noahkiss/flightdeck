@@ -54,8 +54,15 @@ public struct ChatRotors: Equatable, Sendable {
         return r
     }
 
-    /// Capcom cards that ask the owner something: an approval, a confirmation, a grant.
-    static let requestCards: Set<String> = ["approval", "confirmation", "grant"]
+    /// Capcom cards that ask the owner something: an approval, a confirmation, a grant, and a
+    /// calendar or reminder card that offers choices (Add). A memory card's undo asks nothing.
+    static func asks(_ card: CapcomCard?) -> Bool {
+        switch card?.type {
+        case "approval", "confirmation", "grant": return true
+        case "calendar", "reminder": return !(card?.choices.isEmpty ?? true)
+        default: return false
+        }
+    }
 
     /// The Capcom thread's rotors (app.md 22.1): the owner's messages, each turn's line of tool
     /// calls, and the cards that ask the owner. An entry's id is the row's id, as in a chat.
@@ -68,9 +75,10 @@ public struct ChatRotors: Equatable, Sendable {
                 r.turns.append(ChatRotorEntry(id: id, label: turnLabel(body, sender: nil, attachments: att.count)))
             case .tools(let id, let line, _):
                 r.tools.append(ChatRotorEntry(id: id, label: cut(line)))
-            case .card(let it) where requestCards.contains(it.card?.type ?? ""):
+            case .card(let it) where asks(it.card):
                 let text = ToolSentence.firstLine(it.text ?? "").trimmingCharacters(in: .whitespaces)
-                r.requests.append(ChatRotorEntry(id: it.id, label: cut(text.isEmpty ? "Capcom asks" : text)))
+                let label = text.isEmpty ? (it.card?.grant?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "Capcom asks" : text
+                r.requests.append(ChatRotorEntry(id: it.id, label: cut(label)))
             default:
                 break
             }
