@@ -18,6 +18,14 @@ final class FakeActivities: ActivityHost {
 
     func running() -> [String] { live }
 
+    /// What the activity shows: the last update, else the start. A test sets `pushed` for what
+    /// the hab's push wrote since.
+    var pushed: [String: SessionActivityAttributes.ContentState] = [:]
+    func content(session: String) -> SessionActivityAttributes.ContentState? {
+        guard live.contains(session) else { return nil }
+        return pushed[session] ?? updates.last { $0.0 == session }?.1 ?? started.last { $0.0.session == session }?.1
+    }
+
     func start(_ a: SessionActivityAttributes, _ s: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data> {
         started.append((a, s))
         live.append(a.session)
@@ -151,6 +159,57 @@ final class LiveActivityFixTests: XCTestCase {
         XCTAssertEqual(s?.pane, "%1")
         XCTAssertEqual(s?.title, "Run make test?")
         await eventually("token registered") { await hab.activityRegisters.first?.token == "c301" }
+        await fleet.setActive(false)
+    }
+
+    /// A request answered elsewhere (another device, the terminal) leaves the board: the running
+    /// activity loses Allow and Deny at once, without the hab's push (9.1).
+    func testActivityDropsButtonsWhenTheBoardClosesTheRequest() async {
+        let (hab, fleet, tracker, host) = await rig()
+        await tracker.start()
+        XCTAssertEqual(host.started.first?.1.buttons, true)
+        await tracker.dropClosed()
+        XCTAssertTrue(host.updates.isEmpty, "the request is still open")
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .working))
+        await eventually("buttons dropped") { host.updates.last?.1.buttons == false }
+        XCTAssertEqual(host.updates.last?.0, "s1")
+        XCTAssertNil(host.updates.last?.1.request)
+        let n = host.updates.count
+        await tracker.dropClosed()
+        XCTAssertEqual(host.updates.count, n, "dropped once")
+        await fleet.setActive(false)
+    }
+
+    /// Two requests in a row on one pane: when the first closes and the second is open, the
+    /// activity shows the second with its buttons, never a blank.
+    func testActivityMovesToTheNextRequest() async {
+        let (hab, fleet, tracker, host) = await rig()
+        await tracker.start()
+        let req = PermissionRequest(command: "make lint", id: "req-2", title: "Run make lint?", tool: "Bash")
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission, request: req, at: Date()))
+        await eventually("next request shown") { host.updates.last?.1.request == "req-2" }
+        let s = host.updates.last?.1
+        XCTAssertEqual(s?.buttons, true)
+        XCTAssertEqual(s?.title, "Run make lint?")
+        XCTAssertFalse(host.updates.contains { $0.1.request == nil }, "never blanked in between")
+        await fleet.setActive(false)
+    }
+
+    /// The hab's push moved the activity on after the app's last write: a board change leaves
+    /// that content alone, and never writes back what the app started it with.
+    func testActivityKeepsWhatTheHabPushed() async {
+        let (hab, fleet, tracker, host) = await rig()
+        await tracker.start()
+        var pushed = host.started[0].1
+        pushed.state = "working"
+        pushed.buttons = false
+        pushed.request = nil
+        pushed.title = "Working"
+        host.pushed["s1"] = pushed
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .working))
+        await eventually("board saw it") { fleet.board.rows.first?.state == .working }
+        await tracker.dropClosed()
+        XCTAssertTrue(host.updates.isEmpty, "nothing to drop: the hab's push already did")
         await fleet.setActive(false)
     }
 

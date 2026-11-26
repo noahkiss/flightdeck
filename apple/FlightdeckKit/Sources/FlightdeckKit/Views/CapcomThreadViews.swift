@@ -19,7 +19,7 @@ struct CapcomThreadView: View {
         let rows = thread.rows
         let lastUser = rows.last { if case .user = $0 { return true }; return false }?.id
         ChatScroll(rowIDs: rows.map(\.id), readKey: "capcom|" + ChatTranscript.readKey(model.target), sent: model.outgoing.count,
-                   messageIDs: Set(rows.filter(\.isMessage).map(\.id))) { divider in
+                   messageIDs: Set(rows.filter(\.isMessage).map(\.id)), rotors: ChatRotors.of(rows)) { divider in
             if !earlier.isEmpty {
                 CapcomEarlierSection(earlier: earlier, images: model.images)
             }
@@ -118,6 +118,8 @@ struct CapcomRowView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+                            // The owner's message starts a turn: the Headings rotor steps by turn (22.1).
+                            .accessibilityAddTraits(.isHeader)
                     }
                     if showMark {
                         Text(read ? "Read" : "Delivered")
