@@ -170,7 +170,8 @@ Two jobs.
 | `cache-path` | `build/libghostty-vt` |
 | `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline` (section 5) |
 | `cancel-in-progress` | `${{ github.ref != 'refs/heads/main' }}` (E4) |
-| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make ci-full GO_TEST_SHARD=0/4 RACE_COUNT=<1 on a pull request, else 3> GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `vet`, `test`, `race`) |
+| `build-cache-key` | The job's key: `0-4`, `0-4-race`, `1-4` to `4-4`, or `all` (section 5) |
+| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make <targets> GO_TEST_SHARD=<shard> RACE_COUNT=<1 on a pull request, else 3> GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`, where shard `0/4` runs `check-pure vet test` in one job and `race` in another, and `1/4` to `4/4` run `test race`. Together they are `make ci-full` |
 | `commands`, fast | `GFF_TEST_TIMEOUT_SCALE=3 make ci-fast GO_TEST_SHARD=all GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `build`) |
 | job name | `go (full)` or `go (fast)`, from the `plan` output (7.4) |
 
@@ -189,21 +190,24 @@ bounds on a 4-CPU runner (November 2026). Both pass a 30-minute
 ran one after another.
 
 **A pull request runs the race list once.** `ci.yml` passes `RACE_COUNT=1` on a `pull_request`
-event and 3 on every other event; `nightly.yml` runs the full set in the same five shards with the default 3. Repeats
+event and 3 on every other event; `nightly.yml` runs the full set in five shards with the default 3. Repeats
 catch a race that one pass misses, but in November 2026 the second and third pass were about two
 thirds of the race time, roughly 4 to 5 minutes on each shard. Every merged change still gets
 three passes: a direct push runs them, and a merged pull request's push runs the fast set, so the
 nightly run (3.6) gives it three passes that night. The holder packages on macOS keep
 `-count=3` on every event (3.5).
 
-**The full set runs as five jobs.** `cmd/gff-hab` holds the end-to-end tests, about 460 of them.
+**The full set runs as six jobs.** `cmd/gff-hab` holds the end-to-end tests, about 460 of them.
 Run one after another, they took 8 minutes of `make test` and 28 of the 33 minutes of `make race`
 on one runner (November 2026), and the job ran 36 to 45 minutes. They now run in parallel
-(`testing.md`, Principles), and the shards stay. The `go` job is a matrix over
-`GO_TEST_SHARD`, one runner each, through go-ci's `concurrency-key` input: `0/4` runs gofmt, the
-generate check, `check-pure`, `vet`, and `test` and `race` over every package but `cmd/gff-hab`;
-`1/4` to `4/4` each run `make test race` over a quarter of `cmd/gff-hab`'s top-level tests
-(`scripts/go-test-split.sh`: the sorted names in batches of 16, dealt round the four shards). Every
+(`testing.md`, Principles), and the shards stay. The `go` job is a matrix of six jobs, one
+runner each, each with its own go-ci `concurrency-key` and `build-cache-key`. Shard `0/4` covers
+every package but `cmd/gff-hab` in two jobs: `go (full) 0/4` runs gofmt, the generate check,
+`check-pure`, `vet` and `make test`; `go (full) 0/4 race` runs `make race`. `1/4` to `4/4`
+each run `make test race` over a quarter of `cmd/gff-hab`'s top-level tests
+(`scripts/go-test-split.sh`: the sorted names in batches of 16, dealt round the four shards).
+In one job, shard `0/4` took 8 minutes of an 8-minute pull request run, and the race half
+5.5 of them, while `1/4` to `4/4` took 4 to 5 (November 2026). Every
 test still runs, with the same flags and count, in exactly one shard. Separate runners, not
 workers on one: three or four test processes on one runner's four cores starved the timing tests
 in `internal/link` and `internal/logbook`, which then failed. A fast run is one job, `all`.
@@ -237,12 +241,13 @@ steps in the same order.
   on its head succeeded.
 - Most changes here land as direct pushes to `main`, so most runs are full. That is rule 3's
   "direct push runs the full suite".
-- `apple.yml` and `macos-go.yml` follow the same rule with no fast set: the push that merges a
-  pull request whose own run of that workflow passed runs nothing. Each has a `plan` job that asks
-  the same two questions. `macos-go.yml`'s nightly run covers the merged `main` that night; a direct
-  push, a tag, a dispatch and a schedule always run. `app-release.yml` grants the called
+- `macos-go.yml` follows the same rule with no fast set: the push that merges a pull request
+  whose own run passed runs nothing. `apple.yml` follows it too, but its fast set is the Kit's
+  tests on an iOS Simulator, which a pull request does not run (3.4). Each has a `plan` job that
+  asks the same two questions. `macos-go.yml`'s nightly run covers the merged `main` that night; a direct
+  push, a tag, a dispatch and a schedule always run in full. `app-release.yml` grants the called
   `apple.yml` `pull-requests: read` and `actions: read` for its `plan` job.
-- `apple.yml` has a short form instead of a fast set: a pull request whose changes on the Apple
+- `apple.yml` has a short form too: a pull request whose changes on the Apple
   paths are all under `api/` and `swift/HabAPI/` runs only the Swift package tests (3.4). Its
   merge is no skip: the push that merges it runs the full Apple build.
 - A **Renovate** pull request runs the full set. The bot rule of rule 3 is for private repos; this
@@ -250,9 +255,27 @@ steps in the same order.
 
 ### 3.4 `apple.yml`: the Apple build
 
-A `plan` job (ubuntu, a few seconds) that skips the build on a push merging a pull request whose
-full Apple run passed (3.3) and picks full or Swift only, then one job on macOS, a call of the shared `xcode-ci.yml` (E5, section
-11.2), which runs these steps from its inputs:
+A `plan` job (ubuntu, a few seconds) picks the parts to run, then three jobs on macOS run in
+parallel, each a call of the shared `xcode-ci.yml` (E5, section 11.2):
+
+| Job | Steps below | When |
+|---|---|---|
+| `Swift tests` | 1 to 5, 10 | Every event but the push that merges a pull request whose full Apple run passed |
+| `iOS build and Simulator tests` | 1 to 3, 6, 7, 9, 10 | Steps 6 and 7 with the macOS job; step 9 on every event but a pull request. The name lists the parts that run |
+| `macOS build` | 1 to 3, 6, 8, 10 | A full run: not on a Swift-only pull request (below), and not on the merge push above |
+
+So a pull request runs no Simulator tests, and the push that merges a pull request whose full
+run passed runs only them. A direct push to `main`, a tag, a dispatch and the release's call
+(10.1) run all three jobs in full. Each job passes its own `concurrency-key`, so the three do
+not cancel each other, its own `compilation-cache-key-suffix` (`ios`, `mac`), so each restores
+and saves its own store, and its own `logs-name`. `Swift tests` passes `spm-cache-save: false`:
+its SwiftPM entry would lack the cloned packages folder the builds use, and the first save of a
+key wins (section 5). In one job, the steps took about 35 minutes of a pull request run: the two
+`swift test`s 7, the iOS build 8, the macOS build 7.4 and the Simulator tests 12.3
+(November 2026). Split, a pull request waits for the slowest of three. The three take three of
+the five macOS jobs a free account runs at once; `macos-go.yml` can take a fourth.
+
+The steps, from xcode-ci's inputs:
 
 1. Check out. Select `/Applications/Xcode_27.2.app` by path (`xcode-app`, through
    `DEVELOPER_DIR`); fail when it is missing (never the image default, never a beta or release
@@ -269,34 +292,44 @@ full Apple run passed (3.3) and picks full or Swift only, then one job on macOS,
    file, so a stale file passes here and fails only the release archive.
 6. `apple/scripts/generate.sh` (XcodeGen, pinned release; it copies the Kit's `Package.resolved`
    into the project, section 5).
-7. `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build`.
-8. `xcodebuild ... -scheme FlightdeckMac -destination 'generic/platform=macOS' build` (ad hoc
-   signed; no `Local.xcconfig` in CI).
+7. `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build ARCHS=arm64`.
+8. `xcodebuild ... -scheme FlightdeckMac -destination 'generic/platform=macOS' build ARCHS=arm64`
+   (ad hoc signed; no `Local.xcconfig` in CI). A generic destination builds every arch in
+   `ARCHS`: the full logs of run 45349632695 show each Swift file compiled for both
+   `arm64-apple-ios*-simulator` and `x86_64-apple-ios*-simulator`, and for both
+   `arm64-apple-macos*` and `x86_64-apple-macos*`. Intel is no target (4), so both builds pass
+   `ARCHS=arm64` through `xcodebuild-args`.
 9. `xcodebuild -scheme FlightdeckKit-Package -destination <iPhone simulator> test` in
    `apple/FlightdeckKit`: the Kit's tests on an iOS Simulator: the first iPhone, by name, of
    the newest iOS runtime no newer than the selected Xcode's simulator SDK. Runtimes are
-   system-wide, and a newer beta on the image can bring a runtime Xcode 27.2 cannot test on. Step 5 runs them on macOS; this catches iOS-only breaks.
+   system-wide, and a newer beta on the image can bring a runtime Xcode 27.2 cannot test on.
+   Step 5 runs the same tests on macOS; this catches iOS-only breaks. It runs on every event but
+   a pull request: on a push to `main` (alone, on the push that merges a pull request whose full
+   run passed), a tag, a dispatch and the release's call. A pull request skips it because step 5
+   covers the Kit there, and the step took 12.3 of the job's 35 minutes (November 2026). An
+   iOS-only break then shows on `main` after the merge, not on the pull request; a pull request
+   that wants the check dispatches `apple.yml` on its branch.
 10. Each `xcodebuild` log is filtered to errors, signing warnings and failed tests; the full logs
     are uploaded as an artifact on failure.
 
 **Swift only.** A pull request whose files on the Apple paths (3.1) are all `api/schema.json`,
 `api/testdata/**`, `api/modules/testdata/**` or `swift/HabAPI/**` (a rename counts its old path
-too) runs steps 1 to 5 and 10 only: `plan` passes empty `generate`, `builds` and `tests`, which
-`xcode-ci.yml` skips. Most pull requests touch the API, and the Xcode steps took 14 to 22 of the
-job's 17 to 30 minutes (November 2026). The Kit's `swift test` still compiles the Kit against the
-new package. The apps' own sources and the iOS Simulator run wait for the push to `main`, which
-always runs the full build, as do a dispatch and an app tag. A change to any other Apple path, or
-a lookup of the pull request's files that fails, runs the full build. The job's name says which
-ran: `Apple (full)` or `Apple (Swift only)`.
+too) runs the `Swift tests` job only; `plan` skips the other two. Most pull requests touch the
+API, and the Xcode steps took 14 to 22 of the one job's 17 to 30 minutes (November 2026). The
+Kit's `swift test` still compiles the Kit against the new package. The apps' own sources and the
+iOS Simulator run wait for the push to `main`, which always runs the full build, as do a
+dispatch and an app tag. A change to any other Apple path, or a lookup of the pull request's
+files that fails, runs the full build. The jobs that ran say which form it was.
 
 Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves them, and the test
 timeouts: `-test-timeouts-enabled YES`, 120 seconds a test by default, 300 at most for a test that
 sets its own `executionTimeAllowance`. A test that hangs then fails by name, its log is uploaded,
 and the job does not sit silent until its own timeout (the Kit's simulator tests hung that way
-twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. `apple.yml` passes
-`compilation-cache: true` with a 2G limit, so xcode-ci restores and saves the Xcode compilation
-cache between runs (5, E9 in 11.2). No signing, no
-secrets. Timeout 90 minutes: a branch with several app stages ran past 60 by 2026-11. The live tests (`LiveTests`, `ssh-live-check.sh`) do
+twice in 2026-11). `xcodebuild build` accepts the flags and ignores them. The iOS and macOS
+jobs pass `compilation-cache: true` with a 2G limit, so xcode-ci restores and saves each job's
+Xcode compilation cache between runs (5, E9 in 11.2). No signing, no secrets. Timeouts: 75
+minutes for the iOS job, 45 for the other two. The one job ran past 60 by 2026-11, on a branch
+with several app stages; the iOS build and the Simulator tests were 20 of its 35 minutes. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 ### 3.5 `macos-go.yml`: Go on macOS (owner decision, Q2)
@@ -322,9 +355,9 @@ login, which launchd user agents need; stage 2 proves this before it relies on i
 
 After the guard, Linux jobs on go-ci with `mise` and the cache, all in parallel:
 
-- **Five shard jobs**, "Nightly suites 0/4" to "4/4", the same split as `ci.yml`'s `go (full)`
-  jobs (3.2): `make ci-full GO_TEST_SHARD=0/4` on one, `make test race GO_TEST_SHARD=i/4` on the
-  other four, each with `GFF_TEST_TIMEOUT_SCALE=3` and
+- **Five shard jobs**, "Nightly suites 0/4" to "4/4", the shards of `ci.yml`'s `go (full)`
+  jobs (3.2), with shard `0/4` in one job: `make ci-full GO_TEST_SHARD=0/4` on one,
+  `make test race GO_TEST_SHARD=i/4` on the other four, each with `GFF_TEST_TIMEOUT_SCALE=3` and
   `GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`. `RACE_COUNT` stays at its
   default, 3. This is the full set on `main` as it stands. The push that merges a passed pull
   request runs only the fast set (3.3), and that pull request ran against an older `main`; this
@@ -425,11 +458,12 @@ build.
 
 | Cache | Key | Where | Note |
 |---|---|---|---|
-| Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | go-ci saves it on every run |
+| Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | `nightly.yml`, `macos-go.yml` and the release: one entry for every job, saved by the first job that misses |
+| Go build cache, per job | OS, arch, Go version, the job's key, `go.sum` and the run | go-ci's `build-cache-key` input (E10) | `ci.yml`'s go jobs (3.2). Each job restores the newest entry for its own key, so a race build or a shard of `cmd/gff-hab` restores the objects it compiled last time. Only `main` saves, a new entry each run, after go-ci deletes the build cache files unused for 90 minutes. The module cache gets its own entry keyed on `go.sum`. Each `main` run adds one entry per go job to the 10 GB quota; GitHub evicts the oldest first |
 | libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-<patch id>-<build method>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins and the id of `third_party/ghostty/patches/` (`make ghostty-id`), not on a hash of the whole Makefile, which changes often. A pin or patch change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
 | SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key. Every `xcodebuild` passes `-onlyUsePackageVersionsFromResolvedFile`, and every `swift test` `--only-use-versions-from-resolved-file` (3.4), so a graph that drifts from the pins fails instead of floating |
-| Xcode compilation cache | xcode-ci's `compilation-cache` input (E9) | One entry per run, restored from the newest | `apple.yml` turns it on with a 2G limit (3.4). Within one job alone it gave no gain. Keeping the store between runs needs a restore and a save inside `xcode-ci`: a job that calls a reusable workflow cannot add steps, and the store cannot ride in the SwiftPM entry, which is saved only when its key misses. E9 (11.2) proposes the input. A warm store cut a clean local build from about 10 minutes to about 1 |
+| Xcode compilation cache | xcode-ci's `compilation-cache` input (E9) | One entry per job and run, restored from the newest of the same job (`compilation-cache-key-suffix`, E10) | `apple.yml`'s iOS and macOS jobs turn it on with a 2G limit (3.4). Within one job alone it gave no gain. Keeping the store between runs needs a restore and a save inside `xcode-ci`: a job that calls a reusable workflow cannot add steps, and the store cannot ride in the SwiftPM entry, which is saved only when its key misses. E9 (11.2) proposes the input. A warm store cut a clean local build from about 10 minutes to about 1 |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
 | npm (the release's `engine` job) | None | `npm ci` in the job | `setup-node` runs with `package-manager-cache: false`, for the reason fastlane has none: a cache saved on a tag serves that tag only. `capcom-engine.yml` caches through node-ci (3.7) |
@@ -737,7 +771,8 @@ commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` a
 `ci.yml` names its go job `go (full)` or `go (fast)` from the `plan` output, and `verify` reads a
 run's jobs (`gh run view <id> --json jobs`) and requires a successful job whose name starts with
 `go (full)`: a job that calls a reusable workflow shows as `go (full) / <called job>`. A dispatch
-always runs the full set. Every `apple.yml` run is full.
+always runs the full set. `release.yml` reads `ci.yml` only; the app release runs `apple.yml` on
+the tag itself (10.1).
 
 **The path test needs its own matcher** for GitHub's path patterns. A git pathspec cannot do it:
 it cannot take `docs/examples/**` back in after it excludes `docs/**`. `verify` reads the group
@@ -1284,7 +1319,7 @@ As built (stage 8). The jobs:
    `apple/Config/Names.xcconfig`.
 2. **`test`** (`needs: verify`). Calls `apple.yml` (3.4) through `workflow_call`, so xcode-ci
    runs the Swift package tests, both Xcode builds and the Kit's simulator tests on the tagged
-   commit, with the same inputs as on `main`. No secrets.
+   commit in three parallel jobs (3.4), with the same inputs as on `main`. No secrets.
 3. **`ios`** (`needs: [verify, test]`, `xcode-27`, environment `release`, 120 minutes). Steps
    below. Uploads to TestFlight; on a dry run it exports the `.ipa` to disk and uploads nothing.
 4. **`mac`** (`needs: [verify, test]`, `xcode-27`, environment `release`, 90 minutes). Steps
@@ -1480,12 +1515,14 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 | E7 | tap `bump.yml` | `tag_prefix` input (8.2) | `v` |
 | E8 | tap `bump.yml` | Per-platform formula: every url's sha from its `.sha256` asset, the top-level fallback included; a url with no such asset hashed directly (8.2) | Single-url path unchanged |
 | E9 | `xcode-ci.yml` | `compilation-cache` (boolean) and `compilation-cache-limit` (string, passed as `COMPILATION_CACHE_LIMIT_SIZE`): every `xcodebuild` gains `COMPILATION_CACHE_ENABLE_CACHING=YES` and `COMPILATION_CACHE_CAS_PATH=$RUNNER_TEMP/xcode-ci-cas`. The store is restored before the builds and saved after them, as the SwiftPM cache is (not after an earlier failure, never from a tag). Its key is the runner OS and arch, the Xcode build version, the hash of `spm-cache-key-file` and the run id, so every run saves a fresh store; the restore keys drop the run id, then the hash | `false` (no step, no flag) |
+| E10 | `xcode-ci.yml`, `go-ci.yml` | xcode-ci: `concurrency-key` (string, appended to the job's group), `compilation-cache-key-suffix` (string, a name after the Xcode build version in the store's key) and `spm-cache-save` (boolean), so `apple.yml` runs three calls in one run (3.4). go-ci: `build-cache-key` (string): setup-go's cache off, a module cache keyed on `go.sum` and a build cache per key, saved from the default branch only, pruned of files unused for 90 minutes (5) | `''`, `''`, `true`, `''`: today's behaviour |
 
 E4 is needed for `ci.yml`, `nightly.yml` and `macos-go.yml` alike: without it they cancel each
 other's go-ci jobs on `main` (2). E5 and E6 are plan stage 4: noahkiss/workflows#16, with a
 selftest that builds a small XcodeGen fixture through `xcode-ci` and runs both actions with a
 stand-in fastlane. E1 to E8 are approved (section 14); E9 merged as noahkiss/workflows#22, and `apple.yml`
-passes `compilation-cache: true`.
+passes `compilation-cache: true`. E10 is noahkiss/workflows#23; `apple.yml` and `ci.yml` pass its
+inputs, so they wait for it.
 
 ---
 
@@ -1497,10 +1534,10 @@ The CI-minute rules the shared workflows follow, and how this repo applies each.
 |---|---|---|---|
 | 1 | Cancel superseded runs | Applied once E4 merges; partly applied until then | Workflow-level group per workflow and ref in `ci.yml`, `apple.yml`, `macos-go.yml`, `hygiene.yml`; `cancel-in-progress` off for `main` and tags. Release and nightly workflows never cancel. go-ci's own job-level guard cancels `main` and nightly runs across workflows today (2); E4 fixes it, and until then those workflows run go-ci's steps inline |
 | 2 | Each workflow runs only for the paths it tests | Applied, but for `hygiene.yml` | `ci.yml` lists an allow-list of what the Go build and tests read, `docs/examples/**` included because tests read it (2). `apple.yml` and `macos-go.yml` run on their paths only. `hygiene.yml` has no filter on purpose: docs are what it guards. Tags get their runs |
-| 3 | No double runs for one change | Applied | Pull requests run the full set; a push to `main` that merges a passed pull request runs the fast set in `ci.yml` and nothing in `apple.yml` (after a full Apple run) and `macos-go.yml` (3.3); a direct push runs the full set. A pull request runs the race list once, `main` and nightly three times (3.2); an API-only pull request runs only Apple's Swift tests (3.4). The bot clause is for private repos: not applicable, this repo is public |
+| 3 | No double runs for one change | Applied | Pull requests run the full set, but for the Kit's iOS Simulator tests in `apple.yml`; a push to `main` that merges a passed pull request runs the fast set in `ci.yml`, only those Simulator tests in `apple.yml` (after a full Apple run) and nothing in `macos-go.yml` (3.3); a direct push runs the full set. A pull request runs the race list once, `main` and nightly three times (3.2); an API-only pull request runs only Apple's Swift tests (3.4). The bot clause is for private repos: not applicable, this repo is public |
 | 4 | macOS only for jobs that need macOS | Applied | Only Xcode, Swift, launchd and macOS PTY jobs and the darwin release leg run on macOS; each is path- or tag-gated |
 | 5 | Releases and slow suites on tags or a schedule | Applied | Releases on `v*` and `app-v*` tags; fuzz, the 200-cycle restart loop and the service check run nightly, skipped when `main` has not moved |
-| 6 | Cache dependencies keyed on the lockfile | Applied | Go on `go.sum` (go-ci), libghostty on the Makefile pin and `mise.toml`, SwiftPM on `Package.resolved`, gems on `Gemfile.lock` (section 5) |
+| 6 | Cache dependencies keyed on the lockfile | Applied | Go on `go.sum` (go-ci; `ci.yml`'s jobs keep a build cache each, saved from `main`), libghostty on the Makefile pin and `mise.toml`, SwiftPM on `Package.resolved`, gems on `Gemfile.lock` (section 5) |
 | 7 | `timeout-minutes` on every job | Applied | Every job states one (sections 3, 7, 9, 10); go-ci and the new workflows take it as an input |
 | 8 | Prefer public repos for CI-heavy projects | Applied | The repo is public; the hygiene scan keeps it publishable |
 | 9 | Dependency-bot cadence | Applied | No github-actions Dependabot entry here (the workflows repo covers callers at `@main`). `renovate.json` extends `github>noahkiss/renovate-config` (plan stage 2). Two repo rules: Renovate ignores `go.mitchellh.com/libghostty` and zig, because they move with `GHOSTTY_COMMIT`. Those and the other core pins move on their own schedule with heavier validation (7.9). Security updates stay on |
