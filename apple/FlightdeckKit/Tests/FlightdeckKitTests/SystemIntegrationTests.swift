@@ -346,3 +346,68 @@ final class AppIntentLogicTests: XCTestCase {
         XCTAssertEqual(NeedsYouSnapshot.load(d)?.items.count, 1, "the background keeps the last list")
     }
 }
+
+/// Spotlight's ordered writes and the coalesced App Shortcut parameters (app.md 3.19).
+@MainActor
+final class SessionIndexingTests: XCTestCase {
+    private actor Log {
+        var lines: [String] = []
+        func add(_ s: String) { lines.append(s) }
+    }
+
+    func testWritesRunOneAtATimeInOrder() async {
+        let log = Log()
+        let writes = OrderedWrites<String> { w in
+            await log.add("start \(w)")
+            // The first write takes longest: a later one must still wait for it.
+            if w == "upsert" { try? await Task.sleep(for: .milliseconds(50)) }
+            await Task.yield()
+            await log.add("end \(w)")
+        }
+        writes.send("upsert")
+        writes.send("delete")
+        writes.send("upsert again")
+        await writes.drain()
+        let lines = await log.lines
+        XCTAssertEqual(lines, ["start upsert", "end upsert", "start delete", "end delete", "start upsert again", "end upsert again"])
+    }
+
+    private func entry(_ session: String, _ name: String, label: String = "Studio") -> SessionEntry {
+        SessionEntry(hab: "studio-host", session: session, name: name, habLabel: label)
+    }
+
+    func testShortcutParametersCoalesce() {
+        var count = 0
+        let p = ShortcutParameters(delay: .seconds(3600)) { count += 1 }
+        p.flush()
+        XCTAssertEqual(count, 0, "nothing asked yet")
+
+        p.update([entry("tide", "tide")])
+        p.flush()
+        XCTAssertEqual(count, 1, "launch updates once")
+
+        p.update([entry("tide", "tide 2")])
+        p.update([entry("tide", "tide 3")])
+        p.update([entry("tide", "tide 4"), entry("harbour", "harbour")])
+        XCTAssertEqual(count, 1, "a burst waits for the delay")
+        p.flush()
+        XCTAssertEqual(count, 2, "and becomes one update")
+
+        p.update([entry("harbour", "harbour", label: "Lab"), entry("tide", "tide 4", label: "Lab")])
+        p.flush()
+        XCTAssertEqual(count, 2, "a new computer label or order leaves the phrases alone")
+
+        p.update([entry("tide", "tide 5")])
+        p.update([entry("tide", "tide 4"), entry("harbour", "harbour")])
+        p.flush()
+        XCTAssertEqual(count, 2, "a rename undone before the delay changes nothing")
+    }
+
+    func testShortcutParametersFireAfterTheDelay() async throws {
+        var count = 0
+        let p = ShortcutParameters(delay: .milliseconds(10)) { count += 1 }
+        p.update([entry("tide", "tide")])
+        for _ in 0..<200 where count == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(count, 1)
+    }
+}
