@@ -145,6 +145,25 @@ func TargetConfig(ctx context.Context, g worktree.Git, dir, rev string) (Config,
 	return ParseConfig([]byte(out))
 }
 
+// Remove removes the lane's worktree dir of the checkout src, with force: the lane's worktree
+// holds nothing but what a run left (groups.md 5.7, after a move). A folder git no longer
+// knows is deleted, and the checkout's worktree list pruned. A dir that is gone already is no
+// error.
+func Remove(ctx context.Context, g worktree.Git, src, dir string) error {
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	r := runner{g}
+	out, err := r.git1(ctx, src, "worktree", "remove", "--force", "--", dir)
+	if err != nil {
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			return fmt.Errorf("%s; %v", firstLine(out), rerr)
+		}
+	}
+	r.git1(ctx, src, "worktree", "prune")
+	return nil
+}
+
 // Run lands the job's commit, or says why not.
 func Run(ctx context.Context, j Job) Result {
 	r := runner{git: j.Git}

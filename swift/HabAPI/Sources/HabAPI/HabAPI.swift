@@ -4908,7 +4908,7 @@ public struct GroupMoveResult: Codable, Sendable, Hashable {
     public var home: String
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
-    /// moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set.
+    /// moved: the hand-over committed; draining: a land past its push finishes first, at most [groups] move_drain, and the hand-over then runs in the background (the card shows moving, and a failure in move_failed); queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set.
     public var state: String
     /// One line for the user, such as: <label> is offline; the group moves when it is back.
     public var text: String

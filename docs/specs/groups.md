@@ -671,11 +671,20 @@ the catalog copies.
 - **While a move runs** pause, resume, close and retry answer `unavailable`.
 - **At creation** the plan's card gets the always-on line as a warning. It offers no button:
   the user moves the home after the plan runs.
-- **Not built in B9.** The drain does not wait for a land past its push: it puts every item in
-  `landing` back to `ready`, and the new home lands it again from step 1, which marks it
-  `landed` when its head is already on the target (14). `move_drain` is read and not used yet:
-  the wait needs the lane (B4) to report its push to the move. The move does not stop a lane run
-  in flight, and the old home's lane worktree stays.
+- **The drain.** The freeze stops the lane from taking a new item. A lane run counts as past
+  its push once it saved the rebased head (7.3 step 4). A run before that point stops at once:
+  a push it has not saved yet is refused, and its item goes back to `ready` at the front of the
+  queue. The move then runs as one call. A run past its push gets `move_drain` to finish: the
+  call answers `draining` at once, and the hand-over goes on in the background. A land that
+  finishes is written to the record before the adopt, so the group moves with the item
+  `landed`. Any other outcome is written too. At the limit the run stops, and its item goes
+  back to `ready` at the front. A failure after the drain goes to `move_failed`, as for a call.
+  A hab that stops during the drain clears `moving` at its next start.
+- **The old lane worktree.** After the commit, the old home removes its lane worktree for the
+  group's repository, under the lane's lock for that repository. It keeps it while another
+  group on this hab, live or pending, lands in the same repository. A removal that fails is
+  logged and never undoes the move.
+- **Not built in B9.**
   `lane.submit` and `review.verdict` (B7) are not merged; they use the same forwarding when they
   land. Capcom-coordinated groups (B8) do not exist yet, so the move with the Capcom mark waits
   for B8. The app's "Move home" and the home label on the card come with the card.

@@ -36,6 +36,7 @@ type laneFix struct {
 	removeErr         map[string]error
 	stateDir, laneDir string
 	lb                *lbsvc.Service // the Logbook, when withLogbook made one
+	peer              *fakeMoveHab   // a second hab with the project, linked, when set
 }
 
 func lgit(t *testing.T, dir string, args ...string) string {
@@ -82,18 +83,31 @@ func newLaneFix(t *testing.T, laneJSON string, keys groups.Keys) *laneFix {
 }
 
 func (f *laneFix) catalog() api.CatalogList {
-	return api.CatalogList{
+	cl := api.CatalogList{
 		Hosts: []api.CatalogEntry{{Own: true, Catalog: api.Catalog{DeviceID: "dev-me"}}},
 		Projects: []api.CatalogProjectGroup{{Key: "remote:" + f.bare, Name: "shop", Remote: f.bare,
 			Locations: []api.CatalogLocation{{DeviceID: "dev-me", Folders: []api.CatalogFolder{{Path: f.src}}}}}},
 	}
+	if f.peer != nil {
+		cl.Hosts = append(cl.Hosts, api.CatalogEntry{Label: "new", Catalog: api.Catalog{DeviceID: "dev-new"}})
+		cl.Projects[0].Locations = append(cl.Projects[0].Locations, api.CatalogLocation{DeviceID: "dev-new", Folders: []api.CatalogFolder{{Path: "/elsewhere/shop"}}})
+	}
+	return cl
+}
+
+// links is the link to the fixture's second hab, online, when it has one.
+func (f *laneFix) links() []confirmLink {
+	if f.peer == nil {
+		return nil
+	}
+	return []confirmLink{{Label: "new", Online: true, Caps: []string{groups.Capability, "logbook"}, Caller: f.peer}}
 }
 
 // start makes the service, as a gff-hab start does.
 func (f *laneFix) start() {
 	f.t.Helper()
 	s, err := newGroups(groupsConfig{host: "home", self: "dev-me", dir: filepath.Join(f.stateDir, "groups"), keys: f.keys,
-		store: f.store, catalog: f.catalog, laneDir: f.laneDir, laneRetry: 50 * time.Millisecond,
+		store: f.store, catalog: f.catalog, links: f.links, laneDir: f.laneDir, laneRetry: 50 * time.Millisecond,
 		note: func(session, text string) error {
 			f.mu.Lock()
 			defer f.mu.Unlock()

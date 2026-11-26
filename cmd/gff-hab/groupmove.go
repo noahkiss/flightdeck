@@ -10,6 +10,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/groups"
+	"github.com/noahkiss/flightdeck/internal/lane"
 )
 
 // Moving a group's home hab (groups.md 5.7). The current home runs the hand-over, one writer at
@@ -237,13 +238,85 @@ func (s *groupsService) handOver(id, to string) (api.GroupMoveResult, error) {
 		s.mu.Unlock()
 		return refuse(api.ErrorKindConflict, "%s does not have project %s checked out; set it up there to move the group", label, g.Plan.Project)
 	}
-	// 1. Freeze; 2. drain the lane (before its push: back to the front of the queue).
+	// 1. Freeze: the lane takes no new item.
 	gen := max(g.Generation, g.Tried) + 1
 	g.Tried = gen
 	g.Moving = &api.GroupMoveRef{To: to, Label: label, Generation: gen, Since: stampT(s.cfg.now())}
 	g.MoveFailed = ""
-	groups.Drain(g)
+	run := s.lane.runs[id]
+	draining := run != nil && run.pushed
+	if run != nil && !draining {
+		run.stopping = true // a push it saves from now on is refused
+	}
 	s.saveLocked(g)
+	title := g.Title
+	if draining {
+		// 2. A land past its push finishes first, at most [groups] move_drain: the call answers
+		// now, and the hand-over goes on in the background.
+		s.bgLocked(func() { s.drainLand(id, to, label, gen, run) })
+		s.mu.Unlock()
+		return api.GroupMoveResult{State: "draining", Home: to, Text: fmt.Sprintf("group %s moves home to %s once the land in flight finishes, at most %s", title, label, s.cfg.keys.MoveDrain)}, nil
+	}
+	s.mu.Unlock()
+	if run != nil {
+		// 2. A run before its push stops; its item goes back to the front of the queue.
+		run.cancel()
+		<-run.done
+	}
+	return s.finishHandOver(id, to, label, gen, l)
+}
+
+// drainLand waits up to [groups] move_drain for a lane run past its push to finish its land
+// (groups.md 5.7 step 2), stops it at the limit, then finishes the hand-over. A landed outcome
+// is in the record before the adopt, so the group moves with the item landed.
+func (s *groupsService) drainLand(id, to, label string, gen uint64, run *laneRun) {
+	t := time.NewTimer(s.cfg.keys.MoveDrain)
+	defer t.Stop()
+	select {
+	case <-run.done:
+	case <-t.C:
+		s.mu.Lock()
+		run.stopping = true
+		s.mu.Unlock()
+		run.cancel()
+		<-run.done
+	case <-s.stop:
+		return // the next start clears moving and says why on the card
+	}
+	l, _, up := s.linkTo(s.cfg.catalog(), to)
+	if !up {
+		s.mu.Lock()
+		if g := s.groups[id]; g != nil && g.Moving != nil && g.Moving.Generation == gen {
+			g.Moving = nil
+			g.MoveFailed = fmt.Sprintf("the move to %s did not commit: %s went offline while the land finished", label, label)
+			s.saveLocked(g)
+		}
+		s.mu.Unlock()
+		s.kick(id)
+		return
+	}
+	if _, err := s.finishHandOver(id, to, label, gen, l); err != nil {
+		s.cfg.logf("groups: %s: move to %s: %v", id, label, err)
+	}
+}
+
+// finishHandOver runs the hand-over once the lane is drained: the last landing item goes back
+// to the front of the queue, a member start in flight finishes, then the adopt and the commit
+// (groups.md 5.7 steps 2 to 4).
+func (s *groupsService) finishHandOver(id, to, label string, gen uint64, l confirmLink) (api.GroupMoveResult, error) {
+	refuse := func(kind api.ErrorKind, f string, a ...any) (api.GroupMoveResult, error) {
+		return api.GroupMoveResult{}, control.Errorf(kind, f, a...)
+	}
+	cl := s.cfg.catalog()
+	s.mu.Lock()
+	g := s.groups[id]
+	if g == nil || g.Moving == nil || g.Moving.Generation != gen {
+		s.mu.Unlock()
+		return refuse(api.ErrorKindConflict, "group %s changed during the move", id)
+	}
+	if groups.Drain(g) {
+		s.saveLocked(g)
+	}
 	s.mu.Unlock()
 
 	// A member start in flight finishes first, so its outcome moves with the record.
@@ -273,7 +346,7 @@ func (s *groupsService) handOver(id, to string) (api.GroupMoveResult, error) {
 	rec := s.portable(cl, *g)
 	s.mu.Unlock()
 	actx, cancel := context.WithTimeout(s.base, s.cfg.keys.MoveAnswer)
-	err = l.Caller.Call(actx, "group.adopt", api.GroupAdoptParams{Record: rec, Generation: gen}, &api.Empty{})
+	err := l.Caller.Call(actx, "group.adopt", api.GroupAdoptParams{Record: rec, Generation: gen}, &api.Empty{})
 	cancel()
 
 	s.mu.Lock()
@@ -315,9 +388,56 @@ func (s *groupsService) handOver(id, to string) (api.GroupMoveResult, error) {
 	delete(s.groups, id)
 	s.tombs[id] = g
 	title := g.Title
+	s.dropLaneLocked(cl, *g)
 	s.mu.Unlock()
 	s.sendCommit(id, to, gen, &final)
 	return api.GroupMoveResult{State: "moved", Home: to, Text: fmt.Sprintf("group %s moved home to %s", title, label)}, nil
+}
+
+// dropLaneLocked removes this hab's lane worktree of a group that moved away (groups.md 5.7),
+// unless another group here, live or waiting to commit, lands in the same repository. The
+// removal runs off the lock under the repository's lane lock; a failure is logged and never
+// undoes the move. The caller holds s.mu.
+func (s *groupsService) dropLaneLocked(cl api.CatalogList, g api.Group) {
+	if s.cfg.laneDir == "" {
+		return
+	}
+	proj, ok := project(cl, g.Plan.Project)
+	if !ok {
+		return
+	}
+	key, src, dir := s.laneRepo(proj)
+	if src == "" {
+		return
+	}
+	uses := func(o api.Group) bool {
+		p, ok := project(cl, o.Plan.Project)
+		if !ok {
+			return o.Plan.Project == g.Plan.Project
+		}
+		k, _, _ := s.laneRepo(p)
+		return k == key
+	}
+	for oid, o := range s.groups {
+		if oid != g.ID && groups.Live(*o) && uses(*o) {
+			return
+		}
+	}
+	for _, o := range s.pending {
+		if o != nil && uses(*o) {
+			return
+		}
+	}
+	s.bgLocked(func() {
+		lk := s.repoLock(key)
+		lk.Lock()
+		defer lk.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := lane.Remove(ctx, s.cfg.laneGit, src, dir); err != nil {
+			s.cfg.logf("groups: %s: the lane worktree %s stays after the move: %v", g.ID, dir, err)
+		}
+	})
 }
 
 // portable is the record as it goes to the new home: each member names its hab's device, so
