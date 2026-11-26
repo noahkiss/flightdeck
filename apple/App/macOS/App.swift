@@ -22,6 +22,13 @@ struct FlightdeckApp: App {
     /// The needs-you menu bar extra shows (app.md 3.17).
     @AppStorage(MenuBarSetting.key) private var menuBarShown = true
 
+    /// The menu bar extra writes its binding back on every update, even with the same value. A
+    /// write to `@AppStorage` invalidates the App, which updates the extra again: the main
+    /// thread spins and no task on the main actor runs. Only a real change is written.
+    private var menuBarInserted: Binding<Bool> {
+        Binding(get: { menuBarShown }, set: { if $0 != menuBarShown { menuBarShown = $0 } })
+    }
+
     var body: some Scene {
         WindowGroup(id: FlightdeckScene.board) {
             FlightdeckRoot(fleet: fleet)
@@ -55,7 +62,7 @@ struct FlightdeckApp: App {
             FlightdeckSettings(fleet: fleet) { QuickEntrySettings() }
         }
         // Needs you in the menu bar (app.md 3.17); Settings turns it off.
-        MenuBarExtra(isInserted: $menuBarShown) {
+        MenuBarExtra(isInserted: menuBarInserted) {
             NeedsYouMenu(fleet: fleet, askCapcom: { quickEntry.show() })
         } label: {
             NeedsYouMenuBarLabel(board: fleet.board)
