@@ -392,7 +392,7 @@
     },
     {
       "name": "devices.pair",
-      "summary": "Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.",
+      "summary": "Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).",
       "paramStructure": "by-name",
       "params": [
         {
@@ -430,12 +430,12 @@
     },
     {
       "name": "devices.revoke",
-      "summary": "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.",
+      "summary": "Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "id",
-          "description": "Device id to revoke.",
+          "description": "Device id to revoke, or its label when one device has it.",
           "required": true,
           "schema": {
             "type": "string"
@@ -1721,7 +1721,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/CatalogPutParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "catalog.list",
@@ -2366,7 +2367,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/MailPushParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "mail.pull",
@@ -2392,7 +2394,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/MailPullParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "logbook.pull",
@@ -2445,7 +2448,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/LogbookPullParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "logbook.push",
@@ -2473,7 +2477,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/LogbookPushParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "worktree.list",
@@ -4995,7 +5000,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupMessageParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.sync",
@@ -5041,7 +5047,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupSyncParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.move",
@@ -5118,7 +5125,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupAdoptParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.adopt_commit",
@@ -5156,7 +5164,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupAdoptCommitParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "group.tell",
@@ -5195,7 +5204,8 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/GroupTellParams"
-      }
+      },
+      "x-peer-only": true
     },
     {
       "name": "diag.friction",
@@ -5341,7 +5351,7 @@
     },
     {
       "type": "pane.activity",
-      "summary": "A client sent input; at most once per second per client (spec 7.1).",
+      "summary": "A client sent input to the pane; at most once per second per client and pane; the id is the pane id (spec 7.1). Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/PaneActivity"
       }
@@ -5376,7 +5386,7 @@
     },
     {
       "type": "session.turn_end",
-      "summary": "The agent's turn ended; the id is the session id. Ephemeral.",
+      "summary": "The agent's turn ended: its state left working or blocked for done or error; the id is the session id (spec 3.9). Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/TurnEnd"
       }
@@ -9566,6 +9576,7 @@
         "x-known-values": [
           "hab",
           "phone",
+          "tablet",
           "desktop",
           "gff"
         ]
@@ -9651,7 +9662,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Device id to revoke."
+            "description": "Device id to revoke, or its label when one device has it."
           }
         },
         "required": [
@@ -13426,7 +13437,12 @@
         "type": "object",
         "properties": {
           "client": {
-            "type": "string"
+            "type": "string",
+            "description": "The id of the client that sent input."
+          },
+          "label": {
+            "type": "string",
+            "description": "That client's label: the hello's label, else its client name."
           }
         },
         "required": [

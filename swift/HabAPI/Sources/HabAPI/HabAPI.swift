@@ -3697,6 +3697,7 @@ public struct DeviceKind: RawRepresentable, Codable, Sendable, Hashable {
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let hab = DeviceKind(rawValue: "hab")
     public static let phone = DeviceKind(rawValue: "phone")
+    public static let tablet = DeviceKind(rawValue: "tablet")
     public static let desktop = DeviceKind(rawValue: "desktop")
     public static let gff = DeviceKind(rawValue: "gff")
 }
@@ -3776,7 +3777,7 @@ public struct DevicesPairParams: Codable, Sendable, Hashable {
 }
 
 public struct DevicesRevokeParams: Codable, Sendable, Hashable {
-    /// Device id to revoke.
+    /// Device id to revoke, or its label when one device has it.
     public var id: String
 
     enum CodingKeys: String, CodingKey {
@@ -7268,14 +7269,19 @@ public struct Pane: Codable, Sendable, Hashable {
 }
 
 public struct PaneActivity: Codable, Sendable, Hashable {
+    /// The id of the client that sent input.
     public var client: String
+    /// That client's label: the hello's label, else its client name.
+    public var label: String?
 
     enum CodingKeys: String, CodingKey {
         case client = "client"
+        case label = "label"
     }
 
-    public init(client: String) {
+    public init(client: String, label: String? = nil) {
         self.client = client
+        self.label = label
     }
 }
 
@@ -10994,11 +11000,11 @@ public enum HabMethods {
     public static let paneSetDesiredSize = HabMethod<DesiredSizeParams, DesiredSizeResult>(name: "pane.set_desired_size")
     /// Send a fresh snapshot, or nudge the program to redraw (spec 6.7).
     public static let paneRedraw = HabMethod<RedrawParams, Empty>(name: "pane.redraw")
-    /// Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.
+    /// Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).
     public static let devicesPair = HabMethod<DevicesPairParams, PairingOffer>(name: "devices.pair")
     /// List the devices in the hab's trust store (transport.md 5). Needs the devices capability.
     public static let devicesList = HabMethod<DevicesListParams, DeviceList>(name: "devices.list")
-    /// Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.
+    /// Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
     public static let devicesRevoke = HabMethod<DevicesRevokeParams, Empty>(name: "devices.revoke")
     /// Start a program in a new pane and file it as a session (spec 3.9).
     public static let sessionCreate = HabMethod<SessionCreateParams, SessionCreated>(name: "session.create")
@@ -11064,8 +11070,6 @@ public enum HabMethods {
     public static let peersAccept = HabMethod<PeersAcceptParams, PeerAccepted>(name: "peers.accept")
     /// This hab's own catalog, whole, when its generation differs from since (mesh.md 5.2). Needs the catalog capability.
     public static let catalogGet = HabMethod<CatalogGetParams, CatalogGetResult>(name: "catalog.get")
-    /// A peer link hands over its own hab's catalog (mesh.md 4.2). Needs the catalog capability.
-    public static let catalogPut = HabMethod<CatalogPutParams, Empty>(name: "catalog.put")
     /// The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.
     public static let catalogList = HabMethod<CatalogListParams, CatalogList>(name: "catalog.list")
     /// Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
@@ -11098,14 +11102,6 @@ public enum HabMethods {
     public static let channelStatus = HabMethod<ChannelStatusParams, ChannelStatusResult>(name: "channel.status")
     /// Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.
     public static let channelWait = HabMethod<ChannelWaitParams, ChannelWaitResult>(name: "channel.wait")
-    /// A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.
-    public static let mailPush = HabMethod<MailPushParams, MailPushResult>(name: "mail.push")
-    /// A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.
-    public static let mailPull = HabMethod<MailPullParams, MailPullResult>(name: "mail.pull")
-    /// A peer link takes one page of the Logbook ops its hab lacks by its version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.
-    public static let logbookPull = HabMethod<LogbookPullParams, LogbookPullResult>(name: "logbook.pull")
-    /// A peer link hands over one page of Logbook ops this hab lacks; the answer is this hab's version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.
-    public static let logbookPush = HabMethod<LogbookPushParams, LogbookPushResult>(name: "logbook.push")
     /// List a repository's working trees, the main one first (spec 3.10).
     public static let worktreeList = HabMethod<WorktreeListParams, WorktreeList>(name: "worktree.list")
     /// Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).
@@ -11240,18 +11236,8 @@ public enum HabMethods {
     public static let laneSubmit = HabMethod<LaneSubmitParams, LaneSubmitted>(name: "lane.submit")
     /// A reviewer's verdict on the submitted head (groups.md 6.3, 6.4): from the item's reviewer only. fix_needed moves the item to fix and sends the findings to the lead; pass makes it ready. More than [groups] max_findings findings, or a low one, are refused. Needs the groups capability.
     public static let reviewVerdict = HabMethod<ReviewVerdictParams, ReviewVerdictTaken>(name: "review.verdict")
-    /// The home hab's note from Flightdeck into a member on this hab (groups.md 6.2, 6.3). Peer link only, from the group's home hab. Needs the groups capability.
-    public static let groupMessage = HabMethod<GroupMessageParams, Empty>(name: "group.message")
-    /// A group's home hab hands its envelope and pause to a member's hab over a peer link (groups.md 3.3, 5.6): the hab replaces the envelope of that group's members on it and holds or lets through messages and starts at once. A revision below one already taken changes nothing. Needs the groups capability.
-    public static let groupSync = HabMethod<GroupSyncParams, Empty>(name: "group.sync")
     /// The user's move of a group's home hab (groups.md 5.7): the current home hands the record over to the new one. A hab that is not the home passes the call on; the target hab queues it while the home is offline. From a pane route: denied. Needs the groups capability.
     public static let groupMove = HabMethod<GroupMoveParams, GroupMoveResult>(name: "group.move")
-    /// The current home hands a group's record to the new home, which keeps it pending (groups.md 5.7 step 3). Peer links only. Needs the groups capability.
-    public static let groupAdopt = HabMethod<GroupAdoptParams, Empty>(name: "group.adopt")
-    /// The old home wrote its tombstone: the new home clears pending and runs the group (groups.md 5.7 step 4). Peer links only. Needs the groups capability.
-    public static let groupAdoptCommit = HabMethod<GroupAdoptCommitParams, Empty>(name: "group.adopt_commit")
-    /// A moved group's home hands a report to its coordinator on the hab that takes the call: a note from Flightdeck while the coordinator runs, else conflict, and the report waits in the record's inbox (groups.md 5.5, 5.7). Peer links only. Needs the groups capability.
-    public static let groupTell = HabMethod<GroupTellParams, Empty>(name: "group.tell")
     /// Store a friction note: the user's own text, the session, and a tail of this hab's merged logs (diagnostics.md 9). The text never enters a log line. Not over a peer link. Needs the friction capability.
     public static let diagFriction = HabMethod<FrictionParams, FrictionNoted>(name: "diag.friction")
     /// Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.
@@ -11280,7 +11266,7 @@ public enum HabEvent: Sendable, Hashable {
     case paneDeleted(Deleted)
     /// The pane's size owner changed (spec 6.5).
     case paneOwner(PaneOwner)
-    /// A client sent input; at most once per second per client (spec 7.1).
+    /// A client sent input to the pane; at most once per second per client and pane; the id is the pane id (spec 7.1). Ephemeral.
     case paneActivity(PaneActivity)
     /// A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.
     case agentState(AgentState)
@@ -11290,7 +11276,7 @@ public enum HabEvent: Sendable, Hashable {
     case paneOutput(PaneOutput)
     /// A chat message was appended or changed; the id is the message id. Ephemeral.
     case chatMessage(ChatMessage)
-    /// The agent's turn ended; the id is the session id. Ephemeral.
+    /// The agent's turn ended: its state left working or blocked for done or error; the id is the session id (spec 3.9). Ephemeral.
     case sessionTurnEnd(TurnEnd)
     /// A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.
     case agentCompact(Compaction)

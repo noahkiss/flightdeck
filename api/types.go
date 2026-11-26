@@ -268,7 +268,8 @@ type PaneOwner struct {
 }
 
 type PaneActivity struct {
-	Client string `json:"client"`
+	Client string `json:"client" doc:"The id of the client that sent input."`
+	Label  string `json:"label,omitempty" doc:"That client's label: the hello's label, else its client name."`
 }
 
 type Heartbeat struct {
@@ -373,7 +374,7 @@ type DeviceList struct {
 }
 
 type DevicesRevokeParams struct {
-	ID string `json:"id" doc:"Device id to revoke."`
+	ID string `json:"id" doc:"Device id to revoke, or its label when one device has it."`
 }
 
 // --- Peers (mesh.md 3, 4.3) ---

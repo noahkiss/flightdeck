@@ -164,6 +164,7 @@ const (
 const (
 	DeviceKindHab     DeviceKind = "hab"
 	DeviceKindPhone   DeviceKind = "phone"
+	DeviceKindTablet  DeviceKind = "tablet"
 	DeviceKindDesktop DeviceKind = "desktop"
 	DeviceKindGff     DeviceKind = "gff"
 )
@@ -748,7 +749,7 @@ func (c Client) PaneRedraw(ctx context.Context, params RedrawParams) (Empty, err
 	return result, err
 }
 
-// DevicesPair calls devices.pair. Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.
+// DevicesPair calls devices.pair. Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).
 func (c Client) DevicesPair(ctx context.Context, params DevicesPairParams) (PairingOffer, error) {
 	var result PairingOffer
 	err := c.Caller.Call(ctx, "devices.pair", params, &result)
@@ -762,7 +763,7 @@ func (c Client) DevicesList(ctx context.Context, params DevicesListParams) (Devi
 	return result, err
 }
 
-// DevicesRevoke calls devices.revoke. Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.
+// DevicesRevoke calls devices.revoke. Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
 func (c Client) DevicesRevoke(ctx context.Context, params DevicesRevokeParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "devices.revoke", params, &result)

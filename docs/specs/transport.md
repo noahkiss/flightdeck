@@ -402,8 +402,8 @@ Why the answer carries the sshd host keys: the system sshd's host key is not the
 phone learns it over the pairing channel, which the code pinned, so it never trusts a host key on
 first sight.
 
-The Mac app's "Pair a device" (`devices.pair` over a paired connection) is not built yet; the
-method answers `unavailable`. It will open the same window in the running gff-hab.
+Pairing over the API (the Mac app's "Pair a device", with `devices.pair`): not built; proposed
+separately. The method answers `unavailable`.
 
 #### 6.1.1 The code
 
@@ -535,7 +535,10 @@ The key lands in two places:
 `gff-hab devices list` prints the list. `gff-hab devices revoke <id|label>` removes the device's
 line from `authorized_keys` (other lines byte for byte) and keeps the record as a revoked tombstone.
 Over the system sshd a revoke stops new logins; a session already open runs until it drops. The
-fan-out to peers (6.6) and the `devices.*` API methods come with the embedded server.
+device's push registration is kept. The hab and the CLI may write the list at once: each write
+replaces the file only when it still holds what the writer read, else it reads again (three
+tries). The fan-out to peers (6.6) comes with the embedded server. The `devices.*` API methods do the same
+list and revoke for a client (6.1.7).
 
 #### 6.1.5 The terminal
 
@@ -590,6 +593,20 @@ afterwards names the user and key); no retry when the file changes during the ap
 
 Decision: settled for the first build (owner decisions 2026-11-02). The subsystem, not
 keyboard-interactive, because the app's SSH library has no keyboard-interactive client.
+
+#### 6.1.7 The device list over the API (`devices.*`)
+
+`devices.list` returns the device records. `devices.revoke {id}` takes an id, an id prefix of at
+least 6 characters, or a label, as `gff-hab devices revoke` does: it removes the key line and keeps
+the record as a tombstone. A session already open over the system sshd runs until it drops: the
+hab cannot tell which connection used which key. The device's push registration is kept.
+
+| Rule | Value |
+|---|---|
+| Peer links | Every `devices.*` method is `denied`: a peer changes no trust store on another hab (6.2) |
+| Agents | The pane route does not take `devices.*`. `gff-hab api call devices.revoke` and `gff-hab devices revoke` refuse to run inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
+
+Pairing over the API (`devices.pair`): not built; proposed separately.
 
 ### 6.2 The phone and the other habs
 
@@ -819,8 +836,8 @@ Section 4 is updated. The Part 2 stage that built the handshake added the sectio
 - **4.2 SSH stdio:** the client pins the welcome's `device_id` (done).
 - **4.3:** now the embedded gff-hab SSH server; WebSocket only as a later carrier (done).
 - **3.2 Handshake:** the welcome carries `device_id`, the hab's host-key fingerprint (done).
-- **3.1 Protocol:** add a `devices.*` method group (done for `devices.pair`, `devices.list` and
-  `devices.revoke`, which answer `unavailable` until pairing is built; rename and rotate are
-  pending). Pairing is `devices.pair`, not `hab.pair`.
-- **3.4 Capabilities:** add a capability string that says the embedded SSH server is on (done:
-  `devices`).
+- **3.1 Protocol:** add a `devices.*` method group (done: `devices.list` and `devices.revoke`,
+  6.1.7; `devices.pair` answers `unavailable` until pairing over the API is built; rename and
+  rotate are pending). Pairing is `devices.pair`, not `hab.pair`.
+- **3.4 Capabilities:** `devices` says `devices.list` and `devices.revoke` work (done). A word that says the
+  embedded SSH server is on comes with that server.

@@ -550,9 +550,10 @@ Decision: proposed (this stage). Calls and the event: 3.9.
 - Method names are grouped by prefix: `hab.*`, `structure.*`, `pane.*`, `session.*`, `project.*`,
   `data.*`, `events.*`, `devices.*`, `peers.*`, `approval.*`, `chat.*`, `attachment.*`, `push.*`, `usage.*`,
   `rpc.discover`. The calls the clients need are listed in 3.9.
-- `devices.pair`, `devices.list` and `devices.revoke` manage the hab's trust store
-  (`transport.md` 5, 6). They need the `devices` capability. Until pairing is built they answer
-  `unavailable`. Rename and rotate (`transport.md` 6.5) are added the same way when they are built.
+- `devices.list` and `devices.revoke` manage the hab's trust store (`transport.md` 5, 6.1.7).
+  They need the `devices` capability, and a peer link is refused both. `devices.pair` is not
+  built and answers `unavailable`; pairing over the API is proposed separately. Rename and rotate
+  (`transport.md` 6.5) are added the same way when they are built.
 
 Decision: proposed.
 
@@ -657,8 +658,8 @@ a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.update
 `channel.message` work, and that the hab sends `mesh.changed` to a peer link when mail waits for
 its dialer (`mesh.md` 6.5). `mesh.changed` is the one event a connection gets without
 `events.subscribe`: it goes only to a peer link, from the hab that link dialed.
-`devices` means the embedded SSH
-server is on and the `devices.*` methods work. `push` means the hab has working push config;
+`devices` means `devices.list` and `devices.revoke` work (`transport.md` 6.1.7). It does not
+mean the embedded SSH server is on; that server is not built (4.3). `devices.pair` is not built. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). `settings` means the hab-side settings work:
 `settings.get`, `settings.set`, `settings.updated`, and `settings` in a `host` snapshot
 (`app.md` 20.5). `read-tools` means `transcript.list`, `transcript.search`, `transcript.read`,
@@ -679,7 +680,7 @@ survives a restart (`diagnostics.md` 4.5).
 `api.Capabilities` lists every word a hab sends, so the schema's `x-capabilities` and the
 generated clients name them all. A test reads the words `gff-hab serve` and the control server
 put in the welcome. It fails on a word the table lacks, and on a table word no hab sends.
-`devices` and `snapshot-ghostty` are the two table words no hab sends yet. A word a client
+`snapshot-ghostty` is the one table word no hab sends yet. A word a client
 checks before any hab sends it, such as `modules` (`modules.md` 6.6), joins the table with the
 hab code that sends it.
 A client checks for a capability before it uses the feature. Capabilities are
@@ -867,6 +868,22 @@ tools (`capcom-service.md` 8). They stay outside the table on purpose:
 The tallies count them by name all the same (`diagnostics.md` 7.1). A route-only method that
 the control socket starts to answer moves into the table.
 
+**Peer-link methods.** Ten methods in the table are calls one hab makes to another over a peer
+link: `catalog.put` (`mesh.md` 4.2), `mail.push` and `mail.pull` (`mesh.md` 6.5), `logbook.pull`
+and `logbook.push` (`logbook.md` 7.1), and `group.message`, `group.sync`, `group.adopt`,
+`group.adopt_commit` and `group.tell` (`groups.md` 5.6, 5.7, 6.2). They are off the client
+surface:
+
+- **The hab refuses them from a client.** A connection that is not a peer link (`client.kind`
+  `hab` with the hello's `peer` field) gets `denied` for each, before the method's own checks.
+  This tidies the client surface; it authenticates nothing. The `peer` field is what the caller
+  says, and nothing binds it to the peer's key until the transport does (`mesh.md` 4).
+- **The schema marks them.** Each carries `"x-peer-only": true`, and `api.PeerMethods` lists
+  them. The Swift package leaves them out. The Go client keeps them, because the peer code calls
+  them through it.
+- **They keep their wire names.** Habs update one at a time, so a rename would break the link
+  between an updated hab and one that is not.
+
 | Method | Purpose | Built |
 |---|---|---|
 | `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |
@@ -911,13 +928,15 @@ the control socket starts to answer moves into the table.
 | `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes |
 | `capcom.open`, `capcom.assign` | Return or start the standing Capcom session; make a host the Capcom home host (capability `capcom`; `capcom.md` 7, 8.3) | Yes |
 | `capcom.attach`, `capcom.detach`, `capcom.pending`, `capcom.open`'s `context` | Attach a notification, session, file, console command or Logbook record to a Capcom session's next message, remove one, or read what waits (read-only); the next `session.send` delivers it as blocks before the user's text, or alone when the send has no text (capability `capcom`; `capcom.md` 8.1, 8.4) | Yes |
+| `devices.list`, `devices.revoke` | List the trust store; revoke a device (capability `devices`; `transport.md` 6.1.7) | Yes |
+| `devices.pair` | Pairing over the API: not built, proposed separately; answers `unavailable` | No |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
 | `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Yes |
 | `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Yes |
 | `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 (built for Claude Code) |
-| `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
+| `session.turn_end` | The agent's turn ended; names the final message | Session | Yes |
 | `usage.updated` | An account's usage reading changed | Account key | Yes |
 | `command.updated` | A pane's command started or ended (2.5) | Pane | Yes |
 | `notice.raised` | A notice was raised (`notice.raise`) | Notice | Yes |
@@ -929,6 +948,20 @@ either; an update repeats the message id and replaces the message. A scoped subs
 `chat.message` when the message's `session` is in its scope.
 
 Built: gff-hab sends no `revision` key on these events.
+
+**`session.turn_end`.** A turn ends when a pane's agent state leaves `working` or `blocked` for
+`done` or `error`. `idle` ends no turn, because Codex reports `idle` at its start
+(`harness-adapters.md`, Codex); `exited` forgets the turn, and a second `done` sends nothing. The
+event's id is the Flightdeck session of the pane; a pane with no session sends nothing.
+`final_message` is the id of the last top-level agent text after the last user message. Only
+a text that nothing but its own children follows (its subagent's messages) counts at once. When
+more of the turn follows it, such as a tool call, the final text may not be in the transcript
+yet: the hab reads again, and sends that earlier text only when the read time is up. The hab
+reads it from the newest page of a chat reader that a client's `chat.page` already opened; it
+opens no reader of its own, because an open reader polls its file and sends `chat.message`.
+With no reader open, the event goes at once without `final_message`. The transcript may trail
+the state, so the hab reads again every 200 ms for up to 3 s, then sends the event without it.
+The read never runs on the state store's lock. A scoped subscription gets the event when the session is in its scope.
 
 New capabilities: `push` (the hab has working push config, `app.md` 8.4), `host-stats`,
 `commands` (the `command.*` methods and the `command.updated` event work; a hab with the holder
@@ -1342,7 +1375,8 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   fixed: "Open to answer." and "The agent stopped on an error."
 - **Not built here.** Push-to-start of a Live Activity, actions on question banners (answering
   a question through `approval.answer` is not built), "push broken" in a status the app can
-  read, and dropping tokens when a device is revoked (the `devices` methods are not built).
+  read, and dropping push tokens when a device is revoked (`devices.revoke` removes the key line
+  and keeps the push registration).
 
 **`pane.close` on a running pane.** gff-hab asks the pane's holder to release it. The holder
 hangs up the pane's session (SIGHUP) and closes the terminal; it keeps the child's waiter, so
@@ -2210,8 +2244,7 @@ holder link off, a data hello gets a reject frame (`unavailable`).
   channels on one SSH connection, as in option A. It serves the API subsystems only.
 - It sets its own channel limit, so one connection carries one channel per visible pane.
 - Built so far: only the pairing window of `gff-hab pair` (`transport.md` 6.1), a separate
-  short-lived listener that serves the `flightdeck-pair` subsystem and nothing else. The
-  `devices.*` methods still answer `unavailable`.
+  short-lived listener that serves the `flightdeck-pair` subsystem and nothing else.
 - The transport reports the authenticated device id to gff-hab, so events and input record who
   sent them. Data tickets are bound to that device.
 - WebSocket stays possible only as a later carrier for a client that cannot speak SSH. If it comes,
@@ -2534,7 +2567,7 @@ data streams in `cmd/gff-hab/data.go`:
   the same, then resizes the PTY one column narrower (one wider at 1 column) and back after
   100 ms; a size wanted meanwhile is applied in place of the way back. A nudge goes through the
   same throttle as the owner's sizes. Neither writes to the program's input.
-- **Not built here:** `pane.activity` (7.1), focus reports from the owner only (5.6), the
+- **Not built here:** focus reports from the owner only (5.6), the
   owner's display facts for colour answers (5.8), and the nudge after a crash rebuild (6.7).
   The nudge after a crash rebuild is the first follow-up.
 - **Not saved.** An owner change raises the pane's revision in memory and never writes the
@@ -2550,8 +2583,13 @@ data streams in `cmd/gff-hab/data.go`:
 - Both clients' input reaches the program, in the order gff-hab receives it. A single input call
   is never split.
 - There is no input lock. Ownership follows 6.2; the debounce stops size flapping.
-- Every input emits a throttled `pane.activity {client}` event (at most once per second per client),
-  so each client can show who else is typing.
+- Every input emits a throttled `pane.activity {client, label}` event (at most once per second per
+  client and pane), so each client can show who else is typing. The id is the pane; the event is
+  ephemeral and goes where the pane goes. `label` is the client's hello label, else its client
+  name. A client ignores its own client id.
+- Built: `pane.input` is the input that counts, once its write reached the pane; input that
+  fails sends nothing. `session.send` and `pane.type` do not send it:
+  the agent state and the chat show those.
 - Bracketed paste markers come from the client that pastes. gff-hab does not add or remove them.
 
 ### 7.2 A phone that drops for ten minutes

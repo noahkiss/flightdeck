@@ -57,6 +57,15 @@ final class GoldenTests: XCTestCase {
         func result<P: Codable & Sendable, R: Codable & Sendable>(_ m: HabMethod<P, R>) {
             add("result." + m.name, R.self)
         }
+        // The peer-link methods are not in HabMethods (hab-logic-api.md 3.9), but their result
+        // types are, and must still read every golden.
+        for name in ["catalog.put", "group.message", "group.sync", "group.adopt", "group.adopt_commit", "group.tell"] {
+            add("result." + name, Empty.self)
+        }
+        add("result.mail.push", MailPushResult.self)
+        add("result.mail.pull", MailPullResult.self)
+        add("result.logbook.pull", LogbookPullResult.self)
+        add("result.logbook.push", LogbookPushResult.self)
         result(HabMethods.habHello)
         result(HabMethods.habPing)
         result(HabMethods.structureGet)
@@ -103,7 +112,6 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.peersList)
         result(HabMethods.peersAccept)
         result(HabMethods.catalogGet)
-        result(HabMethods.catalogPut)
         result(HabMethods.catalogList)
         result(HabMethods.worktreeList)
         result(HabMethods.worktreeCreate)
@@ -135,10 +143,6 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.channelSend)
         result(HabMethods.channelStatus)
         result(HabMethods.channelWait)
-        result(HabMethods.mailPush)
-        result(HabMethods.mailPull)
-        result(HabMethods.logbookPull)
-        result(HabMethods.logbookPush)
         result(HabMethods.speechPrepare)
         result(HabMethods.speechTranscribe)
         result(HabMethods.transcriptList)
@@ -189,12 +193,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.memberAction)
         result(HabMethods.laneSubmit)
         result(HabMethods.reviewVerdict)
-        result(HabMethods.groupMessage)
-        result(HabMethods.groupSync)
         result(HabMethods.groupMove)
-        result(HabMethods.groupAdopt)
-        result(HabMethods.groupAdoptCommit)
-        result(HabMethods.groupTell)
         result(HabMethods.flightrulesList)
         result(HabMethods.flightrulesText)
         result(HabMethods.diagFriction)

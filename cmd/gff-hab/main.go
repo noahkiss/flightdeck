@@ -285,7 +285,7 @@ func main() {
 	case "pair":
 		err = pairCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "devices":
-		err = devicesCmd(os.Args[2:], os.Stdout)
+		err = devicesCmd(os.Args[2:], os.Stdout, os.Getenv)
 	case "notify":
 		err = notifyCmd(os.Args[2:])
 	case "show":
@@ -555,6 +555,7 @@ func serve(args []string) error {
 	// Teammates report their turns to their spawner (teammates.go): it follows agent states.
 	mates := openTeammates(dir, logger.Printf)
 	defer mates.Close()
+	var turnsRef atomic.Pointer[turnEnds] // session.turn_end (turnend.go), set once the store is open
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
@@ -647,6 +648,9 @@ func serve(args []string) error {
 			if st, ok := e.Data.(api.AgentState); ok {
 				resumes.agent(st)    // never blocks
 				mates.agentState(st) // never blocks
+				if t := turnsRef.Load(); t != nil {
+					t.agentState(st) // never blocks
+				}
 			}
 			if e.Type == api.EventAgentState {
 				pokeCatalog() // pokes channels too
@@ -1534,6 +1538,24 @@ func serve(args []string) error {
 		defer repairStop()
 		finishSwaps(repairCtx, store, swapsToFinish, chSvc.Move, chSvc.Unhold, closePane, logger.Printf)
 	}
+	// session.turn_end: the final message comes from the newest page of a chat reader a client
+	// already opened; the event opens no reader of its own.
+	var readTail func(context.Context, string) ([]api.ChatMessage, error)
+	if chats != nil {
+		readTail = func(ctx context.Context, session string) ([]api.ChatMessage, error) {
+			return chats.openTail(ctx, session, 20)
+		}
+	}
+	turns := newTurnEnds(func(pane string) (string, bool) {
+		ss, ok := store.SessionByPane(pane)
+		return ss.ID, ok
+	}, readTail, func(e structure.Event) {
+		if s := srv.Load(); s != nil {
+			s.Publish(e)
+		}
+	})
+	defer turns.Close()
+	turnsRef.Store(turns)
 	mates.agent = agents.Get
 	mates.name = func(id string) (string, bool) {
 		ss, ok := store.Session(id)
@@ -1930,6 +1952,9 @@ func serve(args []string) error {
 	if input != nil {
 		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
+	// devices.list and devices.revoke (transport.md 5, 6.6) read the device list in the state folder.
+	devicesCtl := newDeviceService(dir, logger.Printf)
+	caps = append(caps, "devices")
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	s := control.New(control.Config{
 		Epoch:    epoch,
@@ -1987,6 +2012,7 @@ func serve(args []string) error {
 		FlightRules:  flightRules,
 		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
 		Debug:        debugSw,
+		Devices:      devicesCtl,
 		Tally:        controlTally(tl),
 	})
 	srv.Store(s)
@@ -2387,6 +2413,16 @@ func printJSON(v any) error {
 	return err
 }
 
+// ownerCall reports whether a method is the owner's own answer or trust decision, which
+// `gff-hab api call` refuses to send from an agent's pane.
+func ownerCall(method string) bool {
+	switch method {
+	case "confirm.answer", "trust.answer", "devices.revoke":
+		return true
+	}
+	return false
+}
+
 // apiCall says hello, sends one request and prints its result as one JSON line. Calling
 // hab.hello prints the welcome.
 func apiCall(args []string) error {
@@ -2399,8 +2435,9 @@ func apiCall(args []string) error {
 		return errors.New("api call needs a method and optional JSON params")
 	}
 	method := fs.Arg(0)
-	if (method == "confirm.answer" || method == "trust.answer") && os.Getenv(hook.Env) != "" {
-		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10).
+	if ownerCall(method) && os.Getenv(hook.Env) != "" {
+		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10;
+		// transport.md 6.6).
 		return fmt.Errorf("%s is the owner's answer; it does not run in an agent's pane", method)
 	}
 	var params any = struct{}{}

@@ -485,8 +485,9 @@ func TestPutRules(t *testing.T) {
 		var ce *control.Error
 		return errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindInvalid
 	}
-	if err := put(dial(nil), "SHA256:x"); !isInvalid(err) {
-		t.Fatalf("put with no peer field: %v", err)
+	var ce *control.Error
+	if err := put(dial(nil), "SHA256:x"); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindDenied {
+		t.Fatalf("put with no peer field: %v", err) // a peer-link method (hab-logic-api.md 3.9)
 	}
 	link := dial(&api.PeerHello{DeviceID: "SHA256:x", Host: "x"})
 	if err := put(link, "SHA256:y"); !isInvalid(err) {

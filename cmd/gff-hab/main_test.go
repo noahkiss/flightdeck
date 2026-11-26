@@ -303,14 +303,14 @@ func TestAPICallErrors(t *testing.T) {
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	startServe(t, sock, filepath.Join(d, "state"))
-	cmd := exec.Command(bin, "api", "call", "-socket", sock, "devices.list")
+	cmd := exec.Command(bin, "api", "call", "-socket", sock, "devices.revoke", `{"id":"no-such-device"}`)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 3 {
 		t.Fatalf("exit %v", err)
 	}
-	if !strings.Contains(stderr.String(), "unavailable") {
+	if !strings.Contains(stderr.String(), "not_found") {
 		t.Fatalf("stderr %q", stderr.String())
 	}
 }

@@ -89,6 +89,27 @@ type chatReader struct {
 	grew    time.Time  // when size last changed, or when the reader was made
 }
 
+// errNoOpenReader: no client reads the session's chat, so no reader is open.
+var errNoOpenReader = errors.New("no chat reader is open for the session")
+
+// openTail returns the newest page of a session's chat from a reader a client already opened,
+// with no transcript read of its own: it opens no reader and keeps none open longer. With
+// none open it answers errNoOpenReader.
+func (c *chatService) openTail(ctx context.Context, session string, limit int) ([]api.ChatMessage, error) {
+	c.mu.Lock()
+	cr := c.readers[session]
+	var r chatSource
+	if cr != nil {
+		r = cr.r
+	}
+	c.mu.Unlock()
+	if r == nil {
+		return nil, errNoOpenReader
+	}
+	msgs, _, _, err := r.Page(ctx, "", limit) // Page reads what was appended first
+	return msgs, err
+}
+
 func newChatService(cfg chatConfig) *chatService {
 	if cfg.logf == nil {
 		cfg.logf = func(string, ...any) {}

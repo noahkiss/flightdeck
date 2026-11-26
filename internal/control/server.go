@@ -232,6 +232,7 @@ type Config struct {
 	Groups       Groups      // nil: the group.* methods answer unavailable
 	FlightRules  FlightRules // nil: flightrules.list and flightrules.text answer unavailable
 	Friction     Friction    // nil: diag.friction answers unavailable
+	Devices      Devices     // nil: the devices.* methods answer unavailable
 	Debug        Debug       // nil: diag.debug answers unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
@@ -278,6 +279,45 @@ type Server struct {
 	wg        sync.WaitGroup
 
 	idemKeys idemTable // session.create and session.send keys (spec 3.9)
+
+	activityMu  sync.Mutex
+	activityAt  map[activityKey]time.Time // the last pane.activity per client and pane (spec 7.1)
+	activityNow func() time.Time          // the throttle's clock; nil: time.Now. Tests set it
+}
+
+// activityKey is one client's input to one pane.
+type activityKey struct{ client, pane string }
+
+// activityEvery is the most often one client's input to one pane sends pane.activity (spec 7.1).
+const activityEvery = time.Second
+
+// typedBy sends pane.activity for a client's input to a pane, at most once per activityEvery
+// per client and pane, so each client can show who else is typing (spec 7.1).
+func (s *Server) typedBy(client, label, pane string) {
+	s.activityMu.Lock()
+	now := time.Now()
+	if s.activityNow != nil {
+		now = s.activityNow()
+	}
+	if s.activityAt == nil {
+		s.activityAt = map[activityKey]time.Time{}
+	}
+	k := activityKey{client, pane}
+	if last, ok := s.activityAt[k]; ok && now.Sub(last) < activityEvery {
+		s.activityMu.Unlock()
+		return
+	}
+	s.activityAt[k] = now
+	if len(s.activityAt) > 256 {
+		// Forget the keys past their throttle, so the map stays as small as the typing.
+		for key, at := range s.activityAt {
+			if now.Sub(at) >= activityEvery {
+				delete(s.activityAt, key)
+			}
+		}
+	}
+	s.activityMu.Unlock()
+	s.Publish(structure.Event{Type: api.EventPaneActivity, ID: pane, Data: api.PaneActivity{Client: client, Label: label}})
 }
 
 type token struct {

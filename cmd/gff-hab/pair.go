@@ -24,6 +24,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/internal/devicestore"
 	"github.com/noahkiss/flightdeck/internal/habkey"
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/pairing"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
@@ -392,8 +393,9 @@ func sshdHostKeys(dir string) []string {
 	return out
 }
 
-// devicesCmd is `gff-hab devices list` and `gff-hab devices revoke <id|label>`.
-func devicesCmd(args []string, out io.Writer) error {
+// devicesCmd is `gff-hab devices list` and `gff-hab devices revoke <id|label>`. getenv reads
+// the environment (os.Getenv; tests pass their own).
+func devicesCmd(args []string, out io.Writer, getenv func(string) string) error {
 	if len(args) == 0 || (args[0] != "list" && args[0] != "revoke") {
 		return errors.New("usage: gff-hab devices list [-state dir] [-json], or gff-hab devices revoke [-state dir] <id|label>")
 	}
@@ -411,6 +413,11 @@ func devicesCmd(args []string, out io.Writer) error {
 		if fs.NArg() != 1 {
 			return errors.New("devices revoke needs one device id or label")
 		}
+		if getenv(hook.Env) != "" {
+			// The same cheap guard as gff-hab confirm answer and api call (transport.md 6.1.7):
+			// it keeps an agent from revoking by mistake; it is no security boundary.
+			return errors.New("devices revoke is the owner's call; it does not run in an agent's pane")
+		}
 		r, n, err := store.Revoke(fs.Arg(0), time.Now())
 		if err != nil {
 			return err
@@ -419,6 +426,7 @@ func devicesCmd(args []string, out io.Writer) error {
 		if r.AuthorizedKeys != "" {
 			fmt.Fprintf(out, "  removed %d line(s) from %s; a session already open runs until it drops\n", n, r.AuthorizedKeys)
 		}
+		fmt.Fprintln(out, "  its push registration is kept")
 		return nil
 	}
 	if fs.NArg() != 0 {

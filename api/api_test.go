@@ -618,15 +618,68 @@ func TestSwiftGoldensReadEveryResult(t *testing.T) {
 	for _, f := range files {
 		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "result."), ".json")
 		name, _, _ = strings.Cut(name, "@")
-		var b strings.Builder
-		for i, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '.' || r == '_' }) {
-			if i > 0 && part != "" {
-				part = strings.ToUpper(part[:1]) + part[1:]
+		want := "result(HabMethods." + swiftMethodName(name) + ")"
+		if PeerOnly(name) {
+			// The Swift package leaves peer-link methods out: its test must not name them.
+			if strings.Contains(string(src), want) {
+				t.Errorf("%s: GoldenTests.swift names the peer-link method %s", f, name)
 			}
-			b.WriteString(part)
+			continue
 		}
-		if want := "result(HabMethods." + b.String() + ")"; !strings.Contains(string(src), want) {
+		if !strings.Contains(string(src), want) {
 			t.Errorf("%s: GoldenTests.swift has no %s", f, want)
+		}
+	}
+}
+
+// swiftMethodName is a method's name in HabMethods: group.adopt_commit is groupAdoptCommit.
+func swiftMethodName(name string) string {
+	var b strings.Builder
+	for i, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '.' || r == '_' }) {
+		if i > 0 && part != "" {
+			part = strings.ToUpper(part[:1]) + part[1:]
+		}
+		b.WriteString(part)
+	}
+	return b.String()
+}
+
+// TestPeerMethodsAreMethods: every peer-link method is in the table and marked in the schema,
+// and the Swift package names none of them.
+func TestPeerMethodsAreMethods(t *testing.T) {
+	var doc struct {
+		Methods []struct {
+			Name     string `json:"name"`
+			PeerOnly bool   `json:"x-peer-only"`
+		} `json:"methods"`
+	}
+	if err := json.Unmarshal(SchemaJSON, &doc); err != nil {
+		t.Fatal(err)
+	}
+	marked := map[string]bool{}
+	for _, m := range doc.Methods {
+		if m.PeerOnly {
+			marked[m.Name] = true
+		}
+	}
+	for _, m := range PeerMethods {
+		if !slices.ContainsFunc(Methods, func(x Method) bool { return x.Name == m }) {
+			t.Errorf("peer method %s is not in Methods", m)
+		}
+		if !marked[m] {
+			t.Errorf("peer method %s is not marked x-peer-only in the schema", m)
+		}
+	}
+	if len(marked) != len(PeerMethods) {
+		t.Errorf("schema marks %d methods peer-only, PeerMethods has %d", len(marked), len(PeerMethods))
+	}
+	src, err := os.ReadFile(filepath.Join("..", "swift", "HabAPI", "Sources", "HabAPI", "HabAPI.swift"))
+	if err != nil {
+		t.Skip("no Swift package:", err)
+	}
+	for _, m := range PeerMethods {
+		if strings.Contains(string(src), fmt.Sprintf("(name: %q)", m)) {
+			t.Errorf("the Swift package declares the peer-link method %s", m)
 		}
 	}
 }

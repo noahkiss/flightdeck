@@ -75,9 +75,9 @@ var Methods = []Method{
 	{"pane.disown", "Give up size ownership; the pane keeps its size (spec 6.3).", PaneRef{}, OwnerResult{}},
 	{"pane.set_desired_size", "Store this client's wanted size (spec 6.3).", DesiredSizeParams{}, DesiredSizeResult{}},
 	{"pane.redraw", "Send a fresh snapshot, or nudge the program to redraw (spec 6.7).", RedrawParams{}, Empty{}},
-	{"devices.pair", "Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.", DevicesPairParams{}, PairingOffer{}},
+	{"devices.pair", "Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).", DevicesPairParams{}, PairingOffer{}},
 	{"devices.list", "List the devices in the hab's trust store (transport.md 5). Needs the devices capability.", DevicesListParams{}, DeviceList{}},
-	{"devices.revoke", "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
+	{"devices.revoke", "Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
 	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
 	{"session.resume", "Start an exited session's harness again in a new pane, with its resume id.", SessionRef{}, SessionCreated{}},
 	{"session.restart", "Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.", SessionRef{}, SessionCreated{}},
@@ -208,6 +208,26 @@ var Methods = []Method{
 	{"diag.debug", "Turn gff-hab's debug lines on until a time, at most 24 hours ahead, or off (diagnostics.md 4.5). The window survives a restart and a crash loop. Not over a peer link. Needs the debug capability.", DebugParams{}, DebugState{}},
 }
 
+// PeerMethods are the methods only a peer link calls: one hab hands another its catalog, mail,
+// Logbook ops or group hand-over (spec 3.9, Peer-link methods). They stay in Methods under their
+// wire names, so habs of mixed versions keep talking, and the Go client keeps them for the peer
+// code. The schema marks them x-peer-only, the Swift package leaves them out, and the hab
+// refuses each from any connection that is not a peer link.
+var PeerMethods = []string{
+	"catalog.put", "mail.push", "mail.pull", "logbook.pull", "logbook.push",
+	"group.message", "group.sync", "group.adopt", "group.adopt_commit", "group.tell",
+}
+
+// PeerOnly reports whether a method is one of PeerMethods.
+func PeerOnly(method string) bool {
+	for _, m := range PeerMethods {
+		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
 // Notifications is every notification the server sends on a control connection.
 var Notifications = []Notification{
 	{"event", "One event; see the event types (spec 3.5).", Event{}},
@@ -224,12 +244,12 @@ var Events = []EventDef{
 	{"pane.updated", "A pane appeared or changed.", Pane{}},
 	{"pane.deleted", "A pane is gone.", Deleted{}},
 	{"pane.owner", "The pane's size owner changed (spec 6.5).", PaneOwner{}},
-	{"pane.activity", "A client sent input; at most once per second per client (spec 7.1).", PaneActivity{}},
+	{"pane.activity", "A client sent input to the pane; at most once per second per client and pane; the id is the pane id (spec 7.1). Ephemeral.", PaneActivity{}},
 	{"agent.state", "A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.", AgentState{}},
 	{"pane.bell", "A pane rang the bell; at most once per second per pane. Ephemeral.", PaneBell{}},
 	{"pane.output", "A pane printed; at most once per second per pane, for activity marks. Ephemeral.", PaneOutput{}},
 	{"chat.message", "A chat message was appended or changed; the id is the message id. Ephemeral.", ChatMessage{}},
-	{"session.turn_end", "The agent's turn ended; the id is the session id. Ephemeral.", TurnEnd{}},
+	{"session.turn_end", "The agent's turn ended: its state left working or blocked for done or error; the id is the session id (spec 3.9). Ephemeral.", TurnEnd{}},
 	{"agent.compact", "A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.", Compaction{}},
 	{"session.action", "A session action moved a step; the id is the action id (spec 3.13). Goes where its session goes. Ephemeral.", SessionAction{}},
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
@@ -275,7 +295,7 @@ var Enums = map[string][]string{
 	"OwnerReason":   {"create", "take", "request", "typed", "disown", "lost", "disconnect", "restore"},
 	"ClosingReason": {"event_backlog", "shutdown"},
 	"RedrawMode":    {"snapshot", "nudge"},
-	"DeviceKind":    {"hab", "phone", "desktop", "gff"},
+	"DeviceKind":    {"hab", "phone", "tablet", "desktop", "gff"},
 	"DeviceState":   {"paired", "revoked"},
 	"AgentStatus":   {"idle", "working", "blocked", "done", "error", "none", "exited"},
 	"BlockedKind":   {"permission", "question", "auth", "trust"},
@@ -369,8 +389,8 @@ type Translator interface {
 // Translators maps revision N to the translator between N and N-1. Revision 1 needs none.
 var Translators = map[int]Translator{}
 
-// Capabilities lists the known capability strings (spec 3.4). "devices" means the hab's embedded
-// SSH server is on and the devices.* methods work (transport.md 9.4). "push" means the hab has
+// Capabilities lists the known capability strings (spec 3.4). "devices" means devices.list and
+// devices.revoke work on the hab's device list (transport.md 5, 6.6); devices.pair is not built. "push" means the hab has
 // working push config (app.md 8.4). "host-stats" means hab.stats works. "commands" means the
 // command.* methods and the command.updated event work (spec 2.5). "permissions" means
 // hab.permissions works (macos-identity.md 7.2). "mesh" means the hab keeps a peer list and

@@ -1,0 +1,20 @@
+{
+  "data": {
+    "client": "client-3",
+    "label": "label-4",
+    "x_unknown_field": "later"
+  },
+  "id": "id-7",
+  "revision": 5,
+  "seq": 6,
+  "type": "pane.activity",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

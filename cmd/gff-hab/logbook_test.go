@@ -147,7 +147,7 @@ func logbookTwoHabs(t *testing.T, tr string) {
 	// The sync methods serve peer links only.
 	for _, m := range []string{"logbook.pull", "logbook.push"} {
 		out, err := exec.Command(bin, "api", "call", "-socket", sockB, m, `{"have":[],"ops":[]}`).CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "needs a peer link") {
+		if err == nil || !strings.Contains(string(out), "peer link only") {
 			t.Fatalf("%s from a client: %v %s", m, err, out)
 		}
 	}
