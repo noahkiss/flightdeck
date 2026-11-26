@@ -81,6 +81,8 @@ jobs:
       mise: true
       cache-path: build/libghostty-vt
       cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline
+      # Shares ci.yml's per-shard Go build cache: job index 0 to 4 gives the keys 0-4 to 4-4.
+      build-cache-key: ${{ format('{0}-4', strategy.job-index) }}
       cancel-in-progress: false
       concurrency-key: ${{ matrix.shard }}
       # GHOSTTY_ZIGFLAGS is inline because go-ci has no env input: on a cache miss, make builds
