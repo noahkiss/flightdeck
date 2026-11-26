@@ -296,7 +296,8 @@ func TestLaneMoveLockWait(t *testing.T) {
 
 // TestLaneMoveQueuedDraining: a queued move the home answers with draining stays, marked, and
 // is not sent again; while the home's catalog copy shows the move, it waits; once the drain's
-// time has passed and the home kept the group, it goes with one notice.
+// time has passed and the home kept the group, it goes with one notice. queued_move_days
+// does not expire it meanwhile.
 func TestLaneMoveQueuedDraining(t *testing.T) {
 	f, _, _ := moveFix(t, "ci", groups.DefaultKeys)
 	id := "a8a8a8a8a8a8a8a8"
@@ -324,9 +325,11 @@ func TestLaneMoveQueuedDraining(t *testing.T) {
 	if moves != 1 {
 		t.Fatalf("group.move sent %d times", moves)
 	}
-	// The drain's time has passed: still moving there, it waits.
+	// The drain's time has passed, and so has queued_move_days: still moving there, it waits,
+	// with no "dropped" notice.
 	f.svc.mu.Lock()
 	f.svc.queued[0].Draining = stampT(time.Now().Add(-time.Hour))
+	f.svc.queued[0].At = stampT(time.Now().Add(-f.keys.QueuedMove - time.Hour))
 	f.svc.mu.Unlock()
 	f.mu.Lock()
 	f.peerGroups = []api.CatalogGroup{{ID: id, State: "running", Home: "dev-new", Generation: 1, Moving: &api.GroupMoveRef{To: "dev-me", Generation: 2}}}

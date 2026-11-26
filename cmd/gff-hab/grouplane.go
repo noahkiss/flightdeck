@@ -127,6 +127,9 @@ type repoLock chan struct{}
 
 // lock takes the lock, or answers the context's error when it ends first.
 func (l repoLock) lock(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err // an ended context never takes a free lock
+	}
 	select {
 	case l <- struct{}{}:
 		return nil
@@ -251,7 +254,7 @@ func (s *groupsService) sweepLanes() {
 			return
 		}
 		if !dirs[dir] {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(s.lane.ctx, 2*time.Minute) // Stop ends it
 			if err := lane.Remove(ctx, s.cfg.laneGit, "", dir); err != nil {
 				s.cfg.logf("groups: the lane worktree %s stays: %v", dir, err)
 			} else {

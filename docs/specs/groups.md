@@ -668,7 +668,8 @@ the catalog copies.
   a home that just started may not reach the target yet. A `draining` answer keeps the request,
   marked, and the target does not send it again. The commit removes it. When the whole drain
   time has passed (`move_drain`, `move_answer` and the start wait) and the home's catalog copy
-  shows the group there with no move under way, the request goes with one notice. A hab that
+  shows the group there with no move under way, the request goes with one notice. A marked
+  request does not expire with `queued_move_days`. A hab that
   reaches the home passes a user's `group.move` on to it, and the home's refusal is final: it
   queues nothing. A call that came over a link is not passed on again.
 - **While a move runs** pause, resume, close and retry answer `unavailable`. This holds for
@@ -693,8 +694,10 @@ the catalog copies.
   group's repository, under the lane's lock for that repository. It keeps it while another
   group on this hab, live or pending, lands in the same repository. A removal that fails is
   logged and never undoes the move. At start the hab removes each lane worktree that no live or
-  pending group here lands in, so a removal that a stop cut short is finished. It removes none
-  while a group's project is missing from the catalog.
+  pending group here lands in, so a removal that a stop cut short is finished. The sweep skips
+  every worktree while any live or pending group's project is missing from the catalog. A
+  removal prunes the checkout's worktree list only when git could not remove the worktree and
+  the folder was deleted by hand.
 - **Not built in B9.**
   `lane.submit` and `review.verdict` (B7) are not merged; they use the same forwarding when they
   land. Capcom-coordinated groups (B8) do not exist yet, so the move with the Capcom mark waits

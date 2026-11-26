@@ -797,15 +797,8 @@ func (s *groupsService) moveTick() {
 	keep := s.queued[:0:0]
 	changed := false
 	for _, q := range s.queued {
-		at, err := time.Parse(time.RFC3339Nano, q.At)
-		if err == nil && at.Before(now.Add(-s.cfg.keys.QueuedMove)) {
-			changed = true
-			if s.cfg.notice != nil {
-				s.cfg.notice("Group move dropped", fmt.Sprintf("The move of group %s to this hab waited %s for %s and was dropped.", nameOr(q.Title, q.Group), s.cfg.keys.QueuedMove, nameOr(q.Label, q.Home)))
-			}
-			continue
-		}
 		if q.Draining != "" {
+			// The home answered: the drain's verdict decides, not the queue's expiry.
 			if why := s.drainVerdictLocked(cl, q, now); why != "" {
 				changed = true
 				if why != "moved" && s.cfg.notice != nil {
@@ -814,6 +807,14 @@ func (s *groupsService) moveTick() {
 				continue
 			}
 			keep = append(keep, q) // the old home finishes the hand-over: nothing to send
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, q.At)
+		if err == nil && at.Before(now.Add(-s.cfg.keys.QueuedMove)) {
+			changed = true
+			if s.cfg.notice != nil {
+				s.cfg.notice("Group move dropped", fmt.Sprintf("The move of group %s to this hab waited %s for %s and was dropped.", nameOr(q.Title, q.Group), s.cfg.keys.QueuedMove, nameOr(q.Label, q.Home)))
+			}
 			continue
 		}
 		keep = append(keep, q)
