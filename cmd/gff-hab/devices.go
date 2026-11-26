@@ -1,7 +1,8 @@
 package main
 
 import (
-	"strings"
+	"errors"
+	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -15,6 +16,7 @@ import (
 
 // deviceService answers devices.list and devices.revoke from the device list in the state folder.
 type deviceService struct {
+	mu    sync.Mutex // one change at a time in this hab; the store's compare-and-swap covers the CLI
 	store *devicestore.Store
 	logf  func(string, ...any)
 }
@@ -39,16 +41,17 @@ func (s *deviceService) List() ([]api.Device, error) {
 }
 
 func (s *deviceService) Revoke(query string) error {
+	s.mu.Lock()
 	r, n, err := s.store.Revoke(query, time.Now())
-	if err != nil {
-		if strings.HasPrefix(err.Error(), "no paired device") {
-			return control.Errorf(api.ErrorKindNotFound, "%v", err)
-		}
-		if strings.Contains(err.Error(), " matches ") {
-			return control.Errorf(api.ErrorKindConflict, "%v", err)
-		}
+	s.mu.Unlock()
+	switch {
+	case errors.Is(err, devicestore.ErrNotFound):
+		return control.Errorf(api.ErrorKindNotFound, "%v", err)
+	case errors.Is(err, devicestore.ErrAmbiguous):
+		return control.Errorf(api.ErrorKindConflict, "%v", err)
+	case err != nil:
 		return err
 	}
-	s.logf("devices: revoked %s (%s); removed %d line(s) from %s", pairing.Printable(r.Label), r.ID, n, r.AuthorizedKeys)
+	s.logf("devices: revoked %s (%s); removed %d line(s) from %s; its push registration is kept", pairing.Printable(r.Label), r.ID, n, r.AuthorizedKeys)
 	return nil
 }

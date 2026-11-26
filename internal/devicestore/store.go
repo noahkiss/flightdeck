@@ -52,53 +52,78 @@ type Store struct {
 // Open names the device list in the state directory dir. It reads nothing yet.
 func Open(dir string) *Store { return &Store{Path: filepath.Join(dir, FileName)} }
 
+// ErrNotFound: no paired device matches the query. ErrAmbiguous: more than one does.
+var (
+	ErrNotFound  = errors.New("no paired device matches")
+	ErrAmbiguous = errors.New("matches more than one device")
+)
+
 // List returns the devices, paired and revoked, in the order they were added.
 func (s *Store) List() ([]Record, error) {
-	b, err := os.ReadFile(s.Path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	devs, _, err := s.load()
+	return devs, err
+}
+
+// load reads the device list and returns the bytes it read, the baseline a write compares
+// against. A missing file is an empty list with nil bytes.
+func (s *Store) load() ([]Record, []byte, error) {
+	b, err := readSmall(s.Path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if b == nil {
+		return nil, nil, nil
 	}
 	var f file
 	if err := json.Unmarshal(b, &f); err != nil {
-		return nil, fmt.Errorf("%s: %w", s.Path, err)
+		return nil, nil, fmt.Errorf("%s: %w", s.Path, err)
 	}
 	if f.Version != 1 {
-		return nil, fmt.Errorf("%s: version %d, this gff-hab reads version 1", s.Path, f.Version)
+		return nil, nil, fmt.Errorf("%s: version %d, this gff-hab reads version 1", s.Path, f.Version)
 	}
-	return f.Devices, nil
+	return f.Devices, b, nil
 }
 
-func (s *Store) save(devs []Record) error {
-	b, err := json.MarshalIndent(file{Version: 1, Devices: devs}, "", "  ")
-	if err != nil {
-		return err
-	}
+// edit reads the list, asks change for the new one, and writes it only when the file still
+// holds what was read; else it starts again (three tries). Two writers, a running hab and
+// `gff-hab devices`, so never lose each other's record.
+func (s *Store) edit(change func([]Record) ([]Record, error)) error {
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
 		return err
 	}
-	old, err := readSmall(s.Path)
-	if err != nil {
+	for range 3 {
+		devs, old, err := s.load()
+		if err != nil {
+			return err
+		}
+		devs, err = change(devs)
+		if err != nil {
+			return err
+		}
+		b, err := json.MarshalIndent(file{Version: 1, Devices: devs}, "", "  ")
+		if err != nil {
+			return err
+		}
+		err = writeAtomic(s.Path, old, append(b, '\n'))
+		if errors.Is(err, errChanged) {
+			continue
+		}
 		return err
 	}
-	return writeAtomic(s.Path, old, append(b, '\n'))
+	return fmt.Errorf("%s: %w, three times", s.Path, errChanged)
 }
 
 // Add stores r, replacing a record with the same id (a device paired again).
 func (s *Store) Add(r Record) error {
-	devs, err := s.List()
-	if err != nil {
-		return err
-	}
-	out := devs[:0:0]
-	for _, d := range devs {
-		if d.ID != r.ID {
-			out = append(out, d)
+	return s.edit(func(devs []Record) ([]Record, error) {
+		out := devs[:0:0]
+		for _, d := range devs {
+			if d.ID != r.ID {
+				out = append(out, d)
+			}
 		}
-	}
-	return s.save(append(out, r))
+		return append(out, r), nil
+	})
 }
 
 // Find returns the one paired device that query names: its full id, an id prefix (with or
@@ -121,7 +146,7 @@ func (s *Store) Find(query string) (Record, error) {
 	}
 	switch len(hits) {
 	case 0:
-		return Record{}, fmt.Errorf("no paired device matches %q", query)
+		return Record{}, fmt.Errorf("%w %q", ErrNotFound, query)
 	case 1:
 		return hits[0], nil
 	}
@@ -129,7 +154,7 @@ func (s *Store) Find(query string) (Record, error) {
 	for _, h := range hits {
 		ids = append(ids, h.ID+" ("+h.Label+")")
 	}
-	return Record{}, fmt.Errorf("%q matches %d devices: %s", query, len(hits), strings.Join(ids, ", "))
+	return Record{}, fmt.Errorf("%q %w: %s", query, ErrAmbiguous, strings.Join(ids, ", "))
 }
 
 // Revoke removes the device's line from the authorized_keys file it was written to and keeps the
@@ -151,14 +176,13 @@ func (s *Store) Revoke(query string, now time.Time) (Record, int, error) {
 	}
 	r.State = StateRevoked
 	r.RevokedAt = now.UTC().Format(time.RFC3339)
-	devs, err := s.List()
-	if err != nil {
-		return Record{}, 0, err
-	}
-	for i := range devs {
-		if devs[i].ID == r.ID {
-			devs[i] = r
+	err = s.edit(func(devs []Record) ([]Record, error) {
+		for i := range devs {
+			if devs[i].ID == r.ID {
+				devs[i] = r
+			}
 		}
-	}
-	return r, removed, s.save(devs)
+		return devs, nil
+	})
+	return r, removed, err
 }

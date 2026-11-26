@@ -285,7 +285,7 @@ func main() {
 	case "pair":
 		err = pairCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "devices":
-		err = devicesCmd(os.Args[2:], os.Stdout)
+		err = devicesCmd(os.Args[2:], os.Stdout, os.Getenv)
 	case "notify":
 		err = notifyCmd(os.Args[2:])
 	case "show":
@@ -2413,8 +2413,6 @@ func printJSON(v any) error {
 	return err
 }
 
-// apiCall says hello, sends one request and prints its result as one JSON line. Calling
-// hab.hello prints the welcome.
 // ownerCall reports whether a method is the owner's own answer or trust decision, which
 // `gff-hab api call` refuses to send from an agent's pane.
 func ownerCall(method string) bool {
@@ -2425,6 +2423,8 @@ func ownerCall(method string) bool {
 	return false
 }
 
+// apiCall says hello, sends one request and prints its result as one JSON line. Calling
+// hab.hello prints the welcome.
 func apiCall(args []string) error {
 	fs := flag.NewFlagSet("api call", flag.ExitOnError)
 	sock := socketFlag(fs)

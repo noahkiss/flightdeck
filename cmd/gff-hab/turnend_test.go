@@ -126,3 +126,64 @@ func TestTurnEndNoReader(t *testing.T) {
 		t.Fatalf("the read opened %d readers", n)
 	}
 }
+
+// TestTurnEndLateFinalText: a text followed by a tool call is not taken while the read time
+// lasts: the final text written late wins. With no late text, the mid-turn text is the answer at
+// the deadline. A text followed only by its own children is taken at once (hab-logic-api.md 3.9).
+func TestTurnEndLateFinalText(t *testing.T) {
+	early := []api.ChatMessage{
+		{ID: "u1", Kind: api.ChatKindUser, Text: "fix it"},
+		{ID: "a1", Kind: api.ChatKindAgent, Text: "let me look"},
+		{ID: "t1", Kind: api.ChatKindTool},
+	}
+	cases := []struct {
+		name  string
+		late  []api.ChatMessage // appended from the third read on
+		want  string
+		reads func(int) bool // the reads the case allows; nil: any
+	}{
+		{"late final text", []api.ChatMessage{{ID: "a2", Kind: api.ChatKindAgent, Text: "fixed"}}, "a2", nil},
+		{"no late text", nil, "a1", nil},
+		{"own children only", []api.ChatMessage{
+			{ID: "a2", Kind: api.ChatKindAgent, Text: "fixed"},
+			{ID: "c1", Kind: api.ChatKindTool, Parent: "a2"},
+			{ID: "c2", Kind: api.ChatKindAgent, Text: "sub", Parent: "c1"},
+		}, "a2", func(n int) bool { return n <= 3 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			reads := 0
+			sent := make(chan api.TurnEnd, 1)
+			te := newTurnEnds(func(string) (string, bool) { return "s1", true },
+				func(context.Context, string) ([]api.ChatMessage, error) {
+					mu.Lock()
+					defer mu.Unlock()
+					reads++
+					if reads < 3 {
+						return early, nil
+					}
+					return append(append([]api.ChatMessage{}, early...), tc.late...), nil
+				},
+				func(e structure.Event) { sent <- e.Data.(api.TurnEnd) })
+			te.poll = time.Millisecond
+			te.readFor = 200 * time.Millisecond
+			defer te.Close()
+			te.agentState(api.AgentState{Pane: "p1", State: api.AgentStatusWorking})
+			te.agentState(api.AgentState{Pane: "p1", State: api.AgentStatusDone})
+			select {
+			case got := <-sent:
+				if got.FinalMessage != tc.want {
+					t.Errorf("final message %q, want %q", got.FinalMessage, tc.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("no turn end")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if tc.reads != nil && !tc.reads(reads) {
+				t.Errorf("%d reads: a settled text should end the read", reads)
+			}
+		})
+	}
+}

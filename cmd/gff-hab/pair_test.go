@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/pairing"
 	"golang.org/x/crypto/ssh"
 )
@@ -200,12 +201,22 @@ func TestPairCommand(t *testing.T) {
 		!strings.Contains(r.added, " flightdeck: Owner's iPhone (paired ") || strings.Count(r.added, "\n") != 2 {
 		t.Fatalf("added %q", r.added)
 	}
+	noEnv := func(string) string { return "" }
+	inPane := func(k string) string {
+		if k == hook.Env {
+			return "/run/hab.sock"
+		}
+		return ""
+	}
 	var out bytes.Buffer
-	if err := devicesCmd([]string{"list", "-state", r.state}, &out); err != nil || !strings.Contains(out.String(), "Owner's iPhone  phone  paired") {
+	if err := devicesCmd([]string{"list", "-state", r.state}, &out, noEnv); err != nil || !strings.Contains(out.String(), "Owner's iPhone  phone  paired") {
 		t.Fatalf("devices list: %v\n%s", err, out.String())
 	}
 	out.Reset()
-	if err := devicesCmd([]string{"revoke", "-state", r.state, "Owner's iPhone"}, &out); err != nil || !strings.Contains(out.String(), "removed 1 line(s)") {
+	if err := devicesCmd([]string{"revoke", "-state", r.state, "Owner's iPhone"}, &out, inPane); err == nil || !strings.Contains(err.Error(), "agent's pane") {
+		t.Fatalf("devices revoke in an agent's pane: %v", err)
+	}
+	if err := devicesCmd([]string{"revoke", "-state", r.state, "Owner's iPhone"}, &out, noEnv); err != nil || !strings.Contains(out.String(), "removed 1 line(s)") || !strings.Contains(out.String(), "push registration is kept") {
 		t.Fatalf("devices revoke: %v\n%s", err, out.String())
 	}
 }
@@ -251,7 +262,7 @@ func TestPairCommandKeyAlreadyThere(t *testing.T) {
 		t.Fatalf("err %v, answer %+v, added %q\n%s", r.err, r.last, r.added, r.out)
 	}
 	var out bytes.Buffer
-	if err := devicesCmd([]string{"list", "-state", r.state}, &out); err != nil || !strings.Contains(out.String(), "no devices") {
+	if err := devicesCmd([]string{"list", "-state", r.state}, &out, func(string) string { return "" }); err != nil || !strings.Contains(out.String(), "no devices") {
 		t.Fatalf("devices list: %v\n%s", err, out.String())
 	}
 }

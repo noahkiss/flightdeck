@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,5 +242,39 @@ func TestStoreAddFindRevoke(t *testing.T) {
 	}
 	if _, _, err := s.Revoke(r.ID, day); err == nil {
 		t.Fatal("a revoked device was revoked again")
+	}
+}
+
+// TestStoreEditRetries: a write that another writer beat (the CLI beside a running hab) reads
+// the list again, so neither record is lost; a revoke error says which kind it is.
+func TestStoreEditRetries(t *testing.T) {
+	dir := t.TempDir()
+	s, other := Open(dir), Open(dir)
+	rec := func(id string) Record {
+		return Record{ID: id, Label: id, Kind: "phone", PairedAt: day.Format(time.RFC3339), State: StatePaired}
+	}
+	calls := 0
+	err := s.edit(func(devs []Record) ([]Record, error) {
+		calls++
+		if calls == 1 {
+			if err := other.Add(rec("b")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return append(devs, rec("a")), nil
+	})
+	if err != nil || calls != 2 {
+		t.Fatalf("edit: %v after %d calls", err, calls)
+	}
+	devs, _ := s.List()
+	if len(devs) != 2 || devs[0].ID != "b" || devs[1].ID != "a" {
+		t.Fatalf("records %+v, want b then a", devs)
+	}
+	if _, _, err := s.Revoke("nobody", day); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revoke unknown: %v", err)
+	}
+	s.Add(Record{ID: "SHA256:c", Label: "a", Kind: "phone", State: StatePaired})
+	if _, _, err := s.Revoke("a", day); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("revoke a label two devices share: %v", err)
 	}
 }

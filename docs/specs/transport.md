@@ -535,7 +535,9 @@ The key lands in two places:
 `gff-hab devices list` prints the list. `gff-hab devices revoke <id|label>` removes the device's
 line from `authorized_keys` (other lines byte for byte) and keeps the record as a revoked tombstone.
 Over the system sshd a revoke stops new logins; a session already open runs until it drops. The
-fan-out to peers (6.6) comes with the embedded server. The `devices.*` API methods do the same
+device's push registration is kept. The hab and the CLI may write the list at once: each write
+replaces the file only when it still holds what the writer read, else it reads again (three
+tries). The fan-out to peers (6.6) comes with the embedded server. The `devices.*` API methods do the same
 list and revoke for a client (6.1.7).
 
 #### 6.1.5 The terminal
@@ -597,12 +599,12 @@ keyboard-interactive, because the app's SSH library has no keyboard-interactive 
 `devices.list` returns the device records. `devices.revoke {id}` takes an id, an id prefix of at
 least 6 characters, or a label, as `gff-hab devices revoke` does: it removes the key line and keeps
 the record as a tombstone. A session already open over the system sshd runs until it drops: the
-hab cannot tell which connection used which key.
+hab cannot tell which connection used which key. The device's push registration is kept.
 
 | Rule | Value |
 |---|---|
 | Peer links | Every `devices.*` method is `denied`: a peer changes no trust store on another hab (6.2) |
-| Agents | The pane route does not take `devices.*`, and `gff-hab api call` refuses `devices.revoke` inside a Flightdeck pane, as it refuses `confirm.answer` |
+| Agents | The pane route does not take `devices.*`. `gff-hab api call devices.revoke` and `gff-hab devices revoke` refuse to run inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
 
 Pairing over the API (`devices.pair`): not built; proposed separately.
 

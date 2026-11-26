@@ -11,16 +11,19 @@ import (
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
-// countInput takes every write at once.
+// countInput takes every write at once, except to the pane "gone", which does not exist.
 type countInput struct{}
 
-func (countInput) QueueInput(context.Context, string, string, []byte) func() error {
+func (countInput) QueueInput(_ context.Context, _, pane string, _ []byte) func() error {
+	if pane == "gone" {
+		return func() error { return Errorf(api.ErrorKindNotFound, "no pane %s", pane) }
+	}
 	return func() error { return nil }
 }
 
 // TestPaneActivity: pane.input sends pane.activity with the typing client's id and label, at
-// most once per second per client and pane; another pane or another client is not held back
-// (spec 7.1). session.turn_end goes to a subscription by its session (spec 3.9).
+// most once per second per client and pane; another pane or another client is not held back;
+// input that fails sends nothing and leaves no throttle entry (spec 7.1). session.turn_end goes to a subscription by its session (spec 3.9).
 func TestPaneActivity(t *testing.T) {
 	cfg := testConfig(&fakeSource{})
 	cfg.Input = countInput{}
@@ -49,6 +52,9 @@ func TestPaneActivity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := typist.Call(ctx(t), "pane.input", api.InputParams{Pane: "gone", Text: "x"}, nil); err == nil {
+		t.Fatal("input to a missing pane succeeded")
+	}
 	in(typist, "p1")
 	in(typist, "p1") // within the second: no event
 	in(typist, "p2")
@@ -70,6 +76,12 @@ func TestPaneActivity(t *testing.T) {
 	srv.Publish(structure.Event{Type: api.EventUsageUpdated, ID: "marker", Data: api.UsageAccount{}})
 	if e := nextEvent(t, watcher); e.Type != api.EventUsageUpdated {
 		t.Fatalf("an extra event: %s %s", e.Type, e.ID)
+	}
+	srv.activityMu.Lock()
+	n := len(srv.activityAt)
+	srv.activityMu.Unlock()
+	if n != 3 {
+		t.Errorf("%d throttle entries, want 3: the failed input left one", n)
 	}
 }
 

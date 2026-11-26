@@ -92,12 +92,17 @@ func (t *turnEnds) end(st api.AgentState) {
 			poll = t.poll
 		}
 		ctx, cancel := context.WithTimeout(t.ctx, wait)
+		candidate := "" // a match that more of the turn followed: the answer at the deadline
 		for {
 			msgs, err := t.read(ctx, sess)
 			if err == nil {
-				if id, ok := finalMessageID(msgs); ok {
-					te.FinalMessage = id
+				id, settled := finalMessageID(msgs)
+				if settled {
+					candidate = id
 					break
+				}
+				if id != "" {
+					candidate = id
 				}
 			}
 			if errors.Is(err, errNoOpenReader) {
@@ -111,6 +116,7 @@ func (t *turnEnds) end(st api.AgentState) {
 			break
 		}
 		cancel()
+		te.FinalMessage = candidate
 	}
 	if t.ctx.Err() != nil {
 		return
@@ -119,7 +125,10 @@ func (t *turnEnds) end(st api.AgentState) {
 }
 
 // finalMessageID is the id of the last top-level agent text after the last user message.
-func finalMessageID(msgs []api.ChatMessage) (string, bool) {
+// settled says nothing but that message's own children follows it. When more of the turn
+// follows (a tool call, say), the transcript may not hold the final text yet: the caller reads
+// again and takes the match only at its deadline.
+func finalMessageID(msgs []api.ChatMessage) (id string, settled bool) {
 	from := 0
 	for i, m := range msgs {
 		if m.Kind == api.ChatKindUser {
@@ -128,9 +137,17 @@ func finalMessageID(msgs []api.ChatMessage) (string, bool) {
 	}
 	for i := len(msgs) - 1; i >= from; i-- {
 		m := msgs[i]
-		if m.Kind == api.ChatKindAgent && m.Parent == "" && strings.TrimSpace(m.Text) != "" {
-			return m.ID, true
+		if m.Kind != api.ChatKindAgent || m.Parent != "" || strings.TrimSpace(m.Text) == "" {
+			continue
 		}
+		own := map[string]bool{m.ID: true} // the message and its descendants
+		for _, after := range msgs[i+1:] {
+			if !own[after.Parent] {
+				return m.ID, false
+			}
+			own[after.ID] = true
+		}
+		return m.ID, true
 	}
 	return "", false
 }

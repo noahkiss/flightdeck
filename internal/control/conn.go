@@ -620,10 +620,6 @@ func (c *conn) handleInput(m message) {
 	if c.s.cfg.Size != nil {
 		c.s.cfg.Size.Typed(c.clientID, p.Pane) // input counts for size ownership (spec 3.8, 6.2)
 	}
-	c.mu.Lock()
-	label := c.label
-	c.mu.Unlock()
-	c.s.typedBy(c.clientID, label, p.Pane) // who else is typing (spec 7.1)
 	if !running {
 		go c.runLane(p.Pane, ln)
 		return
@@ -991,6 +987,12 @@ func (c *conn) runLane(pane string, ln *lane) {
 		if err != nil {
 			c.reply(call.m, call.seq, nil, actionErr(call.m.Method, err))
 		} else {
+			// Who else is typing (spec 7.1): only input that reached a pane counts, so a
+			// bogus pane id never grows the throttle map.
+			c.mu.Lock()
+			label := c.label
+			c.mu.Unlock()
+			c.s.typedBy(c.clientID, label, pane)
 			c.reply(call.m, call.seq, api.Empty{Seq: api.Seq{Seq: call.seq}}, nil)
 		}
 	}

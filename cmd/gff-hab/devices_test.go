@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,5 +57,53 @@ func TestDevicesListRevoke(t *testing.T) {
 	var ce *control.Error
 	if err := svc.Revoke("no-such-device"); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindNotFound {
 		t.Errorf("revoke unknown: %v", err)
+	}
+}
+
+// TestDevicesConcurrentRevokes: two revokes at once, of two devices in one authorized_keys
+// file, both land: two tombstones and neither key line left.
+func TestDevicesConcurrentRevokes(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	keys := filepath.Join(dir, "authorized_keys")
+	if err := os.WriteFile(keys, []byte("# mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := devicestore.Open(state)
+	for _, label := range []string{"one", "two"} {
+		pub, _, _ := ed25519.GenerateKey(rand.Reader)
+		sk, _ := ssh.NewPublicKey(pub)
+		line, _ := devicestore.KeyLine(sk, "/usr/local/bin/gff-hab connect", label, time.Now())
+		if _, err := devicestore.AppendAuthorizedKey(keys, sk, line); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Add(devicestore.Record{ID: ssh.FingerprintSHA256(sk), Label: label, Kind: "phone",
+			Key: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sk))), AuthorizedKeys: keys, State: devicestore.StatePaired}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := newDeviceService(state, nil)
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, label := range []string{"one", "two"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- svc.Revoke(label)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	devs, err := svc.List()
+	if err != nil || len(devs) != 2 || devs[0].State != "revoked" || devs[1].State != "revoked" {
+		t.Fatalf("after two revokes: %+v %v", devs, err)
+	}
+	if b, _ := os.ReadFile(keys); string(b) != "# mine\n" {
+		t.Errorf("authorized_keys after two revokes: %q", b)
 	}
 }

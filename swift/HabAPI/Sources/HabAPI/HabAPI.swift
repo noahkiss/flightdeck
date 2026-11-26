@@ -11004,7 +11004,7 @@ public enum HabMethods {
     public static let devicesPair = HabMethod<DevicesPairParams, PairingOffer>(name: "devices.pair")
     /// List the devices in the hab's trust store (transport.md 5). Needs the devices capability.
     public static let devicesList = HabMethod<DevicesListParams, DeviceList>(name: "devices.list")
-    /// Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops. Not over a peer link or the pane route. Needs the devices capability.
+    /// Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
     public static let devicesRevoke = HabMethod<DevicesRevokeParams, Empty>(name: "devices.revoke")
     /// Start a program in a new pane and file it as a session (spec 3.9).
     public static let sessionCreate = HabMethod<SessionCreateParams, SessionCreated>(name: "session.create")

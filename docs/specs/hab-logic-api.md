@@ -876,6 +876,8 @@ surface:
 
 - **The hab refuses them from a client.** A connection that is not a peer link (`client.kind`
   `hab` with the hello's `peer` field) gets `denied` for each, before the method's own checks.
+  This tidies the client surface; it authenticates nothing. The `peer` field is what the caller
+  says, and nothing binds it to the peer's key until the transport does (`mesh.md` 4).
 - **The schema marks them.** Each carries `"x-peer-only": true`, and `api.PeerMethods` lists
   them. The Swift package leaves them out. The Go client keeps them, because the peer code calls
   them through it.
@@ -951,7 +953,10 @@ Built: gff-hab sends no `revision` key on these events.
 `done` or `error`. `idle` ends no turn, because Codex reports `idle` at its start
 (`harness-adapters.md`, Codex); `exited` forgets the turn, and a second `done` sends nothing. The
 event's id is the Flightdeck session of the pane; a pane with no session sends nothing.
-`final_message` is the id of the last top-level agent text after the last user message. The hab
+`final_message` is the id of the last top-level agent text after the last user message. Only
+a text that nothing but its own children follows (its subagent's messages) counts at once. When
+more of the turn follows it, such as a tool call, the final text may not be in the transcript
+yet: the hab reads again, and sends that earlier text only when the read time is up. The hab
 reads it from the newest page of a chat reader that a client's `chat.page` already opened; it
 opens no reader of its own, because an open reader polls its file and sends `chat.message`.
 With no reader open, the event goes at once without `final_message`. The transcript may trail
@@ -2579,7 +2584,8 @@ data streams in `cmd/gff-hab/data.go`:
   client and pane), so each client can show who else is typing. The id is the pane; the event is
   ephemeral and goes where the pane goes. `label` is the client's hello label, else its client
   name. A client ignores its own client id.
-- Built: `pane.input` is the input that counts. `session.send` and `pane.type` do not send it:
+- Built: `pane.input` is the input that counts, once its write reached the pane; input that
+  fails sends nothing. `session.send` and `pane.type` do not send it:
   the agent state and the chat show those.
 - Bracketed paste markers come from the client that pastes. gff-hab does not add or remove them.
 

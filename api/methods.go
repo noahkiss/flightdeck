@@ -77,7 +77,7 @@ var Methods = []Method{
 	{"pane.redraw", "Send a fresh snapshot, or nudge the program to redraw (spec 6.7).", RedrawParams{}, Empty{}},
 	{"devices.pair", "Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).", DevicesPairParams{}, PairingOffer{}},
 	{"devices.list", "List the devices in the hab's trust store (transport.md 5). Needs the devices capability.", DevicesListParams{}, DeviceList{}},
-	{"devices.revoke", "Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops. Not over a peer link or the pane route. Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
+	{"devices.revoke", "Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
 	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
 	{"session.resume", "Start an exited session's harness again in a new pane, with its resume id.", SessionRef{}, SessionCreated{}},
 	{"session.restart", "Exit an idle or done session's harness and start it again in a new pane of the same session, with its resume id, so it loads its instructions anew; refused with conflict while the agent works or another restart runs (instructions-mcp-flight-rules.md 13). Needs the session-restart capability.", SessionRef{}, SessionCreated{}},
