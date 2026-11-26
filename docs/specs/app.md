@@ -887,11 +887,16 @@ Spotlight, the Action button and Control Center can reach them.
   first.
 - **Spotlight.** Each session is an indexed entity, in a named index of the app's own. On iOS
   that index uses complete data protection, so session names cannot be read while the device is
-  locked; the Mac has no per-index protection class. The app adds or updates the sessions that
-  changed and deletes the ones that went. The writes run one at a time, in order, so a delete
+  locked; the Mac has no per-index protection class. The app writes the index while it runs,
+  almost always in front and unlocked; a write that fails while the device is locked waits for the
+  next launch's rebuild. The app adds or updates the sessions that changed and deletes the ones
+  that went. The writes run one at a time, in order, so a delete
   never overtakes the update before it. At each launch the app deletes every session in the index
   and indexes its whole list, so a lost index heals and an entry the list no longer holds leaves.
   Demo mode reaches neither the list nor Spotlight.
+- **Shortcut phrases.** "Open <session> in Flightdeck" names the sessions of the list. The app
+  registers them again at launch, and after a change only when a session id or name changed:
+  2 s after the last change of a burst, so a run of renames registers once.
 - **Unlock.** Every intent needs the device unlocked (`requiresAuthentication`), the control's
   too: an intent can name a session, open a request or send a message to an agent that can act.
   Siri on a locked device asks for unlock before it reads a session name.

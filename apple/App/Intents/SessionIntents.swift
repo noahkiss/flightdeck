@@ -22,12 +22,18 @@ enum IntentHost {
         guard let directory = fleet.directory else { return }
         directory.onChange = { upsert, delete in
             SessionSpotlight.update(upsert: upsert, delete: delete)
-            // "Open <session> in Flightdeck" knows the sessions of the last update.
-            FlightdeckShortcuts.updateAppShortcutParameters()
+            // "Open <session> in Flightdeck" knows the sessions of the last update. A burst of
+            // changes becomes one update, and a change that leaves ids and names alone none.
+            shortcutParameters.update(directory.entries)
         }
         // Once per launch, the index is rebuilt from the list: a lost index heals, and sessions
         // the list no longer holds (its defaults wiped) leave it.
         SessionSpotlight.reset(directory.entries)
+        shortcutParameters.update(directory.entries)
+        shortcutParameters.flush()
+    }
+
+    private static let shortcutParameters = ShortcutParameters {
         FlightdeckShortcuts.updateAppShortcutParameters()
     }
 }
@@ -81,23 +87,18 @@ enum SessionSpotlight {
         case change(add: [SessionEntity], delete: [String])
     }
 
-    private static let writes: AsyncStream<Write>.Continuation = {
-        let (stream, continuation) = AsyncStream.makeStream(of: Write.self)
-        Task.detached(priority: .utility) {
-            let index = makeIndex()
-            for await w in stream {
-                switch w {
-                case .reset(let all):
-                    try? await index.deleteAppEntities(ofType: SessionEntity.self)
-                    if !all.isEmpty { try? await index.indexAppEntities(all) }
-                case .change(let add, let delete):
-                    if !delete.isEmpty { try? await index.deleteAppEntities(identifiedBy: delete, ofType: SessionEntity.self) }
-                    if !add.isEmpty { try? await index.indexAppEntities(add) }
-                }
-            }
+    private static let writes = OrderedWrites<Write> { w in
+        // A handle on the named index; CSSearchableIndex is not Sendable, so each write opens its own.
+        let index = makeIndex()
+        switch w {
+        case .reset(let all):
+            try? await index.deleteAppEntities(ofType: SessionEntity.self)
+            if !all.isEmpty { try? await index.indexAppEntities(all) }
+        case .change(let add, let delete):
+            if !delete.isEmpty { try? await index.deleteAppEntities(identifiedBy: delete, ofType: SessionEntity.self) }
+            if !add.isEmpty { try? await index.indexAppEntities(add) }
         }
-        return continuation
-    }()
+    }
 
     /// A named index. On iOS its items use complete protection: session names stay unreadable
     /// while the device is locked. The Mac has no per-index protection class.
@@ -111,12 +112,12 @@ enum SessionSpotlight {
 
     @MainActor
     static func reset(_ all: [SessionEntry]) {
-        writes.yield(.reset(all.map(SessionEntity.init)))
+        writes.send(.reset(all.map(SessionEntity.init)))
     }
 
     @MainActor
     static func update(upsert: [SessionEntry], delete: [String]) {
-        writes.yield(.change(add: upsert.map(SessionEntity.init), delete: delete))
+        writes.send(.change(add: upsert.map(SessionEntity.init), delete: delete))
     }
 }
 
