@@ -57,6 +57,15 @@ final class GoldenTests: XCTestCase {
         func result<P: Codable & Sendable, R: Codable & Sendable>(_ m: HabMethod<P, R>) {
             add("result." + m.name, R.self)
         }
+        // The peer-link methods are not in HabMethods (hab-logic-api.md 3.9), but their result
+        // types are, and must still read every golden.
+        for name in ["catalog.put", "group.message", "group.sync", "group.adopt", "group.adopt_commit", "group.tell"] {
+            add("result." + name, Empty.self)
+        }
+        add("result.mail.push", MailPushResult.self)
+        add("result.mail.pull", MailPullResult.self)
+        add("result.logbook.pull", LogbookPullResult.self)
+        add("result.logbook.push", LogbookPushResult.self)
         result(HabMethods.habHello)
         result(HabMethods.habPing)
         result(HabMethods.structureGet)

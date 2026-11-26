@@ -97,3 +97,32 @@ func TestTurnEnds(t *testing.T) {
 		}
 	}
 }
+
+// TestTurnEndNoReader: with no chat reader open, the turn end goes at once without a final
+// message, and the read opens none (hab-logic-api.md 3.9).
+func TestTurnEndNoReader(t *testing.T) {
+	sent := make(chan api.TurnEnd, 1)
+	chats := newChatService(chatConfig{session: func(string) (api.Session, bool) { return api.Session{}, true }})
+	defer chats.Close()
+	te := newTurnEnds(func(string) (string, bool) { return "s1", true },
+		func(ctx context.Context, s string) ([]api.ChatMessage, error) { return chats.openTail(ctx, s, 20) },
+		func(e structure.Event) { sent <- e.Data.(api.TurnEnd) })
+	te.readFor = time.Hour // a wait would hang the test: there must be none
+	defer te.Close()
+	te.agentState(api.AgentState{Pane: "p1", State: api.AgentStatusWorking})
+	te.agentState(api.AgentState{Pane: "p1", State: api.AgentStatusDone})
+	select {
+	case got := <-sent:
+		if got != (api.TurnEnd{Session: "s1"}) {
+			t.Fatalf("turn end %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn end waited for a reader no client opened")
+	}
+	chats.mu.Lock()
+	n := len(chats.readers)
+	chats.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("the read opened %d readers", n)
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +14,8 @@ import (
 // session.turn_end (hab-logic-api.md 3.9): a pane's agent state left working or blocked for
 // done or error. idle never ends a turn, because Codex reports idle at its start
 // (harness-adapters.md, Codex). The event names the turn's final agent message when the chat
-// reader finds it within turnEndRead; else it goes without one.
+// reader a client opened finds it within turnEndRead; else it goes without one. It opens no
+// reader: a reader polls its file and sends chat.message for as long as it stays open.
 
 // turnEndRead bounds the read of a turn's final message: the transcript may trail the state.
 const turnEndRead = 3 * time.Second
@@ -91,11 +93,15 @@ func (t *turnEnds) end(st api.AgentState) {
 		}
 		ctx, cancel := context.WithTimeout(t.ctx, wait)
 		for {
-			if msgs, err := t.read(ctx, sess); err == nil {
+			msgs, err := t.read(ctx, sess)
+			if err == nil {
 				if id, ok := finalMessageID(msgs); ok {
 					te.FinalMessage = id
 					break
 				}
+			}
+			if errors.Is(err, errNoOpenReader) {
+				break // no client reads the chat: the event goes without the message
 			}
 			select {
 			case <-ctx.Done():

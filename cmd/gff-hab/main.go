@@ -1539,12 +1539,12 @@ func serve(args []string) error {
 		defer repairStop()
 		finishSwaps(repairCtx, store, swapsToFinish, chSvc.Move, chSvc.Unhold, closePane, logger.Printf)
 	}
-	// session.turn_end: the final message comes from the chat view's reader, its newest page.
+	// session.turn_end: the final message comes from the newest page of a chat reader a client
+	// already opened; the event opens no reader of its own.
 	var readTail func(context.Context, string) ([]api.ChatMessage, error)
 	if chats != nil {
 		readTail = func(ctx context.Context, session string) ([]api.ChatMessage, error) {
-			page, err := chats.ChatPage(ctx, api.ChatPageParams{Session: session, Limit: 20})
-			return page.Messages, err
+			return chats.openTail(ctx, session, 20)
 		}
 	}
 	turns := newTurnEnds(func(pane string) (string, bool) {

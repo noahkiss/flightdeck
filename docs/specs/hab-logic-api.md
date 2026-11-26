@@ -951,10 +951,12 @@ Built: gff-hab sends no `revision` key on these events.
 `done` or `error`. `idle` ends no turn, because Codex reports `idle` at its start
 (`harness-adapters.md`, Codex); `exited` forgets the turn, and a second `done` sends nothing. The
 event's id is the Flightdeck session of the pane; a pane with no session sends nothing.
-`final_message` is the id of the last top-level agent text after the last user message, read from
-the chat view's newest page. The transcript may trail the state, so the hab reads it again every
-200 ms for up to 3 s, then sends the event without `final_message`. The read never runs on the
-state store's lock. A scoped subscription gets the event when the session is in its scope.
+`final_message` is the id of the last top-level agent text after the last user message. The hab
+reads it from the newest page of a chat reader that a client's `chat.page` already opened; it
+opens no reader of its own, because an open reader polls its file and sends `chat.message`.
+With no reader open, the event goes at once without `final_message`. The transcript may trail
+the state, so the hab reads again every 200 ms for up to 3 s, then sends the event without it.
+The read never runs on the state store's lock. A scoped subscription gets the event when the session is in its scope.
 
 New capabilities: `push` (the hab has working push config, `app.md` 8.4), `host-stats`,
 `commands` (the `command.*` methods and the `command.updated` event work; a hab with the holder

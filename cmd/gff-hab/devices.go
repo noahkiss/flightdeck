@@ -221,7 +221,9 @@ func (s *deviceService) ask(pw *pairWindow, ctx context.Context, d pairing.Devic
 
 // finish records how the window ended.
 func (s *deviceService) finish(pw *pairWindow, dev *pairing.Device, err error) {
+	s.mu.Lock()
 	f := &api.DevicePairing{Device: pw.device}
+	s.mu.Unlock()
 	switch {
 	case err == nil:
 		f.State = api.PairingState("paired")

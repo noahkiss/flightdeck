@@ -628,11 +628,21 @@ the record as a tombstone. A session already open over the system sshd runs unti
 hab cannot tell which connection used which key. The key lands in the authorized_keys of the user
 gff-hab runs as, with the forced command `gff-hab connect` (the `-socket` of `serve` when given).
 
-Why this is safe to offer: whoever can call these methods already runs as the hab's user (the
-local socket) or holds a key the hab admitted. Such a caller can write `~/.ssh/authorized_keys`
-directly, so a window it opens grants nothing new. The confirmation still proves the device in
-the owner's hand is the one asking. The window keeps the bind and lifetime rules the owner
-approved for `gff-hab pair` (6.1.3).
+Why a caller gains nothing new: a local-socket caller runs as the hab's user and can write
+`~/.ssh/authorized_keys` itself. A paired device has a forced command and cannot, but it can
+already start a shell with `session.create` and write the file from there. So the window grants
+no access the caller lacks. The confirmation still proves the device in the owner's hand is the
+one asking.
+
+Not built in the API path, against `gff-hab pair`:
+
+- No `-listen`: the window takes every LAN and tailnet address (6.1.3). On a cloud host, where a
+  private address may be reachable from the internet, pair with `gff-hab pair -listen <tailnet
+  ip>` instead.
+- No StrictModes warning (6.1.4): the API caller sees no terminal line.
+- The sshd endpoints told to the device use port 22, and the host keys come from `/etc/ssh`.
+- A window whose opener disconnects stays open until it ends (at most five minutes); no other
+  client can confirm or close it, and `devices.pair` answers `conflict` until then.
 
 ### 6.2 The phone and the other habs
 
@@ -801,7 +811,8 @@ discussed before it is built.
 | Item | Why it is discuss-first | Proposed default |
 |---|---|---|
 | Enabling the embedded SSH server on any hab | A new listening port | Off. The owner enables it per hab, after the security review |
-| The pairing window of `gff-hab pair` (6.1.3) | A short-lived listening port | Approved by the owner (2026-11-02): LAN and tailnet addresses only, five minutes at most, one use, started by the owner in a terminal, or by the owner's client through `devices.pair` (6.1.7; owner decision 2026-11-19: build `devices.*`) |
+| The pairing window of `gff-hab pair` (6.1.3) | A short-lived listening port | Approved by the owner (2026-11-02): LAN and tailnet addresses only, five minutes at most, one use, started by the owner in a terminal |
+| The same window opened by `devices.pair` (6.1.7) | An API call opens the short-lived port, and a client answers the confirmation | Proposed: the bind and lifetime rules of 6.1.3, only the client that opened the window confirms, never a peer link or an agent's pane. Built so the owner can review it; awaits the owner's approval and a security review before any real host relies on it |
 | The bind address: LAN, tailnet address, or both | Decides who can reach the port | One address per hab, never all interfaces |
 | The port number | A new port on each host | One fixed default in the 2700-9999 range, checked against ports in use, overridable by config |
 | Device keys in gff-hab's authorized-keys file | A new credential that authenticates to a hab | Yes, for the embedded server only; the system sshd and `~/.ssh` unchanged |
