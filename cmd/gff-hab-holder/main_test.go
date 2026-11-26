@@ -576,8 +576,10 @@ func TestKilledLogicClient(t *testing.T) {
 const hupTrap = `trap 'echo hup >"$HUPFILE"; exit 0' HUP; `
 
 // hupWaiter traps SIGHUP, prints ready, and waits. The wait builtin returns at once for a trapped
-// signal, so the trap runs as soon as the signal arrives.
-const hupWaiter = hupTrap + `echo ready; while :; do sleep 600 & wait $!; done`
+// signal, so the trap runs as soon as the signal arrives. A signal that lands just before the
+// shell blocks in wait runs its trap only when the sleep ends, and the hangup reaches only the
+// session leader, not the sleep; so the sleep is short.
+const hupWaiter = hupTrap + `echo ready; while :; do sleep 1 & wait $!; done`
 
 // hupEcho traps SIGHUP, prints ready, then echoes each line it reads, so a test can tell it
 // still runs.
