@@ -230,10 +230,20 @@ func TestHostPingTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 5*time.Second, func() bool { return h.Pid() == 0 })
-	mu.Lock()
-	defer mu.Unlock()
-	if !strings.Contains(strings.Join(logs, "\n"), "answered no ping") {
-		t.Errorf("logs = %q", logs)
+	// The host delivers log lines on its own goroutine, so the kill's line can land after the
+	// child is gone.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		all := strings.Join(logs, "\n")
+		mu.Unlock()
+		if strings.Contains(all, "answered no ping") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("logs = %q", all)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

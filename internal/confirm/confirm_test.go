@@ -395,6 +395,8 @@ func TestExpiredNeverRuns(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// The note goes after the state changes, with no lock held.
+	waitFor(t, func() bool { return len(r.notesNow()) > 0 })
 	if _, err := r.svc.Answer(context.Background(), "phone", api.ConfirmAnswerParams{ID: c.ID, Choice: "confirm"}); kind(err) != api.ErrorKindConflict {
 		t.Fatalf("answer after expiry: %v", err)
 	}

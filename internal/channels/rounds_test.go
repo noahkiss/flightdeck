@@ -177,7 +177,13 @@ func TestRoundCapcomQueuedOnce(t *testing.T) {
 func TestRoundGroupLockAndDeadline(t *testing.T) {
 	bl := &lockLocal{fakeLocal: newLocal("bob")}
 	a := newHab(t, "dev-a", "hosta", t.TempDir(), newLocal("alice"))
-	b := newHabWith(t, "dev-b", "hostb", t.TempDir(), nil, func(c *Config) { c.Local = bl })
+	// Hab b's clock runs skew ahead of the wall clock, so the test moves b past a deadline
+	// only after the round lock has held the message.
+	var skew atomic.Int64
+	b := newHabWith(t, "dev-b", "hostb", t.TempDir(), nil, func(c *Config) {
+		c.Local = bl
+		c.Now = func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	})
 	link(a, b, "bee", nil)
 	link(b, a, "ay", nil)
 	ctx := context.Background()
@@ -194,7 +200,11 @@ func TestRoundGroupLockAndDeadline(t *testing.T) {
 	}
 	// In use until the deadline: expired with the lock's reason, never delivered.
 	bl.setWhy("typed into in the last 2 minutes")
-	a.s.SendRound(ctx, roundSend(hexID(11), "dev-b", "bob", "bee", time.Now().Add(300*time.Millisecond)))
+	asked := bl.n.Load()
+	a.s.SendRound(ctx, roundSend(hexID(11), "dev-b", "bob", "bee", time.Now().Add(time.Minute)))
+	// A second ask comes after the first one's reason was kept.
+	waitFor(t, "the round lock asked twice", func() bool { return bl.n.Load() >= asked+2 })
+	skew.Store(int64(2 * time.Minute))
 	r := final(t, a.s, hexID(11))
 	if r.State != api.ChannelStateExpired || r.Reason != "in use: typed into in the last 2 minutes" {
 		t.Fatalf("%+v", r)

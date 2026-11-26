@@ -268,6 +268,21 @@ sleep 30`)
 // the parser's scrollback stays empty.
 const floodScript = `yes "$(printf '\033[Hx')" | tr -d '\n'`
 
+// stoppableFlood is a pane script that runs floodScript in the background until stop is
+// called, and program in the foreground. A write's answer comes behind the output the holder
+// queued before it. While the flood runs, that queue stays full, so on a slow runner the answer
+// can come after inputTimeout. A test stops the flood once its writes are sent.
+func stoppableFlood(t *testing.T, program string) (script string, stop func()) {
+	t.Helper()
+	flag := filepath.Join(shortDir(t), "stop")
+	script = "stty raw -echo\n" + floodScript + " &\nf=$!\n(while [ ! -e " + flag + " ]; do sleep 0.01; done; kill $f) &\nexec " + program
+	return script, func() {
+		if err := os.WriteFile(flag, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // stallEventLoop stops the link's event loop until release, and waits until the holder client's
 // event channel is full. From then on the client reads no frame from the holder: the holder's
 // answers to requests wait behind output nobody reads.
@@ -333,7 +348,8 @@ func TestInputAbortedResent(t *testing.T) {
 	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
 	u := uuidN(86)
-	spawn(t, l, u, "stty raw -echo; "+floodScript)
+	script, stopFlood := stoppableFlood(t, "sleep 3600") // reads no input
+	spawn(t, l, u, script)
 	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
 	start := time.Now()
 	release := stallEventLoop(t, l)
@@ -358,6 +374,7 @@ func TestInputAbortedResent(t *testing.T) {
 		return len(p.inq) == 0
 	})
 	t.Logf("all sent after %v", time.Since(start))
+	stopFlood()
 	release()
 
 	if err := <-reqs[0].done; err != nil {
@@ -394,7 +411,8 @@ func TestInputDeadline(t *testing.T) {
 	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
 	u := uuidN(87)
-	spawn(t, l, u, "stty raw -echo; "+floodScript)
+	script, stopFlood := stoppableFlood(t, "sleep 3600") // reads no input
+	spawn(t, l, u, script)
 	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
 	release := stallEventLoop(t, l)
 
@@ -418,6 +436,7 @@ func TestInputDeadline(t *testing.T) {
 	p.mu.Lock()
 	reqs[2].deadline = time.Now()
 	p.mu.Unlock()
+	stopFlood()
 	release()
 
 	if err := <-reqs[0].done; err != nil {
@@ -456,9 +475,8 @@ func TestInputOtherWriter(t *testing.T) {
 	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
 	u := uuidN(88)
-	spawn(t, l, u, `stty raw -echo
-`+floodScript+` &
-exec cat > `+out)
+	script, stopFlood := stoppableFlood(t, "cat > "+out)
+	spawn(t, l, u, script)
 	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
 	seen := func(s string) func() bool {
 		return func() bool { b, _ := os.ReadFile(out); return string(b) == s }
@@ -488,6 +506,7 @@ exec cat > `+out)
 	}
 	p.mu.Unlock()
 	waitFor(t, "the third write, at the holder's count", seen("ZZc"))
+	stopFlood()
 	release()
 
 	var re *holderclient.RequestError
