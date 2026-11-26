@@ -354,14 +354,14 @@ type Device struct {
 }
 
 type DevicesPairParams struct {
-	Label string `json:"label,omitempty" doc:"Label for the device that will pair."`
+	Label string `json:"label,omitempty" doc:"The hab's label in the code. Default: the host name up to the first dot."`
 }
 
 // PairingOffer is what a QR code carries (transport.md 6.1).
 type PairingOffer struct {
 	Seq
 	DeviceID    string   `json:"device_id" doc:"The hab's host-key fingerprint, to pin."`
-	Endpoints   []string `json:"endpoints" doc:"Embedded SSH server addresses, host:port."`
+	Endpoints   []string `json:"endpoints" doc:"The pairing window's addresses, host:port, in the order to try."`
 	Token       string   `json:"token" doc:"One-time pairing token."`
 	ExpiresInMS int      `json:"expires_in_ms"`
 }
@@ -375,6 +375,35 @@ type DeviceList struct {
 
 type DevicesRevokeParams struct {
 	ID string `json:"id" doc:"Device id to revoke, or its label when one device has it."`
+}
+
+// DevicesConfirmParams answer the device waiting at the pairing window that devices.pair opened
+// (transport.md 6.1.7). Neither field: wait for a device.
+type DevicesConfirmParams struct {
+	Code    string `json:"code,omitempty" doc:"The last 4 characters of the device's key fingerprint, as the device shows them. A match pairs it; the third wrong code declines it."`
+	Decline bool   `json:"decline,omitempty" doc:"Refuse the waiting device. The window closes and its token is spent."`
+}
+
+// PairingState is where a pairing window that devices.pair opened stands.
+type PairingState string
+
+// PairingDevice is the device that presented the window's token.
+type PairingDevice struct {
+	Name        string     `json:"name" doc:"The name the device sent, cleaned."`
+	Kind        DeviceKind `json:"kind"`
+	KeyType     string     `json:"key_type" doc:"The SSH key type, such as ecdsa-sha2-nistp256."`
+	Fingerprint string     `json:"fingerprint" doc:"The key fingerprint with its last 4 characters hidden as ????: the owner reads them off the device."`
+	From        string     `json:"from" doc:"The device's source address."`
+}
+
+// DevicePairing answers devices.confirm.
+type DevicePairing struct {
+	Seq
+	State     PairingState   `json:"state" doc:"waiting: a device waits for the code; paired: it is in the trust store; declined, expired, failed (the key could not be saved), closed (the hab stopped): the window is closed and nothing paired."`
+	Device    *PairingDevice `json:"device,omitempty" doc:"With waiting, paired and declined: the device."`
+	Paired    *Device        `json:"paired,omitempty" doc:"With paired: its record."`
+	TriesLeft int            `json:"tries_left,omitempty" doc:"With waiting after a wrong code: the codes left before it is declined."`
+	Reason    string         `json:"reason,omitempty" doc:"Why the window closed, or why the code did not match, in one line."`
 }
 
 // --- Peers (mesh.md 3, 4.3) ---

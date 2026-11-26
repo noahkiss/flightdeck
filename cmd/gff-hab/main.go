@@ -93,6 +93,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1952,8 +1953,19 @@ func serve(args []string) error {
 	if input != nil {
 		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
-	// devices.list and devices.revoke (transport.md 5, 6.6) read the device list in the state folder.
-	devicesCtl := newDeviceService(dir, logger.Printf)
+	// The devices.* methods (transport.md 5, 6.1.7): the device list and revoke always; a pairing
+	// window that one of the owner's clients opens and confirms when the forced command is known.
+	fc, err := connectCommand(*sock)
+	if err != nil {
+		logger.Printf("devices: devices.pair is off: %v", err)
+		fc = ""
+	}
+	login := ""
+	if u, err := user.Current(); err == nil {
+		login = u.Username
+	}
+	devicesCtl := newDeviceService(deviceConfig{state: dir, hostKey: key.Private, command: fc, user: login, logf: logger.Printf})
+	defer devicesCtl.Close()
 	caps = append(caps, "devices")
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	s := control.New(control.Config{
@@ -2417,7 +2429,7 @@ func printJSON(v any) error {
 // `gff-hab api call` refuses to send from an agent's pane.
 func ownerCall(method string) bool {
 	switch method {
-	case "confirm.answer", "trust.answer", "devices.revoke":
+	case "confirm.answer", "trust.answer", "devices.pair", "devices.confirm", "devices.revoke":
 		return true
 	}
 	return false
@@ -2437,7 +2449,7 @@ func apiCall(args []string) error {
 	method := fs.Arg(0)
 	if ownerCall(method) && os.Getenv(hook.Env) != "" {
 		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10;
-		// transport.md 6.6).
+		// transport.md 6.1.7).
 		return fmt.Errorf("%s is the owner's answer; it does not run in an agent's pane", method)
 	}
 	var params any = struct{}{}

@@ -1,32 +1,43 @@
 package control
 
-import "github.com/noahkiss/flightdeck/api"
+import (
+	"context"
+	"time"
 
-// Devices runs the hab's trust store (transport.md 5, 6.6). gff-hab implements it.
+	"github.com/noahkiss/flightdeck/api"
+)
+
+// Devices runs the hab's trust store and the pairing window that devices.pair opens
+// (transport.md 5, 6.1.7). gff-hab implements it. client is the calling connection's client id:
+// only the client that opened a window answers its device.
 type Devices interface {
 	List() ([]api.Device, error)
 	Revoke(query string) error
+	Pair(client string, p api.DevicesPairParams) (api.PairingOffer, error)
+	// Confirm waits for a device, or answers it. It returns when ctx ends, with the state then.
+	Confirm(ctx context.Context, client string, p api.DevicesConfirmParams) (api.DevicePairing, error)
 }
 
-// hintNoPair answers devices.pair: pairing over the API is not built (transport.md 6.1).
-const hintNoPair = "%s is not built; pair a device with gff-hab pair on the host"
+// maxConfirmWait bounds one devices.confirm: a window lives at most five minutes.
+const maxConfirmWait = 6 * time.Minute
 
 // handleDevices answers the devices.* methods. They manage who may log in to this hab, so only
 // the owner's own clients call them: never a peer link (a peer cannot admit a key here,
-// transport.md 6.2), and never the pane route, which does not list them.
+// transport.md 6.2), and never the pane route, which does not list them. devices.confirm
+// waits, so each call runs on its own goroutine.
 func (c *conn) handleDevices(m message) {
 	seq := c.currentSeq()
 	ds := c.s.cfg.Devices
 	c.mu.Lock()
 	kind := c.kind
 	c.mu.Unlock()
-	var call func() (any, error)
+	var call func(ctx context.Context) (any, error)
 	var e *Error
 	switch m.Method {
 	case "devices.list":
 		var p api.DevicesListParams
 		if e = c.decodeUp(m, &p); e == nil && ds != nil {
-			call = func() (any, error) {
+			call = func(context.Context) (any, error) {
 				devs, err := ds.List()
 				return api.DeviceList{Devices: devs}, err
 			}
@@ -38,13 +49,22 @@ func (c *conn) handleDevices(m message) {
 				e = appErr(api.ErrorKindInvalid, "devices.revoke needs id: a device id or label")
 				break
 			}
-			call = func() (any, error) { return api.Empty{}, ds.Revoke(p.ID) }
+			call = func(context.Context) (any, error) { return api.Empty{}, ds.Revoke(p.ID) }
 		}
 	case "devices.pair":
-		e = appErr(api.ErrorKindUnavailable, hintNoPair, m.Method)
-	default:
-		c.reply(m, seq, nil, protoErr(codeMethodNotFound, "method %q does not exist", m.Method))
-		return
+		var p api.DevicesPairParams
+		if e = c.decodeUp(m, &p); e == nil && ds != nil {
+			call = func(context.Context) (any, error) { return ds.Pair(c.clientID, p) }
+		}
+	case "devices.confirm":
+		var p api.DevicesConfirmParams
+		if e = c.decodeUp(m, &p); e == nil && ds != nil {
+			if p.Code != "" && p.Decline {
+				e = appErr(api.ErrorKindInvalid, "devices.confirm takes a code or decline, not both")
+				break
+			}
+			call = func(ctx context.Context) (any, error) { return ds.Confirm(ctx, c.clientID, p) }
+		}
 	}
 	if e == nil && kind == api.ClientKindHab {
 		e = appErr(api.ErrorKindDenied, "%s is the owner's call; a peer link cannot send it", m.Method)
@@ -56,11 +76,15 @@ func (c *conn) handleDevices(m message) {
 		c.reply(m, seq, nil, e)
 		return
 	}
-	res, err := call()
-	seq = c.currentSeq()
-	if err != nil {
-		c.reply(m, seq, nil, actionErr(m.Method, err))
-		return
-	}
-	c.reply(m, seq, api.NonNil(withSeq(res, seq)), nil)
+	go func() {
+		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxConfirmWait)
+		defer cancel()
+		res, err := call(ctx)
+		seq := c.currentSeq()
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		c.reply(m, seq, api.NonNil(withSeq(res, seq)), nil)
+	}()
 }

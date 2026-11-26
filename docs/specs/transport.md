@@ -402,8 +402,8 @@ Why the answer carries the sshd host keys: the system sshd's host key is not the
 phone learns it over the pairing channel, which the code pinned, so it never trusts a host key on
 first sight.
 
-Pairing over the API (the Mac app's "Pair a device", with `devices.pair`): not built; proposed
-separately. The method answers `unavailable`.
+The Mac app's "Pair a device" opens the same window in the running gff-hab with `devices.pair`
+and confirms the device with `devices.confirm` (6.1.7).
 
 #### 6.1.1 The code
 
@@ -594,19 +594,58 @@ afterwards names the user and key); no retry when the file changes during the ap
 Decision: settled for the first build (owner decisions 2026-11-02). The subsystem, not
 keyboard-interactive, because the app's SSH library has no keyboard-interactive client.
 
-#### 6.1.7 The device list over the API (`devices.*`)
+#### 6.1.7 Pairing from a client (`devices.*`)
+
+A client the owner already uses (the Mac app on the hab, or any paired client) can run the
+pairing of 6.1 without a terminal. The window is the same: the addresses, limits, token, key
+line and device record of 6.1.1 to 6.1.4. Only the confirmation moves from the terminal to the
+client.
+
+1. **`devices.pair {label?}`** opens the window in the running gff-hab and returns the offer:
+   the hab's device id, the window's endpoints, the token and the time left. The client shows it
+   as the QR code (`PairingCode(offer:)`). One window is open at a time; a second call answers
+   `conflict` until the first closes.
+2. **`devices.confirm {}`** waits until a device presents the token, then answers `waiting` with
+   the device: its name, kind, key type, fingerprint with the last 4 characters as `????`, and
+   source address. The call returns when the window closes too, with how it ended.
+3. The owner types the last 4 characters the device shows. **`devices.confirm {code}`** pairs the
+   device on a match (constant-time compare) and answers `paired` with its record. A wrong code
+   answers `waiting` with `tries_left`; the third declines. `devices.confirm {decline: true}`
+   declines a waiting device, or closes the window when none waits.
+4. Outcomes: `paired`, `declined`, `expired`, `failed` (the key could not be saved) or `closed`
+   (the hab stopped). Each closes the window and spends the token.
+
+Who may call:
+
+| Rule | Value |
+|---|---|
+| The window's owner | Only the client id that called `devices.pair` answers `devices.confirm`; any other gets `denied` |
+| Peer links | Every `devices.*` method is `denied`: a peer admits no key and changes no trust store on another hab (6.2) |
+| Agents | The pane route does not take `devices.*`. `gff-hab api call` refuses `devices.pair`, `devices.confirm` and `devices.revoke`, and `gff-hab devices revoke` refuses to run, inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
+| The code | The answer never carries the last 4 characters; the owner reads them off the device |
 
 `devices.list` returns the device records. `devices.revoke {id}` takes an id, an id prefix of at
 least 6 characters, or a label, as `gff-hab devices revoke` does: it removes the key line and keeps
 the record as a tombstone. A session already open over the system sshd runs until it drops: the
-hab cannot tell which connection used which key. The device's push registration is kept.
+hab cannot tell which connection used which key. The device's push registration is kept. The key
+lands in the authorized_keys of the user gff-hab runs as, with the forced command `gff-hab connect`
+(the `-socket` of `serve` when given).
 
-| Rule | Value |
-|---|---|
-| Peer links | Every `devices.*` method is `denied`: a peer changes no trust store on another hab (6.2) |
-| Agents | The pane route does not take `devices.*`. `gff-hab api call devices.revoke` and `gff-hab devices revoke` refuse to run inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
+Why a caller gains nothing new: a local-socket caller runs as the hab's user and can write
+`~/.ssh/authorized_keys` itself. A paired device has a forced command and cannot, but it can
+already start a shell with `session.create` and write the file from there. So the window grants
+no access the caller lacks. The confirmation still proves the device in the owner's hand is the
+one asking.
 
-Pairing over the API (`devices.pair`): not built; proposed separately.
+Not built in the API path, against `gff-hab pair`:
+
+- No `-listen`: the window takes every LAN and tailnet address (6.1.3). On a cloud host, where a
+  private address may be reachable from the internet, pair with `gff-hab pair -listen <tailnet
+  ip>` instead.
+- No StrictModes warning (6.1.4): the API caller sees no terminal line.
+- The sshd endpoints told to the device use port 22, and the host keys come from `/etc/ssh`.
+- A window whose opener disconnects stays open until it ends (at most five minutes); no other
+  client can confirm or close it, and `devices.pair` answers `conflict` until then.
 
 ### 6.2 The phone and the other habs
 
@@ -776,6 +815,7 @@ discussed before it is built.
 |---|---|---|
 | Enabling the embedded SSH server on any hab | A new listening port | Off. The owner enables it per hab, after the security review |
 | The pairing window of `gff-hab pair` (6.1.3) | A short-lived listening port | Approved by the owner (2026-11-02): LAN and tailnet addresses only, five minutes at most, one use, started by the owner in a terminal |
+| The same window opened by `devices.pair` (6.1.7) | An API call opens the short-lived port, and a client answers the confirmation | Proposed: the bind and lifetime rules of 6.1.3, only the client that opened the window confirms, never a peer link or an agent's pane. Built so the owner can review it; awaits the owner's approval and a security review before any real host relies on it |
 | The bind address: LAN, tailnet address, or both | Decides who can reach the port | One address per hab, never all interfaces |
 | The port number | A new port on each host | One fixed default in the 2700-9999 range, checked against ports in use, overridable by config |
 | Device keys in gff-hab's authorized-keys file | A new credential that authenticates to a hab | Yes, for the embedded server only; the system sshd and `~/.ssh` unchanged |
@@ -836,8 +876,8 @@ Section 4 is updated. The Part 2 stage that built the handshake added the sectio
 - **4.2 SSH stdio:** the client pins the welcome's `device_id` (done).
 - **4.3:** now the embedded gff-hab SSH server; WebSocket only as a later carrier (done).
 - **3.2 Handshake:** the welcome carries `device_id`, the hab's host-key fingerprint (done).
-- **3.1 Protocol:** add a `devices.*` method group (done: `devices.list` and `devices.revoke`,
-  6.1.7; `devices.pair` answers `unavailable` until pairing over the API is built; rename and
-  rotate are pending). Pairing is `devices.pair`, not `hab.pair`.
-- **3.4 Capabilities:** `devices` says `devices.list` and `devices.revoke` work (done). A word that says the
+- **3.1 Protocol:** add a `devices.*` method group (done: `devices.pair`, `devices.confirm`,
+  `devices.list` and `devices.revoke`, 6.1.7; rename and rotate are pending). Pairing is
+  `devices.pair`, not `hab.pair`.
+- **3.4 Capabilities:** `devices` says the `devices.*` methods work (done). A word that says the
   embedded SSH server is on comes with that server.

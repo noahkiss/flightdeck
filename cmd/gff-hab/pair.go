@@ -119,31 +119,7 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		Confirm: func(ctx context.Context, d pairing.Device) (bool, error) {
 			return confirmDevice(ctx, d, lines, out, *authKeys)
 		},
-		Admit: func(d pairing.Device) (pairing.Paired, error) {
-			now := time.Now()
-			line, err := devicestore.KeyLine(d.Key, *command, d.Name, now)
-			if err != nil {
-				return pairing.Paired{}, err
-			}
-			added, err := devicestore.AppendAuthorizedKey(*authKeys, d.Key, line)
-			if err != nil {
-				return pairing.Paired{}, err
-			}
-			if !added {
-				// Another line already holds this key, maybe with no restriction: recording
-				// the device as forced-command, or revoking it later, would be wrong.
-				return pairing.Paired{}, fmt.Errorf("this key is already on another line of %s, so no restricted line was added. Remove that line (gff-hab devices revoke, for a device paired before) or pair with another key, then run gff-hab pair again", *authKeys)
-			}
-			err = store.Add(devicestore.Record{
-				ID: d.Fingerprint, Label: d.Name, Kind: d.Kind, PairedAt: now.UTC().Format(time.RFC3339),
-				Key:            strings.TrimSpace(string(ssh.MarshalAuthorizedKey(d.Key))),
-				AuthorizedKeys: *authKeys, State: devicestore.StatePaired,
-			})
-			if err != nil {
-				return pairing.Paired{}, err
-			}
-			return pairing.Paired{User: u.Username, SSH: pairing.SSHInfo{Endpoints: sshEndpoints, HostKeys: hostKeys}, ForcedCommand: true}, nil
-		},
+		Admit: admitter{store: store, authKeys: *authKeys, command: *command, user: u.Username, endpoints: sshEndpoints, hostKeys: hostKeys}.admit,
 	})
 	if err != nil {
 		return err
@@ -189,6 +165,48 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		return errors.New("declined; the pairing window is closed. Run gff-hab pair again to pair a device")
 	}
 	return fmt.Errorf("%v; the pairing window is closed", err)
+}
+
+// admitter saves a device the owner confirmed (transport.md 6.1.4): one restricted line in the
+// system sshd's authorized_keys, then the record in the hab's device list. gff-hab pair and
+// devices.pair share it.
+type admitter struct {
+	store     *devicestore.Store
+	authKeys  string
+	command   string
+	user      string
+	endpoints []string // the system sshd's, told to the device
+	hostKeys  []string
+	now       func() time.Time
+}
+
+func (a admitter) admit(d pairing.Device) (pairing.Paired, error) {
+	now := time.Now()
+	if a.now != nil {
+		now = a.now()
+	}
+	line, err := devicestore.KeyLine(d.Key, a.command, d.Name, now)
+	if err != nil {
+		return pairing.Paired{}, err
+	}
+	added, err := devicestore.AppendAuthorizedKey(a.authKeys, d.Key, line)
+	if err != nil {
+		return pairing.Paired{}, err
+	}
+	if !added {
+		// Another line already holds this key, maybe with no restriction: recording the device
+		// as forced-command, or revoking it later, would be wrong.
+		return pairing.Paired{}, fmt.Errorf("this key is already on another line of %s, so no restricted line was added. Remove that line (gff-hab devices revoke, for a device paired before) or pair with another key, then pair again", a.authKeys)
+	}
+	err = a.store.Add(devicestore.Record{
+		ID: d.Fingerprint, Label: d.Name, Kind: d.Kind, PairedAt: now.UTC().Format(time.RFC3339),
+		Key:            strings.TrimSpace(string(ssh.MarshalAuthorizedKey(d.Key))),
+		AuthorizedKeys: a.authKeys, State: devicestore.StatePaired,
+	})
+	if err != nil {
+		return pairing.Paired{}, err
+	}
+	return pairing.Paired{User: a.user, SSH: pairing.SSHInfo{Endpoints: a.endpoints, HostKeys: a.hostKeys}, ForcedCommand: true}, nil
 }
 
 // codeLen is how many characters of the key fingerprint the owner types to confirm.
