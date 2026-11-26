@@ -250,15 +250,6 @@ const (
 )
 
 const (
-	PairingStateWaiting  PairingState = "waiting"
-	PairingStatePaired   PairingState = "paired"
-	PairingStateDeclined PairingState = "declined"
-	PairingStateExpired  PairingState = "expired"
-	PairingStateFailed   PairingState = "failed"
-	PairingStateClosed   PairingState = "closed"
-)
-
-const (
 	PaneWaitReasonMatch    PaneWaitReason = "match"
 	PaneWaitReasonQuiet    PaneWaitReason = "quiet"
 	PaneWaitReasonExited   PaneWaitReason = "exited"
@@ -758,17 +749,10 @@ func (c Client) PaneRedraw(ctx context.Context, params RedrawParams) (Empty, err
 	return result, err
 }
 
-// DevicesPair calls devices.pair. Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). One window at a time; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.
+// DevicesPair calls devices.pair. Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).
 func (c Client) DevicesPair(ctx context.Context, params DevicesPairParams) (PairingOffer, error) {
 	var result PairingOffer
 	err := c.Caller.Call(ctx, "devices.pair", params, &result)
-	return result, err
-}
-
-// DevicesConfirm calls devices.confirm. Wait for the device that presented the open window's token, or answer it: the last 4 characters of its key fingerprint pair it, decline refuses it (transport.md 6.1.7). Only the connection that opened the window. Needs the devices capability.
-func (c Client) DevicesConfirm(ctx context.Context, params DevicesConfirmParams) (DevicePairing, error) {
-	var result DevicePairing
-	err := c.Caller.Call(ctx, "devices.confirm", params, &result)
 	return result, err
 }
 

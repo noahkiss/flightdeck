@@ -3091,7 +3091,7 @@ The connection follows `transport.md`. This section says what the app does.
 - **Pairing starts on the hab.** The owner runs `gff-hab pair` (or presses "Pair a device" in the
   Mac app on that host). The app scans the QR code, or takes the offer as text. It pins the hab's
   host key, presents the one-time token and its public key, and waits while the owner confirms on
-  the hab, or in the Mac app that opened the window (`transport.md` 6.1, 6.1.7).
+  the hab (`transport.md` 6.1).
 - **One QR per hab.** The app pairs with each hab on its own (`transport.md` 6.2).
 - **Device key.** iPhone and iPad make a P-256 key in the Secure Enclave on first start. The Mac app
   keeps its key in the Keychain. Settings shows the key's fingerprint. The owner may also import an

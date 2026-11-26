@@ -75,8 +75,7 @@ var Methods = []Method{
 	{"pane.disown", "Give up size ownership; the pane keeps its size (spec 6.3).", PaneRef{}, OwnerResult{}},
 	{"pane.set_desired_size", "Store this client's wanted size (spec 6.3).", DesiredSizeParams{}, DesiredSizeResult{}},
 	{"pane.redraw", "Send a fresh snapshot, or nudge the program to redraw (spec 6.7).", RedrawParams{}, Empty{}},
-	{"devices.pair", "Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). One window at a time; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.", DevicesPairParams{}, PairingOffer{}},
-	{"devices.confirm", "Wait for the device that presented the open window's token, or answer it: the last 4 characters of its key fingerprint pair it, decline refuses it (transport.md 6.1.7). Only the connection that opened the window. Needs the devices capability.", DevicesConfirmParams{}, DevicePairing{}},
+	{"devices.pair", "Not built: answers unavailable. Pairing over the API is proposed separately; gff-hab pair pairs a device on the host (transport.md 6.1).", DevicesPairParams{}, PairingOffer{}},
 	{"devices.list", "List the devices in the hab's trust store (transport.md 5). Needs the devices capability.", DevicesListParams{}, DeviceList{}},
 	{"devices.revoke", "Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops. Not over a peer link or the pane route. Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
 	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
@@ -298,7 +297,6 @@ var Enums = map[string][]string{
 	"RedrawMode":    {"snapshot", "nudge"},
 	"DeviceKind":    {"hab", "phone", "tablet", "desktop", "gff"},
 	"DeviceState":   {"paired", "revoked"},
-	"PairingState":  {"waiting", "paired", "declined", "expired", "failed", "closed"},
 	"AgentStatus":   {"idle", "working", "blocked", "done", "error", "none", "exited"},
 	"BlockedKind":   {"permission", "question", "auth", "trust"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
@@ -391,8 +389,8 @@ type Translator interface {
 // Translators maps revision N to the translator between N and N-1. Revision 1 needs none.
 var Translators = map[int]Translator{}
 
-// Capabilities lists the known capability strings (spec 3.4). "devices" means the hab's embedded
-// SSH server is on and the devices.* methods work (transport.md 9.4). "push" means the hab has
+// Capabilities lists the known capability strings (spec 3.4). "devices" means devices.list and
+// devices.revoke work on the hab's device list (transport.md 5, 6.6); devices.pair is not built. "push" means the hab has
 // working push config (app.md 8.4). "host-stats" means hab.stats works. "commands" means the
 // command.* methods and the command.updated event work (spec 2.5). "permissions" means
 // hab.permissions works (macos-identity.md 7.2). "mesh" means the hab keeps a peer list and

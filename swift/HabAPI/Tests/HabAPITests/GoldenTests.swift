@@ -78,7 +78,6 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.paneSetDesiredSize)
         result(HabMethods.paneRedraw)
         result(HabMethods.devicesPair)
-        result(HabMethods.devicesConfirm)
         result(HabMethods.devicesList)
         result(HabMethods.devicesRevoke)
         result(HabMethods.sessionCreate)
