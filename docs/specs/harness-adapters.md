@@ -488,7 +488,9 @@ When sources disagree inside one turn, the stronger one wins:
 - Built reset, for the owner's interrupt: Esc or Ctrl-C typed through `pane.input` into a
   `working` Claude pane, as one write and with no request open, shows `idle` with source
   `server` (Paseo does the same). It resets precedence, so the harness's next report of any
-  source wins again: a key that interrupted nothing is corrected at once. Plain bytes and the
+  source wins again: a key that interrupted nothing is corrected at once. That report always
+  commits a new revision, even when it says `idle` again: it opens the send gate, and a client
+  holding a refused message sends on the next `agent.state` (Stop and Send Now, `app.md` 4.2). Plain bytes and the
   kitty keyboard forms count; a paste never does. The reset is display only: `session.send`
   stays refused until the harness itself reports again (Claude sends OSC `idle` once it
   stops). The key may have gone to a shell whose Claude was killed, and a send would then

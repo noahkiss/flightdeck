@@ -2,6 +2,7 @@ import FlightdeckShared
 import Intents
 import UIKit
 import UserNotifications
+import WidgetKit
 
 /// Adds the request's expiry to a permission banner as a local clock time,
 /// " · Expires 14:05" (app.md 8.6, 16.1). The hab sends `expires_at` in the
@@ -13,6 +14,10 @@ import UserNotifications
 /// capability iOS refuses the update, and the plain banner shows. Any other push passes
 /// through with only its level changed: approvals, questions and finished turns take the level
 /// the owner picked (app.md 8.9), read from the App Group.
+///
+/// A withdrawal (kind `answered`: answered on another device, in the terminal, or its session
+/// ended) also drops its request from the needs-you widget's snapshot and reloads the widget
+/// (app.md 15.4), so the widget never offers a request that is gone while the app is suspended.
 ///
 /// `didReceive` calls the content handler before it returns, on every path, so
 /// the extension keeps no state between calls. iOS may call its methods on
@@ -28,6 +33,9 @@ final class NotificationService: UNNotificationServiceExtension {
         if meta?.kind == "capcom" {
             contentHandler(Self.communication(content, meta: meta))
             return
+        }
+        if let meta, NeedsYouSnapshot.withdraw(meta) {
+            WidgetCenter.shared.reloadTimelines(ofKind: NeedsYouSnapshot.widgetKind)
         }
         content.body = ExpiryText.append(to: content.body, meta: meta)
         // The owner's level for approvals, questions and finished turns (app.md 8.9).

@@ -154,6 +154,24 @@ final class LiveActivityFixTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// A request answered elsewhere (another device, the terminal) leaves the board: the running
+    /// activity loses Allow and Deny at once, without the hab's push (9.1).
+    func testActivityDropsButtonsWhenTheBoardClosesTheRequest() async {
+        let (hab, fleet, tracker, host) = await rig()
+        await tracker.start()
+        XCTAssertEqual(host.started.first?.1.buttons, true)
+        await tracker.dropClosed()
+        XCTAssertTrue(host.updates.isEmpty, "the request is still open")
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .working))
+        await eventually("buttons dropped") { host.updates.last?.1.buttons == false }
+        XCTAssertEqual(host.updates.last?.0, "s1")
+        XCTAssertNil(host.updates.last?.1.request)
+        let n = host.updates.count
+        await tracker.dropClosed()
+        XCTAssertEqual(host.updates.count, n, "dropped once")
+        await fleet.setActive(false)
+    }
+
     /// One activity at a time: any other ends before the new one starts.
     func testEndsOtherActivitiesFirst() async {
         let (_, fleet, tracker, host) = await rig()

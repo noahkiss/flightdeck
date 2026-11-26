@@ -364,8 +364,10 @@ func TestNotifierLiveActivity(t *testing.T) {
 	r.n.State(state(api.AgentStatusWorking))
 	r.n.Sync()
 	a = acts()
-	if len(a) != 2 || cs(a[1])["buttons"] != false || cs(a[1])["state"] != "working" || a[1].Header.Get("apns-priority") != "5" {
-		t.Fatalf("after the answer: %d, %v", len(a), cs(a[len(a)-1]))
+	// The update that withdraws the request goes at high priority: iOS may hold back a low one,
+	// and the activity would keep Allow and Deny for a request answered elsewhere.
+	if len(a) != 2 || cs(a[1])["buttons"] != false || cs(a[1])["state"] != "working" || a[1].Header.Get("apns-priority") != "10" {
+		t.Fatalf("after the answer: %d, %v, priority %s", len(a), cs(a[len(a)-1]), a[len(a)-1].Header.Get("apns-priority"))
 	}
 	// Working again within 30 s: throttled. After 30 s: one more.
 	w := state(api.AgentStatusWorking)
@@ -376,8 +378,8 @@ func TestNotifierLiveActivity(t *testing.T) {
 	w.Revision = 6
 	r.n.State(w)
 	r.n.Sync()
-	if n := len(acts()); n != 3 {
-		t.Fatalf("working throttle: %d updates, want 3", n)
+	if a = acts(); len(a) != 3 || a[2].Header.Get("apns-priority") != "5" {
+		t.Fatalf("working throttle: %d updates, want 3 (a later working update at low priority)", len(a))
 	}
 	r.n.State(state(api.AgentStatusDone))
 	r.n.Sync()

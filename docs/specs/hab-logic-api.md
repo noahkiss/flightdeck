@@ -1270,7 +1270,8 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   that is offline: a permission banner until its request's `expires_at`, other banners and
   notices for an hour, and a withdrawal as long as the banner it replaces. Live Activity updates
   go with 0: APNs tries once and stores nothing. Alerts go at priority 10, passive ones and Live
-  Activity progress at 5.
+  Activity progress at 5. A Live Activity update that leaves `blocked` goes at 10: it withdraws
+  the request.
 - **Tokens.** `<state>/push/tokens.json`, mode 0600 in a 0700 directory, written whole and
   renamed into place. One device token and one Live Activity token per device id: a second
   registration replaces the first. At most 64 devices; the oldest registration goes first.
@@ -1315,7 +1316,8 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   Permission answers).
 - **Live Activity** (`app.md` 9). Each device's activity token tracks one session. Every change
   of state goes out at once; repeated `working` at most every 30 s; other repeats not at all.
-  An answer drops the buttons at once (state `working` after allow, `idle` after deny).
+  An answer drops the buttons at once (state `working` after allow, `idle` after deny). The
+  update that leaves `blocked`, for any reason, goes at priority 10.
   `done`, `error` and `exited` end the activity with a dismissal ten minutes later, and the
   token is dropped. The content state is `state`, `kind`, `title`, `request`, `pane`,
   `buttons`, `since`, `others` (other blocked panes on this hab), `hab` and `harness`.

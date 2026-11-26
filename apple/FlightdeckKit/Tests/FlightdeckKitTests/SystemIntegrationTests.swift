@@ -296,6 +296,40 @@ final class AppIntentLogicTests: XCTestCase {
         XCTAssertEqual(reloads, 1, "an unknown request changes nothing")
     }
 
+    /// A withdrawal push (kind `answered`) drops its request from the stored snapshot, so the
+    /// widget clears it while the app is suspended: by request id, or by pane for a question
+    /// with no id. Other habs' items, other kinds and any other push leave it alone (15.4).
+    func testWithdrawalPushDropsTheRequestFromTheSnapshot() throws {
+        func item(_ kind: NeedsYouSnapshot.Item.Kind, hab: String = "desk-host", pane: String?, request: String?) -> NeedsYouSnapshot.Item {
+            NeedsYouSnapshot.Item(kind: kind, title: "t", habLabel: "desk", hab: hab, session: "s", pane: pane, request: request, since: nil)
+        }
+        let items = [
+            item(.approval, pane: "%1", request: "req-1"),
+            item(.approval, hab: "other-host", pane: "%1", request: "req-1"),
+            item(.question, pane: "%2", request: nil),
+            item(.other, pane: nil, request: nil),
+        ]
+        let d = emptyDefaults()
+        XCTAssertTrue(NeedsYouSnapshot(writtenAt: Date(timeIntervalSince1970: 1_000), count: 6, items: items).save(d))
+
+        XCTAssertFalse(NeedsYouSnapshot.withdraw(PushMeta(kind: "permission", hab: "desk-host", pane: "%1", request: "req-1"), defaults: d),
+                       "a new request is no withdrawal")
+        XCTAssertFalse(NeedsYouSnapshot.withdraw(PushMeta(kind: "answered", hab: "desk-host", pane: "%1", request: "req-9"), defaults: d),
+                       "an unknown request changes nothing")
+        XCTAssertTrue(NeedsYouSnapshot.withdraw(PushMeta(kind: "answered", hab: "desk-host", pane: "%1", request: "req-1"), defaults: d))
+        var s = try XCTUnwrap(NeedsYouSnapshot.load(d))
+        XCTAssertEqual(s.items.map(\.hab), ["other-host", "desk-host", "desk-host"], "only that hab's request goes")
+        XCTAssertEqual(s.count, 5)
+        XCTAssertFalse(NeedsYouSnapshot.withdraw(PushMeta(kind: "answered", hab: "desk-host", pane: "%1", request: "req-1"), defaults: d),
+                       "a second withdrawal changes nothing")
+
+        XCTAssertTrue(NeedsYouSnapshot.withdraw(PushMeta(kind: "answered", hab: "desk-host", pane: "%2"), defaults: d), "a question by its pane")
+        s = try XCTUnwrap(NeedsYouSnapshot.load(d))
+        XCTAssertEqual(s.items.map(\.kind), [.approval, .other])
+        XCTAssertEqual(s.count, 4)
+        XCTAssertFalse(NeedsYouSnapshot.withdraw(PushMeta(kind: "answered", hab: "desk-host"), defaults: d), "no pane, no request: nothing")
+    }
+
     /// With two habs, the stop of one on the way to the background must not drop its items.
     func testNeedsYouWritesOnlyWhileTheAppIsInFront() async {
         let b = board()

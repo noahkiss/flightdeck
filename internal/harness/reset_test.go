@@ -153,9 +153,22 @@ func TestOwnerInterrupt(t *testing.T) {
 	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
 		t.Fatalf("send before the harness confirmed the interrupt: %v", err)
 	}
+	before, n := st.Revision, len(events)
 	s.Report("p", progstatus.Report{State: "idle", App: "claude"}, 1150, true)
 	if _, err := s.CheckSend("p"); err != nil {
 		t.Fatalf("send after Claude's OSC idle: %v", err)
+	}
+	// Idle after idle still publishes a revision: a client holding a message the gate refused
+	// (Stop and Send Now) sends it on the next agent state, and gets one.
+	st, _ = s.Get("p")
+	if st.Revision == before || st.Source != api.StateSourceOsc || len(events) == n {
+		t.Fatalf("the gate opened with no new agent state: %+v, %d events", st, len(events)-n)
+	}
+	// Another OSC idle changes nothing: no revision.
+	n = len(events)
+	s.Report("p", progstatus.Report{State: "idle", App: "claude"}, 1160, true)
+	if len(events) != n {
+		t.Fatalf("a repeated idle published %d events", len(events)-n)
 	}
 	// The key interrupted nothing after all: Claude's next OSC working wins.
 	s.Report("p", progstatus.Report{State: "working", App: "claude"}, 1200, true)

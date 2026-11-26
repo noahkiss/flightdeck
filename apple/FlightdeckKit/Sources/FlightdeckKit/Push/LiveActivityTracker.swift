@@ -90,6 +90,26 @@ public final class LiveActivityTracker {
             pick.needed = (r.target, at)
         }
         blocked = now
+        Task { await dropClosed() }
+    }
+
+    /// A request a running activity offers closed on the board: answered on another device, in
+    /// the terminal, or its session ended. Its buttons go now, while the app runs, without
+    /// waiting for the hab's push (app.md 9.1). Only a hab online in this process can say so.
+    func dropClosed() async {
+        guard let host else { return }
+        let open = OpenRequest.collect(board.habs).filter { !$0.offline }
+        for (session, a) in live {
+            guard let request = a.state.request,
+                  board.habs.contains(where: { $0.state.welcome?.host.id == a.host && $0.state.status == .online }),
+                  !open.contains(where: { $0.host == a.host && $0.requestID == request })
+            else { continue }
+            var s = a.state
+            s.buttons = false
+            s.request = nil
+            live[session]?.state = s
+            await host.update(session: session, s)
+        }
     }
 
     /// The app is leaving the screen (scene inactive): start the tracked

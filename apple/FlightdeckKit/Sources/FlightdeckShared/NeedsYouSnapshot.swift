@@ -82,6 +82,33 @@ public struct NeedsYouSnapshot: Codable, Equatable, Sendable {
         return s
     }
 
+    /// The snapshot without the requests a hab reported resolved (app.md 15.4): the request
+    /// with that id, or, when the report names none (a question carries no id), the request
+    /// items of that pane with no id. Only items of `hab` go. The count drops by what left.
+    public func withdrawing(hab: String, request: String?, pane: String?) -> NeedsYouSnapshot {
+        let gone: (Item) -> Bool = { it in
+            guard it.hab == hab, it.kind != .other else { return false }
+            if let request, !request.isEmpty { return it.request == request }
+            guard let pane, !pane.isEmpty else { return false }
+            return it.pane == pane && (it.request ?? "").isEmpty
+        }
+        var s = self
+        let left = items.filter { !gone($0) }
+        s.count = max(left.count, count - (items.count - left.count))
+        s.items = left
+        return s
+    }
+
+    /// Drops what a withdrawal push names from the stored snapshot (the push kind `answered`,
+    /// hab-logic-api.md 3.9). True when the snapshot changed, so the widget should reload.
+    @discardableResult
+    public static func withdraw(_ meta: PushMeta, defaults: UserDefaults = SharedSettings.defaults) -> Bool {
+        guard meta.kind == "answered", let s = load(defaults) else { return false }
+        let next = s.withdrawing(hab: meta.hab, request: meta.request, pane: meta.pane)
+        guard next.items != s.items else { return false }
+        return next.save(defaults)
+    }
+
     /// Writes the snapshot; false when what the widget shows is unchanged.
     @discardableResult
     public func save(_ defaults: UserDefaults = SharedSettings.defaults) -> Bool {

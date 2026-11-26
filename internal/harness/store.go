@@ -237,7 +237,11 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		}
 		return false, ""
 	}
-	p.ownerStop = false // the harness spoke after the owner's interrupt
+	// The harness spoke after the owner's interrupt: the send gate opens. That report may
+	// change nothing else (Claude's OSC idle after the interrupt's idle), so it still commits a
+	// revision below: a client that holds a message waits for the next agent state.
+	ownerStopped := p.ownerStop
+	p.ownerStop = false
 	if rank[src] > rank[p.turnSource] {
 		p.turnSource = src
 	}
@@ -349,7 +353,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		p.bound, p.turnSource, p.hooked, p.served = false, "", "", ""
 	}
 
-	if same(p.st, next) {
+	if same(p.st, next) && !ownerStopped {
 		return false, opened
 	}
 	next.Source = src

@@ -807,8 +807,10 @@ func (n *Notifier) activity(st api.AgentState, w Where, changed bool) {
 			Others:  n.othersBlocked(st.Pane),
 		}
 		end := st.State == api.AgentStatusDone || st.State == api.AgentStatusError || st.State == api.AgentStatusExited
+		// Leaving blocked goes at high priority too: the update withdraws the request (and its
+		// Allow and Deny), which iOS may otherwise hold back for a while (app.md 9.2).
 		prio := 10
-		if st.State == api.AgentStatusWorking || st.State == api.AgentStatusIdle {
+		if (st.State == api.AgentStatusWorking || st.State == api.AgentStatusIdle) && !strings.HasPrefix(n.laKey[dk], "blocked/") {
 			prio = 5
 		}
 		env := d.Environment
