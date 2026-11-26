@@ -1,13 +1,17 @@
 # The Apple build (docs/specs/ci-release.md 3.4): the Swift package tests, then the Xcode
 # project generated from apple/project.yml, built for the iOS Simulator and for macOS, and the
-# Kit package's tests on an iOS Simulator. No signing, no secrets; the Mac app signs ad hoc (no
-# Local.xcconfig in CI). It runs only when the app, the Swift package, the schema it is generated
-# from, or the Go testdata the Swift tests read change. A Go change under api/ that alters the schema
-# also regenerates swift/HabAPI, so the schema file and the testdata folders are enough. The live
-# tests skip: they need a real hab.
+# Kit package's tests on an iOS Simulator. Three xcode-ci jobs run in parallel: the two
+# `swift test`s, the iOS build with the Simulator tests, and the macOS build. Each builds arm64
+# only. The Simulator tests run on every event but a pull request: there the Kit's `swift test`
+# covers the Kit, and the push to main runs them (spec 3.4). No signing, no secrets; the Mac app
+# signs ad hoc (no Local.xcconfig in CI). It runs only when the app, the Swift package, the
+# schema it is generated from, or the Go testdata the Swift tests read change. A Go change under
+# api/ that alters the schema also regenerates swift/HabAPI, so the schema file and the testdata
+# folders are enough. The live tests skip: they need a real hab.
 # app-release.yml calls it on an app tag (workflow_call), so the release tests the tagged commit
-# with these same inputs. The push that merges a pull request whose own Apple run passed builds
-# nothing again (spec 3.3); a direct push to main, a tag and a dispatch always run.
+# with these same inputs. The push that merges a pull request whose own full Apple run passed
+# runs only the Simulator tests the pull request left out (spec 3.3); a direct push to main, a
+# tag and a dispatch run everything.
 name: Apple
 
 on:
@@ -45,16 +49,19 @@ jobs:
       pull-requests: read
       actions: read
     outputs:
-      run: ${{ steps.mode.outputs.run }}
-      full: ${{ steps.mode.outputs.full }}
+      swift: ${{ steps.mode.outputs.swift }}
+      builds: ${{ steps.mode.outputs.builds }}
+      sim: ${{ steps.mode.outputs.sim }}
     steps:
-      # Full or Swift only: a pull request whose files on the Apple paths are all under api/ or
-      # swift/HabAPI/ (the schema, its testdata and the generated package) runs only the two
-      # `swift test`s. Any other Apple path, a push, a tag and a dispatch run everything.
-      # Skip only when this push to main merges a pull request whose apple.yml run on its head
-      # passed in full; a Swift-only pull request gets its full run on main. Any lookup that
-      # fails leaves it on and full.
-      - name: Run, full or Swift only
+      # Three switches, one per part: swift (the two `swift test`s), builds (the iOS and macOS
+      # builds) and sim (the Kit's tests on an iOS Simulator).
+      # A pull request runs swift and builds, never sim. A pull request whose files on the Apple
+      # paths are all under api/ or swift/HabAPI/ (the schema, its testdata and the generated
+      # package) runs swift only.
+      # A push to main that merges a pull request whose full apple.yml run on its head passed
+      # runs sim only; a Swift-only pull request gets all three on main. Any other push, a tag,
+      # a dispatch and the release's call run all three. Any lookup that fails leaves all on.
+      - name: Which parts run
         id: mode
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,11 +88,15 @@ jobs:
             done <<< "$files"
             if [ "$any" = true ]; then echo swift; else echo full; fi
           }
-          run=true
-          full=true
-          if [ "$EVENT" = pull_request ] && [ -n "$PR" ] && [ "$(kind "$PR")" = swift ]; then
-            echo "Only the API and the Swift package changed on the Apple paths: Swift tests only."
-            full=false
+          swift=true
+          builds=true
+          sim=true
+          if [ "$EVENT" = pull_request ]; then
+            sim=false
+            if [ -n "$PR" ] && [ "$(kind "$PR")" = swift ]; then
+              echo "Only the API and the Swift package changed on the Apple paths: Swift tests only."
+              builds=false
+            fi
           fi
           if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
             prs=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[] | select(.merged_at != null) | "\(.number) \(.head.sha)"') || prs=""
@@ -93,24 +104,33 @@ jobs:
               [ -n "$number" ] || continue
               passed=$(gh run list -R "$REPO" --workflow apple.yml --commit "$head" --status success --limit 1 --json databaseId --jq 'length') || passed=0
               if [ "$passed" = 1 ] && [ "$(kind "$number")" = full ]; then
-                echo "This push merges pull request #$number, whose full Apple run on $head passed: nothing to run."
-                run=false
+                echo "This push merges pull request #$number, whose full Apple run on $head passed: Simulator tests only."
+                swift=false
+                builds=false
                 break
               fi
             done <<< "$prs"
           fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "swift=$swift builds=$builds sim=$sim"
+          {
+            echo "swift=$swift"
+            echo "builds=$builds"
+            echo "sim=$sim"
+          } >> "$GITHUB_OUTPUT"
 
-  apple:
-    name: Apple (${{ needs.plan.outputs.full == 'true' && 'full' || 'Swift only' }})
+  # Three calls of xcode-ci, in parallel on three runners (spec 3.4). Each has its own
+  # concurrency-key, compilation cache store and logs artifact, so the three never cancel each
+  # other or share a cache key. Only the iOS and macOS jobs save the SwiftPM entry: the job that
+  # runs only `swift test` would save it without the cloned packages the builds use.
+  # Xcode 27.2 by path on the xcode-27 image; never the image default or a beta (spec 4).
+  swift:
+    name: Swift tests
     needs: plan
-    if: needs.plan.outputs.run == 'true'
+    if: needs.plan.outputs.swift == 'true'
     permissions:
       contents: read
     uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
     with:
-      # Xcode 27.2 by path on the xcode-27 image; never the image default or a beta (spec 4).
       runner: xcode-27
       xcode-app: /Applications/Xcode_27.2.app
       swift-test-dirs: |
@@ -119,18 +139,37 @@ jobs:
       # Resolve and test only the versions in each Package.resolved: a file that does not match its
       # Package.swift fails, instead of `swift test` rewriting it in silence (spec 3.4).
       swift-resolved-only: true
-      # Swift only: empty generate, builds and tests skip those steps in xcode-ci.
-      generate: ${{ needs.plan.outputs.full == 'true' && 'apple/scripts/generate.sh' || '' }}
+      spm-cache-key-file: apple/FlightdeckKit/Package.resolved
+      spm-cache-save: false
+      concurrency-key: swift
+      logs-name: xcode-ci-logs-swift
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+      timeout-minutes: 45
+
+  # The iOS build, and the Kit's tests on an iOS Simulator on every event but a pull request.
+  # On the push that merges a pull request whose full run passed, the Simulator tests alone.
+  # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5). A test
+  # that hangs fails by name after 2 minutes (at most 5 with its own allowance), so the job
+  # never sits until its own timeout with nothing in the log (spec 3.4). ARCHS=arm64: a generic
+  # destination builds every arch in ARCHS, x86_64 too, and Intel is no target (spec 4).
+  # The Xcode compilation cache is restored and saved between runs (spec 5).
+  ios:
+    name: iOS${{ needs.plan.outputs.builds == 'true' && ' build' || '' }}${{ needs.plan.outputs.builds == 'true' && needs.plan.outputs.sim == 'true' && ' and' || '' }}${{ needs.plan.outputs.sim == 'true' && ' Simulator tests' || '' }}
+    needs: plan
+    if: needs.plan.outputs.builds == 'true' || needs.plan.outputs.sim == 'true'
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
+    with:
+      runner: xcode-27
+      xcode-app: /Applications/Xcode_27.2.app
+      generate: ${{ needs.plan.outputs.builds == 'true' && 'apple/scripts/generate.sh' || '' }}
       project: apple/Flightdeck.xcodeproj
-      # fromJSON turns the \n in the JSON string into the line break between the two builds.
-      builds: ${{ needs.plan.outputs.full == 'true' && fromJSON('"FlightdeckiOS | generic/platform=iOS Simulator\nFlightdeckMac | generic/platform=macOS"') || '' }}
-      tests: ${{ needs.plan.outputs.full == 'true' && 'FlightdeckKit-Package | ios-simulator | apple/FlightdeckKit' || '' }}
-      # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5). A test
-      # that hangs fails by name after 2 minutes (at most 5 with its own allowance), so the job
-      # never sits until its own timeout with nothing in the log (spec 3.4).
-      # The Xcode compilation cache is restored and saved between runs (spec 5).
+      builds: ${{ needs.plan.outputs.builds == 'true' && 'FlightdeckiOS | generic/platform=iOS Simulator' || '' }}
+      tests: ${{ needs.plan.outputs.sim == 'true' && 'FlightdeckKit-Package | ios-simulator | apple/FlightdeckKit' || '' }}
       compilation-cache: true
       compilation-cache-limit: 2G
+      compilation-cache-key-suffix: ios
       xcodebuild-args: |
         -onlyUsePackageVersionsFromResolvedFile
         -test-timeouts-enabled
@@ -139,6 +178,41 @@ jobs:
         120
         -maximum-test-execution-time-allowance
         300
+        ARCHS=arm64
       spm-cache-key-file: apple/FlightdeckKit/Package.resolved
+      concurrency-key: ios
+      logs-name: xcode-ci-logs-ios
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
-      timeout-minutes: 90
+      timeout-minutes: 75
+
+  # The macOS build, ad hoc signed. The same arguments as the iOS job.
+  mac:
+    name: macOS build
+    needs: plan
+    if: needs.plan.outputs.builds == 'true'
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
+    with:
+      runner: xcode-27
+      xcode-app: /Applications/Xcode_27.2.app
+      generate: apple/scripts/generate.sh
+      project: apple/Flightdeck.xcodeproj
+      builds: FlightdeckMac | generic/platform=macOS
+      compilation-cache: true
+      compilation-cache-limit: 2G
+      compilation-cache-key-suffix: mac
+      xcodebuild-args: |
+        -onlyUsePackageVersionsFromResolvedFile
+        -test-timeouts-enabled
+        YES
+        -default-test-execution-time-allowance
+        120
+        -maximum-test-execution-time-allowance
+        300
+        ARCHS=arm64
+      spm-cache-key-file: apple/FlightdeckKit/Package.resolved
+      concurrency-key: mac
+      logs-name: xcode-ci-logs-mac
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+      timeout-minutes: 45

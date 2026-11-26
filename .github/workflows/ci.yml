@@ -33,7 +33,17 @@ jobs:
       actions: read
     outputs:
       full: ${{ steps.mode.outputs.full }}
-      shards: ${{ steps.mode.outputs.full == 'true' && '["0/4","1/4","2/4","3/4","4/4"]' || '["all"]' }}
+      # One entry per go job: its name, its GO_TEST_SHARD, its make targets, and a key for its
+      # concurrency group and build cache.
+      jobs: >-
+        ${{ steps.mode.outputs.full == 'true' && '[
+        {"name":"0/4","shard":"0/4","make":"check-pure vet test","key":"0-4"},
+        {"name":"0/4 race","shard":"0/4","make":"race","key":"0-4-race"},
+        {"name":"1/4","shard":"1/4","make":"test race","key":"1-4"},
+        {"name":"2/4","shard":"2/4","make":"test race","key":"2-4"},
+        {"name":"3/4","shard":"3/4","make":"test race","key":"3-4"},
+        {"name":"4/4","shard":"4/4","make":"test race","key":"4-4"}]'
+        || '[{"name":"all","shard":"all","make":"ci-fast","key":"all"}]' }}
       ghostty_key: ${{ steps.key.outputs.ghostty_key }}
     steps:
       - name: Checkout
@@ -76,36 +86,38 @@ jobs:
 
   # The job name says which set ran: the release check accepts only a run with a passing
   # "go (full) / ..." job (docs/specs/ci-release.md 7.4).
-  # The full set runs as five jobs on five runners: shard 0/4 is gofmt, the generate check,
-  # check-pure, vet and every package but cmd/gff-hab; shards 1/4 to 4/4 each run a quarter of
-  # cmd/gff-hab's tests, the long pole, in make test and make race (scripts/go-test-split.sh,
-  # spec 3.2). The job names start "go (full)": the release check accepts a run whose "go (full)"
-  # jobs passed (spec 7.4).
+  # The full set runs as six jobs on six runners: shard 0/4 is gofmt, the generate check,
+  # check-pure, vet and make test over every package but cmd/gff-hab; "0/4 race" is make race
+  # over the race list but cmd/gff-hab; shards 1/4 to 4/4 each run a quarter of cmd/gff-hab's
+  # tests, the long pole, in make test and make race (scripts/go-test-split.sh, spec 3.2).
+  # Together they run `make ci-full` for each shard. The job names start "go (full)": the
+  # release check accepts a run whose "go (full)" jobs passed (spec 7.4). Each job keeps its own
+  # Go build cache, saved from main (build-cache-key, spec 5).
   go:
-    name: go (${{ needs.plan.outputs.full == 'true' && 'full' || 'fast' }}) ${{ matrix.shard }}
+    name: go (${{ needs.plan.outputs.full == 'true' && 'full' || 'fast' }}) ${{ matrix.job.name }}
     needs: plan
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+        job: ${{ fromJSON(needs.plan.outputs.jobs) }}
     permissions:
       contents: read
     uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
     with:
-      fmt: ${{ matrix.shard == '0/4' || matrix.shard == 'all' }}
-      generate-check: ${{ matrix.shard == '0/4' || matrix.shard == 'all' }}
+      fmt: ${{ matrix.job.key == '0-4' || matrix.job.key == 'all' }}
+      generate-check: ${{ matrix.job.key == '0-4' || matrix.job.key == 'all' }}
       mise: true
       cache-path: build/libghostty-vt
       cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline
+      build-cache-key: ${{ matrix.job.key }}
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-      concurrency-key: ${{ matrix.shard }}
+      concurrency-key: ${{ matrix.job.key }}
       # A hosted runner is slower than a dev box; the scale raises every test's upper bound.
       # GHOSTTY_ZIGFLAGS is inline because go-ci has no env input: on a cache miss, make builds
       # the release's baseline libghostty, the one the -baseline key promises.
       commands: >-
-        GFF_TEST_TIMEOUT_SCALE=3 make
-        ${{ needs.plan.outputs.full != 'true' && 'ci-fast' || (matrix.shard == '0/4' && 'ci-full' || 'test race') }}
-        GO_TEST_SHARD=${{ matrix.shard }}
+        GFF_TEST_TIMEOUT_SCALE=3 make ${{ matrix.job.make }}
+        GO_TEST_SHARD=${{ matrix.job.shard }}
         RACE_COUNT=${{ github.event_name == 'pull_request' && '1' || '3' }}
         GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
       timeout-minutes: 45
