@@ -1,5 +1,5 @@
 {
-  "originHash" : "a0581e1de8c3abe9cb4c8d961018eda8b39f599570dd28b461949ea7cd573b5e",
+  "originHash" : "d4efdef7c5d0c32b245b854fef8cccb13e067ff822ff7aa7937ec221df0637b9",
   "pins" : [
     {
       "identity" : "displaylink",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Lakr233/libghostty-spm.git",
       "state" : {
-        "revision" : "b9694b5014bcf783882328a04da37569422aebef",
-        "version" : "2.2.2026111701"
+        "revision" : "706afe07b410e9f189ab00691ea064a9f69d61d8",
+        "version" : "2.2.2026112302"
       }
     },
     {
@@ -123,8 +123,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "2f58d8ef84438d6517fc78bcea2f8527e3c72936",
-        "version" : "2.105.0"
+        "revision" : "ae78c343cde1fad5aad88f0bf59cc7a91dfec0e5",
+        "version" : "2.105.1"
       }
     },
     {
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio-ssh.git",
       "state" : {
-        "revision" : "d1985926494b624e751b379009dc83f3395fd88a",
-        "version" : "0.15.1"
+        "revision" : "e8de09a26d3d0a6ecf509fe0554bd27a6f9ee3d0",
+        "version" : "0.15.2"
       }
     },
     {
