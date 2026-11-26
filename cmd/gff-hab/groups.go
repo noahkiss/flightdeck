@@ -250,6 +250,7 @@ func newGroups(cfg groupsConfig) (*groupsService, error) {
 	s.base, s.baseCancel = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.watch()
+	s.bg(s.sweepLanes)
 	for _, id := range ending {
 		// The hab stopped during the group's end: it finishes now (groups.md 7.6). An ending
 		// group starts nothing and lands nothing meanwhile.
@@ -2037,6 +2038,8 @@ func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator
 		err = control.Errorf(api.ErrorKindNotFound, "no group %s on this hab", id)
 	case !groups.Live(*g) || g.State == groups.StateConfirming || g.State == groups.StateEnding:
 		err = control.Errorf(api.ErrorKindConflict, "group %s is %s", g.ID, g.State)
+	case g.Moving != nil:
+		err = control.Errorf(api.ErrorKindUnavailable, "group %s is moving to %s; try again in a moment", id, nameOr(g.Moving.Label, g.Moving.To))
 	}
 	remote := map[string][]string{} // device: idle members' session ids on that hab
 	if err == nil && s.boolSetting(settings.GroupCloseMembers, true) {
@@ -2056,6 +2059,9 @@ func (s *groupsService) closeGroup(ctx context.Context, id string, byCoordinator
 		head = "" // the coordinator's own close: its answer is the record
 	}
 	if _, err := s.end(id, head, false); err != nil {
+		if errKind(err) != "" {
+			return api.Group{}, err // a move started meanwhile: unavailable
+		}
 		return api.Group{}, control.Errorf(api.ErrorKindConflict, "%v", err)
 	}
 	// Idle members on other habs close over the link this hab dialed; a hab offline keeps

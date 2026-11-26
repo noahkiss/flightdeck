@@ -246,7 +246,7 @@ func (s *groupsService) handOver(id, to string) (api.GroupMoveResult, error) {
 	run := s.lane.runs[id]
 	draining := run != nil && run.pushed
 	if run != nil && !draining {
-		run.stopping = true // a push it saves from now on is refused
+		run.stopping = true // a push it reports from now on records no attempt, and the run stops
 	}
 	s.saveLocked(g)
 	title := g.Title
@@ -314,6 +314,10 @@ func (s *groupsService) finishHandOver(id, to, label string, gen uint64, l confi
 		s.mu.Unlock()
 		return refuse(api.ErrorKindConflict, "group %s changed during the move", id)
 	}
+	if err := s.stillMovableLocked(g, label); err != nil {
+		s.mu.Unlock()
+		return api.GroupMoveResult{}, err
+	}
 	if groups.Drain(g) {
 		s.saveLocked(g)
 	}
@@ -342,6 +346,10 @@ func (s *groupsService) finishHandOver(id, to, label string, gen uint64, l confi
 	if g == nil || g.Moving == nil || g.Moving.Generation != gen {
 		s.mu.Unlock()
 		return refuse(api.ErrorKindConflict, "group %s changed during the move", id)
+	}
+	if err := s.stillMovableLocked(g, label); err != nil {
+		s.mu.Unlock()
+		return api.GroupMoveResult{}, err
 	}
 	rec := s.portable(cl, *g)
 	s.mu.Unlock()
@@ -394,6 +402,23 @@ func (s *groupsService) finishHandOver(id, to, label string, gen uint64, l confi
 	return api.GroupMoveResult{State: "moved", Home: to, Text: fmt.Sprintf("group %s moved home to %s", title, label)}, nil
 }
 
+// stillMovableLocked checks, before the adopt, that the group still runs or is paused: close
+// and the end answer unavailable while the group moves, so nothing else should have changed
+// its state. When something did, the move stops here: moving clears, the card says why, and
+// the error is the answer. The caller holds s.mu.
+func (s *groupsService) stillMovableLocked(g *api.Group, label string) error {
+	if g.State == groups.StateRunning || g.State == groups.StatePaused {
+		return nil
+	}
+	g.Moving = nil
+	g.MoveFailed = fmt.Sprintf("the move to %s did not commit: the group became %s during it", label, g.State)
+	failed := g.MoveFailed
+	s.saveLocked(g)
+	id := g.ID
+	s.bgLocked(func() { s.kick(id) })
+	return control.Errorf(api.ErrorKindConflict, "%s", failed)
+}
+
 // dropLaneLocked removes this hab's lane worktree of a group that moved away (groups.md 5.7),
 // unless another group here, live or waiting to commit, lands in the same repository. The
 // removal runs off the lock under the repository's lane lock; a failure is logged and never
@@ -429,10 +454,12 @@ func (s *groupsService) dropLaneLocked(cl api.CatalogList, g api.Group) {
 		}
 	}
 	s.bgLocked(func() {
-		lk := s.repoLock(key)
-		lk.Lock()
-		defer lk.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		lk := s.repoLock(dir)
+		if lk.lock(s.lane.ctx) != nil {
+			return // the hab stops; the sweep at the next start removes the worktree
+		}
+		defer lk.unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute) // a removal under way finishes
 		defer cancel()
 		if err := lane.Remove(ctx, s.cfg.laneGit, src, dir); err != nil {
 			s.cfg.logf("groups: %s: the lane worktree %s stays after the move: %v", g.ID, dir, err)
@@ -633,6 +660,14 @@ func (s *groupsService) commitLocked(cl api.CatalogList, pd *api.Group, final *a
 	}
 	delete(s.pending, g.ID)
 	s.groups[g.ID] = g
+	if n := len(s.queued); n > 0 {
+		// A move queued here, now done: the request goes.
+		if s.queued = slices.DeleteFunc(s.queued, func(o groups.Queued) bool { return o.Group == g.ID }); len(s.queued) != n {
+			if err := s.st.SaveQueued(s.queued); err != nil {
+				s.cfg.logf("groups: queued moves: %v", err)
+			}
+		}
+	}
 	s.tellLocked(g, fmt.Sprintf("group %s moved home to %s", g.Title, label), "Flightdeck")
 	s.saveLocked(g)
 	id := g.ID
@@ -770,6 +805,17 @@ func (s *groupsService) moveTick() {
 			}
 			continue
 		}
+		if q.Draining != "" {
+			if why := s.drainVerdictLocked(cl, q, now); why != "" {
+				changed = true
+				if why != "moved" && s.cfg.notice != nil {
+					s.cfg.notice("Group move failed", fmt.Sprintf("The queued move of group %s to this hab did not finish: %s", nameOr(q.Title, q.Group), why))
+				}
+				continue
+			}
+			keep = append(keep, q) // the old home finishes the hand-over: nothing to send
+			continue
+		}
 		keep = append(keep, q)
 		if _, _, up := s.linkTo(cl, q.Home); up && !s.queuing[q.Group] {
 			run = append(run, q)
@@ -797,6 +843,37 @@ func (s *groupsService) moveTick() {
 		q := q
 		s.bg(func() { s.runQueued(q) })
 	}
+}
+
+// drainVerdictLocked reads a queued move the home answered with draining (groups.md 5.7):
+// "moved" once the group is here, a reason once the move clearly did not finish, else "" while
+// it may still run. The reason needs the drain's whole time to have passed, by this hab's keys,
+// and the home's catalog copy to show the group there with no move under way. The caller holds
+// s.mu.
+func (s *groupsService) drainVerdictLocked(cl api.CatalogList, q groups.Queued, now time.Time) string {
+	if _, ok := s.groups[q.Group]; ok {
+		return "moved"
+	}
+	if _, ok := s.pending[q.Group]; ok {
+		return "" // adopted here: the commit drops the request
+	}
+	at, err := time.Parse(time.RFC3339Nano, q.Draining)
+	if err == nil && now.Before(at.Add(s.cfg.keys.MoveDrain+s.cfg.keys.MoveAnswer+moveStartWait+time.Minute)) {
+		return ""
+	}
+	w, ok := groups.Find(cl, q.Group)
+	home := nameOr(q.Label, q.Home)
+	switch {
+	case !ok:
+		return "the group is no longer in the catalog"
+	case w.Device == s.cfg.self:
+		return "" // the commit is on its way
+	case w.Device == q.Home && w.Entry.Moving != nil:
+		return "" // the hand-over still runs there
+	case w.Device == q.Home:
+		return fmt.Sprintf("%s kept the group; its card says why", home)
+	}
+	return fmt.Sprintf("the group moved to %s instead", nameOr(s.labelOf(cl, w.Device), w.Device))
 }
 
 // pendingVerdict reads the catalog copies for a pending copy (5.7 steps 6 and 7): "commit"
@@ -861,8 +938,19 @@ func (s *groupsService) runQueued(q groups.Queued) {
 	}
 	s.mu.Lock()
 	delete(s.queueTries, q.Group)
-	s.mu.Unlock()
-	s.mu.Lock()
+	if err == nil && out.State == "draining" {
+		// The home finishes the hand-over in the background: the request stays, marked, so
+		// a drain that fails still raises a notice here (moveTick).
+		if i := slices.IndexFunc(s.queued, func(o groups.Queued) bool { return o.Group == q.Group && o.At == q.At }); i >= 0 {
+			s.queued[i].Draining = stampT(s.cfg.now())
+			if serr := s.st.SaveQueued(s.queued); serr != nil {
+				s.cfg.logf("groups: queued moves: %v", serr)
+			}
+		}
+		s.mu.Unlock()
+		s.cfg.logf("groups: %s: the queued move runs: %s", q.Group, out.Text)
+		return
+	}
 	s.queued = slices.DeleteFunc(s.queued, func(o groups.Queued) bool { return o.Group == q.Group && o.At == q.At })
 	if serr := s.st.SaveQueued(s.queued); serr != nil {
 		s.cfg.logf("groups: queued moves: %v", serr)

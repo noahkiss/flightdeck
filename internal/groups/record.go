@@ -486,6 +486,10 @@ type Queued struct {
 	Home  string `json:"home"`
 	Label string `json:"label,omitempty"`
 	At    string `json:"at"`
+	// Draining is when the home answered draining: the hand-over goes on there in the
+	// background. The request is not sent again; it goes at the commit, or with a notice when
+	// the move did not finish.
+	Draining string `json:"draining,omitempty"`
 }
 
 const queuedFile = "queued-moves.json"

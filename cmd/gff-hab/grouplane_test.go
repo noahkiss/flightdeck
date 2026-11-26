@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,8 +36,10 @@ type laneFix struct {
 	closeHook         func() // runs as the end closes a pane, when set
 	removeErr         map[string]error
 	stateDir, laneDir string
-	lb                *lbsvc.Service // the Logbook, when withLogbook made one
-	peer              *fakeMoveHab   // a second hab with the project, linked, when set
+	lb                *lbsvc.Service     // the Logbook, when withLogbook made one
+	peer              *fakeMoveHab       // a second hab with the project, linked, when set
+	peerGroups        []api.CatalogGroup // the groups in the second hab's catalog copy
+	notices           []string           // the notices' titles
 }
 
 func lgit(t *testing.T, dir string, args ...string) string {
@@ -89,7 +92,10 @@ func (f *laneFix) catalog() api.CatalogList {
 			Locations: []api.CatalogLocation{{DeviceID: "dev-me", Folders: []api.CatalogFolder{{Path: f.src}}}}}},
 	}
 	if f.peer != nil {
-		cl.Hosts = append(cl.Hosts, api.CatalogEntry{Label: "new", Catalog: api.Catalog{DeviceID: "dev-new"}})
+		f.mu.Lock()
+		pg := slices.Clone(f.peerGroups)
+		f.mu.Unlock()
+		cl.Hosts = append(cl.Hosts, api.CatalogEntry{Label: "new", Catalog: api.Catalog{DeviceID: "dev-new", Groups: pg}})
 		cl.Projects[0].Locations = append(cl.Projects[0].Locations, api.CatalogLocation{DeviceID: "dev-new", Folders: []api.CatalogFolder{{Path: "/elsewhere/shop"}}})
 	}
 	return cl
@@ -133,6 +139,11 @@ func (f *laneFix) start() {
 				return api.WorktreeRemoved{}, fmt.Errorf("%s", strings.TrimSpace(string(out)))
 			}
 			return api.WorktreeRemoved{}, nil
+		},
+		notice: func(title, body string) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.notices = append(f.notices, title)
 		},
 		logf: f.t.Logf, logbook: f.lb,
 	})

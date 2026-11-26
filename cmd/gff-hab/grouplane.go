@@ -9,12 +9,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/heavy"
 	"github.com/noahkiss/flightdeck/internal/lane"
@@ -36,28 +37,31 @@ const laneRetry = time.Minute
 type laneState struct {
 	running map[string]bool // a lane pass runs for the group
 	again   map[string]bool
-	repos   map[string]*sync.Mutex // one lane run at a time per repository
-	tried   map[string]bool        // worktrees whose removal was refused: tried again at the end
-	armed   map[string]bool        // a retry is armed for the group: one at a time
-	runs    map[string]*laneRun    // the run in flight per group: the end of a group stops it
-	ctx     context.Context        // ends at Stop
+	repos   map[string]repoLock // one lane run at a time per repository, by its lane worktree
+	tried   map[string]bool     // worktrees whose removal was refused: tried again at the end
+	armed   map[string]bool     // a retry is armed for the group: one at a time
+	runs    map[string]*laneRun // the run in flight per group: the end of a group stops it
+	ctx     context.Context     // ends at Stop
 	cancel  context.CancelFunc
 }
 
-// laneRun is one lane run in flight. pushed and stopping are guarded by s.mu.
+// laneRun is one lane run in flight. pushed and stopping are guarded by s.mu. The run stays in
+// s.lane.runs until its outcome is on the record: the section of s.mu that writes the outcome
+// deletes it, and done closes after.
 type laneRun struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	// pushed: the run pushed the rebased branch and saved its head (groups.md 7.3 step 4). A
 	// move lets such a run finish its land, at most [groups] move_drain (5.7 step 2).
 	pushed bool
-	// stopping: a move stops the run; a push it has not saved yet is refused.
+	// stopping: a move stops the run; a push it has not saved yet records no attempt, and the
+	// run stops.
 	stopping bool
 }
 
 func (s *groupsService) laneInit() {
 	s.lane.running, s.lane.again = map[string]bool{}, map[string]bool{}
-	s.lane.repos, s.lane.tried = map[string]*sync.Mutex{}, map[string]bool{}
+	s.lane.repos, s.lane.tried = map[string]repoLock{}, map[string]bool{}
 	s.lane.armed, s.lane.runs = map[string]bool{}, map[string]*laneRun{}
 	s.lane.ctx, s.lane.cancel = context.WithCancel(context.Background())
 }
@@ -117,13 +121,30 @@ func (s *groupsService) laneLaterLocked(id string) {
 	}()
 }
 
-func (s *groupsService) repoLock(key string) *sync.Mutex {
+// repoLock is the lane lock of one repository on this hab: one slot, taken with a context, so
+// a run that a move or an end stops while it waits leaves the queue at once.
+type repoLock chan struct{}
+
+// lock takes the lock, or answers the context's error when it ends first.
+func (l repoLock) lock(ctx context.Context) error {
+	select {
+	case l <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (l repoLock) unlock() { <-l }
+
+// repoLock is the lane lock for the lane worktree dir, which stands for one repository.
+func (s *groupsService) repoLock(dir string) repoLock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l := s.lane.repos[key]
+	l := s.lane.repos[dir]
 	if l == nil {
-		l = &sync.Mutex{}
-		s.lane.repos[key] = l
+		l = make(repoLock, 1)
+		s.lane.repos[dir] = l
 	}
 	return l
 }
@@ -131,8 +152,7 @@ func (s *groupsService) repoLock(key string) *sync.Mutex {
 // laneJob is what one run needs, read under the lock.
 type laneJob struct {
 	lane.Job
-	repo string // the repository's lock key
-	err  string // why it cannot run: the lane waits
+	err string // why it cannot run: the lane waits
 }
 
 // laneJobLocked builds the run from the record and a catalog read before the lock: the
@@ -142,11 +162,11 @@ func (s *groupsService) laneJobLocked(cl api.CatalogList, g *api.Group, it api.G
 	if !ok {
 		return laneJob{err: fmt.Sprintf("project %s is no longer in the catalog", g.Plan.Project)}
 	}
-	key, src, dir := s.laneRepo(proj)
+	_, src, dir := s.laneRepo(proj)
 	if src == "" {
 		return laneJob{err: "the project is not set up on the group's home hab, where the lane runs"}
 	}
-	j := laneJob{repo: key, Job: lane.Job{
+	j := laneJob{Job: lane.Job{
 		Source: src, Dir: dir, Identity: proj.Remote,
 		Target: g.Plan.Lane.Target, Branch: it.Branch, Land: it.Land, Upstreams: groups.Upstreams(*g, it),
 		Prior: groups.Prior(it), Tries: s.cfg.keys.LaneTries, OutputLines: s.cfg.keys.FixOutputLines,
@@ -159,8 +179,9 @@ func (s *groupsService) laneJobLocked(cl api.CatalogList, g *api.Group, it api.G
 	return j
 }
 
-// laneRepo is a project's lane on this hab: the repository's lock key, the checkout the lane
-// works from ("" when the project is not here) and the lane's worktree, one per repository.
+// laneRepo is a project's lane on this hab: the repository's key (its remote, else the
+// checkout), the checkout the lane works from ("" when the project is not here) and the lane's
+// worktree, one per repository, whose path keys the repository's lane lock.
 func (s *groupsService) laneRepo(proj api.CatalogProjectGroup) (key, src, dir string) {
 	src = folderOn(proj, s.cfg.self)
 	key = proj.Remote
@@ -169,6 +190,77 @@ func (s *groupsService) laneRepo(proj api.CatalogProjectGroup) (key, src, dir st
 	}
 	sum := sha256.Sum256([]byte(key))
 	return key, src, filepath.Join(s.cfg.laneDir, hex.EncodeToString(sum[:8]))
+}
+
+// laneDirName is a lane worktree's folder name: 16 hex digits (laneRepo).
+var laneDirName = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// sweepLanes runs once at start: it removes the lane worktrees that no live or pending group
+// here lands in. A move's removal that a stop or a crash cut short leaves one (groups.md 5.7).
+// It removes nothing while a group's project is missing from the catalog, since that group's
+// worktree cannot be told apart.
+func (s *groupsService) sweepLanes() {
+	if s.cfg.laneDir == "" {
+		return
+	}
+	ents, err := os.ReadDir(s.cfg.laneDir)
+	if err != nil {
+		return
+	}
+	cl := s.cfg.catalog()
+	used := func() (map[string]bool, bool) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		dirs := map[string]bool{}
+		add := func(g *api.Group) bool {
+			proj, ok := project(cl, g.Plan.Project)
+			if !ok {
+				return false
+			}
+			_, _, dir := s.laneRepo(proj)
+			dirs[dir] = true
+			return true
+		}
+		for _, g := range s.groups {
+			if groups.Live(*g) && !add(g) {
+				return nil, false
+			}
+		}
+		for _, g := range s.pending {
+			if g != nil && !add(g) {
+				return nil, false
+			}
+		}
+		return dirs, true
+	}
+	for _, e := range ents {
+		if !e.IsDir() || !laneDirName.MatchString(e.Name()) {
+			continue
+		}
+		dir := filepath.Join(s.cfg.laneDir, e.Name())
+		lk := s.repoLock(dir)
+		if lk.lock(s.lane.ctx) != nil {
+			return
+		}
+		// Read under the lane lock: a group that lands here from now on waits for the lock,
+		// and its run makes the worktree again.
+		dirs, ok := used()
+		if !ok {
+			lk.unlock()
+			s.cfg.logf("groups: the lane worktrees stay: a group's project is not in the catalog")
+			return
+		}
+		if !dirs[dir] {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			if err := lane.Remove(ctx, s.cfg.laneGit, "", dir); err != nil {
+				s.cfg.logf("groups: the lane worktree %s stays: %v", dir, err)
+			} else {
+				s.cfg.logf("groups: removed the lane worktree %s: no group here lands in its repository", dir)
+			}
+			cancel()
+		}
+		lk.unlock()
+	}
 }
 
 // lanePass lands the group's items one at a time while there is one to land.
@@ -215,7 +307,7 @@ func (s *groupsService) lanePass(id string) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			if run.stopping {
-				return errors.New("the group moves: the run stops before its push is saved")
+				return errors.New("the group moves: the run stops, and its push records no attempt")
 			}
 			g := s.groups[id]
 			if g == nil {
@@ -226,25 +318,27 @@ func (s *groupsService) lanePass(id string) {
 			it.Attempts = append(it.Attempts, api.GroupLaneAttempt{At: stampT(s.cfg.now()), Target: a.Target, Rebased: a.Rebased, Outcome: "pushed", Step: lane.StepPush})
 			return s.saveLocked(g)
 		}
-		l := s.repoLock(j.repo)
-		l.Lock()
-		res := lane.Run(ctx, j.Job)
-		l.Unlock()
-		ended := ctx.Err() != nil // the end of the group, or Stop, stopped the run
+		var res lane.Result
+		l := s.repoLock(j.Dir)
+		if l.lock(ctx) == nil {
+			res = lane.Run(ctx, j.Job)
+			l.unlock()
+		}
+		ended := ctx.Err() != nil // the end of the group, a move, or Stop stopped the run
 		cancel()
-		s.mu.Lock()
-		delete(s.lane.runs, id)
-		s.mu.Unlock()
 		if s.lane.ctx.Err() != nil {
+			s.mu.Lock()
+			s.dropRunLocked(id, run)
+			s.mu.Unlock()
 			close(run.done)
 			return // the hab stops: the item stays landing, and the next start runs it again
 		}
 		if ended && res.Outcome != lane.Landed {
-			s.laneEnded(id, ii, item) // the group ended during the run: nothing more lands
+			s.laneEnded(id, ii, item, run) // the group ended or moves: nothing more lands here
 			close(run.done)
 			return
 		}
-		cont, task := s.laneDone(id, ii, item, res)
+		cont, task := s.laneDone(id, ii, item, res, run)
 		close(run.done)
 		if task != "" {
 			s.setStatus([]string{task}, "done", "") // here, not on its own goroutine: Stop waits for it
@@ -258,9 +352,10 @@ func (s *groupsService) lanePass(id string) {
 // laneEnded puts an item whose run the end of its group, or a move, stopped back to ready. A
 // moving group's item goes to the front of the queue, so the new home lands it first (groups.md
 // 5.7 step 2).
-func (s *groupsService) laneEnded(id string, ii int, item string) {
+func (s *groupsService) laneEnded(id string, ii int, item string, run *laneRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.dropRunLocked(id, run)
 	g := s.groups[id]
 	if g == nil || ii >= len(g.Items) || g.Items[ii].ID != item {
 		return
@@ -277,6 +372,15 @@ func (s *groupsService) laneEnded(id string, ii int, item string) {
 	s.saveLocked(g)
 }
 
+// dropRunLocked takes the group's run off s.lane.runs, in the section of s.mu that writes its
+// outcome: a move or an end that finds no run there finds the outcome on the record. The
+// caller holds s.mu.
+func (s *groupsService) dropRunLocked(id string, run *laneRun) {
+	if s.lane.runs[id] == run {
+		delete(s.lane.runs, id)
+	}
+}
+
 // laneStop stops the group's run in flight, if any, and waits for its outcome to be written.
 func (s *groupsService) laneStop(id string) {
 	s.mu.Lock()
@@ -290,12 +394,18 @@ func (s *groupsService) laneStop(id string) {
 
 // laneDone writes a run's outcome. It reports whether the lane goes on with the next item, and
 // the Logbook task of an item that landed, which the caller marks done.
-func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result) (bool, string) {
+func (s *groupsService) laneDone(id string, ii int, item string, res lane.Result, run *laneRun) (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.dropRunLocked(id, run)
 	g := s.groups[id]
 	if g == nil || ii >= len(g.Items) || g.Items[ii].ID != item {
 		return false, ""
+	}
+	if g.Moving != nil {
+		// A moving group's landing item goes to the front of the queue first. Each outcome
+		// below then sets the item's state; one that leaves it ready keeps the front (5.7).
+		groups.Drain(g)
 	}
 	it := &g.Items[ii]
 	target := res.Target
@@ -481,6 +591,12 @@ func (s *groupsService) end(id, head string, resume bool) (api.Group, error) {
 		st := g.State
 		s.mu.Unlock()
 		return api.Group{}, fmt.Errorf("group %s is %s", id, st)
+	}
+	if g.Moving != nil {
+		// A move runs, maybe for move_drain: the group ends on its new home (groups.md 5.7).
+		mv := g.Moving
+		s.mu.Unlock()
+		return api.Group{}, control.Errorf(api.ErrorKindUnavailable, "group %s is moving to %s; try again in a moment", id, nameOr(mv.Label, mv.To))
 	}
 	g.State = groups.StateEnding
 	var panes []string

@@ -146,7 +146,8 @@ func TargetConfig(ctx context.Context, g worktree.Git, dir, rev string) (Config,
 }
 
 // Remove removes the lane's worktree dir of the checkout src, with force: the lane's worktree
-// holds nothing but what a run left (groups.md 5.7, after a move). A folder git no longer
+// holds nothing but what a run left (groups.md 5.7, after a move). An empty src is read from
+// the worktree itself, for a lane worktree no group names any more. A folder git no longer
 // knows is deleted, and the checkout's worktree list pruned. A dir that is gone already is no
 // error.
 func Remove(ctx context.Context, g worktree.Git, src, dir string) error {
@@ -154,6 +155,13 @@ func Remove(ctx context.Context, g worktree.Git, src, dir string) error {
 		return nil
 	}
 	r := runner{g}
+	if src == "" {
+		common, err := r.git1(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+		if err != nil {
+			return os.RemoveAll(dir) // not a worktree git knows: only the folder is left
+		}
+		src = strings.TrimSpace(common)
+	}
 	out, err := r.git1(ctx, src, "worktree", "remove", "--force", "--", dir)
 	if err != nil {
 		if rerr := os.RemoveAll(dir); rerr != nil {
