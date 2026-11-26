@@ -10881,7 +10881,7 @@
           },
           "state": {
             "type": "string",
-            "description": "moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."
+            "description": "moved: the hand-over committed; draining: a land past its push finishes first, at most [groups] move_drain, and the hand-over then runs in the background (the card shows moving, and a failure in move_failed); queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."
           },
           "text": {
             "type": "string",

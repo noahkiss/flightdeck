@@ -424,7 +424,7 @@ type GroupMoveParams struct {
 // GroupMoveResult answers group.move.
 type GroupMoveResult struct {
 	Seq
-	State string `json:"state" doc:"moved: the hand-over committed; queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."`
+	State string `json:"state" doc:"moved: the hand-over committed; draining: a land past its push finishes first, at most [groups] move_drain, and the hand-over then runs in the background (the card shows moving, and a failure in move_failed); queued: the home is offline and the target hab runs the move when it is back; cancelled: a queued move was cancelled. An open set."`
 	Home  string `json:"home" doc:"The new home's device id."`
 	Text  string `json:"text" doc:"One line for the user, such as: <label> is offline; the group moves when it is back."`
 }

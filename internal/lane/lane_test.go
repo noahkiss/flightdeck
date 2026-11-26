@@ -381,3 +381,50 @@ func TestPushRefusal(t *testing.T) {
 		}
 	}
 }
+
+// TestRemoveOrphan: Remove with no checkout given deletes a lane dir that is not a worktree
+// of its own, under a parent checkout, without touching that checkout; it removes a real lane
+// worktree through its own checkout. Neither prunes the checkout's other worktrees, whose
+// folders may be away for a while.
+func TestRemoveOrphan(t *testing.T) {
+	d := t.TempDir()
+	parent := filepath.Join(d, "parent")
+	git(t, d, "init", "-q", "-b", "main", parent)
+	git(t, parent, "commit", "-q", "--allow-empty", "-m", "first")
+	away := filepath.Join(d, "away")
+	git(t, parent, "worktree", "add", "-q", "--detach", away)
+	if err := os.Rename(away, away+".moved"); err != nil { // a worktree whose folder is away
+		t.Fatal(err)
+	}
+	list := func() string { return git(t, parent, "worktree", "list", "--porcelain") }
+	before := list()
+
+	plain := filepath.Join(parent, "lane", "0123456789abcdef")
+	if err := os.MkdirAll(plain, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plain, "left"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(context.Background(), worktree.Git{}, "", plain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(plain); !os.IsNotExist(err) {
+		t.Fatalf("the plain lane dir stays: %v", err)
+	}
+	if got := list(); got != before {
+		t.Fatalf("the parent's worktree list changed:\n%s\nwas\n%s", got, before)
+	}
+
+	wt := filepath.Join(d, "lane", "fedcba9876543210")
+	git(t, parent, "worktree", "add", "-q", "--detach", wt)
+	if err := Remove(context.Background(), worktree.Git{}, "", wt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("the lane worktree stays: %v", err)
+	}
+	if got := list(); got != before {
+		t.Fatalf("after the worktree's removal the list is:\n%s\nwas\n%s", got, before)
+	}
+}

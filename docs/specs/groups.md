@@ -665,17 +665,40 @@ the catalog copies.
   `group.move` with `cancel` removes it. The target sends `group.move {device}` once its link to
   the home is up. An answer ends the request, and a refusal raises one notice, as an expired
   request does. An `unavailable` answer is tried again 12 times (about a minute) first, since
-  a home that just started may not reach the target yet. A hab that reaches the home passes a
-  user's `group.move` on to it, and the home's refusal is final: it queues nothing. A call that
-  came over a link is not passed on again.
-- **While a move runs** pause, resume, close and retry answer `unavailable`.
+  a home that just started may not reach the target yet. A `draining` answer keeps the request,
+  marked, and the target does not send it again. The commit removes it. When the whole drain
+  time has passed (`move_drain`, `move_answer` and the start wait) and the home's catalog copy
+  shows the group there with no move under way, the request goes with one notice. A marked
+  request does not expire with `queued_move_days`. A hab that
+  reaches the home passes a user's `group.move` on to it, and the home's refusal is final: it
+  queues nothing. A call that came over a link is not passed on again.
+- **While a move runs** pause, resume, close and retry answer `unavailable`. This holds for
+  the whole drain. Before the adopt the home checks again that the group runs or is paused;
+  when it does not, the move stops and `move_failed` says why.
 - **At creation** the plan's card gets the always-on line as a warning. It offers no button:
   the user moves the home after the plan runs.
-- **Not built in B9.** The drain does not wait for a land past its push: it puts every item in
-  `landing` back to `ready`, and the new home lands it again from step 1, which marks it
-  `landed` when its head is already on the target (14). `move_drain` is read and not used yet:
-  the wait needs the lane (B4) to report its push to the move. The move does not stop a lane run
-  in flight, and the old home's lane worktree stays.
+- **The drain.** The freeze stops the lane from taking a new item. A lane run counts as past
+  its push once it saved the rebased head (7.3 step 4). A run before that point stops at once.
+  A run that pushes after the freeze does not save its attempt, and stops. The pushed branch
+  is harmless: the lease is read again after a fetch. Its item goes back to `ready` at the
+  front of the queue. A run waiting for the repository's lane lock leaves the wait at once. The
+  move then runs as one call. A run past its push gets `move_drain` to finish: the
+  call answers `draining` at once, and the hand-over goes on in the background. A land that
+  finishes is written to the record before the adopt, so the group moves with the item
+  `landed`. Any other outcome is written too. At the limit the run stops, and its item goes
+  back to `ready` at the front, as it does after an outcome that leaves it `ready`. A failure
+  after the drain goes to `move_failed`, as for a call. A run leaves the lane's list of runs in
+  flight only when its outcome is on the record, so a move never adopts before it.
+  A hab that stops during the drain clears `moving` at its next start.
+- **The old lane worktree.** After the commit, the old home removes its lane worktree for the
+  group's repository, under the lane's lock for that repository. It keeps it while another
+  group on this hab, live or pending, lands in the same repository. A removal that fails is
+  logged and never undoes the move. At start the hab removes each lane worktree that no live or
+  pending group here lands in, so a removal that a stop cut short is finished. The sweep skips
+  every worktree while any live or pending group's project is missing from the catalog. A
+  removal prunes the checkout's worktree list only when git could not remove the worktree and
+  the folder was deleted by hand.
+- **Not built in B9.**
   `lane.submit` and `review.verdict` (B7) are not merged; they use the same forwarding when they
   land. Capcom-coordinated groups (B8) do not exist yet, so the move with the Capcom mark waits
   for B8. The app's "Move home" and the home label on the card come with the card.
