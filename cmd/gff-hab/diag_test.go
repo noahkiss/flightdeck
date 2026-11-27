@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/hook"
@@ -41,7 +44,21 @@ func readMarker(t *testing.T, state string) health.Marker {
 func habLog(t *testing.T, state string) string {
 	t.Helper()
 	b, _ := os.ReadFile(filepath.Join(logsDir(state), habLogFile))
-	return string(b)
+	return renderLog(string(b))
+}
+
+// renderLog is a log file as a reader sees it: each structured line (diagnostics.md 4.2) as its
+// text, a text line as it is.
+func renderLog(s string) string {
+	var out strings.Builder
+	for line := range strings.Lines(s) {
+		if l, ok := diaglog.Parse(line); ok {
+			out.WriteString(l.Text() + "\n")
+		} else {
+			out.WriteString(line)
+		}
+	}
+	return out.String()
 }
 
 // crashNotices counts the crash notices in the state's notice log.
@@ -153,6 +170,67 @@ func TestHealthRecords(t *testing.T) {
 	out = run(t, "logs", "-state", state, "-grep", "previous run ended", "-proc", "hab")
 	if n := strings.Count(out, "\n"); n != 3 || !strings.Contains(out, " hab ") {
 		t.Errorf("logs -grep: %d lines:\n%s", n, out)
+	}
+	// hab.log holds structured lines (4.2): one JSON object each, with gff-hab's epoch.
+	b, _ = os.ReadFile(filepath.Join(logsDir(state), habLogFile))
+	for line := range strings.Lines(string(b)) {
+		l, ok := diaglog.Parse(line)
+		if !ok || l.Proc != "hab" || l.Epoch == "" || l.Comp == "" || l.Lvl == "" {
+			t.Fatalf("hab.log line %q: %+v", line, l)
+		}
+	}
+	out = run(t, "logs", "-state", state, "-grep", "previous run ended", "-json")
+	for line := range strings.Lines(out) {
+		if l, ok := diaglog.Parse(line); !ok || l.Msg != diaglog.MsgLegacy {
+			t.Errorf("logs -json line %q", line)
+		}
+	}
+	if out = run(t, "logs", "-state", state, "-grep", "previous run ended", "-level", "warn"); out != "" {
+		t.Errorf("logs -level warn printed info lines:\n%s", out)
+	}
+}
+
+// TestLogsFlags: gff-hab logs selects structured lines by level and component, and -json prints
+// a structured line as written and a text line as an object (4.8).
+func TestLogsFlags(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	logs := logsDir(state)
+	os.MkdirAll(logs, 0o700)
+	os.WriteFile(filepath.Join(logs, habLogFile), []byte(
+		`{"t":"2026-11-19T10:00:02.000Z","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"old style"}`+"\n"+
+			`{"t":"2026-11-19T10:00:04.000Z","lvl":"warn","msg":"pin failed","proc":"hab","comp":"peers","label":"box"}`+"\n"), 0o600)
+	os.WriteFile(filepath.Join(logs, holderLogPrefix+"aaaa0001.log"), []byte("gff-hab-holder: 2026/11/19 10:00:03 holder line\n"), 0o600)
+	logs1 := func(args ...string) string {
+		var b strings.Builder
+		if err := logsCmd(append([]string{"-state", state}, args...), &b); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	if out := logs1("-level", "warn"); strings.Count(out, "\n") != 1 || !strings.Contains(out, "warn peers: pin failed label=box") {
+		t.Errorf("-level warn:\n%s", out)
+	}
+	if out := logs1("-comp", "peers,link"); strings.Count(out, "\n") != 1 || !strings.Contains(out, "pin failed") {
+		t.Errorf("-comp peers:\n%s", out)
+	}
+	out := logs1("-json")
+	ls := strings.Split(strings.TrimSpace(out), "\n")
+	// The holder's line is in local time, so its place among the hab's lines depends on the zone.
+	i := slices.IndexFunc(ls, func(s string) bool { return strings.Contains(s, "holder line") })
+	if len(ls) != 3 || i < 0 || !strings.Contains(out, `{"t":"2026-11-19T10:00:02.000Z","lvl":"info","msg":"legacy"`) {
+		t.Fatalf("-json:\n%s", out)
+	}
+	var holder struct {
+		T               time.Time
+		Proc, Src, Text string
+	}
+	if err := json.Unmarshal([]byte(ls[i]), &holder); err != nil || holder.Proc != "holder" || holder.Text != "holder line" ||
+		holder.Src != "holder aaaa0001" || holder.T.IsZero() {
+		t.Errorf("-json holder line %q: %+v %v", ls[i], holder, err)
+	}
+	if err := logsCmd([]string{"-state", state, "-level", "loud"}, io.Discard); err == nil {
+		t.Error("-level loud taken")
 	}
 }
 

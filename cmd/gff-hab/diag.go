@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/friction"
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
@@ -44,9 +44,7 @@ const (
 	stacksKeep                  = 5 // stack dumps, kept apart so dumps never push out a crash trace
 	logsBudget                  = 100 << 20
 
-	// habLogFlags: UTC date and time with microseconds, which gff-hab logs parses (4.1).
-	habLogFlags = log.LstdFlags | log.Lmicroseconds | log.LUTC
-	habPrefix   = "gff-hab: "
+	habPrefix = "gff-hab: " // in front of each stderr line
 
 	sweepEvery    = time.Hour
 	hookDownEvery = 10 * time.Minute
@@ -76,21 +74,23 @@ func flushedExit(w *logfile.Writer, exit func(int)) func(int) {
 	}
 }
 
-// newLogWriter makes gff-hab's log writer (4.1, 4.3). Run by hand, each line goes to stderr too;
-// run by a service manager, a line goes to stderr only before the file opens.
-func newLogWriter(service bool, onFlush func()) *logfile.Writer {
-	cfg := logfile.Config{Max: habLogMax, Keep: habLogKeep, OnFlush: onFlush,
+// newLogWriter makes gff-hab's log writer (4.1, 4.3). It writes hab.log only; the line sink
+// (setupLog) copies lines to stderr.
+func newLogWriter(onFlush func()) *logfile.Writer {
+	return logfile.New(logfile.Config{Max: habLogMax, Keep: habLogKeep, OnFlush: onFlush,
 		Dropped: func(n int64) []byte {
-			var b bytes.Buffer
-			log.New(&b, habPrefix, habLogFlags).Printf("log: %d lines dropped", n)
-			return b.Bytes()
-		}}
-	if service {
-		cfg.Early = os.Stderr
-	} else {
-		cfg.Tee = os.Stderr
-	}
-	return logfile.New(cfg)
+			return diaglog.Format(diaglog.LevelWarn, "log", "lines dropped", diaglog.Count("lines", n))
+		}})
+}
+
+// setupLog makes the writer gff-hab's line sink (4.2) and returns the legacy logger every Logf
+// call writes through: each of its lines becomes a JSON line with msg legacy. Run by hand, each
+// line goes to stderr too, as text; run by a service manager, a warn or error line does, and
+// every line written while hab.log is not open.
+func setupLog(w *logfile.Writer, service bool, epoch string) *log.Logger {
+	diaglog.Setup(diaglog.Config{Proc: "hab", Epoch: epoch, File: w, Stderr: os.Stderr, Prefix: habPrefix,
+		CopyAll: func() bool { return !service || !w.Writing() }})
+	return log.New(diaglog.Legacy(diaglog.LevelInfo), "", 0)
 }
 
 // habDiag is gff-hab's side of diagnostics stage 1: its run marker, crash output, health

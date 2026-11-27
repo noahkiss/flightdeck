@@ -20,6 +20,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcom"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/logfile"
@@ -317,6 +318,9 @@ func logsCmd(args []string, out io.Writer) error {
 	proc := fs.String("proc", "", "only these process kinds, comma separated: "+strings.Join(logKinds, ", "))
 	grep := fs.String("grep", "", "only lines that hold this text")
 	traceID := fs.String("trace", "", "only the lines of one action: a trace id from a response or a log line")
+	level := fs.String("level", "", "only lines at this level or above: debug, info, warn, error (a text line counts as info)")
+	comp := fs.String("comp", "", "only structured lines of these components, comma separated: peers, link, ...")
+	asJSON := fs.Bool("json", false, "print one JSON object per line: a structured line as written, a text line as t, proc, src and text")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
 		return errors.New("logs takes no arguments; see gff-hab logs -h")
@@ -349,7 +353,25 @@ func logsCmd(args []string, out io.Writer) error {
 			return fmt.Errorf("-trace %q: want 12 Crockford base32 characters, the first a, g or h", *traceID)
 		}
 	}
-	print := func(e logfile.Entry) { fmt.Fprint(out, formatEntry(e)) }
+	if *level != "" {
+		l, ok := diaglog.ParseLevel(*level)
+		if !ok {
+			return fmt.Errorf("-level %q: want debug, info, warn or error", *level)
+		}
+		f.Level = &l
+	}
+	if *comp != "" {
+		for c := range strings.SplitSeq(*comp, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				f.Comps = append(f.Comps, c)
+			}
+		}
+	}
+	format := formatEntry
+	if *asJSON {
+		format = jsonEntry
+	}
+	print := func(e logfile.Entry) { fmt.Fprint(out, format(e)) }
 	if !*follow {
 		return logfile.Merge(logSources(dir), f, print)
 	}
@@ -371,6 +393,26 @@ func formatEntry(e logfile.Entry) string {
 		t = e.T.Local().Format("2006-01-02 15:04:05.000000")
 	}
 	return fmt.Sprintf("%s %-15s %s\n", t, e.Name, e.Text)
+}
+
+// jsonEntry is one entry as one JSON object (4.8): a structured line as the file holds it, else
+// its time, process kind, source and text.
+func jsonEntry(e logfile.Entry) string {
+	if e.JSON != "" {
+		return e.JSON + "\n"
+	}
+	v := struct {
+		T    *time.Time `json:"t,omitempty"`
+		Proc string     `json:"proc"`
+		Src  string     `json:"src"`
+		Text string     `json:"text"`
+	}{Proc: e.Kind, Src: e.Name, Text: e.Text}
+	if !e.T.IsZero() {
+		t := e.T.UTC()
+		v.T = &t
+	}
+	b, _ := json.Marshal(v)
+	return string(b) + "\n"
 }
 
 // parseWhen reads a duration ago (2h) or a time (RFC 3339). Empty is the zero time.

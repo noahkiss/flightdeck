@@ -39,6 +39,7 @@ type debugSwitch struct {
 	path    string
 	env     bool
 	logf    func(string, ...any)
+	out     func(string, ...any) // where printf writes its debug lines; nil: logf
 	now     func() time.Time
 	changed func(on bool, until time.Time) // the marker, for gff-hab status; called with mu held
 
@@ -118,13 +119,23 @@ func (d *debugSwitch) end(t time.Time) {
 // printf writes a debug line when debug is on: GFF_HAB_DEBUG, or a window whose end the wall
 // clock has not reached.
 func (d *debugSwitch) printf(format string, args ...any) {
-	if d.env {
-		d.logf(format, args...)
+	if !d.enabled() {
 		return
 	}
-	if u := d.untilNs.Load(); u != 0 && d.now().UnixNano() < u {
-		d.logf(format, args...)
+	if d.out != nil {
+		d.out(format, args...)
+		return
 	}
+	d.logf(format, args...)
+}
+
+// enabled says whether debug lines are written now: the diaglog sink's debug switch (4.5).
+func (d *debugSwitch) enabled() bool {
+	if d.env {
+		return true
+	}
+	u := d.untilNs.Load()
+	return u != 0 && d.now().UnixNano() < u
 }
 
 // Set opens a window until until, or closes it when until is zero (diag.debug). The control

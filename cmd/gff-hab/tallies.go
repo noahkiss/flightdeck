@@ -15,6 +15,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/tallies"
 )
@@ -41,6 +42,31 @@ func talliesOn(path string, logf func(string, ...any)) bool {
 		return true // the config's own readers report a file that does not parse
 	}
 	return fc.Diagnostics.Tallies == nil || *fc.Diagnostics.Tallies
+}
+
+// logLevel reads [diagnostics] log_level from the hab's config (diagnostics.md 4.5): debug,
+// info, warn or error. Missing, or a word it does not know: info.
+func logLevel(path string, logf func(string, ...any)) diaglog.Level {
+	if path == "" {
+		return diaglog.LevelInfo
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return diaglog.LevelInfo // tallies report a config they cannot read
+	}
+	var fc struct {
+		Diagnostics struct {
+			LogLevel string `toml:"log_level"`
+		} `toml:"diagnostics"`
+	}
+	if _, err := toml.Decode(string(b), &fc); err != nil || fc.Diagnostics.LogLevel == "" {
+		return diaglog.LevelInfo
+	}
+	l, ok := diaglog.ParseLevel(fc.Diagnostics.LogLevel)
+	if !ok {
+		logf("diagnostics: log_level %q is not debug, info, warn or error; the floor stays info", fc.Diagnostics.LogLevel)
+	}
+	return l
 }
 
 // openTallies starts gff-hab's tallies (diagnostics.md 7), or returns nil when the config

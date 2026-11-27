@@ -9,6 +9,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/groups"
 	"github.com/noahkiss/flightdeck/internal/lane"
 )
@@ -949,7 +950,7 @@ func (s *groupsService) runQueued(q groups.Queued) {
 			}
 		}
 		s.mu.Unlock()
-		s.cfg.logf("groups: %s: the queued move runs: %s", q.Group, out.Text)
+		groupsLog.Info("queued move runs", diaglog.Group(q.Group), diaglog.Text(out.Text))
 		return
 	}
 	s.queued = slices.DeleteFunc(s.queued, func(o groups.Queued) bool { return o.Group == q.Group && o.At == q.At })
@@ -964,5 +965,8 @@ func (s *groupsService) runQueued(q groups.Queued) {
 		}
 		return
 	}
-	s.cfg.logf("groups: %s: the queued move ran: %s", q.Group, out.Text)
+	groupsLog.Info("queued move ran", diaglog.Group(q.Group), diaglog.Text(out.Text))
 }
+
+// groupsLog writes the group lines whose values are free text (diagnostics.md 1.5).
+var groupsLog = diaglog.For("groups")

@@ -11,6 +11,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/harness"
 )
 
@@ -363,7 +364,7 @@ func (t *trustService) run(pane, kind, folder string) {
 		if err == nil && harness.TrustDialog(kind, strings.Join(rows, "\n")) {
 			misses, gone = 0, time.Time{}
 			if seen.IsZero() {
-				t.logf("pane %s: %s asks to trust folder %s", pane, kind, folder)
+				trustLog.Info("trust prompt shown", diaglog.Pane(pane), diaglog.Harness(kind), diaglog.Path(folder))
 			}
 			seen = time.Now()
 			if cs.step != coverCard && t.coverStep(pane, kind, &cs) {
@@ -404,6 +405,9 @@ func (t *trustService) Declined(pane string) (declined, pending bool) {
 	defer t.mu.Unlock()
 	return t.declined[pane], t.exiting[pane] || t.holding[pane]
 }
+
+// trustLog writes the trust lines that name a folder (diagnostics.md 1.5).
+var trustLog = diaglog.For("trust")
 
 // Answer serves trust.answer (app.md 7.10). The pane must show blocked:trust and its screen
 // the dialog, with one cursor row and one row with the chosen label, and no client input may be
@@ -464,7 +468,8 @@ func (t *trustService) Answer(ctx context.Context, client string, p api.TrustAns
 			return out, err
 		}
 	}
-	t.logf("pane %s: trust prompt for %s answered %s (client %s)", pane, folder, p.Choice, client)
+	trustLog.Info("trust prompt answered", diaglog.Pane(pane), diaglog.Path(folder), diaglog.Word("choice", string(p.Choice)),
+		diaglog.ClientID(client))
 	if err := t.outcome(ctx, pane, st.Harness, trust); err != nil {
 		return out, err
 	}

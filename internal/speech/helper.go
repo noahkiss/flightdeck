@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/speechproto"
 )
 
@@ -81,7 +82,7 @@ func startHelper(bin, dir string, threads int, logf func(string, ...any)) (*help
 	readers.Add(2)
 	go func() { // the helper's own log lines; it never writes audio or text there
 		defer readers.Done()
-		logLines(stderr, func(line string) { logf("speech helper: %s", line) })
+		logLines(stderr, func(line string) { speechLog.Debug("helper stderr", diaglog.Text(line)) })
 	}()
 	go func() {
 		defer readers.Done()
@@ -103,6 +104,9 @@ func startHelper(bin, dir string, threads int, logf func(string, ...any)) (*help
 	}()
 	return h, nil
 }
+
+// speechLog writes the helper's stderr lines: free text, at debug (diagnostics.md 4.9).
+var speechLog = diaglog.For("speech")
 
 // maxLogLine is where a helper log line is cut.
 const maxLogLine = 4096

@@ -15,6 +15,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/capcomengine"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	habusage "github.com/noahkiss/flightdeck/internal/usage"
@@ -236,6 +237,9 @@ func (p *capcomPacer) key(engine string) string {
 	return habusage.Key(p.host, engine, p.dir)
 }
 
+// capcomLog writes the Capcom lines whose values are free text (diagnostics.md 1.5).
+var capcomLog = diaglog.For("capcom")
+
 // reading stores one usage event of the engine under Capcom's account for kind, the engine its
 // connection's ready named, then rechecks: the Claude SDK's rate_limit_info, or the Codex
 // rollout's token_count records.
@@ -262,7 +266,7 @@ func (p *capcomPacer) reading(kind string, raw json.RawMessage) {
 		p.drifts[line] = true
 		p.mu.Unlock()
 		if first {
-			p.logf("capcom: usage reading: %s", line)
+			capcomLog.Info("usage reading drift", diaglog.Text(line))
 		}
 	}
 	p.usage.Put(r)
