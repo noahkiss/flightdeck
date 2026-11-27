@@ -1,7 +1,8 @@
 # Diagnostics: behaviour spec
 
-Status: stages 1 to 4 built; stages 5 and 6 proposed. Owner decisions
-are open in section 13.
+Status: stages 1 to 4 built. Stage 5: the structured lines and the source check built; the
+Capcom log, `hook.log`, `detect explain --no-text`, the bundle and the canary test proposed.
+Stage 6 proposed. Owner decisions are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
 that early daily use tells the maintainers three things: how the product is used, which bugs
@@ -260,6 +261,16 @@ of our own, `internal/diaglog` (10.2). One line is one object:
   those of 1.5.
 - A line is at most 8 KiB. A longer value is cut and marked `…(cut)`.
 - `warn` and `error` lines also go to stderr, so the service manager's capture holds them.
+- The stderr copy is text, in the form of 4.1: the prefix, the UTC time with microseconds, then
+  the line as `gff-hab logs` prints it (4.8). Run by hand, every line is copied, as in 4.1. Run by
+  a service manager, a `warn` or `error` line is, and every line written while `hab.log` is not
+  open: before the state lock, and after the clean exit closes it.
+- A legacy line's `comp` is `legacy`; the old text names its subsystem in its own words.
+- A safe constructor that refuses a value's form (10.2) writes it under `<key>_text`, of class
+  `text`. `Count`, `Dur` and `Word` take a key of the caller's, a constant; `Dur` writes
+  milliseconds under `<key>_ms`. A key that no constructor fixes is of class `text`; a number is
+  `safe` under any key.
+- gff-hab writes these lines. The holder keeps its text lines until its next build (Q5).
 
 **Decision: JSON lines on disk, from stage 5.** JSON lets the bundle redact by key and lets
 `gff-hab logs` filter by trace and level. Every reference tool writes text (2), and text is
@@ -355,7 +366,13 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
 - The level floor is set in the hab's config file, `[diagnostics] log_level`. It is an operator
   limit, so it has no app row (`app.md` 20.1).
 - A repeating line with the same message and subsystem logs at most once per 10 seconds; the next
-  one carries the count suppressed. This fixes the flood of 1.2 #9.
+  one carries the count suppressed. This fixes the flood of 1.2 #9. Legacy lines are not limited:
+  they all share the message `legacy`. The limit keys on message and component only, so it also
+  drops distinct lines of one message in a burst, such as the speech helper's stderr lines or a
+  second round notice (Q10).
+- A floor above `info` drops the legacy lines too: they are all `info`.
+- `log_level = "debug"` keeps the debug lines on, as `GFF_HAB_DEBUG` does. A word other than
+  `debug`, `info`, `warn` or `error` leaves the floor at `info` and logs one line.
 
 ### 4.6 Lines stage 1 adds
 
@@ -418,7 +435,7 @@ with the line before it. Until the holder's next build, its lines carry local ti
 | `--proc holder` | 1 | One process kind |
 | `--grep <text>` | 1 | Lines that hold the text |
 | `--trace <id>` | 4 | One action (5): lines that name `trace <id>`. Any case is taken |
-| `--level warn`, `--comp peers`, `--json` | 5 | Need structured lines |
+| `--level warn`, `--comp peers`, `--json` | 5 | Need structured lines. A text line counts as `info` and has no component. `--json` prints a structured line as written, and a text line as `t`, `proc`, `src` and `text` |
 
 - Output is local time, one line per entry, with the file's process kind in front.
 - `gff-hab status` (stage 1): build and version of gff-hab and each holder, uptime, crashes and
@@ -886,6 +903,14 @@ and fails on:
 
 The checker has its own test: a fixture package with one case of each ban must fail it.
 
+The check is `internal/diaglog/check`, and runs as Go tests: `TestFixture` on its fixture in
+`testdata/fixture`, `TestTree` on the repository. It type-checks only the packages that import
+`diaglog`, against the export data `go list -export` builds, so it needs no module outside the
+standard library. Its hot-path functions and content types are listed in the package.
+Test files and files another build takes (another system, a test seam) get the import bans
+only. The content ban applies to the functions that write a line, not to a reader such as
+`diaglog.Parse`.
+
 Other guards:
 
 | Guard | What it does |
@@ -976,6 +1001,7 @@ The owner decides.
 | Q7 | Retention: tallies 90 days, health 500 lines, friction 200 notes? | Yes | Enough for a prune decision and a first quarter, well under the caps |
 | Q8 | Watchdog threshold: 10 seconds silent while work waits? | Yes, fixed | Long enough to skip a slow git read off the loop, short enough to catch a deadlock in one session |
 | Q9 | Add a canary UI test for the app's logs? | After stage 6 | The Go canary covers the content paths first; the app logs little content |
+| Q10 | Should the 10-second limit (4.5) key on more than message and component? | Not now; revisit when a bundle shows a lost line | It fixes the flood of 1.2 #9 as written. Lines of `text` class that differ in value, such as helper stderr, are the ones it drops |
 
 ---
 

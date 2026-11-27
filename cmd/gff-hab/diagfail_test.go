@@ -69,12 +69,12 @@ func TestFlushedExit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), habLogFile)
 	gate, reached := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	w := newLogWriter(true, func() { once.Do(func() { close(reached); <-gate }) })
+	w := newLogWriter(func() { once.Do(func() { close(reached); <-gate }) })
 	defer w.Close()
 	if err := w.Open(path); err != nil {
 		t.Fatal(err)
 	}
-	lg := log.New(w, habPrefix, habLogFlags)
+	lg := log.New(w, "", 0)
 	lg.Print("first") // written; then the writer waits on the gate
 	<-reached
 	lg.Print("queued") // waits in the queue

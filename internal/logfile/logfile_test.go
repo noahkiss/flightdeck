@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/testtmp"
 )
 
@@ -382,4 +383,61 @@ func appendPartial(t *testing.T, path, text string) {
 	}
 	fmt.Fprint(f, text)
 	f.Close()
+}
+
+// TestMergeStructured: the reader takes structured lines (diagnostics.md 4.2) beside the text
+// lines of an older build and of a holder, merges them by time, and filters by level,
+// component and trace (4.8); following reads structured lines too.
+func TestMergeStructured(t *testing.T) {
+	dir := t.TempDir()
+	hab := filepath.Join(dir, "hab.log")
+	holder := filepath.Join(dir, "gff-hab-holder.aaaa0001.log")
+	os.WriteFile(Old(hab, 1), []byte("gff-hab: 2026/11/19 10:00:00.000001 old text line, trace gK3V9QX2M7TA\n"), 0o600)
+	os.WriteFile(hab, []byte(`{"t":"2026-11-19T10:00:02.000Z","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"a \"quoted\" line"}`+"\n"+
+		`{"t":"2026-11-19T10:00:04.000Z","lvl":"warn","msg":"peer offline","proc":"hab","comp":"peers","trace":"hABCDEFGHJKM","device":"d1"}`+"\n"), 0o600)
+	os.WriteFile(holder, []byte("gff-hab-holder: 2026/11/19 10:00:03 holder line\n"), 0o600)
+	srcs := []Source{{Kind: "hab", Name: "hab", Path: hab}, {Kind: "holder", Name: "holder aaaa0001", Path: holder}}
+	run := func(f Filter) []string {
+		var got []string
+		if err := Merge(srcs, f, func(e Entry) { got = append(got, e.Text) }); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	want := []string{"old text line, trace gK3V9QX2M7TA", `a "quoted" line`, "holder line",
+		"warn peers: peer offline device=d1, trace hABCDEFGHJKM"}
+	if got := run(Filter{}); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("merged\n %q\nwant\n %q", got, want)
+	}
+	warn := diaglog.LevelWarn
+	if got := run(Filter{Level: &warn}); len(got) != 1 || got[0] != want[3] {
+		t.Errorf("level warn: %q", got)
+	}
+	if got := run(Filter{Comps: []string{"peers"}}); len(got) != 1 || got[0] != want[3] {
+		t.Errorf("comp peers: %q", got)
+	}
+	if got := run(Filter{Trace: "hABCDEFGHJKM"}); len(got) != 1 || got[0] != want[3] {
+		t.Errorf("structured trace: %q", got)
+	}
+	if got := run(Filter{Trace: "gK3V9QX2M7TA"}); len(got) != 1 || got[0] != want[0] {
+		t.Errorf("text trace: %q", got)
+	}
+	var js []string
+	Merge(srcs, Filter{Kinds: []string{"hab"}}, func(e Entry) { js = append(js, e.JSON) })
+	if len(js) != 3 || js[0] != "" || !strings.HasPrefix(js[2], `{"t":"2026-11-19T10:00:04.000Z"`) {
+		t.Errorf("JSON of the entries: %q", js)
+	}
+
+	fw, err := MergeFollow(func() []Source { return srcs }, Filter{}, func(Entry) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fw.Close()
+	appendLine(t, hab, `{"t":"2026-11-19T10:00:06.000Z","lvl":"error","msg":"stopped","proc":"hab","comp":"link"}`)
+	var followed []Entry
+	fw.poll(func(e Entry) { followed = append(followed, e) })
+	if len(followed) != 1 || followed[0].Text != "error link: stopped" || followed[0].Lvl != "error" ||
+		!followed[0].T.Equal(time.Date(2026, 11, 19, 10, 0, 6, 0, time.UTC)) {
+		t.Errorf("followed %+v", followed)
+	}
 }

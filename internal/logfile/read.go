@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 )
 
 // Source is one process's log file. Its old files (Path.1, Path.2, ...) are read first, oldest
@@ -27,12 +29,25 @@ type Source struct {
 	Loc *time.Location
 }
 
-// Entry is one log line, with the lines after it that carry no time stamp (a stack trace).
+// Entry is one log line, with the lines after it that carry no time stamp (a stack trace). A
+// structured line (diagnostics.md 4.2) also fills Lvl, Comp, Trace and JSON; a text line of an
+// older build or of a holder leaves them empty.
 type Entry struct {
 	T    time.Time // zero when no line before it in its file had a time
 	Name string
 	Kind string
 	Text string // the message with prefix and time cut off; continuation lines after a newline
+	Lvl  string // debug, info, warn, error; empty for a text line
+	Comp string
+	// Trace is the trace of a structured line; a text line names its trace in Text.
+	Trace string
+	JSON  string // the structured line as the file holds it
+}
+
+// Level is the entry's level: a text line counts as info.
+func (e Entry) Level() diaglog.Level {
+	l, _ := diaglog.ParseLevel(e.Lvl)
+	return l
 }
 
 // Filter selects entries. Zero values select all.
@@ -40,8 +55,13 @@ type Filter struct {
 	Since, Until time.Time
 	Kinds        []string
 	Grep         string
-	// Trace selects the lines of one action: those that name "trace <id>" (diagnostics.md 5).
+	// Trace selects the lines of one action: a structured line with that trace, or a text line
+	// that names "trace <id>" (diagnostics.md 5).
 	Trace string
+	// Level, when set, selects the lines at it or above; a text line counts as info (4.8).
+	Level *diaglog.Level
+	// Comps selects structured lines of these components; a text line has none.
+	Comps []string
 }
 
 func (f Filter) kind(k string) bool { return len(f.Kinds) == 0 || slices.Contains(f.Kinds, k) }
@@ -56,7 +76,13 @@ func (f Filter) match(e Entry) bool {
 	if !f.Until.IsZero() && !e.T.IsZero() && e.T.After(f.Until) {
 		return false
 	}
-	if f.Trace != "" && !strings.Contains(e.Text, "trace "+f.Trace) {
+	if f.Trace != "" && e.Trace != f.Trace && !strings.Contains(e.Text, "trace "+f.Trace) {
+		return false
+	}
+	if f.Level != nil && e.Level() < *f.Level {
+		return false
+	}
+	if len(f.Comps) > 0 && !slices.Contains(f.Comps, e.Comp) {
 		return false
 	}
 	return f.Grep == "" || strings.Contains(e.Text, f.Grep)
@@ -95,6 +121,30 @@ func ParseLine(line string, loc *time.Location) (t time.Time, msg string, ok boo
 		return time.Time{}, line, false
 	}
 	return t, strings.TrimPrefix(rest[n:], " "), true
+}
+
+// parsed is one line read: a structured line or a text line with its time stamp.
+type parsed struct {
+	t     time.Time
+	text  string
+	lvl   string
+	comp  string
+	trace string
+	json  string
+}
+
+// parseAny reads a structured line (4.2), else a text line. ok is false for a line with no time:
+// it continues the entry before it.
+func parseAny(line string, loc *time.Location) (parsed, bool) {
+	if l, ok := diaglog.Parse(line); ok {
+		return parsed{t: l.T, text: l.Text(), lvl: l.Lvl, comp: l.Comp, trace: l.Trace, json: line}, true
+	}
+	t, msg, ok := ParseLine(line, loc)
+	return parsed{t: t, text: msg}, ok
+}
+
+func (p parsed) entry(s Source) Entry {
+	return Entry{T: p.t, Name: s.Name, Kind: s.Kind, Text: p.text, Lvl: p.lvl, Comp: p.comp, Trace: p.trace, JSON: p.json}
 }
 
 // Files lists a source's files in reading order: its old files from the oldest, then Path.
@@ -186,7 +236,7 @@ func (r *reader) entry() *Entry {
 			r.next = nil
 			return e
 		}
-		t, msg, timed := ParseLine(s, r.src.Loc)
+		p, timed := parseAny(s, r.src.Loc)
 		if !timed {
 			if r.next == nil {
 				r.next = &Entry{T: r.last, Name: r.src.Name, Kind: r.src.Kind, Text: s}
@@ -195,9 +245,10 @@ func (r *reader) entry() *Entry {
 			}
 			continue
 		}
-		r.last = t
+		r.last = p.t
 		e := r.next
-		r.next = &Entry{T: t, Name: r.src.Name, Kind: r.src.Kind, Text: msg}
+		ne := p.entry(r.src)
+		r.next = &ne
 		if e != nil {
 			return e
 		}
@@ -385,13 +436,13 @@ func readFrom(s Source, fl *followed, size int64, all bool, f Filter, out func(E
 		return fl.off
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(text[:end], "\n"), "\n") {
-		t, msg, ok := ParseLine(line, s.Loc)
+		p, ok := parseAny(line, s.Loc)
 		if ok {
-			fl.last = t
+			fl.last = p.t
 		} else {
-			t, msg = fl.last, line
+			p = parsed{t: fl.last, text: line}
 		}
-		e := Entry{T: t, Name: s.Name, Kind: s.Kind, Text: msg}
+		e := p.entry(s)
 		if f.match(e) {
 			out(e)
 		}

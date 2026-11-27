@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api/modules"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 )
 
 // Runner is a loaded module: a Module in this process, or a Remote in the module host.
@@ -142,6 +143,9 @@ func NewHost(o HostOptions) *Host {
 	go h.logLoop()
 	return h
 }
+
+// modhostLog writes the module host's stderr lines: free text (diagnostics.md 1.5).
+var modhostLog = diaglog.For("modhost")
 
 func (h *Host) logf(format string, args ...any) {
 	if h.o.Log != nil {
@@ -457,7 +461,7 @@ func (p *proc) read(stdout io.Reader) {
 	}
 	p.mu.Unlock()
 	if lines := p.stderr.lines(10); lines != "" {
-		p.h.logf("module host (pid %d) stderr:\n%s", p.cmd.Process.Pid, lines)
+		modhostLog.Info("module host stderr", diaglog.Count("pid", int64(p.cmd.Process.Pid)), diaglog.Text(lines))
 	}
 	p.c.end()
 	// The host forgets this child before any failed call returns: a caller that saw the host

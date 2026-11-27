@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/friction"
 )
 
@@ -153,7 +154,11 @@ func frictionShow(args []string, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "log tail: %d lines%s\n", len(n.Log), cut)
 		for _, l := range n.Log {
-			fmt.Fprintf(out, "%s %-15s %s\n", l.T.Local().Format("2006-01-02 15:04:05.000000"), l.Proc, l.Text)
+			text := l.Text
+			if p, ok := diaglog.Parse(text); ok { // a structured line (diagnostics.md 4.2)
+				text = p.Text()
+			}
+			fmt.Fprintf(out, "%s %-15s %s\n", l.T.Local().Format("2006-01-02 15:04:05.000000"), l.Proc, text)
 		}
 	}
 	return nil

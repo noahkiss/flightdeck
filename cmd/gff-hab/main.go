@@ -116,6 +116,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
 	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/groups"
@@ -443,10 +444,11 @@ func serve(args []string) error {
 	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
 	fs.Parse(args)
 	// The log goes to <state>/logs/hab.log once gff-hab holds the state lock (diagnostics.md
-	// 4.1). Run by hand, each line goes to stderr too.
+	// 4.1), as JSON lines (4.2). Run by hand, each line goes to stderr too, as text.
+	epoch := control.NewEpoch()
 	var diag diagRef
-	logw := newLogWriter(*sf.init == "systemd" || *sf.init == "launchd", diag.touch)
-	logger := log.New(logw, habPrefix, habLogFlags)
+	logw := newLogWriter(diag.touch)
+	logger := setupLog(logw, *sf.init == "systemd" || *sf.init == "launchd", epoch)
 	// Registered first, so it runs last: after every deferred close has logged its lines. A
 	// clean exit marks the run clean and closes the log; any other return writes what is queued.
 	clean := false
@@ -457,7 +459,6 @@ func serve(args []string) error {
 			logw.FlushTimeout(exitFlush)
 		}
 	}()
-	epoch := control.NewEpoch()
 	// Catch SIGTERM and SIGINT before any socket is up: a stop that arrives while gff-hab starts
 	// waits for the shutdown below instead of killing it with no checkpoint.
 	sigs := make(chan os.Signal, 1)
@@ -587,14 +588,19 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The level floor (4.5): [diagnostics] log_level. debug keeps the debug lines on.
+	floor := logLevel(tallyConfig, logger.Printf)
+	diaglog.SetLevel(floor)
 	tl := openTallies(dir, tallyConfig, logger.Printf)
 	defer tl.Close()
 	hd := startDiag(dir, holderDirOf(*holders), epoch, logw, tl, logger.Printf)
 	diag.Store(hd)
 	hd.startStacks(usr1)
 	// Debug lines (4.5): a window from diag.debug, kept across restarts, or GFF_HAB_DEBUG.
-	debugSw := openDebug(dir, os.Getenv("GFF_HAB_DEBUG") != "", logger.Printf, time.Now, hd.setDebug)
+	debugSw := openDebug(dir, os.Getenv("GFF_HAB_DEBUG") != "" || floor == diaglog.LevelDebug, logger.Printf, time.Now, hd.setDebug)
 	defer debugSw.Close()
+	debugSw.out = log.New(diaglog.Legacy(diaglog.LevelDebug), "", 0).Printf
+	diaglog.SetDebug(debugSw.enabled)
 	// The stall watchdog (4.7) probes the store's lock; the link's loop joins it below.
 	probes := []stall.Probe{{Name: "structure", Run: func() { store.Health() }}}
 	if lk != nil {

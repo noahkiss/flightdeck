@@ -23,6 +23,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
@@ -1302,11 +1303,14 @@ func (s *roundsService) prune(roundID string) {
 	}
 }
 
+// roundsLog writes the round lines whose values are free text (diagnostics.md 1.5).
+var roundsLog = diaglog.For("rounds")
+
 // Notice raises a notification the scheduler asks for (rounds.md 10.2). The scheduler already
 // applied the round's notify setting; it is applied here again, so no path past the scheduler
 // sends a row the setting leaves out.
 func (s *roundsService) Notice(n rounds.Notice) {
-	s.cfg.logf("rounds: %s", n.Text)
+	roundsLog.Info("round notice", diaglog.Text(n.Text))
 	ev, ok := roundEvent(n)
 	if !ok || s.cfg.raise == nil || !push.RoundAllowed(string(n.Round.Round.Notify), ev.Kind) {
 		return

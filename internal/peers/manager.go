@@ -11,6 +11,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/habconn"
 	"github.com/noahkiss/flightdeck/internal/hosts"
 )
@@ -299,11 +300,14 @@ func (m *Manager) pump() {
 	}
 }
 
+// peersLog writes the peer lines that name a label (diagnostics.md 4.6).
+var peersLog = diaglog.For("peers")
+
 // online handles a link that came up. It reports true when the peer turned out to be this hab
 // and was dropped.
 func (m *Manager) online(label string, w api.Welcome) bool {
 	if w.DeviceID == m.cfg.Self {
-		m.cfg.Logf("peers: %s is this hab; skipped", label)
+		peersLog.Info("peer is this hab; skipped", diaglog.Label(label))
 		m.mu.Lock()
 		for _, sp := range m.specs {
 			if sp.Label == label {
@@ -321,12 +325,12 @@ func (m *Manager) online(label string, w api.Welcome) bool {
 	if pinned == "" && w.DeviceID != "" {
 		// First contact: pin the peer's device id in the file (mesh.md 3.2).
 		if err := SetPin(m.cfg.Path, label, w.DeviceID); err != nil {
-			m.cfg.Logf("peers: pin %s: %v", label, err)
+			peersLog.Warn("pin failed", diaglog.Label(label), diaglog.Err(err))
 			m.mu.Lock()
 			m.pinFailed[label] = fmt.Sprintf("peer %q: could not pin it: %v; set device_id = %q by hand", label, err, w.DeviceID)
 			m.mu.Unlock()
 		} else {
-			m.cfg.Logf("peers: pinned %s as %s", label, w.DeviceID)
+			peersLog.Info("peer pinned", diaglog.Label(label), diaglog.Device(w.DeviceID))
 			m.mu.Lock()
 			delete(m.pinFailed, label)
 			m.mu.Unlock()
@@ -454,7 +458,7 @@ func (m *Manager) Accept(label string) (api.PeerAccepted, error) {
 	if err := SetPin(m.cfg.Path, label, dc.Got); err != nil {
 		return api.PeerAccepted{}, control.Errorf(api.ErrorKindUnavailable, "%v", err)
 	}
-	m.cfg.Logf("peers: accepted %s: %s, was %s", label, dc.Got, dc.Pinned)
+	peersLog.Info("new device accepted", diaglog.Label(label), diaglog.Device(dc.Got), diaglog.WasDevice(dc.Pinned))
 	m.reapply(label, dc.Got)
 	return api.PeerAccepted{Label: label, Old: dc.Pinned, New: dc.Got}, nil
 }

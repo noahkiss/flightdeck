@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/capcom"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/logfile"
 )
 
@@ -487,6 +488,9 @@ func (s *Supervisor) exited(p Proc) {
 	s.report()
 }
 
+// capcomLog writes the engine lines whose values are free text (diagnostics.md 1.5).
+var capcomLog = diaglog.For("capcom")
+
 // EngineError takes an error the engine reported (4.4): a refused credential, or the start
 // check. Either way the exit that follows is no crash.
 func (s *Supervisor) EngineError(kind, text string, exiting bool) {
@@ -499,10 +503,10 @@ func (s *Supervisor) EngineError(kind, text string, exiting bool) {
 		s.cfg.Logf("capcom: the model provider refused the credential (%d)", s.authFails)
 	case ErrKindStart:
 		s.planned = "start"
-		s.cfg.Logf("capcom: the engine's start check: %s", text)
+		capcomLog.Warn("engine start check failed", diaglog.Text(text))
 	default:
 		if text != "" {
-			s.cfg.Logf("capcom: the engine reported: %s", text)
+			capcomLog.Info("engine reported", diaglog.Text(text))
 		}
 	}
 }

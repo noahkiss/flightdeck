@@ -1,6 +1,7 @@
-// Package logfile writes, caps and reads the text log files of docs/specs/diagnostics.md 4.3:
+// Package logfile writes, caps and reads the log files of docs/specs/diagnostics.md 4.3:
 // a buffered writer that rotates its own file at a size cap, copy-truncate for a file another
-// process writes, and a reader that merges several files by time (4.8).
+// process writes, and a reader that merges several files by time (4.8). The reader takes the
+// structured lines of 4.2 and the text lines of older builds and of the holder alike.
 package logfile
 
 import (
@@ -118,6 +119,16 @@ func (w *Writer) Write(p []byte) (int, error) {
 		w.dropped.Add(1)
 	}
 	return len(p), nil
+}
+
+// Writing reports whether lines reach the file: Open ran and Close did not.
+func (w *Writer) Writing() bool {
+	if !w.opened.Load() {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return !w.closed
 }
 
 // Dropped is how many lines were dropped and not reported in the file yet.
