@@ -91,7 +91,7 @@ func (r Reader) gitRaw(ctx context.Context, dir string, max int, args ...string)
 	if bin == "" {
 		bin = "git"
 	}
-	full := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false"}, args...)
+	full := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=false"}, args...)
 	cmd := exec.CommandContext(ctx, bin, full...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanEnv(), r.Env...)

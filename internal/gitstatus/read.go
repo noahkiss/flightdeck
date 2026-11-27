@@ -150,7 +150,7 @@ func (r Reader) git(ctx context.Context, dir string, args ...string) (string, er
 	if bin == "" {
 		bin = "git"
 	}
-	full := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false"}, args...)
+	full := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}, args...)
 	cmd := exec.CommandContext(ctx, bin, full...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanEnv(), r.Env...)

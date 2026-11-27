@@ -2232,9 +2232,9 @@ the peer-only methods. The hab now judges the process, not its environment.
   | Signal | Catches | Escaped by |
   |---|---|---|
   | An ancestor is a holder process: every live holder in the holder registry, unreachable ones (an older protocol) and draining ones included, and every holder the link is connected to. A holder starts nothing but panes | Any process a pane started, also before the link learned the new pane's pid | Leaving the tree: the parent exits, so the process moves to `init` or a subreaper |
-  | An ancestor is `gff-hab serve` itself. What it starts runs code an agent may have written: git and what a repository names for it (hooks, filters), lane checks, worktree scripts. On Linux serve is a child subreaper (`PR_SET_CHILD_SUBREAPER`), so a process whose parent exits moves to serve, not `init` | A hook, a filter or a script that dials the socket from a call an agent made, such as `worktree.create`; on Linux also what it leaves running | On macOS, the same as a holder's: the next two rows catch most of it. On Linux, none within the user account |
+  | An ancestor is `gff-hab serve` itself. What it starts runs code an agent may have written: git and what a repository names for it (hooks, filters), lane checks, worktree scripts. On Linux serve is a child subreaper (`PR_SET_CHILD_SUBREAPER`), so a process whose parent exits moves to serve, not `init` | A hook, a filter or a script that dials the socket from a call an agent made, such as `worktree.create`; on Linux also what it leaves running | On macOS, the same as a holder's: the next two rows catch most of it. On Linux, the escapes below that start a process outside serve (a service manager, `ssh localhost`, `at`); where serve is no subreaper (Go waits without a pidfd), the same as on macOS |
   | The caller or an ancestor is in the session of a pane's first process. Each pane's first process leads its pane's session (`hab-holder.md`); exited panes count until they are released | An orphan whose parent exited | `setsid`, or a release of the pane (`pane.close`) while the orphan runs on |
-  | The caller or an ancestor is in the session of a program serve started that may run a repository's code (the list in the first row). Each such program leads a session of its own; its session counts while it runs and after, until no process is left in it. Every 5 s serve drops a session with no process left, or one whose leader's pid a newer process took | What such a program leaves running after it exits, with its environment cleared | `setsid` |
+  | The caller or an ancestor is in the session of a program serve started that may run a repository's code (the list in the first row). Each such program leads a session of its own; its session counts while it runs and after, until no process is left in it. Every 5 s serve drops a session with no process left, or one whose leader's pid a newer process took | What such a program leaves running after it exits, with its environment cleared | `setsid`; a gff-hab restart, which forgets the sessions. Under launchd the leftover outlives the restart (launchd ends only the job's process group, which the session left); under systemd the hab's unit stops its whole control group, the leftover too |
   | The caller's start-up environment holds `GFF_HAB` naming this hab's hook socket: a pane's address, or the mark serve gives each program of the first row (the hook socket and no token, so it reaches no hook and names no pane) | A process that left the tree and the session but kept its environment | Starting with a cleared environment |
 
 - **What the check stops, and what it does not.** It stops an agent that reaches the socket by
@@ -2246,6 +2246,8 @@ the peer-only methods. The hab now judges the process, not its environment.
   - a double fork with `setsid` and a cleared environment;
   - on macOS, the same from a process that a program serve started leaves running (a git filter
     that backgrounds a child); on Linux serve adopts it;
+  - on macOS, such a leftover with a cleared environment that outlives a gff-hab restart: the new
+    serve does not know its session;
   - an orphan that runs on after `pane.close` released its pane;
   - a service manager: `launchctl submit`, `systemd-run --user`;
   - `ssh localhost`;
@@ -2271,7 +2273,9 @@ the peer-only methods. The hab now judges the process, not its environment.
   `-c core.hooksPath=/dev/null` but the merge lane's two pushes. Those keep the repository's
   hooks, so a `pre-push` the owner set up (git-lfs, a leak scan) runs as it does for the owner's
   own push; the lane makes no plain commit, and its checkout, rebase and worktree calls run no
-  hook. Other config still runs a command: a filter's `smudge` and `clean`, `core.sshCommand`,
+  hook. Inside such a program `GFF_HAB` is the mark, which reaches no hook: there `gff lb`,
+  the `gff-hab` read tools and channel sends fail, and a lane check or worktree script cannot use
+  them. Other config still runs a command: a filter's `smudge` and `clean`, `core.sshCommand`,
   a credential helper. Only the marks above keep that code, and the hooks that run, from being
   the person; turning hooks and fsmonitor off is a second layer.
 - **It fails closed.** A caller the socket gave no pid for, a pid with no process, a process
