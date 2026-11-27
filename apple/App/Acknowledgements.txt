@@ -3460,7 +3460,7 @@ https://github.com/apple/swift-cmark.
 
 ==============================================================================
 swift-nio
-Version: 2.105.1
+Version: 2.105.2
 Source: https://github.com/apple/swift-nio
 Licence: Apache-2.0
 In: Flightdeck (Swift package)
