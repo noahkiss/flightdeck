@@ -1,6 +1,7 @@
 package lbextra
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/logbook"
+
+	"github.com/noahkiss/flightdeck/internal/servechild"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // GitEvery is the least time between two export commits (13).
@@ -91,12 +95,16 @@ func (g GitExport) run(ctx context.Context, args ...string) (string, error) {
 	if bin == "" {
 		bin = "git"
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", g.Dir}, args...)...)
+	// A repository's hooks and fsmonitor are code an agent may have written; the export needs
+	// neither (hab-logic-api.md 4.1).
+	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", g.Dir, "-c", worktree.NoHooks, "-c", worktree.NoFSMonitor}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME="+gitName, "GIT_AUTHOR_EMAIL="+gitEmail,
 		"GIT_COMMITTER_NAME="+gitName, "GIT_COMMITTER_EMAIL="+gitEmail, "GIT_TERMINAL_PROMPT=0")
+	var stdout bytes.Buffer
 	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := servechild.Run(cmd)
+	out := stdout.Bytes()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {

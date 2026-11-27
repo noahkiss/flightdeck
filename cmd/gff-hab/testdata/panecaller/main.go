@@ -4,6 +4,10 @@
 // parent and keeps only the pane's session. The copy writes what the hab answered to the out
 // file: one line per call, the call and its error kind, or "ok".
 //
+// "detach" starts the dialing copy and exits once it is ready, so the copy loses its parent.
+// Two more words choose what the copy keeps: "keep" or "clear" its environment, "keep" or
+// "new" its session. It stands in for what a git filter or a lane check leaves running.
+//
 // "call" makes the calls named after the out file, each a method and its JSON params, in this
 // process, and writes one line per call the same way.
 package main
@@ -43,6 +47,21 @@ func main() {
 		write(out, dial(sock))
 		return
 	}
+	if mode == "detach" {
+		cmd := exec.Command(os.Args[0], "dial", sock, out, fmt.Sprint(os.Getpid()))
+		cmd.Env = os.Environ()
+		if os.Args[4] == "clear" {
+			cmd.Env = []string{}
+		}
+		if os.Args[5] == "new" {
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		}
+		if err := cmd.Start(); err != nil {
+			panic(err)
+		}
+		waitReady(out)
+		return
+	}
 	parent := ""
 	if mode == "orphan" {
 		parent = fmt.Sprint(os.Getpid())
@@ -56,6 +75,10 @@ func main() {
 		cmd.Wait()
 		return
 	}
+	waitReady(out)
+}
+
+func waitReady(out string) {
 	for i := 0; i < 500; i++ {
 		if _, err := os.Stat(out + ".ready"); err == nil {
 			return

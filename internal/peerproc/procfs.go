@@ -87,6 +87,36 @@ func (f procfs) uptime() (time.Duration, error) {
 	return time.Duration(secs * float64(time.Second)), nil
 }
 
+// Sessions returns the session id of every live process under root.
+func (f procfs) Sessions() (map[int]bool, error) {
+	ents, err := os.ReadDir(f.root)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]bool{}
+	for _, e := range ents {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(f.root, e.Name(), "stat"))
+		if err != nil {
+			continue // it ended
+		}
+		end := bytes.LastIndexByte(b, ')')
+		if end < 0 {
+			continue
+		}
+		fields := strings.Fields(string(b[end+1:]))
+		if len(fields) < 4 || fields[0] == "Z" || fields[0] == "X" {
+			continue
+		}
+		if sid, err := strconv.Atoi(fields[3]); err == nil && sid > 0 {
+			out[sid] = true
+		}
+	}
+	return out, nil
+}
+
 // Env reads <root>/<pid>/environ, at most 2 MiB.
 func (f procfs) Env(pid int) []byte {
 	fh, err := os.Open(filepath.Join(f.root, strconv.Itoa(pid), "environ"))

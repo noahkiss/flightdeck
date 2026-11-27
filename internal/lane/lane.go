@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/worktree"
+
+	"github.com/noahkiss/flightdeck/internal/servechild"
 )
 
 // Outcome is how a lane run ended.
@@ -299,7 +301,7 @@ func Run(ctx context.Context, j Job) Result {
 		}
 		// 4. Push the rebased branch, and save the rebased head before CI.
 		lease, _ := r.git1(ctx, j.Source, "rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+j.Branch)
-		out, err := r.git1(ctx, j.Dir, "push", "--porcelain", "--force-with-lease=refs/heads/"+j.Branch+":"+lease, remote, rebased+":refs/heads/"+j.Branch)
+		out, err := r.push(ctx, j.Dir, "--porcelain", "--force-with-lease=refs/heads/"+j.Branch+":"+lease, remote, rebased+":refs/heads/"+j.Branch)
 		if err != nil {
 			switch pushRefusal(out) {
 			case refusedRule:
@@ -335,7 +337,7 @@ func Run(ctx context.Context, j Job) Result {
 			return unavailable(StepLand, "stopped: %v", ctx.Err())
 		}
 		pctx, pcancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-		out, err = r.git1(pctx, j.Dir, "push", "--porcelain", remote, rebased+":refs/heads/"+res.Target)
+		out, err = r.push(pctx, j.Dir, "--porcelain", remote, rebased+":refs/heads/"+res.Target)
 		pcancel()
 		if err == nil {
 			res.Outcome, res.Commit = Landed, rebased
@@ -385,23 +387,37 @@ func pushRefusal(out string) refusal {
 
 type runner struct{ git worktree.Git }
 
-// git1 runs git in dir and returns stdout and stderr together, trimmed.
+// git1 runs git in dir with the repository's hooks off and returns stdout and stderr together,
+// trimmed.
 func (r runner) git1(ctx context.Context, dir string, args ...string) (string, error) {
-	return r.gitEnv(ctx, dir, nil, args...)
+	return r.gitEnv(ctx, dir, nil, false, args...)
 }
 
-func (r runner) gitEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
+// push runs a git push in dir with the repository's hooks on: a pre-push hook the owner set up
+// (git-lfs, a leak scan) runs as it does for the owner's own push. The hook runs as a program
+// gff-hab started, so it counts as a pane's (hab-logic-api.md 4.1).
+func (r runner) push(ctx context.Context, dir string, args ...string) (string, error) {
+	return r.gitEnv(ctx, dir, nil, true, append([]string{"push"}, args...)...)
+}
+
+func (r runner) gitEnv(ctx context.Context, dir string, env []string, hooks bool, args ...string) (string, error) {
 	bin := r.git.Bin
 	if bin == "" {
 		bin = "git"
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", dir, "-c", worktree.NoHooks}, args...)...)
+	pre := []string{"-C", dir, "-c", worktree.NoFSMonitor}
+	if !hooks {
+		pre = append(pre, "-c", worktree.NoHooks)
+	}
+	cmd := exec.CommandContext(ctx, bin, append(pre, args...)...)
 	cmd.Env = append(append(append(os.Environ(), "LC_ALL=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_EDITOR=true"), r.git.Env...), env...)
-	out, err := cmd.CombinedOutput()
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := servechild.Run(cmd)
 	if err != nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(out.String()), err
 }
 
 // commit runs a git command that writes commits: with a committer of its own when the
@@ -411,7 +427,7 @@ func (r runner) commit(ctx context.Context, dir string, args ...string) (string,
 	if v, _ := r.git1(ctx, dir, "config", "user.email"); v == "" {
 		env = []string{"GIT_COMMITTER_NAME=Flightdeck lane", "GIT_COMMITTER_EMAIL=lane@flightdeck.invalid"}
 	}
-	return r.gitEnv(ctx, dir, env, args...)
+	return r.gitEnv(ctx, dir, env, false, args...)
 }
 
 func (r runner) ancestor(ctx context.Context, dir, commit, rev string) bool {
@@ -520,7 +536,7 @@ func runScript(ctx context.Context, dir, s string, args, env []string) (int, str
 	cmd.Stdin = bytes.NewReader(nil)
 	cmd.WaitDelay = time.Second
 	worktree.OwnGroup(cmd)
-	err := cmd.Run()
+	err := servechild.Run(cmd)
 	if err == nil {
 		return 0, string(out.b), nil
 	}

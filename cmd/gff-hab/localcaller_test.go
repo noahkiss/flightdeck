@@ -49,7 +49,8 @@ func TestLocalCallerRoots(t *testing.T) {
 	const serve, holder, gone = 100, 200, 300
 	// 1 init; serve -> git (110) -> hook (111); an unreachable holder -> shell (210) -> agent
 	// (211); a terminal (400) -> the person's gff (401).
-	table := callerTable{1: 0, serve: 1, 110: serve, 111: 110, holder: 1, 210: holder, 211: 210, 400: 1, 401: 400}
+	// A program serve started that detached (500), with the session serve recorded.
+	table := callerTable{1: 0, serve: 1, 110: serve, 111: 110, holder: 1, 210: holder, 211: 210, 400: 1, 401: 400, 500: 1}
 	dir := t.TempDir()
 	if err := holderreg.Write(dir, holderreg.Entry{Instance: "old", Build: "old", Pid: holder, Socket: filepath.Join(dir, "old.sock")}); err != nil {
 		t.Fatal(err)
@@ -58,8 +59,11 @@ func TestLocalCallerRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	alive := func(pid int) bool { _, err := table.Proc(pid); return err == nil }
-	check := localCaller(callerRoots{serve: serve, holderDir: dir, alive: alive}, table)
-	for pid, want := range map[int]bool{111: true, 110: true, 211: true, 401: false} {
+	var warned []string
+	now := time.Unix(1000, 0)
+	junk := &junkWarn{logf: func(f string, a ...any) { warned = append(warned, fmt.Sprintf(f, a...)) }, now: func() time.Time { return now }}
+	check := localCaller(callerRoots{serve: serve, holderDir: dir, alive: alive, sessions: func() []int { return []int{500} }, junk: junk}, table)
+	for pid, want := range map[int]bool{111: true, 110: true, 211: true, 401: false, 500: true} {
 		if pane, why := check(pid, time.Now()); pane != want {
 			t.Errorf("caller %d: pane %v (%s), want %v", pid, pane, why, want)
 		}
@@ -70,5 +74,15 @@ func TestLocalCallerRoots(t *testing.T) {
 	}
 	if pane, why := check(401, time.Now()); !pane || !strings.Contains(why, "registry") {
 		t.Errorf("an unreadable registry: pane %v (%s)", pane, why)
+	}
+	// One loud line, not one per caller, until junkEvery has passed.
+	check(401, time.Now())
+	if len(warned) != 1 || !strings.Contains(warned[0], "WARNING") || !strings.Contains(warned[0], "junk.json") {
+		t.Errorf("warnings %q, want one that names the file", warned)
+	}
+	now = now.Add(junkEvery)
+	check(401, time.Now())
+	if len(warned) != 2 {
+		t.Errorf("%d warnings after %v, want 2", len(warned), junkEvery)
 	}
 }

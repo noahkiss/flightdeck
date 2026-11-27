@@ -17,3 +17,6 @@ func bootTime() (time.Duration, error) {
 	}
 	return time.Duration(ts.Nano()), nil
 }
+
+// Sessions returns the session id of every live process on this machine.
+func Sessions() (map[int]bool, error) { return procfs{root: "/proc"}.Sessions() }

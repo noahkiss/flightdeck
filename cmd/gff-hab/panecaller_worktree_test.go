@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -171,4 +172,107 @@ func TestPaneCallerServeChildren(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(f.Worktree.Path, "setup.ran"))
 		return string(b) == "ran\nran\n"
 	})
+}
+
+// TestPaneCallerDetachedChild covers what a program gff-hab starts leaves running after it
+// detaches (hab-logic-api.md 4.1). An agent with file writes adds a smudge filter to the
+// repository; worktree.create runs it. The filter starts three processes that outlive it, so
+// each leaves gff-hab's tree, and each dials the socket:
+//
+//   - one that keeps its environment and leaves the session: the mark in its GFF_HAB catches it;
+//   - one that clears its environment and keeps the session: the session catches it;
+//   - one that does both: on Linux, gff-hab is a subreaper and adopts it, so the ancestor walk
+//     catches it; on macOS it escapes, as the spec says.
+//
+// The person's own client, outside gff-hab's tree, still counts as the person.
+func TestPaneCallerDetachedChild(t *testing.T) {
+	t.Parallel()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	d := shortDir(t)
+	hdir, state, repo, root, work := filepath.Join(d, "h"), filepath.Join(d, "state"), filepath.Join(d, "repo"),
+		filepath.Join(d, "wt"), filepath.Join(d, "w")
+	for _, dir := range []string{hdir, repo, work} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	helper := filepath.Join(work, "panecaller")
+	if out, err := exec.Command("go", "build", "-o", helper, "./testdata/panecaller").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	gitEnv := []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com"}
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(realGit, append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), gitEnv...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	sock := filepath.Join(d, "run", "hab.sock")
+	outs := map[string]string{}
+	filter := "#!/bin/sh\nif mkdir '" + work + "/filter.lock' 2>/dev/null; then\n"
+	for _, c := range []string{"keep-new", "clear-keep", "clear-new"} {
+		outs[c] = filepath.Join(work, c+".out")
+		env, session, _ := strings.Cut(c, "-")
+		filter += "  '" + helper + "' detach '" + sock + "' '" + outs[c] + "' " + env + " " + session + "\n"
+	}
+	filter += "fi\nexec cat\n"
+	if err := os.WriteFile(filepath.Join(d, "filter"), []byte(filter), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(repo, "init", "-q", "-b", "main")
+	git(repo, "remote", "add", "origin", "https://example.com/team/thing.git")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(repo, "add", ".")
+	git(repo, "commit", "-q", "-m", "first")
+	git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	// What an agent with file writes adds: the filter, in files git reads.
+	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "attributes"), []byte("*.txt filter=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(repo, "config", "filter.x.smudge", filepath.Join(d, "filter"))
+
+	startHolder(t, hdir, "one")
+	env := append(append([]string{}, gitEnv...), noRaceExitSleep)
+	startServeWith(t, sock, state, env, "-holders", hdir, "-worktrees", root)
+
+	var f api.WorktreeCreated
+	b, err := json.Marshal(api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{ProjectDir: repo}, Branch: "try", Base: "origin/main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", sock, "worktree.create", string(b))), &f); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for c, out := range outs {
+		waitUntil(t, c+": the detached process's answers", func() bool {
+			b, err := os.ReadFile(out)
+			got[c] = string(b)
+			return err == nil
+		})
+	}
+	const denied = "hello ok\ndevices.list denied\nstructure.get ok\nhello-hab denied\n"
+	if want := "env GFF_HAB is set\n" + denied; got["keep-new"] != want {
+		t.Errorf("kept its environment, left the session: got\n%s\nwant\n%s", got["keep-new"], want)
+	}
+	if got["clear-keep"] != denied {
+		t.Errorf("cleared its environment, kept the session: got\n%s\nwant\n%s", got["clear-keep"], denied)
+	}
+	if runtime.GOOS == "linux" {
+		if got["clear-new"] != denied {
+			t.Errorf("cleared its environment, left the session, adopted by the subreaper: got\n%s\nwant\n%s", got["clear-new"], denied)
+		}
+	} else if !strings.Contains(got["clear-new"], "devices.list ok\n") {
+		t.Errorf("cleared its environment and left the session: got\n%s\nwant the escape the spec names", got["clear-new"])
+	}
+	// The person's own client is outside gff-hab's tree.
+	run(t, "api", "call", "-socket", sock, "devices.list", "{}")
 }

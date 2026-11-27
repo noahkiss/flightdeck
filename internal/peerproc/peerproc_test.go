@@ -76,6 +76,12 @@ func TestClassify(t *testing.T) {
 				f.envs[230] = hook.Env + "=" + hook.Addr("/elsewhere/hooks.sock", "0123456789abcdef") + "\x00"
 			}},
 		{name: "a detached orphan with a cleared environment", pid: 230, pane: false},
+		{name: "a detached orphan in the session of a program gff-hab started", pid: 230, pane: true, why: "program 230",
+			r: &Roots{Sessions: []int{230}}},
+		{name: "a detached orphan with the mark gff-hab gives its programs", pid: 230, pane: true, why: "environment",
+			edit: func(f *fakeTable) { f.envs[230] = hook.Env + "=" + hook.ChildAddr("/run/gff/hooks.sock") + "\x00" }},
+		{name: "a detached orphan with another hab's mark", pid: 230, pane: false,
+			edit: func(f *fakeTable) { f.envs[230] = hook.Env + "=" + hook.ChildAddr("/elsewhere/hooks.sock") + "\x00" }},
 		{name: "no pid", pid: 0, pane: true, why: "no caller pid"},
 		{name: "a caller that ended", pid: 999, pane: true, why: "caller 999"},
 		{name: "a pid a newer process took", pid: 320, pane: true, why: "started after",
@@ -147,6 +153,9 @@ func TestProcfs(t *testing.T) {
 	if got := string(f.Env(42)); got != files["42/environ"] {
 		t.Fatalf("env %q", got)
 	}
+	if m, err := f.Sessions(); err != nil || !m[40] || len(m) != 1 {
+		t.Fatalf("sessions %v (%v), want only 40", m, err)
+	}
 	if _, err := f.Proc(43); err == nil {
 		t.Fatal("a missing process read")
 	}
@@ -155,5 +164,8 @@ func TestProcfs(t *testing.T) {
 	}
 	if _, err := f.Proc(42); err == nil {
 		t.Fatal("a zombie read as a live process")
+	}
+	if m, _ := f.Sessions(); len(m) != 0 {
+		t.Fatalf("a zombie's session counted: %v", m)
 	}
 }

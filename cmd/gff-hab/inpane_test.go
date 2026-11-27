@@ -27,4 +27,12 @@ func TestVerbsInPane(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "pane") {
 		t.Errorf("devices revoke in a pane: %v", err)
 	}
+	for _, verb := range []func() error{
+		func() error { return install([]string{"-prefix", "x"}, io.Discard) },
+		func() error { return uninstall([]string{"-prefix", "x", "-yes"}, strings.NewReader(""), io.Discard) },
+	} {
+		if err := verb(); err == nil || !strings.Contains(err.Error(), "pane") {
+			t.Errorf("install or uninstall in a pane: %v", err)
+		}
+	}
 }

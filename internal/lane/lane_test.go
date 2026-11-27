@@ -263,6 +263,38 @@ func TestLaneProtectedBranch(t *testing.T) {
 	}
 }
 
+// TestLaneHooks: the lane's pushes run the repository's pre-push hook, as the owner's own push
+// does (git-lfs, a leak scan); its checkout and rebase run no hook (hab-logic-api.md 4.1).
+func TestLaneHooks(t *testing.T) {
+	r := newRepo(t, "")
+	d := t.TempDir()
+	hooks := filepath.Join(r.src, ".git", "hooks")
+	r.write(hooks, "pre-push", "#!/bin/sh\necho push >> '"+filepath.Join(d, "pre-push")+"'\n")
+	r.write(hooks, "post-checkout", "#!/bin/sh\necho checkout >> '"+filepath.Join(d, "post-checkout")+"'\n")
+	r.write(hooks, "post-rewrite", "#!/bin/sh\necho rewrite >> '"+filepath.Join(d, "post-rewrite")+"'\n")
+	for _, h := range []string{"pre-push", "post-checkout", "post-rewrite"} {
+		if err := os.Chmod(filepath.Join(hooks, h), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := r.item("group/g/a", "origin/main", "a.txt")
+	r.move("m.txt") // so the lane's rebase rewrites the item
+	for _, h := range []string{"pre-push", "post-checkout", "post-rewrite"} {
+		os.Remove(filepath.Join(d, h)) // what the test's own git ran
+	}
+	if res := Run(context.Background(), r.job("group/g/a", a)); res.Outcome != Landed {
+		t.Fatalf("%+v", res)
+	}
+	if b, err := os.ReadFile(filepath.Join(d, "pre-push")); err != nil || string(b) != "push\npush\n" {
+		t.Errorf("pre-push ran %q (%v), want twice: the item branch and the land", b, err)
+	}
+	for _, h := range []string{"post-checkout", "post-rewrite"} {
+		if _, err := os.Stat(filepath.Join(d, h)); err == nil {
+			t.Errorf("the lane ran the %s hook", h)
+		}
+	}
+}
+
 func TestLaneChecksFromTarget(t *testing.T) {
 	// The target's checks fail; the item empties lane.checks on its branch, and the target's
 	// checks still run.

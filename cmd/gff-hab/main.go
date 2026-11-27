@@ -137,6 +137,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/readtools"
+	"github.com/noahkiss/flightdeck/internal/servechild"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/speech"
@@ -481,6 +482,12 @@ func serve(args []string) error {
 	if stopped := waitPrivateSocketDirs([]string{path, hpath}, sigs, logger.Printf, socketDirPoll); stopped {
 		return nil
 	}
+	// The programs serve starts that may run a repository's code carry a mark and a session of
+	// their own, and on Linux serve adopts what they leave running, so none of it reaches the
+	// control socket as the person (hab-logic-api.md 4.1).
+	servechild.Enable(hpath)
+	startSubreaper(logger.Printf)
+	go sweepServeChildren(serveChildSweep)
 	dir, err := stateDir(*state)
 	if err != nil {
 		return err
@@ -1961,7 +1968,8 @@ func serve(args []string) error {
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	// gff-hab's own pid is a root: what it starts (git hooks, lane checks) may run the agent's
 	// code (hab-logic-api.md 4.1).
-	callers := callerRoots{serve: os.Getpid(), holderDir: holderDirOf(*holders), lk: lk, hookSocket: hpath}
+	callers := callerRoots{serve: os.Getpid(), holderDir: holderDirOf(*holders), lk: lk, hookSocket: hpath,
+		sessions: servechild.Sessions, junk: &junkWarn{logf: logger.Printf, now: time.Now}}
 	s := control.New(control.Config{
 		Epoch:    epoch,
 		Build:    build,

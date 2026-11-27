@@ -42,6 +42,9 @@ type Roots struct {
 	// Panes are the pids of the panes' first processes. Each leads its pane's session, so a
 	// process in that session is the pane's, also after its parent exited.
 	Panes []int
+	// Sessions are the session ids of the programs gff-hab serve started that may run a
+	// repository's code (internal/servechild): a process in one is a pane's.
+	Sessions []int
 	// HookSocket is the hab's hook socket. A process whose environment holds GFF_HAB naming it
 	// started inside a pane of this hab.
 	HookSocket string
@@ -67,6 +70,7 @@ func Classify(t Table, pid int, at time.Time, r Roots) Class {
 	}
 	holders := set(r.Holders)
 	panes := set(r.Panes)
+	sessions := set(r.Sessions)
 	p, err := t.Proc(pid)
 	if err != nil {
 		return Class{Pane: true, Why: fmt.Sprintf("caller %d: %v", pid, err)}
@@ -85,6 +89,9 @@ func Classify(t Table, pid int, at time.Time, r Roots) Class {
 		}
 		if cur.SID > 0 && panes[cur.SID] {
 			return Class{Pane: true, Why: fmt.Sprintf("caller %d is in the session of pane process %d", pid, cur.SID)}
+		}
+		if cur.SID > 0 && sessions[cur.SID] {
+			return Class{Pane: true, Why: fmt.Sprintf("caller %d is in the session of program %d that gff-hab started", pid, cur.SID)}
 		}
 		if cur.PPID <= 1 || cur.PPID == cur.PID {
 			return Class{Why: fmt.Sprintf("caller %d is outside every pane", pid)}
@@ -109,7 +116,8 @@ func Classify(t Table, pid int, at time.Time, r Roots) Class {
 	}
 }
 
-// NamesSocket reports whether env, NUL-separated, holds a GFF_HAB entry whose socket is socket.
+// NamesSocket reports whether env, NUL-separated, holds a GFF_HAB entry whose socket is socket:
+// a pane's address, or the mark gff-hab serve gives the programs it starts (hook.ChildAddr).
 func NamesSocket(env []byte, socket string) bool {
 	want := filepath.Clean(socket)
 	for _, entry := range bytes.Split(env, []byte{0}) {
@@ -118,6 +126,9 @@ func NamesSocket(env []byte, socket string) bool {
 			continue
 		}
 		if sock, _, err := hook.ParseAddr(string(v)); err == nil && filepath.Clean(sock) == want {
+			return true
+		}
+		if sock, ok := hook.ParseChildAddr(string(v)); ok && filepath.Clean(sock) == want {
 			return true
 		}
 	}

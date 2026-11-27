@@ -36,3 +36,21 @@ func (darwinTable) Proc(pid int) (Proc, error) {
 }
 
 func (darwinTable) Env(pid int) []byte { return procscope.Environ(pid) }
+
+// Sessions returns the session id of every live process on this machine.
+func Sessions() (map[int]bool, error) {
+	ks, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]bool{}
+	for _, k := range ks {
+		if k.Proc.P_stat == szomb || k.Proc.P_pid <= 0 {
+			continue
+		}
+		if sid, err := unix.Getsid(int(k.Proc.P_pid)); err == nil && sid > 0 {
+			out[sid] = true
+		}
+	}
+	return out, nil
+}

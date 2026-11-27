@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/structure"
+
+	"github.com/noahkiss/flightdeck/internal/servechild"
 )
 
 // Result is one read: the state, plus the files whose change means the state may have changed.
@@ -156,7 +158,7 @@ func (r Reader) git(ctx context.Context, dir string, args ...string) (string, er
 	cmd.WaitDelay = 200 * time.Millisecond
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
+	err := servechild.Run(cmd)
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), ctx.Err())
 	}

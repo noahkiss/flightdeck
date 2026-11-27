@@ -13,3 +13,8 @@ func (noTable) Proc(int) (Proc, error) {
 	return Proc{}, errors.New("process reads are not supported on this system")
 }
 func (noTable) Env(int) []byte { return nil }
+
+// Sessions cannot read processes on this system.
+func Sessions() (map[int]bool, error) {
+	return nil, errors.New("process reads are not supported on this system")
+}
