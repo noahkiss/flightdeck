@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -130,31 +131,176 @@ func TestLevels(t *testing.T) {
 	}
 }
 
-// TestRepeat: a line with the same message and component is written once per RepeatEvery; the
-// next one carries the count left out. Legacy lines are never limited (4.5).
+// TestRepeat: a line with the same component, message and identity is written once per
+// RepeatEvery; when the window ends, the count left out is a line of its own. Legacy lines are
+// never limited (4.5).
 func TestRepeat(t *testing.T) {
 	now := time.Unix(1000, 0)
 	f, _ := setup(t, Config{Now: func() time.Time { return now }})
 	l := For("peers")
-	for range 5 {
-		l.Warn("reconnect failed")
+	for i := range 50 {
+		l.Warn("reconnect failed", Label("a"), Count("try", int64(i)), Err(errors.New("refused")))
 	}
-	For("other").Warn("reconnect failed")
+	For("other").Warn("reconnect failed", Label("a"))
 	lg := log.New(Legacy(LevelInfo), "", 0)
 	lg.Printf("same text")
 	lg.Printf("same text")
+	if got := f.all(); len(got) != 4 {
+		t.Fatalf("lines in the window %q", got)
+	}
 	now = now.Add(RepeatEvery)
-	l.Warn("reconnect failed")
+	current.Load().sweep()
+	l.Warn("reconnect failed", Label("a"))
 	got := f.all()
-	if len(got) != 5 {
+	if len(got) != 6 {
 		t.Fatalf("lines %q", got)
 	}
-	last := decode(t, got[4])
-	if last["suppressed"] != 4.0 {
-		t.Errorf("the line after the window: %v", last)
+	count := decode(t, got[4])
+	if count["suppressed"] != 49.0 || count["msg"] != "reconnect failed" || count["label"] != "a" || count["lvl"] != "warn" ||
+		count["try"] != nil || count["err"] != nil {
+		t.Errorf("the count line: %v", count)
+	}
+	if last := decode(t, got[5]); last["suppressed"] != nil {
+		t.Errorf("the line after the window carries a count: %v", last)
 	}
 	if decode(t, got[2])["text"] != "same text" || decode(t, got[3])["msg"] != MsgLegacy {
 		t.Errorf("legacy lines %q", got[2:4])
+	}
+}
+
+// TestRepeatTimer: the first line left out in a window starts a timer for the window's end; the
+// timer writes the count when no other line follows (4.5).
+func TestRepeatTimer(t *testing.T) {
+	var waits []time.Duration
+	var fire []func()
+	old := afterFunc
+	afterFunc = func(d time.Duration, f func()) { waits, fire = append(waits, d), append(fire, f) }
+	t.Cleanup(func() { afterFunc = old })
+	now := time.Unix(1000, 0)
+	f, _ := setup(t, Config{Now: func() time.Time { return now }})
+	l := For("speech")
+	l.Info("helper stderr", Text("a"))
+	now = now.Add(3 * time.Second)
+	l.Info("helper stderr", Text("b"))
+	l.Info("helper stderr", Text("c"))
+	if len(fire) != 1 || waits[0] != RepeatEvery-3*time.Second+time.Millisecond {
+		t.Fatalf("timers %v", waits)
+	}
+	fire[0]() // early: the window is still open
+	if n := len(f.all()); n != 1 {
+		t.Fatalf("%d lines after an early timer", n)
+	}
+	now = now.Add(7 * time.Second)
+	fire[0]()
+	got := f.all()
+	if len(got) != 2 {
+		t.Fatalf("lines %q", got)
+	}
+	if c := decode(t, got[1]); c["suppressed"] != 2.0 || c["msg"] != "helper stderr" || c["text"] != nil {
+		t.Errorf("count %v", c)
+	}
+}
+
+// TestRepeatIdentity: lines of one message for different entities are each written, and a count
+// is written only for the entity whose lines were left out (4.5, Q10).
+func TestRepeatIdentity(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f, _ := setup(t, Config{Now: func() time.Time { return now }})
+	l := For("peers")
+	l.Info("peer pinned", Label("a"), Device("dev-1"))
+	now = now.Add(time.Second)
+	l.Info("peer pinned", Label("b"), Device("dev-2"))
+	l.Info("peer pinned", Label("b"), Device("dev-2"))
+	For("trust").Info("trust prompt answered", Pane("p1"), Path("/x"), Word("choice", "trust"))
+	For("trust").Info("trust prompt answered", Pane("p2"), Path("/y"), Word("choice", "trust"))
+	got := f.all()
+	if len(got) != 4 {
+		t.Fatalf("lines %q", got)
+	}
+	if decode(t, got[0])["device"] != "dev-1" || decode(t, got[1])["device"] != "dev-2" {
+		t.Errorf("pins %q", got[:2])
+	}
+	// The next line, of another key, ends every window. Only b's left a line out, so only b's
+	// writes a count.
+	now = now.Add(RepeatEvery)
+	For("x").Info("later")
+	got = f.all()
+	if len(got) != 6 {
+		t.Fatalf("lines after the windows %q", got)
+	}
+	if c := decode(t, got[4]); c["suppressed"] != 1.0 || c["label"] != "b" || c["device"] != "dev-2" {
+		t.Errorf("count %v", c)
+	}
+}
+
+// TestRepeatBound: the limiter keeps at most maxRepeat windows; the oldest ends early and writes
+// its count.
+func TestRepeatBound(t *testing.T) {
+	now := time.Unix(1000, 0)
+	f, _ := setup(t, Config{Now: func() time.Time { return now }})
+	l := For("x")
+	l.Info("each", Session("s-first"))
+	l.Info("each", Session("s-first"))
+	for i := range maxRepeat {
+		l.Info("each", Session("s-"+strconv.Itoa(i)))
+	}
+	s := current.Load()
+	s.mu.Lock()
+	n := len(s.repeat)
+	s.mu.Unlock()
+	if n != maxRepeat {
+		t.Errorf("%d windows, want %d", n, maxRepeat)
+	}
+	got := f.all()
+	if len(got) != maxRepeat+2 {
+		t.Fatalf("%d lines, want %d", len(got), maxRepeat+2)
+	}
+	if c := decode(t, got[len(got)-2]); c["suppressed"] != 1.0 || c["session"] != "s-first" {
+		t.Errorf("the evicted window's count %v", c)
+	}
+}
+
+// TestReservedKeys: Word, Count and Dur write a value under a reserved key as <key>_text, so it
+// passes as no line key and no fixed key's class (10.2).
+func TestReservedKeys(t *testing.T) {
+	f, _ := setup(t, Config{})
+	For("x").Info("real", Word("msg", "fake"), Count("t", 1), Word("host", "box"), Count("session", 2),
+		Word("state", "ok"), Dur("took", time.Second))
+	got := f.all()
+	if len(got) != 1 {
+		t.Fatalf("lines %q", got)
+	}
+	l, ok := Parse(got[0])
+	if !ok || l.Msg != "real" {
+		t.Fatalf("Parse %q: %+v %v", got[0], l, ok)
+	}
+	m := decode(t, got[0])
+	want := map[string]any{"msg_text": "fake", "t_text": 1.0, "host_text": "box", "session_text": 2.0, "state": "ok", "took_ms": 1000.0}
+	for k, v := range want {
+		if m[k] != v {
+			t.Errorf("%s = %v, want %v", k, m[k], v)
+		}
+	}
+	for _, k := range []string{"t", "lvl", "msg", "proc", "epoch", "comp", "trace", "suppressed", "session", "host", "text", "path", "client_id"} {
+		if !Reserved(k) {
+			t.Errorf("%s is not reserved", k)
+		}
+	}
+	if Reserved("state") || Word("msg", "x").class != ClassText {
+		t.Error("Reserved(state), or Word under msg kept as safe")
+	}
+}
+
+// TestLegacyFloor: a floor above info keeps legacy lines at info, which are not typed at their
+// level yet; a legacy debug line keeps the debug rule (4.5).
+func TestLegacyFloor(t *testing.T) {
+	f, _ := setup(t, Config{Level: LevelWarn})
+	For("x").Info("typed info")
+	log.New(Legacy(LevelInfo), "", 0).Print("old info")
+	log.New(Legacy(LevelDebug), "", 0).Print("old debug")
+	got := f.all()
+	if len(got) != 1 || decode(t, got[0])["text"] != "old info" {
+		t.Errorf("lines %q", got)
 	}
 }
 
@@ -199,6 +345,8 @@ func TestSafeForms(t *testing.T) {
 		{Trace("gK3V9QX2M7TA"), "trace", ClassSafe, false},
 		{Trace("gk3v9qx2m7ta"), "trace_text", ClassText, true},
 		{Event("PostToolUse"), "event", ClassSafe, false},
+		{ClientID("0a1b2c3d4e5f6789"), "client_id", ClassSafe, false},
+		{ClientID("app"), "client_id_text", ClassText, true},
 		{Word("state", "online"), "state", ClassSafe, false},
 		{Word("state", "a b"), "state_text", ClassText, true},
 		{Host("box"), "host", ClassName, false},

@@ -40,6 +40,11 @@ func (c Class) String() string {
 	return "text"
 }
 
+// constant is the type of a message, a component and a caller's key. It is unexported, so only
+// an untyped string constant converts to it: a variable, a typed constant or a value built at
+// run time does not compile (10.2).
+type constant string
+
 // Attr is one key and value of a line. Only this package's constructors make one, so every
 // value has a class.
 type Attr struct {
@@ -52,14 +57,15 @@ type Attr struct {
 
 // The fixed keys of the constructors. KeyClass maps each to its class.
 const (
-	KeySession = "session"
-	KeyPane    = "pane"
-	KeyMethod  = "method"
-	KeyKind    = "kind"
-	KeyTrace   = "trace"
-	KeyHarness = "harness"
-	KeyEvent   = "event"
-	KeyClient  = "client"
+	KeySession  = "session"
+	KeyPane     = "pane"
+	KeyMethod   = "method"
+	KeyKind     = "kind"
+	KeyTrace    = "trace"
+	KeyHarness  = "harness"
+	KeyEvent    = "event"
+	KeyClient   = "client"
+	KeyClientID = "client_id"
 
 	KeyHost    = "host"
 	KeyLabel   = "label"
@@ -82,7 +88,7 @@ const textSuffix = "_text"
 
 var keyClass = map[string]Class{
 	KeySession: ClassSafe, KeyPane: ClassSafe, KeyMethod: ClassSafe, KeyKind: ClassSafe, KeyTrace: ClassSafe, KeyHarness: ClassSafe,
-	KeyEvent: ClassSafe, KeyClient: ClassSafe,
+	KeyEvent: ClassSafe, KeyClient: ClassSafe, KeyClientID: ClassSafe,
 	KeyHost: ClassName, KeyLabel: ClassName, KeyDevice: ClassName, KeyWas: ClassName, KeyProject: ClassName, KeyBranch: ClassName, KeyTitle: ClassName,
 	KeyGroup: ClassName,
 	KeyPath:  ClassPath,
@@ -113,6 +119,26 @@ func KeyClass(key string) Class {
 		return c
 	}
 	return ClassText
+}
+
+// Reserved reports whether key is one a caller's key may not take: a key the line always has or
+// the sink adds, or a fixed constructor's key. Word, Count and Dur write a value under such a key
+// as <key>_text instead, so it never passes as that key's class (10.2).
+func Reserved(key string) bool {
+	switch key {
+	case KeyT, KeyLvl, KeyProc, KeyEpoch, KeyComp, KeyMsg, KeySuppressed:
+		return true
+	}
+	_, ok := keyClass[key]
+	return ok
+}
+
+// callerKey is key, or key_text when key is reserved.
+func callerKey(key string) string {
+	if Reserved(key) {
+		return key + textSuffix
+	}
+	return key
 }
 
 // maxID bounds an id a safe constructor keeps (diagnostics.md 9.2 refuses longer ones too).
@@ -185,21 +211,46 @@ func Event(e string) Attr { return checked(KeyEvent, e, wordForm(e)) }
 // ClientKind is a client kind from a hello: app, terminal, cli, script, hab.
 func ClientKind(k string) Attr { return checked(KeyClient, k, wordForm(k)) }
 
-// Word is a known word under a key of the caller's: a state, a choice, a mode. Its key has no
-// fixed class, so a bundle scrubs its value; a value that is not a word is kept as text.
-func Word(key, w string) Attr {
-	if wordForm(w) {
-		return Attr{key: key, str: w, class: ClassSafe}
+// ClientID is the id gff-hab minted for a client's connection: lower-case hex.
+func ClientID(id string) Attr { return checked(KeyClientID, id, hexForm(id)) }
+
+// hexForm reports whether s is lower-case hex of at most 64 digits.
+func hexForm(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
 	}
-	return Attr{key: key + textSuffix, str: w, class: ClassText}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
-// Count is a number under a key of the caller's: a count, a pid, a size.
-func Count(key string, n int64) Attr { return Attr{key: key, num: n, isNum: true, class: ClassSafe} }
+// Word is a known word under a key of the caller's: a state, a choice, a mode. Its key has no
+// fixed class, so a bundle scrubs its value; a value that is not a word is kept as text. A
+// reserved key (Reserved) becomes <key>_text.
+func Word(key constant, w string) Attr {
+	k := callerKey(string(key))
+	if wordForm(w) && k == string(key) {
+		return Attr{key: k, str: w, class: ClassSafe}
+	}
+	if k == string(key) {
+		k += textSuffix
+	}
+	return Attr{key: k, str: w, class: ClassText}
+}
 
-// Dur is a duration, written in milliseconds under key.
-func Dur(key string, d time.Duration) Attr {
-	return Attr{key: key + "_ms", num: d.Milliseconds(), isNum: true, class: ClassSafe}
+// Count is a number under a key of the caller's: a count, a pid, a size. A reserved key
+// (Reserved) becomes <key>_text.
+func Count(key constant, n int64) Attr {
+	return Attr{key: callerKey(string(key)), num: n, isNum: true, class: ClassSafe}
+}
+
+// Dur is a duration, written in milliseconds under key_ms. A reserved key (Reserved) becomes
+// <key>_text.
+func Dur(key constant, d time.Duration) Attr {
+	return Attr{key: callerKey(string(key) + "_ms"), num: d.Milliseconds(), isNum: true, class: ClassSafe}
 }
 
 // Host is a host name or host id.

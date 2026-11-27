@@ -406,15 +406,15 @@ func (t *trustService) Declined(pane string) (declined, pending bool) {
 	return t.declined[pane], t.exiting[pane] || t.holding[pane]
 }
 
+// trustLog writes the trust lines that name a folder (diagnostics.md 1.5).
+var trustLog = diaglog.For("trust")
+
 // Answer serves trust.answer (app.md 7.10). The pane must show blocked:trust and its screen
 // the dialog, with one cursor row and one row with the chosen label, and no client input may be
 // on its way to the pane. Exit sends Esc, which exits whatever row the cursor is on. Trust moves
 // the cursor one key at a time, reads the screen again, and sends Enter only when the cursor sits
 // on "Yes, I trust this folder". It returns once the outcome shows: the agent exited for exit;
 // the dialog gone and the agent still running for trust.
-// trustLog writes the trust lines that name a folder (diagnostics.md 1.5).
-var trustLog = diaglog.For("trust")
-
 func (t *trustService) Answer(ctx context.Context, client string, p api.TrustAnswerParams) (api.TrustAnswered, error) {
 	var out api.TrustAnswered
 	pane := canonicalPane(p.Pane)
@@ -469,7 +469,7 @@ func (t *trustService) Answer(ctx context.Context, client string, p api.TrustAns
 		}
 	}
 	trustLog.Info("trust prompt answered", diaglog.Pane(pane), diaglog.Path(folder), diaglog.Word("choice", string(p.Choice)),
-		diaglog.ClientKind(client))
+		diaglog.ClientID(client))
 	if err := t.outcome(ctx, pane, st.Harness, trust); err != nil {
 		return out, err
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/importer"
 	"go/parser"
 	"go/token"
@@ -21,6 +22,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 )
 
 // DiaglogPath is the package every log line goes through.
@@ -28,7 +31,7 @@ const DiaglogPath = "github.com/noahkiss/flightdeck/internal/diaglog"
 
 // The rules, one per ban of 10.2.
 const (
-	RuleMessage = "message"  // a diaglog message, component or key that is not a constant
+	RuleMessage = "message"  // a diaglog message, component or key that is not a constant, a reserved key, or a diaglog function used as a value
 	RuleSlog    = "slog"     // log/slog used outside internal/diaglog
 	RuleBuilt   = "built"    // fmt or strings in the argument of a safe constructor
 	RuleContent = "content"  // a []byte or a content type reaching a diaglog call
@@ -94,17 +97,21 @@ func (f Finding) String() string { return fmt.Sprintf("%s: %s: %s", f.Pos, f.Rul
 // safeCtors are the constructors of class safe: their arguments may not be built with fmt or
 // strings.
 var safeCtors = map[string]bool{"Session": true, "Pane": true, "Method": true, "Kind": true, "Trace": true,
-	"Harness": true, "Event": true, "ClientKind": true, "Word": true, "Count": true, "Dur": true}
+	"Harness": true, "Event": true, "ClientKind": true, "ClientID": true, "Word": true, "Count": true, "Dur": true}
 
 // keyed are the functions whose first argument must be a constant: a message, a component or a
 // key.
 var keyed = map[string]bool{"Debug": true, "Info": true, "Warn": true, "Error": true, "For": true,
 	"Word": true, "Count": true, "Dur": true}
 
+// callerKeyed are the constructors whose first argument is a key of the caller's: it may not be
+// a reserved key (diaglog.Reserved).
+var callerKeyed = map[string]bool{"Word": true, "Count": true, "Dur": true}
+
 // notLogging are the diaglog functions that write no line: content may reach them, as when a
-// reader parses a line.
+// reader parses a line, and they may be used as values.
 var notLogging = map[string]bool{"Parse": true, "ParseLevel": true, "KeyClass": true, "Setup": true,
-	"SetLevel": true, "SetDebug": true, "Enabled": true, "Reset": true, "Get": true}
+	"SetLevel": true, "SetDebug": true, "Enabled": true, "Reset": true, "Reserved": true, "Get": true}
 
 var netImports = []string{"net", "net/http", "crypto/tls"}
 
@@ -117,6 +124,7 @@ type listed struct {
 	// IgnoredGoFiles are the files this build leaves out: other systems, test seams.
 	IgnoredGoFiles []string
 	Imports        []string
+	Deps           []string
 	Export         string
 	Error          *struct{ Err string }
 }
@@ -165,7 +173,8 @@ func Run(cfg Config) ([]Finding, error) {
 		if err := c.imports(p); err != nil {
 			return nil, err
 		}
-		if slices.Contains(p.Imports, DiaglogPath) && p.ImportPath != DiaglogPath {
+		// A package that reaches diaglog through another package can log through it too.
+		if slices.Contains(p.Deps, DiaglogPath) && p.ImportPath != DiaglogPath {
 			typed = append(typed, p)
 		}
 	}
@@ -216,7 +225,7 @@ func (c *checker) imports(p listed) error {
 	return nil
 }
 
-// typed type-checks the packages that call diaglog, with the export data of what they import,
+// typed type-checks the packages that depend on diaglog, with the export data of what they import,
 // and applies the call bans.
 func (c *checker) typed(pkgs []listed) error {
 	var paths []string
@@ -249,7 +258,8 @@ func (c *checker) typed(pkgs []listed) error {
 			}
 			files = append(files, f)
 		}
-		info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Uses: map[*ast.Ident]types.Object{}}
+		info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Uses: map[*ast.Ident]types.Object{},
+			Instances: map[*ast.Ident]types.Instance{}}
 		conf := types.Config{Importer: imp}
 		if _, err := conf.Check(p.ImportPath, c.fset, files, info); err != nil {
 			return fmt.Errorf("type-check %s: %w", p.ImportPath, err)
@@ -257,14 +267,21 @@ func (c *checker) typed(pkgs []listed) error {
 		for _, f := range files {
 			c.calls(p.ImportPath, f, info)
 		}
+		c.instances(info)
 	}
 	return nil
 }
 
 // diaglogFunc returns the name of the diaglog function or Logger method a call names.
 func diaglogFunc(call *ast.CallExpr, info *types.Info) (string, bool) {
+	return diaglogName(ast.Unparen(call.Fun), info)
+}
+
+// diaglogName returns the name of the diaglog function or method e names, as an identifier or
+// a selector.
+func diaglogName(e ast.Expr, info *types.Info) (string, bool) {
 	var id *ast.Ident
-	switch fn := call.Fun.(type) {
+	switch fn := e.(type) {
 	case *ast.SelectorExpr:
 		id = fn.Sel
 	case *ast.Ident:
@@ -306,49 +323,128 @@ func funcKey(pkg string, fd *ast.FuncDecl) string {
 	return pkg + "." + name + "." + fd.Name.Name
 }
 
+// calls applies the call bans to every declaration of f: function bodies, and the values of
+// package-level declarations with the function literals in them.
 func (c *checker) calls(pkg string, f *ast.File, info *types.Info) {
 	for _, d := range f.Decls {
-		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Body == nil {
+		where, hot := "", false
+		if fd, ok := d.(*ast.FuncDecl); ok {
+			if fd.Body == nil {
+				continue
+			}
+			where, hot = fd.Name.Name, slices.Contains(c.cfg.HotPaths, funcKey(pkg, fd))
+		}
+		c.walk(d, where, hot, info)
+	}
+}
+
+// walk applies the call bans inside one declaration. Each use of a diaglog function or method
+// must be the function of a call: a method value or a function value would let a caller pass a
+// value the constant type does not check, as through a generic helper.
+func (c *checker) walk(d ast.Decl, where string, hot bool, info *types.Info) {
+	var stack []ast.Node
+	ast.Inspect(d, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		stack = append(stack, n)
+		switch n := n.(type) {
+		case *ast.Ident:
+			c.value(n, stack, info)
+		case *ast.CallExpr:
+			c.call(n, where, hot, info)
+		}
+		return true
+	})
+}
+
+// value reports a diaglog function or method used outside call position. stack ends with id.
+func (c *checker) value(id *ast.Ident, stack []ast.Node, info *types.Info) {
+	name, ok := diaglogName(id, info)
+	if !ok || notLogging[name] {
+		return
+	}
+	i := len(stack) - 1
+	var e ast.Expr = id
+	if i > 0 {
+		if sel, ok := stack[i-1].(*ast.SelectorExpr); ok && sel.Sel == id {
+			e, i = sel, i-1
+		}
+	}
+	for i > 0 {
+		p, ok := stack[i-1].(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		e, i = p, i-1
+	}
+	if i > 0 {
+		if call, ok := stack[i-1].(*ast.CallExpr); ok && call.Fun == e {
+			return
+		}
+	}
+	c.add(id.Pos(), RuleMessage, "diaglog.%s is used as a value, not called: its message or key would go unchecked", name)
+}
+
+// constantType is diaglog's unexported type of messages, components and keys, as
+// types.TypeString writes it.
+const constantType = DiaglogPath + ".constant"
+
+// instances reports each generic function or type instantiated with diaglog's constant type: a
+// type parameter converts any string to it, so a variable could pass as a message or a key.
+func (c *checker) instances(info *types.Info) {
+	for id, in := range info.Instances {
+		for t := range in.TypeArgs.Types() {
+			if strings.Contains(types.TypeString(t, nil), constantType) {
+				c.add(id.Pos(), RuleMessage, "%s is instantiated with diaglog's message type: a type parameter converts any string to it", id.Name)
+				break
+			}
+		}
+	}
+}
+
+// call applies the bans to one call of a diaglog function or method.
+func (c *checker) call(call *ast.CallExpr, where string, hot bool, info *types.Info) {
+	name, ok := diaglogFunc(call, info)
+	if !ok {
+		return
+	}
+	if hot {
+		c.add(call.Pos(), RuleHotPath, "diaglog.%s in the hot-path function %s", name, where)
+	}
+	var consts []ast.Expr
+	switch {
+	case keyed[name] && len(call.Args) > 0:
+		consts = call.Args[:1]
+	case name == "Format" && len(call.Args) > 2: // level, component, message
+		consts = call.Args[:3]
+	}
+	for _, a := range consts {
+		tv := info.Types[a]
+		if tv.Value == nil {
+			c.add(a.Pos(), RuleMessage, "a message, component or key of diaglog.%s is not a constant", name)
 			continue
 		}
-		hot := slices.Contains(c.cfg.HotPaths, funcKey(pkg, fd))
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+		if callerKeyed[name] && tv.Value.Kind() == constant.String {
+			k := constant.StringVal(tv.Value)
+			if name == "Dur" {
+				k += "_ms"
 			}
-			name, ok := diaglogFunc(call, info)
-			if !ok {
-				return true
+			if diaglog.Reserved(k) {
+				c.add(a.Pos(), RuleMessage, "diaglog.%s takes the reserved key %q", name, k)
 			}
-			if hot {
-				c.add(call.Pos(), RuleHotPath, "diaglog.%s in the hot-path function %s", name, fd.Name.Name)
-			}
-			var consts []ast.Expr
-			switch {
-			case keyed[name] && len(call.Args) > 0:
-				consts = call.Args[:1]
-			case name == "Format" && len(call.Args) > 2: // level, component, message
-				consts = call.Args[:3]
-			}
-			for _, a := range consts {
-				if tv := info.Types[a]; tv.Value == nil {
-					c.add(a.Pos(), RuleMessage, "a message, component or key of diaglog.%s is not a constant", name)
-				}
-			}
-			if safeCtors[name] {
-				for _, a := range call.Args {
-					c.built(a, name, info)
-				}
-			}
-			if !notLogging[name] {
-				for _, a := range call.Args {
-					c.content(a, name, info)
-				}
-			}
-			return true
-		})
+		}
+	}
+	if safeCtors[name] {
+		for _, a := range call.Args {
+			c.built(a, name, info)
+		}
+	}
+	if !notLogging[name] {
+		for _, a := range call.Args {
+			c.content(a, name, info)
+		}
 	}
 }
 
@@ -419,4 +515,73 @@ func (c *checker) contentType(t types.Type) string {
 		}
 	}
 	return ""
+}
+
+// Unresolved returns each entry of cfg.HotPaths and cfg.ContentTypes that names no declaration
+// in the tree, so a rename cannot turn a ban off without notice.
+func Unresolved(cfg Config) ([]string, error) {
+	pkgOf := func(entry string, parts int) string { // the package path: entry less its last parts
+		i := len(entry)
+		for range parts {
+			i = strings.LastIndex(entry[:i], ".")
+			if i < 0 {
+				return ""
+			}
+		}
+		return entry[:i]
+	}
+	want := map[string][]string{} // package path: entries in it
+	for _, h := range cfg.HotPaths {
+		// "<pkg>.<Func>" or "<pkg>.<Type>.<Method>": the package path holds no dot after its
+		// last slash.
+		parts := strings.Count(h[strings.LastIndex(h, "/")+1:], ".")
+		want[pkgOf(h, parts)] = append(want[pkgOf(h, parts)], h)
+	}
+	for _, ct := range cfg.ContentTypes {
+		want[pkgOf(ct, 1)] = append(want[pkgOf(ct, 1)], ct)
+	}
+	var paths []string
+	for p := range want {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	pkgs, err := goList(cfg.Dir, paths...)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	fset := token.NewFileSet()
+	for _, p := range pkgs {
+		if p.Error != nil {
+			continue
+		}
+		for _, name := range slices.Concat(p.GoFiles, p.IgnoredGoFiles) {
+			if strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), nil, parser.SkipObjectResolution)
+			if err != nil {
+				return nil, err
+			}
+			for _, d := range f.Decls {
+				switch d := d.(type) {
+				case *ast.FuncDecl:
+					have[funcKey(p.ImportPath, d)] = true
+				case *ast.GenDecl:
+					for _, sp := range d.Specs {
+						if ts, ok := sp.(*ast.TypeSpec); ok {
+							have[p.ImportPath+"."+ts.Name.Name] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	var missing []string
+	for _, e := range slices.Concat(cfg.HotPaths, cfg.ContentTypes) {
+		if !have[e] {
+			missing = append(missing, e)
+		}
+	}
+	return missing, nil
 }

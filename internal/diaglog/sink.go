@@ -2,6 +2,7 @@ package diaglog
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"io"
 	"log/slog"
@@ -58,10 +59,18 @@ const MaxLine = 8 << 10
 // Cut ends a value that was cut to keep its line within MaxLine.
 const Cut = "…(cut)"
 
-// RepeatEvery is how often a line with the same message and component is written; the next one
-// written carries the count of those left out (4.5). Legacy lines are not limited: they all
-// share one message.
+// RepeatEvery is how often a line with the same component, message and identity is written
+// (4.5). A line's identity is the values of its safe, name and path keys, not its text, error or
+// numbers: so a line per peer or per pane is kept, and a flood of one line is cut. When the
+// window ends, a line with the same identity carries the count left out under suppressed.
+// Legacy lines are not limited: they all share one message.
 const RepeatEvery = 10 * time.Second
+
+// afterFunc starts the timer that writes a window's count. A test replaces it.
+var afterFunc = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
+
+// maxRepeat bounds the limiter's table. When it is full, the oldest window ends early.
+const maxRepeat = 1024
 
 // MsgLegacy is the message of a line the legacy shim wrote: an old Logf call's text, under
 // KeyText (4.2).
@@ -93,8 +102,9 @@ type Config struct {
 	CopyAll func() bool
 	// Prefix starts each Stderr line, as the standard log package's prefix: "gff-hab: ".
 	Prefix string
-	// Level is the floor: lines below it are dropped. A debug line is written also while the
-	// debug switch (SetDebug) is on.
+	// Level is the floor: typed lines below it are dropped. A debug line is written also while
+	// the debug switch (SetDebug) is on. Legacy lines at info or above are written whatever the
+	// floor (Legacy).
 	Level Level
 	// Now is the clock. Default time.Now.
 	Now func() time.Time
@@ -106,12 +116,19 @@ type sink struct {
 	debug atomic.Pointer[func() bool]
 
 	mu     sync.Mutex
-	repeat map[string]*repeated
+	repeat map[string]*list.Element // of *repeated, oldest window first in order
+	order  list.List
 }
 
+// repeated is one open window of the limiter: the first line written, and the count left out.
 type repeated struct {
-	last time.Time
-	left int64
+	key   string
+	first time.Time
+	left  int64
+	lvl   Level
+	comp  string
+	msg   string
+	ids   []Attr
 }
 
 var current atomic.Pointer[sink]
@@ -121,7 +138,7 @@ func Setup(cfg Config) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	s := &sink{cfg: cfg, repeat: map[string]*repeated{}}
+	s := &sink{cfg: cfg, repeat: map[string]*list.Element{}}
 	s.level.Store(int32(cfg.Level))
 	if old := current.Load(); old != nil {
 		s.debug.Store(old.debug.Load())
@@ -173,7 +190,7 @@ type Logger struct {
 
 // For returns the logger of a component: link, control, peers, speech, and so on. comp must
 // be a constant word.
-func For(comp string) *Logger { return &Logger{comp: comp} }
+func For(comp constant) *Logger { return &Logger{comp: string(comp)} }
 
 // Ctx returns the logger with the trace of ctx, when it carries a valid one (5.2): each line it
 // writes names the action.
@@ -189,16 +206,16 @@ func (l *Logger) Ctx(ctx context.Context) *Logger {
 }
 
 // Debug writes a debug line. msg is a constant phrase; values go in attrs.
-func (l *Logger) Debug(msg string, attrs ...Attr) { l.log(LevelDebug, msg, attrs) }
+func (l *Logger) Debug(msg constant, attrs ...Attr) { l.log(LevelDebug, string(msg), attrs) }
 
 // Info writes an info line.
-func (l *Logger) Info(msg string, attrs ...Attr) { l.log(LevelInfo, msg, attrs) }
+func (l *Logger) Info(msg constant, attrs ...Attr) { l.log(LevelInfo, string(msg), attrs) }
 
 // Warn writes a warn line; it goes to stderr too.
-func (l *Logger) Warn(msg string, attrs ...Attr) { l.log(LevelWarn, msg, attrs) }
+func (l *Logger) Warn(msg constant, attrs ...Attr) { l.log(LevelWarn, string(msg), attrs) }
 
 // Error writes an error line; it goes to stderr too.
-func (l *Logger) Error(msg string, attrs ...Attr) { l.log(LevelError, msg, attrs) }
+func (l *Logger) Error(msg constant, attrs ...Attr) { l.log(LevelError, string(msg), attrs) }
 
 func (l *Logger) log(lvl Level, msg string, attrs []Attr) {
 	if l == nil {
@@ -208,31 +225,101 @@ func (l *Logger) log(lvl Level, msg string, attrs []Attr) {
 	if s == nil || !s.enabled(lvl) {
 		return
 	}
-	left, ok := s.limit(l.comp, msg)
-	if !ok {
+	if !s.limit(lvl, l.comp, msg, attrs) {
 		return
 	}
-	s.write(lvl, l.comp, msg, l.trace, attrs, left)
+	s.write(lvl, l.comp, msg, l.trace, attrs, 0)
 }
 
-// limit applies RepeatEvery to a line of comp and msg: ok is false when the line is left out,
-// and left counts the lines left out since the last one written.
-func (s *sink) limit(comp, msg string) (left int64, ok bool) {
+// identity is the part of attrs that tells one entity's line from another's: each string value
+// of class safe, name or path, but no trace. Text, errors and numbers vary from line to line of
+// one flood, so they are left out.
+func identity(attrs []Attr) []Attr {
+	var ids []Attr
+	for _, a := range attrs {
+		if a.key == "" || a.isNum || a.class == ClassText || a.key == KeyTrace {
+			continue
+		}
+		ids = append(ids, a)
+	}
+	return ids
+}
+
+// limit applies RepeatEvery to a line: false when the line is left out. A line opens a window
+// for its component, message and identity; the lines that follow in the window are counted, and
+// when it ends the count is written as a line of its own (sweep).
+func (s *sink) limit(lvl Level, comp, msg string, attrs []Attr) bool {
 	now := s.cfg.Now()
-	key := comp + "\x00" + msg
+	ids := identity(attrs)
+	var k strings.Builder
+	k.WriteString(comp)
+	k.WriteByte(0)
+	k.WriteString(msg)
+	for _, a := range ids {
+		k.WriteByte(0)
+		k.WriteString(a.key)
+		k.WriteByte('=')
+		k.WriteString(a.str)
+	}
+	key := k.String()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	r := s.repeat[key]
-	if r == nil {
-		s.repeat[key] = &repeated{last: now}
-		return 0, true
-	}
-	if d := now.Sub(r.last); d >= 0 && d < RepeatEvery {
+	ended := s.endedLocked(now)
+	e, open := s.repeat[key]
+	if open {
+		r := e.Value.(*repeated)
 		r.left++
-		return 0, false
+		if r.left == 1 {
+			wait := RepeatEvery - now.Sub(r.first)
+			afterFunc(max(wait, 0)+time.Millisecond, s.sweep)
+		}
+	} else {
+		if s.order.Len() >= maxRepeat {
+			ended = append(ended, s.dropLocked(s.order.Front()))
+		}
+		s.repeat[key] = s.order.PushBack(&repeated{key: key, first: now, lvl: lvl, comp: comp, msg: msg, ids: ids})
 	}
-	left, r.left, r.last = r.left, 0, now
-	return left, true
+	s.mu.Unlock()
+	s.writeEnded(ended)
+	return !open
+}
+
+// endedLocked removes the windows that ended by now, oldest first, and returns them. A clock
+// that went back ends a window too.
+func (s *sink) endedLocked(now time.Time) []*repeated {
+	var ended []*repeated
+	for e := s.order.Front(); e != nil; e = s.order.Front() {
+		r := e.Value.(*repeated)
+		if d := now.Sub(r.first); d >= 0 && d < RepeatEvery {
+			break
+		}
+		ended = append(ended, s.dropLocked(e))
+	}
+	return ended
+}
+
+func (s *sink) dropLocked(e *list.Element) *repeated {
+	r := s.order.Remove(e).(*repeated)
+	delete(s.repeat, r.key)
+	return r
+}
+
+// writeEnded writes, for each ended window that left lines out, one line with its identity and
+// the count under suppressed.
+func (s *sink) writeEnded(ended []*repeated) {
+	for _, r := range ended {
+		if r.left > 0 {
+			s.write(r.lvl, r.comp, r.msg, "", r.ids, r.left)
+		}
+	}
+}
+
+// sweep ends the windows whose time is up. A timer calls it when a window has a count to write,
+// so the count is written even when no other line follows.
+func (s *sink) sweep() {
+	s.mu.Lock()
+	ended := s.endedLocked(s.cfg.Now())
+	s.mu.Unlock()
+	s.writeEnded(ended)
 }
 
 func (s *sink) write(lvl Level, comp, msg, tr string, attrs []Attr, left int64) {
@@ -360,14 +447,16 @@ func cut(s string, limit int) string {
 }
 
 // Legacy returns the writer for an old log.Logger, made with no prefix and no flags: each Write
-// is one line at lvl with msg "legacy" and its text under KeyText (4.2).
+// is one line at lvl with msg "legacy" and its text under KeyText (4.2). A legacy line at info or
+// above is written whatever the floor: the old lines are not typed at their level yet (4.5). A
+// legacy debug line keeps the debug rule.
 func Legacy(lvl Level) io.Writer { return legacy{lvl} }
 
 type legacy struct{ lvl Level }
 
 func (w legacy) Write(p []byte) (int, error) {
 	s := current.Load()
-	if s == nil || !s.enabled(w.lvl) {
+	if s == nil || (w.lvl < LevelInfo && !s.enabled(w.lvl)) {
 		return len(p), nil
 	}
 	text := strings.TrimSuffix(string(p), "\n")
@@ -377,10 +466,10 @@ func (w legacy) Write(p []byte) (int, error) {
 
 // Format is one line as the sink would write it to its file, without writing it: for a line a
 // writer makes itself, such as the count of lines it dropped. Nil before Setup.
-func Format(lvl Level, comp, msg string, attrs ...Attr) []byte {
+func Format(lvl Level, comp, msg constant, attrs ...Attr) []byte {
 	s := current.Load()
 	if s == nil {
 		return nil
 	}
-	return s.encode(s.cfg.Now(), lvl, comp, msg, "", attrs, 0)
+	return s.encode(s.cfg.Now(), lvl, string(comp), string(msg), "", attrs, 0)
 }

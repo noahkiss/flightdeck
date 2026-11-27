@@ -270,6 +270,12 @@ of our own, `internal/diaglog` (10.2). One line is one object:
   `text`. `Count`, `Dur` and `Word` take a key of the caller's, a constant; `Dur` writes
   milliseconds under `<key>_ms`. A key that no constructor fixes is of class `text`; a number is
   `safe` under any key.
+- A caller's key may not be reserved: a key every line has or the sink adds (`t`, `lvl`, `msg`,
+  `proc`, `epoch`, `comp`, `trace`, `suppressed`) or a fixed constructor's key (`session`,
+  `host`, `text` and the rest). `Count`, `Dur` and `Word` write a value under such a key as
+  `<key>_text`, of class `text`, and the source check fails on it (10.2).
+- A client's connection id, which gff-hab mints, goes under `client_id`, of class `safe` when it
+  is lower-case hex. `client` holds a client kind only (4.6).
 - gff-hab writes these lines. The holder keeps its text lines until its next build (Q5).
 
 **Decision: JSON lines on disk, from stage 5.** JSON lets the bundle redact by key and lets
@@ -365,12 +371,21 @@ Stage 1 keeps two levels: every line, and the `debugf` lines that `GFF_HAB_DEBUG
   `gff-hab status` (6.1).
 - The level floor is set in the hab's config file, `[diagnostics] log_level`. It is an operator
   limit, so it has no app row (`app.md` 20.1).
-- A repeating line with the same message and subsystem logs at most once per 10 seconds; the next
-  one carries the count suppressed. This fixes the flood of 1.2 #9. Legacy lines are not limited:
-  they all share the message `legacy`. The limit keys on message and component only, so it also
-  drops distinct lines of one message in a burst, such as the speech helper's stderr lines or a
-  second round notice (Q10).
-- A floor above `info` drops the legacy lines too: they are all `info`.
+- A repeating line logs at most once per 10 seconds. The limit keys on component, message and the
+  line's identity: the string values of its `safe`, `name` and `path` keys, except `trace`. So
+  one line per peer, pane, device, label or group is kept, and a flood of one line is cut. This
+  fixes the flood of 1.2 #9. Text, errors and numbers are no part of the identity: lines that
+  differ only there, such as the speech helper's stderr lines or a second round notice, are
+  still dropped in a burst (Q10).
+- When a window ends with lines left out, gff-hab writes one line of its own for that key: the
+  same component, message, level and identity, with the count under `suppressed`. A timer
+  writes it, so it never lands on a later, unrelated line. The limiter keeps at most 1,024
+  windows; when it is full, the oldest window ends early and writes its count.
+- Legacy lines are not limited: they all share the message `legacy`.
+- A floor above `info` drops typed lines below it. Legacy lines at `info` are written whatever
+  the floor, until the lines of stages 1 to 4 are typed at their level: otherwise
+  `log_level = "warn"` would drop the start line, "previous run ended", stalls and failed
+  requests, and leave friction tails nearly empty. A legacy debug line keeps the debug rule.
 - `log_level = "debug"` keeps the debug lines on, as `GFF_HAB_DEBUG` does. A word other than
   `debug`, `info`, `warn` or `error` leaves the floor at `info` and logs one line.
 
@@ -760,7 +775,7 @@ constructor has a class (10.2):
 
 | Class | Constructors (examples) | In a bundle |
 |---|---|---|
-| `safe` | `Session(id)`, `Pane(id)`, `Method(m)`, `Kind(k)`, `Trace(t)`, `Count(n)`, `Dur(d)`, `Harness(h)`, `Event(e)`, `ClientKind(k)` | Kept |
+| `safe` | `Session(id)`, `Pane(id)`, `Method(m)`, `Kind(k)`, `Trace(t)`, `Count(n)`, `Dur(d)`, `Harness(h)`, `Event(e)`, `ClientKind(k)`, `ClientID(id)` | Kept |
 | `name` | `Host(h)`, `Label(l)`, `Device(id)`, `Project(p)`, `Branch(b)`, `Title(t)` | Replaced by `n:` plus 8 hex digits of HMAC-SHA256 of the value, keyed with a random salt for this bundle |
 | `path` | `Path(p)` | The home directory becomes `~`; each component is replaced as a name, except the fixed layout under `<state>` |
 | `text` | `Err(err)`, `Text(s)`, and every `legacy` line's text | Pass 2 only |
@@ -884,6 +899,11 @@ From stage 5, every Go log line goes through `internal/diaglog`:
 
 - `diaglog.Logger` has `Debug`, `Info`, `Warn`, `Error`, each taking a message and
   `...diaglog.Attr`. `Attr` is an opaque type; only the package's class constructors make one.
+- A message, a component (`For`, `Format`) and a caller's key (`Word`, `Count`, `Dur`) have an
+  unexported string type. Only an untyped string constant converts to it, so a call that passes
+  a variable, a typed constant or a built string does not compile, in any package. A generic
+  function can still convert a string to the type through a type parameter; the source check
+  bans that (below).
 - Safe constructors take typed values where the type exists (`time.Duration`, `int`, the API's
   kind words). Those that take a string check its form: an id shape, a method from the table, a
   known word. A value of the wrong form is logged as `text` class instead.
@@ -894,7 +914,9 @@ and fails on:
 
 | Banned | Why |
 |---|---|
-| A `diaglog` message that is not a string constant | Prose with values would bypass the key classes |
+| A `diaglog` message, component or key that is not a string constant | Prose with values would bypass the key classes |
+| A `diaglog` function or method used as a value, not called (a method value, a function value; parentheses do not count), and a generic function or type instantiated with the unexported type | A type parameter converts a variable to the unexported type |
+| A reserved key (4.2) in `Word`, `Count` or `Dur` | It would pass as the line's own key or a fixed key's class |
 | Any use of `log/slog` outside `internal/diaglog` (`slog.Any`, `slog.Group`, `slog.String`, `Logger.With`, a `LogValuer`) | Each lets a value skip its class; `slog.Any` marshals a struct whole |
 | A call into `fmt` or `strings` as the argument of a `safe` constructor | It would build a safe-looking value from content |
 | A `[]byte` or a content type (`api.ChatMessage`, transcript records; a listed set) reaching any `diaglog` call | Content by type |
@@ -904,9 +926,16 @@ and fails on:
 The checker has its own test: a fixture package with one case of each ban must fail it.
 
 The check is `internal/diaglog/check`, and runs as Go tests: `TestFixture` on its fixture in
-`testdata/fixture`, `TestTree` on the repository. It type-checks only the packages that import
-`diaglog`, against the export data `go list -export` builds, so it needs no module outside the
-standard library. Its hot-path functions and content types are listed in the package.
+`testdata/fixture` and `testdata/fixture/relay`, `TestTree` on the repository. It type-checks
+every package that depends on `diaglog`, directly or through another package, against the
+export data `go list -export` builds, so it needs no module outside the standard library. It
+walks function bodies and package-level values, with the function literals in both. Its
+hot-path functions and content types are listed in the package; `TestTree` fails when an entry
+names no declaration, so a rename cannot turn a ban off.
+The `fmt` and `strings` ban and the content ban are syntactic: they look at the argument as
+written. A value built in a local variable or a helper function first, then passed, is not
+traced (no def-use step). The constant type closes this for messages, components and keys; for
+other values, the constructor's class and the bundle's pass 2 hold.
 Test files and files another build takes (another system, a test seam) get the import bans
 only. The content ban applies to the functions that write a line, not to a reader such as
 `diaglog.Parse`.
@@ -1001,7 +1030,7 @@ The owner decides.
 | Q7 | Retention: tallies 90 days, health 500 lines, friction 200 notes? | Yes | Enough for a prune decision and a first quarter, well under the caps |
 | Q8 | Watchdog threshold: 10 seconds silent while work waits? | Yes, fixed | Long enough to skip a slow git read off the loop, short enough to catch a deadlock in one session |
 | Q9 | Add a canary UI test for the app's logs? | After stage 6 | The Go canary covers the content paths first; the app logs little content |
-| Q10 | Should the 10-second limit (4.5) key on more than message and component? | Not now; revisit when a bundle shows a lost line | It fixes the flood of 1.2 #9 as written. Lines of `text` class that differ in value, such as helper stderr, are the ones it drops |
+| Q10 | Should the 10-second limit (4.5) key on more than component, message and identity? | Not now; revisit when a bundle shows a lost line | Keying on identity keeps one line per peer, pane, device or group, such as two peers pinned together, and the count goes on a line of its own. It still fixes the flood of 1.2 #9. Lines that differ only in `text` values or numbers, such as helper stderr, are the ones it drops |
 
 ---
 
