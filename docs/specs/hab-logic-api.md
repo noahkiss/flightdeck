@@ -550,10 +550,11 @@ Decision: proposed (this stage). Calls and the event: 3.9.
 - Method names are grouped by prefix: `hab.*`, `structure.*`, `pane.*`, `session.*`, `project.*`,
   `data.*`, `events.*`, `devices.*`, `peers.*`, `approval.*`, `chat.*`, `attachment.*`, `push.*`, `usage.*`,
   `rpc.discover`. The calls the clients need are listed in 3.9.
-- `devices.list` and `devices.revoke` manage the hab's trust store (`transport.md` 5, 6.1.7).
-  They need the `devices` capability, and a peer link is refused both. `devices.pair` is not
-  built and answers `unavailable`; pairing over the API is proposed separately. Rename and rotate
-  (`transport.md` 6.5) are added the same way when they are built.
+- `devices.pair`, `devices.confirm`, `devices.list` and `devices.revoke` manage the hab's trust
+  store (`transport.md` 5, 6.1.7). They need the `devices` capability, and a peer link is refused
+  every one of them. `devices.pair` and `devices.confirm` answer `unavailable` unless the
+  `[pairing]` section of the hab's config file turns them on. Rename and rotate (`transport.md` 6.5) are added the same way when they are
+  built.
 
 Decision: proposed.
 
@@ -658,8 +659,9 @@ a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.update
 `channel.message` work, and that the hab sends `mesh.changed` to a peer link when mail waits for
 its dialer (`mesh.md` 6.5). `mesh.changed` is the one event a connection gets without
 `events.subscribe`: it goes only to a peer link, from the hab that link dialed.
-`devices` means `devices.list` and `devices.revoke` work (`transport.md` 6.1.7). It does not
-mean the embedded SSH server is on; that server is not built (4.3). `devices.pair` is not built. `push` means the hab has working push config;
+`devices` means the `devices.*` methods work: the device list and revoke, and, when the hab's
+config file turns it on, a pairing window that a client opens and confirms (`transport.md` 6.1.7). It does not mean the embedded SSH server
+is on; that server is not built (4.3). `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). `settings` means the hab-side settings work:
 `settings.get`, `settings.set`, `settings.updated`, and `settings` in a `host` snapshot
 (`app.md` 20.5). `read-tools` means `transcript.list`, `transcript.search`, `transcript.read`,
@@ -928,8 +930,7 @@ surface:
 | `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes |
 | `capcom.open`, `capcom.assign` | Return or start the standing Capcom session; make a host the Capcom home host (capability `capcom`; `capcom.md` 7, 8.3) | Yes |
 | `capcom.attach`, `capcom.detach`, `capcom.pending`, `capcom.open`'s `context` | Attach a notification, session, file, console command or Logbook record to a Capcom session's next message, remove one, or read what waits (read-only); the next `session.send` delivers it as blocks before the user's text, or alone when the send has no text (capability `capcom`; `capcom.md` 8.1, 8.4) | Yes |
-| `devices.list`, `devices.revoke` | List the trust store; revoke a device (capability `devices`; `transport.md` 6.1.7) | Yes |
-| `devices.pair` | Pairing over the API: not built, proposed separately; answers `unavailable` | No |
+| `devices.pair`, `devices.confirm`, `devices.list`, `devices.revoke` | Open a pairing window and confirm its device by the last 4 characters of its key fingerprint; list the trust store; revoke a device (capability `devices`; `transport.md` 6.1.7) | Yes |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
@@ -2243,8 +2244,9 @@ holder link off, a data hello gets a reject frame (`unavailable`).
 - It carries the same connections as 4.2: the control connection and each data connection are
   channels on one SSH connection, as in option A. It serves the API subsystems only.
 - It sets its own channel limit, so one connection carries one channel per visible pane.
-- Built so far: only the pairing window of `gff-hab pair` (`transport.md` 6.1), a separate
-  short-lived listener that serves the `flightdeck-pair` subsystem and nothing else.
+- Built so far: only the pairing window (`transport.md` 6.1), a separate short-lived listener
+  that serves the `flightdeck-pair` subsystem and nothing else. `gff-hab pair` opens it from a
+  terminal, and `devices.pair` opens it in the running gff-hab (`transport.md` 6.1.7).
 - The transport reports the authenticated device id to gff-hab, so events and input record who
   sent them. Data tickets are bound to that device.
 - WebSocket stays possible only as a later carrier for a client that cannot speak SSH. If it comes,

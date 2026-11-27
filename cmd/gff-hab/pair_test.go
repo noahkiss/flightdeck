@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -334,8 +335,59 @@ func TestPairAddrsAndCommand(t *testing.T) {
 	if _, err := shellWord("/x/it's"); err == nil {
 		t.Error("a single quote was accepted")
 	}
-	cmd, err := connectCommand("/tmp/s p/hab.sock")
+	cmd, _, err := connectCommand("/tmp/s p/hab.sock", t.TempDir())
 	if err != nil || !strings.HasSuffix(cmd, " connect -socket '/tmp/s p/hab.sock'") {
 		t.Fatalf("%q %v", cmd, err)
+	}
+}
+
+// TestStableExe: the forced command names a gff-hab path that survives an upgrade
+// (transport.md 6.1.4). A gff-hab running from <state>/builds/<build> (macOS) is named through
+// <state>/current; with no current it keeps the build path and warns; the CLI link on PATH wins
+// when it is this binary; the Linux copy in <state>/bin is named as it is, with no warning.
+func TestStableExe(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state dir")
+	rest := filepath.Join("GFF Hab.app", "Contents", "MacOS", "gff-hab")
+	self := filepath.Join(state, "builds", "0123456789abcdef", rest)
+	os.MkdirAll(filepath.Dir(self), 0o700)
+	os.WriteFile(self, []byte("#!/bin/sh\n"), 0o700)
+	noPath := func(string) (string, error) { return "", exec.ErrNotFound }
+
+	got, warn := stableExe(self, state, noPath)
+	if got != self || !strings.Contains(warn, "build folder") || !strings.Contains(warn, filepath.Join(state, "current")) {
+		t.Errorf("no current: %q, warning %q; want the build path and a warning", got, warn)
+	}
+	if err := os.Symlink(filepath.Join("builds", "0123456789abcdef"), filepath.Join(state, "current")); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(state, "current", rest)
+	if got, warn := stableExe(self, state, noPath); got != want || warn != "" {
+		t.Errorf("with current: %q, warning %q; want %q", got, warn, want)
+	}
+	// The state folder named through a link (macOS temp folders are): still a build path.
+	link := filepath.Join(t.TempDir(), "state-link")
+	os.Symlink(state, link)
+	if got, warn := stableExe(self, link, noPath); got != filepath.Join(link, "current", rest) || warn != "" {
+		t.Errorf("state through a link: %q, warning %q", got, warn)
+	}
+	cli := filepath.Join(t.TempDir(), "gff-hab")
+	os.Symlink(filepath.Join(state, "current", rest), cli)
+	if got, warn := stableExe(self, state, func(string) (string, error) { return cli, nil }); got != cli || warn != "" {
+		t.Errorf("with a CLI link on PATH: %q, warning %q; want %q", got, warn, cli)
+	}
+	if got, _ := stableExe(self, state, func(string) (string, error) { return self, nil }); got != want {
+		t.Errorf("a PATH folder inside the build was named: %q", got)
+	}
+	other := filepath.Join(t.TempDir(), "gff-hab")
+	os.WriteFile(other, []byte("#!/bin/sh\n"), 0o700)
+	if got, _ := stableExe(self, state, func(string) (string, error) { return other, nil }); got != want {
+		t.Errorf("another gff-hab on PATH was named: %q", got)
+	}
+
+	bin := filepath.Join(state, "bin", "gff-hab")
+	os.MkdirAll(filepath.Dir(bin), 0o700)
+	os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o700)
+	if got, warn := stableExe(bin, state, noPath); got != bin || warn != "" {
+		t.Errorf("Linux install: %q, warning %q; want %q and no warning", got, warn, bin)
 	}
 }

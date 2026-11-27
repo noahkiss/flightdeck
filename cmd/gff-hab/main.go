@@ -93,6 +93,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -438,7 +439,7 @@ func serve(args []string) error {
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
-	habConfig := fs.String("config", "", "the hab's config file, with its [catalog], [speech] and [summaries] sections (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
+	habConfig := fs.String("config", "", "the hab's config file, with its [catalog], [speech], [summaries] and [pairing] sections (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off; given, it locks hab.permission_wait (default: $GFF_HAB_PERMISSION_WAIT, else the setting, 60s unless changed)")
 	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
@@ -1958,8 +1959,32 @@ func serve(args []string) error {
 	if input != nil {
 		input = typedInput{Input: input, t: typedAt} // pane.type's "a person comes first" (3.12)
 	}
-	// devices.list and devices.revoke (transport.md 5, 6.6) read the device list in the state folder.
-	devicesCtl := newDeviceService(dir, logger.Printf)
+	// The devices.* methods (transport.md 5, 6.1.7): the device list and revoke always; a pairing
+	// window that one of the owner's clients opens and confirms only when the [pairing] section
+	// of the hab's config file turns it on.
+	var pairCfg pairSettings
+	if cpath, err := habConfigPath(*habConfig); err != nil {
+		logger.Printf("devices: devices.pair is off: %v", err)
+	} else if pairCfg, err = loadPairSettings(cpath); err != nil {
+		logger.Printf("devices: devices.pair is off: %v", err)
+		pairCfg = pairSettings{}
+	}
+	fc, fcWarn := "", ""
+	if pairCfg.API {
+		if fc, fcWarn, err = connectCommand(*sock, dir); err != nil {
+			logger.Printf("devices: devices.pair is off: %v", err)
+			fc = ""
+		} else if fcWarn != "" {
+			logger.Printf("devices: %s", fcWarn)
+		}
+	}
+	login := ""
+	if u, err := user.Current(); err == nil {
+		login = u.Username
+	}
+	devicesCtl := newDeviceService(deviceConfig{state: dir, hostKey: key.Private, pair: pairCfg.API, command: fc, commandWarning: fcWarn, user: login,
+		authKeys: pairCfg.AuthorizedKeys, sshPort: pairCfg.SSHPort, sshdKeys: pairCfg.SSHDKeys, listen: pairCfg.Listen, logf: logger.Printf})
+	defer devicesCtl.Close()
 	caps = append(caps, "devices")
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	s := control.New(control.Config{
@@ -2338,7 +2363,19 @@ func shutdownWatchdog(d time.Duration, logf func(string, ...any), exit func(int)
 func connect(args []string) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	sock := socketFlag(fs)
+	device := fs.String("device", "", "the paired device this session is for; the key line of a device paired by gff-hab sets it (transport.md 6.6)")
+	devices := fs.String("devices", "", "with -device: the device list that says whether the device is still paired")
 	fs.Parse(args)
+	if (*device == "") != (*devices == "") {
+		return errors.New("connect: -device and -devices go together")
+	}
+	if *device != "" {
+		// A revoked device's key line is gone, but an SSH connection that authenticated before
+		// may still open channels: each one runs this command, which refuses it.
+		if err := devicePaired(*devices, *device); err != nil {
+			return fmt.Errorf("connect: %v", err)
+		}
+	}
 	path, err := socketPath(*sock)
 	if err != nil {
 		return err
@@ -2348,6 +2385,15 @@ func connect(args []string) error {
 		return err
 	}
 	defer nc.Close()
+	var cut atomic.Pointer[error]
+	if *device != "" {
+		done := make(chan struct{})
+		defer close(done)
+		go watchDevice(*devices, *device, devicePoll, func(err error) {
+			cut.Store(&err)
+			nc.Close() // ends the copy below, so the session ends
+		}, done)
+	}
 	go func() {
 		io.Copy(nc, os.Stdin)
 		// Client finished sending: half-close so the hab sees EOF and closes its side.
@@ -2356,6 +2402,9 @@ func connect(args []string) error {
 		}
 	}()
 	_, err = io.Copy(os.Stdout, nc)
+	if e := cut.Load(); e != nil {
+		return fmt.Errorf("connect: %v; session closed", *e)
+	}
 	return err
 }
 
@@ -2423,7 +2472,7 @@ func printJSON(v any) error {
 // `gff-hab api call` refuses to send from an agent's pane.
 func ownerCall(method string) bool {
 	switch method {
-	case "confirm.answer", "trust.answer", "devices.revoke":
+	case "confirm.answer", "trust.answer", "devices.pair", "devices.confirm", "devices.revoke":
 		return true
 	}
 	return false
@@ -2443,7 +2492,7 @@ func apiCall(args []string) error {
 	method := fs.Arg(0)
 	if ownerCall(method) && os.Getenv(hook.Env) != "" {
 		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10;
-		// transport.md 6.6).
+		// transport.md 6.1.7).
 		return fmt.Errorf("%s is the owner's answer; it does not run in an agent's pane", method)
 	}
 	var params any = struct{}{}

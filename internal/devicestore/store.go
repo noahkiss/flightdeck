@@ -31,7 +31,15 @@ type Record struct {
 	AuthorizedKeys string `json:"authorized_keys,omitempty"`
 	State          string `json:"state"`
 	RevokedAt      string `json:"revoked_at,omitempty"`
+	// PairedBy is who opened the pairing window: the device id of the device whose connection
+	// opened it, when the hab knows it, else PairedByLocal. A revoke does not cascade to the
+	// devices a device paired (transport.md 6.1.7). "": a record written before the field.
+	PairedBy string `json:"paired_by,omitempty"`
 }
+
+// PairedByLocal is Record.PairedBy when no device id is known for the window's opener: a
+// terminal on the host, or a client whose connection the hab cannot tie to a device.
+const PairedByLocal = "local"
 
 // PublicKey parses the record's key.
 func (r Record) PublicKey() (ssh.PublicKey, error) {
@@ -157,22 +165,20 @@ func (s *Store) Find(query string) (Record, error) {
 	return Record{}, fmt.Errorf("%q %w: %s", query, ErrAmbiguous, strings.Join(ids, ", "))
 }
 
-// Revoke removes the device's line from the authorized_keys file it was written to and keeps the
-// record as a revoked tombstone. It returns the record and how many lines it removed.
+// ErrLineLeft: the device is revoked in the list, but its line could not be taken out of the
+// authorized_keys file. A -device line already refuses the device (its forced command checks the
+// list); a line without -device still logs in until the owner removes it.
+var ErrLineLeft = errors.New("its key line is still there")
+
+// Revoke marks the device revoked in the list, then removes its line from the authorized_keys
+// file it was written to; the record stays as a revoked tombstone. It returns the record and how
+// many lines it removed. The order fails closed: when the list write fails nothing changed, and
+// when the line removal fails the device is revoked already, so a -device line refuses it; the
+// error then wraps ErrLineLeft, names the file, and the record is returned with it.
 func (s *Store) Revoke(query string, now time.Time) (Record, int, error) {
 	r, err := s.Find(query)
 	if err != nil {
 		return Record{}, 0, err
-	}
-	removed := 0
-	if r.AuthorizedKeys != "" {
-		pub, err := r.PublicKey()
-		if err != nil {
-			return Record{}, 0, fmt.Errorf("device %s: %w", r.ID, err)
-		}
-		if removed, err = RemoveAuthorizedKey(r.AuthorizedKeys, pub); err != nil {
-			return Record{}, 0, err
-		}
 	}
 	r.State = StateRevoked
 	r.RevokedAt = now.UTC().Format(time.RFC3339)
@@ -184,5 +190,19 @@ func (s *Store) Revoke(query string, now time.Time) (Record, int, error) {
 		}
 		return devs, nil
 	})
-	return r, removed, err
+	if err != nil {
+		return Record{}, 0, err
+	}
+	if r.AuthorizedKeys == "" {
+		return r, 0, nil
+	}
+	removed := 0
+	pub, err := r.PublicKey()
+	if err == nil {
+		removed, err = RemoveAuthorizedKey(r.AuthorizedKeys, pub)
+	}
+	if err != nil {
+		return r, 0, fmt.Errorf("device %s is revoked, but %w in %s (%v); remove the line whose comment starts %q by hand", r.ID, ErrLineLeft, r.AuthorizedKeys, err, CommentPrefix+" "+r.Label)
+	}
+	return r, removed, nil
 }

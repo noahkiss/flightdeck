@@ -1,10 +1,12 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 )
@@ -48,7 +50,10 @@ func TestPeerMethodsRefusedFromClients(t *testing.T) {
 // fakeDevices records the calls the devices.* handler makes.
 type fakeDevices struct {
 	mu      sync.Mutex
+	clients []string
 	revoked []string
+	opener  context.Context // the conn context devices.pair got
+	conns   []uint64        // the connection of each pair and confirm call
 }
 
 func (f *fakeDevices) List() ([]api.Device, error) {
@@ -60,28 +65,58 @@ func (f *fakeDevices) Revoke(q string) error {
 	f.revoked = append(f.revoked, q)
 	return nil
 }
+func (f *fakeDevices) Pair(by Caller, p api.DevicesPairParams) (api.PairingOffer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clients = append(f.clients, by.Client)
+	f.conns = append(f.conns, by.Conn)
+	f.opener = by.Ctx
+	return api.PairingOffer{DeviceID: "SHA256:hab", Endpoints: []string{"192.0.2.1:1234"}, Token: "t", ExpiresInMS: 1000}, nil
+}
+func (f *fakeDevices) Confirm(_ context.Context, by Caller, p api.DevicesConfirmParams) (api.DevicePairing, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clients = append(f.clients, by.Client)
+	f.conns = append(f.conns, by.Conn)
+	if p.Code == "abcd" {
+		return api.DevicePairing{State: "paired", Paired: &api.Device{ID: "SHA256:x"}}, nil
+	}
+	return api.DevicePairing{State: "waiting", Device: &api.PairingDevice{Name: "phone"}}, nil
+}
 
-// TestDevicesMethods: devices.list and devices.revoke reach the device service and carry the
-// seq; devices.pair answers unavailable (not built); a peer link is refused list and revoke; a
-// hab with no service answers unavailable (transport.md 5, 6.6).
+// TestDevicesMethods: the devices.* methods reach the device service with the caller's client
+// id and carry the seq; a peer link is refused every one of them; a hab with no service answers
+// unavailable (transport.md 6.1.7).
 func TestDevicesMethods(t *testing.T) {
 	fd := &fakeDevices{}
 	path := socketPath(t)
 	startHab(t, "", path, func(c *Config) { c.Devices = fd })
 	cl := dial(t, path)
-	hello(t, cl, "")
+	w := hello(t, cl, "")
 
 	var list api.DeviceList
 	if err := cl.Call(ctx(t), "devices.list", api.DevicesListParams{}, &list); err != nil || len(list.Devices) != 1 || list.Devices[0].Kind != "tablet" {
 		t.Fatalf("devices.list: %+v %v", list, err)
 	}
-	var ce *Error
-	if err := cl.Call(ctx(t), "devices.pair", api.DevicesPairParams{}, &api.PairingOffer{}); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
-		t.Errorf("devices.pair: %v, want unavailable: it is not built", err)
+	var offer api.PairingOffer
+	if err := cl.Call(ctx(t), "devices.pair", api.DevicesPairParams{}, &offer); err != nil || offer.Token != "t" || len(offer.Endpoints) != 1 {
+		t.Fatalf("devices.pair: %+v %v", offer, err)
 	}
-	var raw any
-	if err := cl.Call(ctx(t), "devices.confirm", struct{}{}, &raw); !errors.As(err, &ce) || ce.Code != codeMethodNotFound {
-		t.Errorf("devices.confirm: %v, want method not found", err)
+	// devices.pair gets the connection's context, not the request's: the window lives on after
+	// the call returns, and closes when the connection ends (transport.md 6.1.7).
+	fd.mu.Lock()
+	opener := fd.opener
+	fd.mu.Unlock()
+	if opener == nil || opener.Err() != nil {
+		t.Fatalf("devices.pair's connection context after the call: %v", opener)
+	}
+	var dp api.DevicePairing
+	if err := cl.Call(ctx(t), "devices.confirm", api.DevicesConfirmParams{Code: "abcd"}, &dp); err != nil || dp.State != "paired" {
+		t.Fatalf("devices.confirm: %+v %v", dp, err)
+	}
+	var ce *Error
+	if err := cl.Call(ctx(t), "devices.confirm", api.DevicesConfirmParams{Code: "abcd", Decline: true}, &dp); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid {
+		t.Errorf("devices.confirm with a code and decline: %v", err)
 	}
 	if err := cl.Call(ctx(t), "devices.revoke", api.DevicesRevokeParams{}, &api.Empty{}); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid {
 		t.Errorf("devices.revoke with no id: %v", err)
@@ -90,17 +125,26 @@ func TestDevicesMethods(t *testing.T) {
 		t.Fatal(err)
 	}
 	fd.mu.Lock()
-	if len(fd.revoked) != 1 || fd.revoked[0] != "phone" {
-		t.Errorf("the service revoked %v", fd.revoked)
+	if len(fd.clients) != 2 || fd.clients[0] != w.ClientID || fd.clients[1] != w.ClientID || len(fd.revoked) != 1 || fd.revoked[0] != "phone" {
+		t.Errorf("the service saw clients %v, revoked %v; want %s", fd.clients, fd.revoked, w.ClientID)
+	}
+	if len(fd.conns) != 2 || fd.conns[0] == 0 || fd.conns[0] != fd.conns[1] {
+		t.Errorf("the service saw connections %v; want one non-zero id twice", fd.conns)
 	}
 	fd.mu.Unlock()
+	cl.Close()
+	select {
+	case <-opener.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("devices.pair's connection context lives on after the client closed")
+	}
 
 	peer := dial(t, path)
 	if _, err := peer.HelloAs(ctx(t), api.HelloParams{Client: api.ClientInfo{Name: "gff-hab", Version: "0", Kind: api.ClientKindHab},
 		Peer: &api.PeerHello{DeviceID: "SHA256:peer", Host: "laptop"}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range []string{"devices.list", "devices.revoke"} {
+	for _, m := range []string{"devices.list", "devices.pair", "devices.confirm", "devices.revoke"} {
 		var raw any
 		if err := peer.Call(ctx(t), m, map[string]string{"id": "phone"}, &raw); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindDenied {
 			t.Errorf("%s over a peer link: %v, want denied", m, err)
@@ -111,10 +155,37 @@ func TestDevicesMethods(t *testing.T) {
 	startHab(t, "", path2, nil)
 	none := dial(t, path2)
 	hello(t, none, "")
-	for _, m := range []string{"devices.list", "devices.pair", "devices.revoke"} {
+	for _, m := range []string{"devices.list", "devices.pair", "devices.confirm", "devices.revoke"} {
 		var raw any
 		if err := none.Call(ctx(t), m, map[string]string{"id": "phone"}, &raw); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
 			t.Errorf("%s with no device service: %v, want unavailable", m, err)
 		}
+	}
+}
+
+// TestDevicesCallerIsTheConnection: a client that reconnects with its reconnect token keeps its
+// client id but is a new connection, so the device service can tell it from the connection that
+// opened a window (transport.md 6.1.7).
+func TestDevicesCallerIsTheConnection(t *testing.T) {
+	fd := &fakeDevices{}
+	path := socketPath(t)
+	startHab(t, "", path, func(c *Config) { c.Devices = fd })
+	first := dial(t, path)
+	w := hello(t, first, "")
+	if err := first.Call(ctx(t), "devices.pair", api.DevicesPairParams{}, &api.PairingOffer{}); err != nil {
+		t.Fatal(err)
+	}
+	again := dial(t, path)
+	w2 := hello(t, again, w.ReconnectToken)
+	if w2.ClientID != w.ClientID {
+		t.Fatalf("the reconnect got client id %s, want %s", w2.ClientID, w.ClientID)
+	}
+	if err := again.Call(ctx(t), "devices.confirm", api.DevicesConfirmParams{}, &api.DevicePairing{}); err != nil {
+		t.Fatal(err)
+	}
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.conns) != 2 || fd.conns[0] == fd.conns[1] || fd.clients[0] != fd.clients[1] {
+		t.Errorf("connections %v, clients %v; want two connections of one client", fd.conns, fd.clients)
 	}
 }
