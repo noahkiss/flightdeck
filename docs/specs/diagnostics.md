@@ -1,8 +1,8 @@
 # Diagnostics: behaviour spec
 
-Status: stages 1 to 4 built. Stage 5: the structured lines and the source check built; the
-Capcom log, `hook.log`, `detect explain --no-text`, the bundle and the canary test proposed.
-Stage 6 proposed. Owner decisions are open in section 13.
+Status: stages 1 to 4 built. Stage 5: the structured lines, the source check, `hook.log`,
+`detect explain --no-text`, the bundle and the canary test built; the Capcom engine's log (4.9)
+and the canary's Capcom leg proposed. Stage 6 proposed. Owner decisions are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
 that early daily use tells the maintainers three things: how the product is used, which bugs
@@ -337,6 +337,14 @@ nothing when it works.
 
 - When it fails (no hab, a timeout, an error status), it appends one line to `hook.log`: time,
   harness, event, the failure kind and the duration. It never writes the payload.
+- The line is a structured line (4.2) of `proc` `hook`, at `warn`: message "hook failed",
+  `harness`, `event`, `failure` and `took_ms`. `failure` is `no_hab` (nothing answers on the hook
+  socket), `timeout` (the run reached its budget), `status` (gff-hab answered an error status),
+  `payload` (the payload is not JSON or names no event) or `other`.
+- A run outside any pane gff-hab owns (no `GFF_HAB`) and a nested Claude Code run send nothing by
+  design, and write no line. The hard cap at the budget plus 50 ms ends the process from a timer;
+  that timer writes the `timeout` line before the exit.
+- The state folder is `$GFF_HAB_STATE`, which gff-hab sets in its panes, else the default (3).
 - A hook only appends. Each run opens the file fresh, so gff-hab's rename in the sweep is safe.
 - The exit code stays 0. A hook must never break the harness.
 - gff-hab logs "no hook reached gff-hab" for a session as a plain line, not under
@@ -736,7 +744,14 @@ machine, and the planned prune needs them from the first week. Latencies and app
 `gff-hab bundle [-o <file>] [--since 48h] [--no-friction]` writes one `.tar.gz`. By default it
 goes in the current directory as `flightdeck-diagnostics-<yyyymmdd-hhmm>.tar.gz`. It works while
 gff-hab is down. At the end it prints the archive path, its size, the count of replacements per
-rule, and one line: "Review the files before you share them."
+rule, each item it left out and why, and one line: "Review the files before you share them."
+
+- `-socket`, `-state`, `-holders` and `-config` name the hab as the other commands do. The peer
+  file is `$GFF_HAB_PEERS`, else its default (`mesh.md` 3.1).
+- The archive's files sit under one folder, `flightdeck-diagnostics-<yyyymmdd-hhmm>/`, with no
+  user or group name in its headers. The command builds the folder beside the archive, writes
+  the archive to a temporary file, renames it, and removes the folder.
+- The window has a start only: a line written while the bundle is made is kept.
 
 ### 8.2 Contents
 
@@ -756,6 +771,15 @@ The bundle holds only these files.
 | `friction/` | Friction notes within the window (9) | Text: pass 2. Log snapshots: pass 1, then pass 2 |
 | `detect.json` | `gff-hab detect explain --json --no-text` for each live pane | Pass 2 |
 
+- `hab.stderr` is never read: it holds the text copy of `warn` and `error` lines that `hab.log`
+  holds by key (4.2), with no classes, and a crash's traceback, which the crash file holds too.
+- `service.txt` comes from the install record (`<state>/install.json`). It holds four parsed
+  fields per job: loaded, running, last exit, runs (launchd) or restarts (systemd), never the
+  init system's own output. With no install record it says so and asks nothing.
+- `detect.json` lists each live pane with its answer or its error kind. With gff-hab down it is
+  left out, and the manifest names it with the reason.
+- `logs/` keeps each file's name, old files included.
+
 Never in a bundle: `engine.log`, `hab.stderr`, transcripts, terminal rings and snapshots,
 logbook contents, module state, the hab key, device keys, push keys, the Capcom credential,
 environment files, secret sets, any file not in this table.
@@ -764,7 +788,9 @@ environment files, secret sets, any file not in this table.
 `gff-hab detect explain` prints the winning rule's screen region (`cmd/gff-hab/detect.go:343-344`,
 `writeRegion` at 356-367): terminal output that no scrub can recognise. The bundle uses a new
 `--no-text` mode: rule ids, states, priorities and region coordinates, never the text. Test 11's
-canary is on screen in a live pane at bundle time, and must not appear in `detect.json`.
+canary is on screen in a live pane at bundle time, and must not appear in `detect.json`. The
+mode also drops each process's arguments (`args`), which can hold a prompt; process names stay.
+It strips the answer in the client, so the method and the schema do not change.
 
 ### 8.3 Redaction
 
@@ -791,14 +817,32 @@ bundle command.
 
 | Rule | Replaced by |
 |---|---|
-| This machine's host name, user name and home path; every host, label and device id in `peers.toml` and `hab.toml`; the names of projects gff-hab knows. Exact, any case | The `n:` token |
+| This machine's host name, user name and home path; every host, label and device id in `peers.toml` and `hab.toml`; the names of projects gff-hab knows. Exact, any case | The `n:` token; the home path `~` |
 | The hygiene scan's built-in rules (`ci-release.md` 9.4): private IPv4, CGNAT IPv4, tailnet IPv6, `<label>.ts.net` names, home paths | `<ip>`, `<ip>`, `<ip>`, `<host>`, `~/<path>` |
 | Any other IPv4 or IPv6 address | `<ip>` |
-| Email addresses | `<email>` |
 | A URL's user info, query and fragment | Removed |
+| Email addresses | `<email>` |
 | PEM blocks; `ssh-` and `ecdsa-` key lines; `SHA256:` fingerprints | `<key>` |
 | `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer` | `<secret>` |
 | Runs of 32 or more base64, base64url or hex characters | `<blob>` |
+
+How each rule reads (the code is `internal/diagbundle`):
+
+- **Names.** A name matches only as a word of its own: no letter or digit right before or after
+  it. A name shorter than 3 characters, or with no letter, is not used: it would hit common
+  words. The names are the host name and its first label, the user name, the values of the
+  config files' `label`, `host`, `host_id`, `device_id` and `name` keys, the host part of each
+  endpoint and URL, each project root's folder and the folders in it, the projects and their
+  folders in `structure.json`, and, from a running gff-hab, its host id and projects.
+- **The home folder** becomes `~` in pass 1 and pass 2 alike, so a path reads the same in both.
+- **URL before email.** A URL's user info such as `user:pw@host` would otherwise read as an
+  address and leave the user name.
+- **Secrets.** `bearer` takes the next word. The other words take the value after `:` or `=`, so
+  "the key is missing" keeps its words.
+- **Blobs.** A run must hold a letter and a digit. A UUID, the form of a pane id, is kept. A run
+  with `/` must also mix upper and lower case, so a path is not a blob.
+- Only the hygiene scan's built-in rules run; its private rules stay outside the repo and the
+  product.
 
 Pass 2 removes names and secrets. It cannot remove content such as a prompt fragment. Content is
 kept out at the source (10.2); the bundle is the second guard, not the first.
@@ -809,10 +853,27 @@ The manifest records each rule's hit count, never the matched text, as the hygie
 **Config allowlist.** A config value stays only when its key is a setting whose value is an enum,
 a number or a boolean in the settings registry. Every other value becomes `<value>`.
 
+- The allowlist reads the `[settings]` table (`settings.Def.Plain`). A value outside its
+  setting's type becomes `<value>` too. The `[capcom]` `pace_*` keys, which lock settings by
+  another name, are not kept.
+- The file is written again from its parsed tree: comments go, and a key passes pass 2, since a
+  table may be named for a host. A file that does not parse is left out and named in the
+  manifest.
+
+**Other strings.** A safe value of a structured line is kept (pass 1) and then scrubbed too: a
+minted id matches no rule, so it reads the same, and a value that only has a safe form cannot
+carry a name out. A line's own fields (`t`, `lvl`, `msg`, `proc`, `comp`) are kept as written. A
+health record, a friction note and `detect.json` get pass 2 on every string; a friction tail line
+that is a structured line gets both passes. A line that starts as JSON but does not parse is
+left out and counted (12).
+
 ### 8.4 Review
 
-- `gff-hab bundle --dir <folder>` writes the files unpacked, for review, and makes no archive.
-- The manifest lists each file and its size.
+- `gff-hab bundle --dir <folder>` writes the files unpacked, for review, and makes no archive. The
+  folder must be new or empty.
+- The manifest lists each file and its size, the replacements per rule (every rule, zeros
+  included), the count of lines left out because they do not parse, and the items left out
+  with why.
 - The bundle is never uploaded. The user attaches it to an issue by hand.
 
 ### 8.5 The app (stage 6)
@@ -1065,7 +1126,7 @@ Each test guards a promise in this spec, at the lowest layer that proves it (`do
 | 8 | Tallies: calls and errors per method and client kind; `--unused` against the method table; a key outside the surface stored as `other` only; the counter path allocates nothing | Unit and integration | 3 | 7 |
 | 9 | A request trace reaches the response and a peer's line; a malformed one is replaced | Integration and end to end | 4 | 5.2, 5.4 |
 | 10 | The source check fails its fixture (one case per ban of 10.2) and passes the tree | Unit (source) | 5 | 10.2 |
-| 11 | **Canary.** One random string goes through pane input, terminal output (on screen at bundle time), a chat send, a hook payload, a Capcom turn on a test engine that also echoes it on stderr and in a provider error, a config label and an environment value. Afterwards no file under `<state>/logs`, `<state>/tallies`, `<state>/health.jsonl`, the friction log tails, `gff-hab status` output or the bundle (including `detect.json`) contains it | End to end | 5 | 8.2, 10.1, 10.2 |
+| 11 | **Canary.** One random string goes through pane input, terminal output (on screen at bundle time), a chat send, a hook payload, a Capcom turn on a test engine that also echoes it on stderr and in a provider error, a config label and an environment value. Afterwards no file under `<state>/logs`, `<state>/tallies`, `<state>/health.jsonl`, the friction log tails, `gff-hab status` output or the bundle (including `detect.json`) contains it. The config label is a name, not content: `hab.log` may hold it under a name key or in a legacy line, and the bundle replaces it. So the label is a second string, checked in the bundle and the status output only | End to end | 5 | 8.2, 10.1, 10.2 |
 | 12 | Bundle redaction: the seeded fixture leaks nothing; a value hashes alike within one bundle and differently across two | Unit | 5 | 8.3 |
 | 13 | A failed hook writes one `hook.log` line, exits 0, and stays within its budget | Integration | 5 | 4.4 |
 | 14 | The app's logging wrapper defaults to `.private`, and export holds `app.log` and payloads | Swift unit | 2, 6 | 4.10, 6.4 |
