@@ -757,9 +757,48 @@ func sessionIDArg(argv []string) string {
 	return ""
 }
 
+// leaderArgsWait bounds how long leaderArgv lists a group again for a leader whose arguments
+// could not be read, and leaderArgsStep is the pause between listings.
+const (
+	leaderArgsWait = time.Second
+	leaderArgsStep = 30 * time.Millisecond
+)
+
+// errArgsUnread means a group's leader is there but its arguments could not be read: on Linux
+// it was in state D, which a shell shows for a moment each time it vforks a command, or on
+// macOS the kernel gave no whole copy.
+var errArgsUnread = errors.New("its arguments could not be read")
+
+// leaderArgv returns the argv of pid, its process group's leader, from list
+// (detect.GroupProcesses). A leader with no Args is listed again every leaderArgsStep for up
+// to leaderArgsWait, then answers errArgsUnread; any other answer returns at once.
+func leaderArgv(ctx context.Context, list func(context.Context, int) (detect.Foreground, error), pid int) ([]string, error) {
+	deadline := time.Now().Add(leaderArgsWait)
+	for {
+		fg, err := list(ctx, pid)
+		switch {
+		case err != nil:
+			return nil, err
+		case fg.Leader.PID != pid:
+			return nil, fmt.Errorf("process %d is not its group's leader", pid)
+		case len(fg.Leader.Args) > 0:
+			return fg.Leader.Args, nil
+		}
+		if time.Now().Add(leaderArgsStep).After(deadline) {
+			return nil, fmt.Errorf("process %d: %w", pid, errArgsUnread)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(leaderArgsStep):
+		}
+	}
+}
+
 // adoptHarness sets where a harness run adopted after a gff-hab restart is (rounds.md 8.4).
 // Whether the prompt went in is not stored; the run's conversation says. Claude Code's session
-// id comes back from the program's argv (--session-id). With no user message the prompt never
+// id comes back from the program's argv (--session-id), listed again for up to leaderArgsWait
+// while it cannot be read (leaderArgv). With no user message the prompt never
 // went in: the run waits for its first idle again, under the readiness limit. With an agent
 // message after it, the turn may have ended while gff-hab was down: the first idle (or done)
 // ends the run. Otherwise, or when the conversation cannot be read, the run is in its turn.

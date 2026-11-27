@@ -1900,14 +1900,7 @@ func serve(args []string) error {
 				return roundMessages(ctx, chats, findTranscript, session, kind, native)
 			},
 			argv: func(ctx context.Context, pid int) ([]string, error) {
-				fg, err := detect.GroupProcesses(ctx, pid)
-				if err != nil {
-					return nil, err
-				}
-				if fg.Leader.PID != pid {
-					return nil, fmt.Errorf("process %d is not its group's leader", pid)
-				}
-				return fg.Leader.Args, nil
+				return leaderArgv(ctx, detect.GroupProcesses, pid)
 			},
 			screen: func(pane string) (string, bool) {
 				u, ok := parseUUID(pane)
