@@ -108,7 +108,42 @@ func postQuery(ctx context.Context, addr string, env harness.Envelope, query str
 		return b, err
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	return nil, fmt.Errorf("hab answered %s", resp.Status)
+	return nil, &StatusError{Status: resp.Status, Code: resp.StatusCode}
+}
+
+// ErrSkipped means the hook sent nothing by design: a nested Claude Code run.
+var ErrSkipped = errors.New("not sent")
+
+// ErrPayload means the payload on stdin could not be sent: not JSON, or no event name.
+var ErrPayload = errors.New("bad payload")
+
+// The failure kinds a failed hook run writes to hook.log (diagnostics.md 4.4).
+const (
+	FailNoHab   = "no_hab"  // gff-hab does not answer on its hook socket
+	FailTimeout = "timeout" // the run reached its budget
+	FailStatus  = "status"  // gff-hab answered with an error status
+	FailPayload = "payload" // the payload could not be sent
+	FailOther   = "other"
+)
+
+// FailureKind is the kind of a hook run's error for hook.log, or "" for a run that is no
+// failure: it sent its envelope, or it runs outside any pane gff-hab owns (ErrNoHab), or it sent
+// nothing by design (ErrSkipped).
+func FailureKind(err error) string {
+	var se *StatusError
+	switch {
+	case err == nil, errors.Is(err, ErrNoHab), errors.Is(err, ErrSkipped):
+		return ""
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
+		return FailTimeout
+	case Unreachable(err):
+		return FailNoHab
+	case errors.As(err, &se):
+		return FailStatus
+	case errors.Is(err, ErrPayload):
+		return FailPayload
+	}
+	return FailOther
 }
 
 // Invocation is one run of `gff-hab hook <harness> [event]`.
@@ -145,12 +180,12 @@ func Run(ctx context.Context, in Invocation) error {
 	}
 	if in.Harness == detect.KindClaude {
 		if ep := in.Getenv("CLAUDE_CODE_ENTRYPOINT"); ep != "" && ep != "cli" {
-			return fmt.Errorf("claude entrypoint %q is not the interactive TUI; not sent", ep)
+			return fmt.Errorf("%w: claude entrypoint %q is not the interactive TUI", ErrSkipped, ep)
 		}
 	}
 	payload = bytes.TrimSpace(payload)
 	if !json.Valid(payload) {
-		return fmt.Errorf("hook payload on stdin is not JSON")
+		return fmt.Errorf("%w: hook payload on stdin is not JSON", ErrPayload)
 	}
 	event := in.Event
 	if event == "" {
@@ -160,7 +195,7 @@ func Run(ctx context.Context, in Invocation) error {
 		json.Unmarshal(payload, &p)
 		event = p.HookEventName
 		if event == "" {
-			return fmt.Errorf("no event name: give one after the harness")
+			return fmt.Errorf("%w: no event name: give one after the harness", ErrPayload)
 		}
 	}
 	now := time.Now

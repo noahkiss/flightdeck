@@ -215,6 +215,7 @@ func detectCmd(args []string, stdout io.Writer) error {
 	via := fs.String("via", "", "run this command and speak over its stdio, e.g. \"ssh <host> gff-hab connect\"")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
 	all := fs.Bool("all", false, "list every rule with the region text it read, not only the winner's")
+	noTextFlag := fs.Bool("no-text", false, "print no screen text and no process arguments: rule ids, states, priorities and regions only, as a diagnostics bundle takes it")
 	timeout := fs.Duration("timeout", 20*time.Second, "give up after this long")
 	fs.Parse(args[1:])
 	if fs.NArg() != 1 {
@@ -238,6 +239,9 @@ func detectCmd(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if *noTextFlag {
+		noText(&res)
+	}
 	if *asJSON {
 		b, err := json.MarshalIndent(res, "", "  ")
 		if err != nil {
@@ -246,12 +250,27 @@ func detectCmd(args []string, stdout io.Writer) error {
 		_, err = fmt.Fprintf(stdout, "%s\n", b)
 		return err
 	}
-	writeExplain(stdout, res, *all)
+	writeExplain(stdout, res, *all, *noTextFlag)
 	return nil
 }
 
+// noText removes the content of a detect.explain answer: each rule's region text and each
+// process's arguments, which can hold a prompt (diagnostics.md 8.2). Rule ids, states,
+// priorities, regions and process names stay.
+func noText(r *api.DetectExplain) {
+	for i := range r.Process.Processes {
+		r.Process.Processes[i].Args = nil
+	}
+	if r.Screen == nil {
+		return
+	}
+	for i := range r.Screen.Rules {
+		r.Screen.Rules[i].Text, r.Screen.Rules[i].Truncated = "", false
+	}
+}
+
 // writeExplain prints a detect.explain result for a person.
-func writeExplain(w io.Writer, r api.DetectExplain, all bool) {
+func writeExplain(w io.Writer, r api.DetectExplain, all, noText bool) {
 	fmt.Fprintf(w, "pane      %s\n", r.Pane)
 
 	// The state, and the source that won.
@@ -340,7 +359,7 @@ func writeExplain(w io.Writer, r api.DetectExplain, all bool) {
 				won = "  <- won"
 			}
 			fmt.Fprintf(w, "          %s %s  %s  priority %d  %s%s\n", m, ru.ID, ru.State, ru.Priority, ru.Region, won)
-			if all || ru == win {
+			if (all || ru == win) && !noText {
 				writeRegion(w, ru)
 			}
 		}

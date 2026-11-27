@@ -8,9 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbcli"
@@ -64,17 +67,62 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	if *wait {
 		budget = hook.WaitBudget
 	}
-	timer := time.AfterFunc(budget+50*time.Millisecond, func() { os.Exit(0) })
+	start := time.Now()
+	var failed sync.Once
+	fail := func(kind string) {
+		failed.Do(func() { writeHookLog(os.Getenv, fs.Arg(0), fs.Arg(1), kind, time.Since(start)) })
+	}
+	// The cap ends the process without a return from hook.Run, so it writes its own line.
+	timer := time.AfterFunc(budget+50*time.Millisecond, func() { fail(hook.FailTimeout); os.Exit(0) })
 	defer timer.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	inv := hook.Invocation{Harness: fs.Arg(0), Event: fs.Arg(1), T: *stamp, Stdin: stdin, Getenv: os.Getenv, Stdout: stdout,
 		Wait: *wait, FileBrief: fileBrief}
 	err := hook.Run(ctx, inv)
+	if kind := hook.FailureKind(err); kind != "" {
+		if ctx.Err() != nil {
+			kind = hook.FailTimeout
+		}
+		fail(kind)
+	}
 	if err != nil && os.Getenv("GFF_HOOK_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "gff-hab hook: %v\n", err)
 	}
 	return 0
+}
+
+var hookLog = diaglog.For("hook")
+
+// writeHookLog appends one line for a failed hook run to <state>/logs/hook.log: the harness, the
+// event, the failure kind and the duration, never the payload (diagnostics.md 4.4). The state
+// folder is $GFF_HAB_STATE, which gff-hab sets in its panes, else the default. It writes nothing
+// when the logs folder does not exist, as on a host with no hab installed. Each run opens the
+// file afresh, so gff-hab's rename in its sweep is safe.
+func writeHookLog(getenv func(string) string, harnessName, event, kind string, took time.Duration) {
+	state := getenv("GFF_HAB_STATE")
+	if state == "" {
+		var err error
+		if state, err = control.DefaultState(); err != nil {
+			return
+		}
+	}
+	logs := logsDir(state)
+	if st, err := os.Stat(logs); err != nil || !st.IsDir() {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(logs, hookLogFile), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	diaglog.Setup(diaglog.Config{Proc: "hook", File: f, Level: diaglog.LevelInfo})
+	defer diaglog.Reset()
+	attrs := []diaglog.Attr{diaglog.Harness(harnessName), diaglog.Word("failure", kind), diaglog.Dur("took", took)}
+	if event != "" {
+		attrs = append(attrs, diaglog.Event(event))
+	}
+	hookLog.Warn("hook failed", attrs...)
 }
 
 // hookSocketPath picks the hook socket: -hook-socket, else $GFF_HAB_HOOK_SOCKET, else hook.sock
