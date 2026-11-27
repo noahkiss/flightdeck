@@ -833,7 +833,7 @@ bundle command.
 | A URL's user info, query and fragment | Removed |
 | Email addresses | `<email>` |
 | PEM blocks; `ssh-` and `ecdsa-` key lines; `SHA256:` fingerprints | `<key>` |
-| `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer` | `<secret>` |
+| `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer`; the whole value of a structured line's attribute whose key is, or ends in, `token`, `secret`, `password`, `passwd`, `authorization`, `api_key` or `private_key` | `<secret>` |
 | Runs of 32 or more base64, base64url or hex characters | `<blob>` |
 
 How each rule reads (the code is `internal/diagbundle`):

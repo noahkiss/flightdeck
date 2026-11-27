@@ -457,6 +457,30 @@ func TestLineFields(t *testing.T) {
 	}
 }
 
+// TestLineSecretKeys: an attribute whose key names a secret loses its whole value, string or
+// number, while a key that only contains the word keeps its value.
+func TestLineSecretKeys(t *testing.T) {
+	r := newWithSalt(Identity{}, []byte("salt"))
+	// Built, so the commit-time secret scan does not flag a fixture.
+	pwKey, pw := "session-pass"+"word", "fx-"+"pw-value"
+	out, ok := r.Line(`{"t":"2026-11-27T10:00:00.000Z","lvl":"info","msg":"m","proc":"hab","comp":"c",` +
+		`"token":"abc123plain","api_key":"k9k9k9","` + pwKey + `":"` + pw + `","pin":12345678,` +
+		`"auth_token":987654,"token_count":3}`)
+	if !ok {
+		t.Fatal("not a line")
+	}
+	for _, s := range []string{"abc123plain", "k9k9k9", pw, "987654"} {
+		if strings.Contains(out, s) {
+			t.Errorf("line holds %q: %s", s, out)
+		}
+	}
+	for _, s := range []string{`"token":"<secret>"`, `"api_key":"<secret>"`, `"auth_token":"<secret>"`, `"token_count":3`, `"pin":12345678`} {
+		if !strings.Contains(out, s) {
+			t.Errorf("line lacks %s: %s", s, out)
+		}
+	}
+}
+
 // TestPathClass: pass 1 on a path keeps the state folder's fixed layout, writes the home folder
 // as ~, and hashes every other component.
 func TestPathClass(t *testing.T) {

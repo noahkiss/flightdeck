@@ -251,6 +251,12 @@ func (r *Redactor) Line(s string) (string, bool) {
 	}
 	for _, kv := range l.Attrs {
 		key := r.Scrub(kv.Key)
+		if secretAttrRE.MatchString(kv.Key) {
+			// The key names a secret, so the value goes whole: pass 2 alone sees no key word.
+			field(key, "<secret>")
+			r.count(RuleSecret, 1)
+			continue
+		}
 		if kv.Num && plainJSON(kv.Val) {
 			b.WriteByte(',')
 			writeJSONString(&b, key)
@@ -263,6 +269,10 @@ func (r *Redactor) Line(s string) (string, bool) {
 	b.WriteByte('}')
 	return b.String(), true
 }
+
+// secretAttrRE matches a line attribute key that names a secret: the word alone or as the
+// last part of the key, such as token, api_key or session-password.
+var secretAttrRE = regexp.MustCompile(`(?i)^(?:.*[_.-])?(?:token|secret|password|passwd|authorization|api_?key|private_?key)$`)
 
 // plainJSON reports whether a value written bare is a JSON number or Boolean.
 func plainJSON(s string) bool {
