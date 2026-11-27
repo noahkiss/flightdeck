@@ -33,10 +33,10 @@ func noKeyLeft(t *testing.T, f devicesFixture) {
 // answer unavailable and open nothing; list and revoke still work (transport.md 6.1.7).
 func TestDevicesPairOff(t *testing.T) {
 	f := newDevicesFixture(t, func(c *deviceConfig) { c.pair = false })
-	if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "[pairing]") {
+	if _, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "[pairing]") {
 		t.Fatalf("devices.pair with pairing off: %v", err)
 	}
-	if _, err := f.svc.Confirm(context.Background(), "c1", api.DevicesConfirmParams{}); errKindOf(err) != api.ErrorKindUnavailable {
+	if _, err := f.svc.Confirm(context.Background(), byConn(context.Background(), 1), api.DevicesConfirmParams{}); errKindOf(err) != api.ErrorKindUnavailable {
 		t.Fatalf("devices.confirm with pairing off: %v", err)
 	}
 	if devs, err := f.svc.List(); err != nil || len(devs) != 0 {
@@ -49,7 +49,7 @@ func TestDevicesPairOff(t *testing.T) {
 func TestDevicesPairOpenerGone(t *testing.T) {
 	f := newDevicesFixture(t)
 	opener, hangUp := context.WithCancel(context.Background())
-	o, err := f.svc.Pair(opener, "c1", api.DevicesPairParams{})
+	o, err := f.svc.Pair(byConn(opener, 1), api.DevicesPairParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,19 +57,19 @@ func TestDevicesPairOpenerGone(t *testing.T) {
 	defer cancel()
 	signer, _ := newPhoneKey(t)
 	answers := phone(t, o, signer)
-	if p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || p.State != "waiting" {
+	if p, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || p.State != "waiting" {
 		t.Fatalf("waiting: %+v %v", p, err)
 	}
 	hangUp()
 	if a := lastAnswer(t, answers); a.State == "paired" {
 		t.Fatalf("the device heard %+v", a)
 	}
-	p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{})
+	p, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{})
 	if err != nil || p.State != "closed" || !strings.Contains(p.Reason, "disconnected") {
 		t.Fatalf("after the opener left: %+v %v", p, err)
 	}
 	noKeyLeft(t, f)
-	if _, err := f.svc.Pair(context.Background(), "c2", api.DevicesPairParams{}); err != nil {
+	if _, err := f.svc.Pair(byConn(context.Background(), 2), api.DevicesPairParams{}); err != nil {
 		t.Fatalf("a new window after the orphan closed: %v", err)
 	}
 
@@ -77,10 +77,10 @@ func TestDevicesPairOpenerGone(t *testing.T) {
 	g := newDevicesFixture(t)
 	gone, end := context.WithCancel(context.Background())
 	end()
-	if _, err := g.svc.Pair(gone, "c1", api.DevicesPairParams{}); err != nil {
+	if _, err := g.svc.Pair(byConn(gone, 1), api.DevicesPairParams{}); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := g.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || p.State != "closed" {
+	if p, err := g.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || p.State != "closed" {
 		t.Fatalf("a window whose opener was gone: %+v %v", p, err)
 	}
 }
@@ -89,7 +89,7 @@ func TestDevicesPairOpenerGone(t *testing.T) {
 // and leaves no key or record behind.
 func TestDevicesPairExpires(t *testing.T) {
 	f := newDevicesFixture(t, func(c *deviceConfig) { c.lifetime = 2 * time.Second })
-	o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+	o, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +98,13 @@ func TestDevicesPairExpires(t *testing.T) {
 	signer, _ := newPhoneKey(t)
 	answers := phone(t, o, signer)
 	// On a slow machine the window may expire before the device is shown: both are fine.
-	if p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || (p.State != "waiting" && p.State != "expired") {
+	if p, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || (p.State != "waiting" && p.State != "expired") {
 		t.Fatalf("waiting: %+v %v", p, err)
 	}
 	if a := lastAnswer(t, answers); a.State == "paired" {
 		t.Fatalf("the device heard %+v", a)
 	}
-	if p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || p.State != "expired" {
+	if p, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || p.State != "expired" {
 		t.Fatalf("after the lifetime: %+v %v", p, err)
 	}
 	noKeyLeft(t, f)
@@ -139,7 +139,7 @@ func TestDevicesPairStateTooOpen(t *testing.T) {
 			if err := os.Chmod(path, c.mode); err != nil {
 				t.Fatal(err)
 			}
-			_, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+			_, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
 			if errKindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), path) {
 				t.Fatalf("%s at %04o: %v", c.name, c.mode, err)
 			}
@@ -151,7 +151,7 @@ func TestDevicesPairStateTooOpen(t *testing.T) {
 	if err := os.Chmod(dir, 0o775); err != nil {
 		t.Fatal(err)
 	}
-	o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+	o, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestDevicesPairCloudRefuses(t *testing.T) {
 			return pickPairAddrs([]pairing.IfAddr{{Name: "eth0", Prefix: netip.MustParsePrefix("172.31.5.6/20")}}, "Amazon EC2")
 		}
 	})
-	if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "Amazon EC2") {
+	if _, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "Amazon EC2") {
 		t.Fatalf("devices.pair on a cloud host: %v", err)
 	}
 
@@ -205,7 +205,7 @@ func TestDevicesPairCloudRefuses(t *testing.T) {
 		c.listen = nil
 		c.auto = func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil }
 	})
-	o, err := g.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+	o, err := g.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
 	if err != nil || len(o.Warnings) != 1 || !strings.Contains(o.Warnings[0], "set listen") {
 		t.Fatalf("auto-chosen addresses: %+v %v", o.Warnings, err)
 	}
@@ -243,6 +243,55 @@ func TestLoadPairSettings(t *testing.T) {
 	} {
 		if _, err := loadPairSettings(write(bad)); err == nil {
 			t.Errorf("%q: no error", bad)
+		}
+	}
+
+	// authorized_keys is absolute, or starts at ~; a relative path would land in the job's
+	// working folder.
+	home, _ := os.UserHomeDir()
+	if s, err := loadPairSettings(write("[pairing]\nauthorized_keys = \"~/.ssh/other_keys\"\n")); err != nil || s.AuthorizedKeys != filepath.Join(home, ".ssh", "other_keys") {
+		t.Errorf("~ path: %q %v", s.AuthorizedKeys, err)
+	}
+	if s, err := loadPairSettings(write("[pairing]\nauthorized_keys = \"/etc/ssh/keys/owner\"\n")); err != nil || s.AuthorizedKeys != "/etc/ssh/keys/owner" {
+		t.Errorf("absolute path: %q %v", s.AuthorizedKeys, err)
+	}
+	if _, err := loadPairSettings(write("[pairing]\nauthorized_keys = \".ssh/authorized_keys\"\n")); err == nil || !strings.Contains(err.Error(), "relative") {
+		t.Errorf("relative path: %v", err)
+	}
+
+	// The file turns pairing on: with api = true it must not be writable by group or others.
+	on := write("[pairing]\napi = true\n")
+	if err := os.Chmod(on, 0o620); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := loadPairSettings(on); err == nil || s.API || !strings.Contains(err.Error(), "chmod go-w") {
+		t.Errorf("a group-writable file with api = true: %+v %v", s, err)
+	}
+	if err := os.WriteFile(on, []byte("[pairing]\napi = false\n"), 0o620); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPairSettings(on); err != nil {
+		t.Errorf("a group-writable file with pairing off: %v", err)
+	}
+	os.Chmod(on, 0o600)
+}
+
+// TestDevicesCloseRacesPair: Close and Pair at once never call the WaitGroup's Add while its
+// Wait runs; a Pair after Close answers unavailable. Run it with -race.
+func TestDevicesCloseRacesPair(t *testing.T) {
+	for range 20 {
+		f := newDevicesFixture(t)
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
+			done <- err
+		}()
+		f.svc.Close()
+		if err := <-done; err != nil && errKindOf(err) != api.ErrorKindUnavailable {
+			t.Fatalf("Pair during Close: %v", err)
+		}
+		if _, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindUnavailable {
+			t.Fatalf("Pair after Close: %v", err)
 		}
 	}
 }

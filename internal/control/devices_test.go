@@ -53,6 +53,7 @@ type fakeDevices struct {
 	clients []string
 	revoked []string
 	opener  context.Context // the conn context devices.pair got
+	conns   []uint64        // the connection of each pair and confirm call
 }
 
 func (f *fakeDevices) List() ([]api.Device, error) {
@@ -64,17 +65,19 @@ func (f *fakeDevices) Revoke(q string) error {
 	f.revoked = append(f.revoked, q)
 	return nil
 }
-func (f *fakeDevices) Pair(conn context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error) {
+func (f *fakeDevices) Pair(by Caller, p api.DevicesPairParams) (api.PairingOffer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.clients = append(f.clients, client)
-	f.opener = conn
+	f.clients = append(f.clients, by.Client)
+	f.conns = append(f.conns, by.Conn)
+	f.opener = by.Ctx
 	return api.PairingOffer{DeviceID: "SHA256:hab", Endpoints: []string{"192.0.2.1:1234"}, Token: "t", ExpiresInMS: 1000}, nil
 }
-func (f *fakeDevices) Confirm(_ context.Context, client string, p api.DevicesConfirmParams) (api.DevicePairing, error) {
+func (f *fakeDevices) Confirm(_ context.Context, by Caller, p api.DevicesConfirmParams) (api.DevicePairing, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.clients = append(f.clients, client)
+	f.clients = append(f.clients, by.Client)
+	f.conns = append(f.conns, by.Conn)
 	if p.Code == "abcd" {
 		return api.DevicePairing{State: "paired", Paired: &api.Device{ID: "SHA256:x"}}, nil
 	}
@@ -125,6 +128,9 @@ func TestDevicesMethods(t *testing.T) {
 	if len(fd.clients) != 2 || fd.clients[0] != w.ClientID || fd.clients[1] != w.ClientID || len(fd.revoked) != 1 || fd.revoked[0] != "phone" {
 		t.Errorf("the service saw clients %v, revoked %v; want %s", fd.clients, fd.revoked, w.ClientID)
 	}
+	if len(fd.conns) != 2 || fd.conns[0] == 0 || fd.conns[0] != fd.conns[1] {
+		t.Errorf("the service saw connections %v; want one non-zero id twice", fd.conns)
+	}
 	fd.mu.Unlock()
 	cl.Close()
 	select {
@@ -154,5 +160,32 @@ func TestDevicesMethods(t *testing.T) {
 		if err := none.Call(ctx(t), m, map[string]string{"id": "phone"}, &raw); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
 			t.Errorf("%s with no device service: %v, want unavailable", m, err)
 		}
+	}
+}
+
+// TestDevicesCallerIsTheConnection: a client that reconnects with its reconnect token keeps its
+// client id but is a new connection, so the device service can tell it from the connection that
+// opened a window (transport.md 6.1.7).
+func TestDevicesCallerIsTheConnection(t *testing.T) {
+	fd := &fakeDevices{}
+	path := socketPath(t)
+	startHab(t, "", path, func(c *Config) { c.Devices = fd })
+	first := dial(t, path)
+	w := hello(t, first, "")
+	if err := first.Call(ctx(t), "devices.pair", api.DevicesPairParams{}, &api.PairingOffer{}); err != nil {
+		t.Fatal(err)
+	}
+	again := dial(t, path)
+	w2 := hello(t, again, w.ReconnectToken)
+	if w2.ClientID != w.ClientID {
+		t.Fatalf("the reconnect got client id %s, want %s", w2.ClientID, w.ClientID)
+	}
+	if err := again.Call(ctx(t), "devices.confirm", api.DevicesConfirmParams{}, &api.DevicePairing{}); err != nil {
+		t.Fatal(err)
+	}
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.conns) != 2 || fd.conns[0] == fd.conns[1] || fd.clients[0] != fd.clients[1] {
+		t.Errorf("connections %v, clients %v; want two connections of one client", fd.conns, fd.clients)
 	}
 }

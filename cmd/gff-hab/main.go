@@ -1963,18 +1963,20 @@ func serve(args []string) error {
 		logger.Printf("devices: devices.pair is off: %v", err)
 		pairCfg = pairSettings{}
 	}
-	fc := ""
+	fc, fcWarn := "", ""
 	if pairCfg.API {
-		if fc, err = connectCommand(*sock); err != nil {
+		if fc, fcWarn, err = connectCommand(*sock, dir); err != nil {
 			logger.Printf("devices: devices.pair is off: %v", err)
 			fc = ""
+		} else if fcWarn != "" {
+			logger.Printf("devices: %s", fcWarn)
 		}
 	}
 	login := ""
 	if u, err := user.Current(); err == nil {
 		login = u.Username
 	}
-	devicesCtl := newDeviceService(deviceConfig{state: dir, hostKey: key.Private, pair: pairCfg.API, command: fc, user: login,
+	devicesCtl := newDeviceService(deviceConfig{state: dir, hostKey: key.Private, pair: pairCfg.API, command: fc, commandWarning: fcWarn, user: login,
 		authKeys: pairCfg.AuthorizedKeys, sshPort: pairCfg.SSHPort, sshdKeys: pairCfg.SSHDKeys, listen: pairCfg.Listen, logf: logger.Printf})
 	defer devicesCtl.Close()
 	caps = append(caps, "devices")

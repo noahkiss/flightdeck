@@ -433,7 +433,7 @@ answers "will the grants still match".
 ```
 <state>/builds/<build-id>/GFF Holder.app     one copy per holder build (hab-holder.md 4.4)
 <state>/builds/<build-id>/GFF Hab.app        the gff-hab bundle of that build
-<state>/current -> builds/<build-id>          used only by the CLI symlink, never by launchd
+<state>/current -> builds/<build-id>          used by the CLI symlink and by paired key lines, never by launchd
 ```
 
 - `gff-hab install` copies a bundle with `ditto` into a temp directory beside its target, verifies

@@ -524,8 +524,14 @@ The key lands in two places:
    - `restrict` turns off port, agent and X11 forwarding, PTYs and `~/.ssh/rc`.
    - `command=` forces `gff-hab connect`. The app runs only that command over SSH: the control
      connection, each data connection and the one-shot ping are all `gff-hab connect` on an exec
-     channel (`app.md` 10.6), so the forced command covers every use. The path is the `gff-hab`
-     found on `PATH` when it is the binary running `pair`, else the running binary's own path.
+     channel (`app.md` 10.6), so the forced command covers every use. The path must survive an
+     upgrade, so it is the first of: the `gff-hab` found on `PATH` when it is the running binary
+     (the owner's CLI link); for a binary that runs from `<state>/builds/<build>/` (macOS,
+     `macos-identity.md` 6.1), the same file under `<state>/current/`, the link install moves to
+     each new build; else the running binary's own path (on Linux `<state>/bin/gff-hab`, which
+     install replaces in place). A path still under `<state>/builds/` comes with a warning (on
+     the terminal, and in the offer of 6.1.7): install prunes old builds, and the device would
+     stop connecting after the next upgrade.
      `-command` replaces the whole command; a `-socket` given to `pair` is passed on.
    - `-device` and `-devices` name the device and the hab's device list, so `connect` can end the
      device's sessions once it is revoked (6.6). They are added only to gff-hab's own command, not
@@ -549,12 +555,17 @@ The key lands in two places:
      the file it points to. If the file changed between the read and the rename, the write starts
      again, at most three times.
 2. **gff-hab's own device list**, `<state>/devices.json` (0600): id, label, kind, paired at, the key
-   line, the file the key was written to, state. When this write fails, the key line just added is
+   line, the file the key was written to, state, and `paired_by`, who opened the window (6.1.7). When this write fails, the key line just added is
    taken out again: a line with no record could never be revoked. This is the trust store the embedded server will
    read (4.2, 5); it never reads `~/.ssh`.
 
-`gff-hab devices list` prints the list. `gff-hab devices revoke <id|label>` removes the device's
-line from `authorized_keys` (other lines byte for byte) and keeps the record as a revoked tombstone.
+`gff-hab devices list` prints the list. `gff-hab devices revoke <id|label>` marks the record
+revoked, then removes the device's line from `authorized_keys` (other lines byte for byte); the
+record stays as a revoked tombstone. The order fails closed. When the list write fails, nothing
+changed and the revoke reports the error. When the line removal fails, the device is revoked
+already, so its `-device` line refuses every new channel (6.6). The revoke then reports that the
+line is left, names the file, and says to remove it by hand: a line without `-device` still logs
+in.
 Over the system sshd a revoke stops new logins, and `connect -device` ends the device's open
 sessions within about two seconds (6.6). The device's push registration is kept. The hab and the CLI may write the list at once: each write
 replaces the file only when it still holds what the writer read, else it reads again (three
@@ -636,6 +647,10 @@ authorized_keys = ""        # default: ~/.ssh/authorized_keys of the user gff-ha
 
 Off, `devices.pair` and `devices.confirm` answer `unavailable`. `listen` takes what `-listen`
 takes (6.1.3): a public or unspecified address makes the section an error, and pairing stays off.
+`authorized_keys` is absolute or starts at `~/`; a relative path is an error, since the job's
+working folder is no place the owner chose. With `api = true`, the config file itself must not be
+writable by group or others, as the state folder of 6.1.4: it turns pairing on and picks where
+the window listens and where keys land. Each of these errors turns pairing off.
 
 1. **`devices.pair {label?}`** opens the window in the running gff-hab and returns the offer:
    the hab's device id, the window's endpoints, the token, the time left, and `warnings`: one line
@@ -648,7 +663,9 @@ takes (6.1.3): a public or unspecified address makes the section an error, and p
 3. The owner types the last 4 characters the device shows. **`devices.confirm {code}`** pairs the
    device on a match (constant-time compare) and answers `paired` with its record. A wrong code
    answers `waiting` with `tries_left`; the third declines. `devices.confirm {decline: true}`
-   declines a waiting device, or closes the window when none waits.
+   declines a waiting device, or closes the window when none waits. A code sent while no device
+   waits answers `conflict` and is not kept for the next device: the owner types the code the
+   device in hand shows, as the terminal drops input typed before its question (6.1.5).
 4. Outcomes: `paired`, `declined`, `expired`, `failed` (the key could not be saved) or `closed`
    (the hab stopped, or the client that opened the window disconnected). Each closes the window
    and spends the token.
@@ -657,11 +674,11 @@ Who may call:
 
 | Rule | Value |
 |---|---|
-| The window's owner | Only the client id that called `devices.pair` answers `devices.confirm`; any other gets `denied` |
+| The window's owner | Only the connection that called `devices.pair` answers `devices.confirm`; any other gets `denied`, another connection with the same client id included |
 | Peer links | Every `devices.*` method is `denied`: a peer admits no key and changes no trust store on another hab (6.2) |
 | Agents | The pane route does not take `devices.*`. `gff-hab api call` refuses `devices.pair`, `devices.confirm` and `devices.revoke`, and `gff-hab devices revoke` refuses to run, inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
 | The code | The answer never carries the last 4 characters; the owner reads them off the device |
-| The opener's connection | The window lives as long as the connection that opened it, at most. When it ends, the window closes as `closed`, a waiting device is refused, and nothing is written. A client that reconnects with its reconnect token keeps its client id, but the window is gone; it opens a new one |
+| The opener's connection | The window lives as long as the connection that opened it, at most. When it ends, the window closes as `closed`, a waiting device is refused, and nothing is written. A client that reconnects with its reconnect token keeps its client id, but not the window. The old connection may drain for a few seconds (the close grace). Until it ends, the new connection's `devices.confirm` answers `denied` and its `devices.pair` answers `conflict`; after that, it opens a new window |
 
 `devices.list` returns the device records. `devices.revoke {id}` takes an id, an id prefix of at
 least 6 characters, or a label, as `gff-hab devices revoke` does: it removes the key line and keeps
@@ -669,7 +686,15 @@ the record as a tombstone. The device's open sessions over the system sshd end w
 seconds, when its key line names it (6.6). The device's push registration is kept. A paired key
 lands in the authorized_keys of the user gff-hab runs as (or `authorized_keys` in `[pairing]`),
 with the forced command `gff-hab connect -device <id> -devices <list>` (and the `-socket` of
-`serve` when given).
+`serve` when given). The `gff-hab` path follows the rule of 6.1.4, computed when `serve` starts;
+a build path warns in every offer.
+
+Who paired a device: the record's `paired_by` names the opener of the window. It is the device id
+of the device whose connection opened it when the hab knows it, else `local`. Today the hab
+cannot tell a device's relayed connection from a local client, so every window records `local`,
+`gff-hab pair` included; the hab log names the opener's client id and connection too. A revoke
+does not cascade: revoking a device leaves the devices it paired in place. The owner reviews
+`devices.list` after a revoke and revokes those too.
 
 Why a caller gains nothing new: a local-socket caller runs as the hab's user and can write
 `~/.ssh/authorized_keys` itself. A paired device has a forced command and cannot, but it can

@@ -30,6 +30,7 @@ type pubEvent struct {
 // seq order on the wire is the order in which messages were queued.
 type conn struct {
 	s    *Server
+	id   uint64 // unique in this process (Caller.Conn)
 	nc   net.Conn
 	br   *bufio.Reader
 	wake chan struct{}
@@ -105,6 +106,7 @@ func newConn(s *Server, nc net.Conn, br *bufio.Reader) *conn {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &conn{
 		s:      s,
+		id:     connIDs.Add(1),
 		nc:     nc,
 		br:     br,
 		wake:   make(chan struct{}, 1),

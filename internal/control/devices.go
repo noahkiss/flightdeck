@@ -2,23 +2,37 @@ package control
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 )
 
 // Devices runs the hab's trust store and the pairing window that devices.pair opens
-// (transport.md 5, 6.1.7). gff-hab implements it. client is the calling connection's client id:
-// only the client that opened a window answers its device.
+// (transport.md 5, 6.1.7). gff-hab implements it. Only the connection that opened a window
+// answers its device.
 type Devices interface {
 	List() ([]api.Device, error)
 	Revoke(query string) error
-	// Pair opens a pairing window. conn ends when the calling connection does: the window closes
-	// then, so a window never outlives the only client that may answer it.
-	Pair(conn context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error)
+	// Pair opens a pairing window. by.Ctx ends when the calling connection does: the window
+	// closes then, so a window never outlives the only connection that may answer it.
+	Pair(by Caller, p api.DevicesPairParams) (api.PairingOffer, error)
 	// Confirm waits for a device, or answers it. It returns when ctx ends, with the state then.
-	Confirm(ctx context.Context, client string, p api.DevicesConfirmParams) (api.DevicePairing, error)
+	Confirm(ctx context.Context, by Caller, p api.DevicesConfirmParams) (api.DevicePairing, error)
 }
+
+// Caller is the connection that sends a devices.* call.
+type Caller struct {
+	// Conn is the connection, unique in this process. A window answers only the connection that
+	// opened it, not its client id: a client that reconnects with its reconnect token takes the
+	// id while the old connection may still be draining (transport.md 6.1.7).
+	Conn   uint64
+	Client string          // the connection's client id, for the log
+	Ctx    context.Context // ends when the connection does
+}
+
+// connIDs numbers the connections of this process, for Caller.Conn.
+var connIDs atomic.Uint64
 
 // maxConfirmWait bounds one devices.confirm: a window lives at most five minutes.
 const maxConfirmWait = 6 * time.Minute
@@ -30,6 +44,7 @@ const maxConfirmWait = 6 * time.Minute
 func (c *conn) handleDevices(m message) {
 	seq := c.currentSeq()
 	ds := c.s.cfg.Devices
+	by := c.caller()
 	c.mu.Lock()
 	kind := c.kind
 	c.mu.Unlock()
@@ -56,7 +71,7 @@ func (c *conn) handleDevices(m message) {
 	case "devices.pair":
 		var p api.DevicesPairParams
 		if e = c.decodeUp(m, &p); e == nil && ds != nil {
-			call = func(context.Context) (any, error) { return ds.Pair(c.ctx, c.clientID, p) }
+			call = func(context.Context) (any, error) { return ds.Pair(by, p) }
 		}
 	case "devices.confirm":
 		var p api.DevicesConfirmParams
@@ -65,7 +80,7 @@ func (c *conn) handleDevices(m message) {
 				e = appErr(api.ErrorKindInvalid, "devices.confirm takes a code or decline, not both")
 				break
 			}
-			call = func(ctx context.Context) (any, error) { return ds.Confirm(ctx, c.clientID, p) }
+			call = func(ctx context.Context) (any, error) { return ds.Confirm(ctx, by, p) }
 		}
 	}
 	if e == nil && kind == api.ClientKindHab {
@@ -90,3 +105,6 @@ func (c *conn) handleDevices(m message) {
 		c.reply(m, seq, api.NonNil(withSeq(res, seq)), nil)
 	}()
 }
+
+// caller is c as a devices.* caller.
+func (c *conn) caller() Caller { return Caller{Conn: c.id, Client: c.clientID, Ctx: c.ctx} }

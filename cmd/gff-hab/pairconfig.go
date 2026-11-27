@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/noahkiss/flightdeck/internal/pairing"
@@ -64,6 +66,38 @@ func loadPairSettings(path string) (pairSettings, error) {
 		}
 		s.Listen = append(s.Listen, a.Unmap())
 	}
-	s.API, s.SSHPort, s.SSHDKeys, s.AuthorizedKeys = c.API, c.SSHPort, c.SSHDKeys, c.AuthorizedKeys
+	keys, err := expandHome(c.AuthorizedKeys)
+	if err != nil {
+		return s, fmt.Errorf("%s: pairing: authorized_keys: %v", path, err)
+	}
+	if c.API {
+		// The file turns pairing on and picks where the window listens and where keys land: as
+		// stateTooOpen does for the state folder, refuse it when group or others can write it.
+		fi, err := os.Stat(path)
+		if err != nil {
+			return s, err
+		}
+		if fi.Mode().Perm()&0o022 != 0 {
+			return s, fmt.Errorf("%s: group or others can write it (mode %04o), so pairing over the API stays off; run chmod go-w %s", path, fi.Mode().Perm(), path)
+		}
+	}
+	s.API, s.SSHPort, s.SSHDKeys, s.AuthorizedKeys = c.API, c.SSHPort, c.SSHDKeys, keys
 	return s, nil
+}
+
+// expandHome makes a configured path absolute: "~/" and "~" name the home folder; any other
+// relative path is an error, since the hab's working folder is no place the owner chose ("/"
+// under launchd). "" stays "", the default.
+func expandHome(p string) (string, error) {
+	switch {
+	case p == "" || filepath.IsAbs(p):
+		return p, nil
+	case p == "~" || strings.HasPrefix(p, "~/"):
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, strings.TrimPrefix(p, "~")), nil
+	}
+	return "", fmt.Errorf("%q is a relative path; name it from / or from ~/", p)
 }

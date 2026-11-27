@@ -93,8 +93,12 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	}
 	watch := ""
 	if *command == "" {
-		if *command, err = connectCommand(*sock); err != nil {
+		var warn string
+		if *command, warn, err = connectCommand(*sock, dir); err != nil {
 			return err
+		}
+		if warn != "" {
+			fmt.Fprintln(out, warn)
 		}
 		watch = devicestore.Open(dir).Path // our own connect: it can end the sessions of a revoked device
 	}
@@ -124,7 +128,8 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		Confirm: func(ctx context.Context, d pairing.Device) (bool, error) {
 			return confirmDevice(ctx, d, lines, out, *authKeys)
 		},
-		Admit: admitter{store: store, authKeys: *authKeys, command: *command, watch: watch, user: u.Username, endpoints: sshEndpoints, hostKeys: hostKeys}.admit,
+		Admit: admitter{store: store, authKeys: *authKeys, command: *command, watch: watch, user: u.Username, endpoints: sshEndpoints, hostKeys: hostKeys,
+			pairedBy: devicestore.PairedByLocal}.admit,
 	})
 	if err != nil {
 		return err
@@ -190,7 +195,9 @@ type admitter struct {
 	user      string
 	endpoints []string // the system sshd's, told to the device
 	hostKeys  []string
-	now       func() time.Time
+	// pairedBy is who opened the window, for the record (devicestore.Record.PairedBy).
+	pairedBy string
+	now      func() time.Time
 }
 
 func (a admitter) admit(d pairing.Device) (pairing.Paired, error) {
@@ -226,7 +233,7 @@ func (a admitter) admit(d pairing.Device) (pairing.Paired, error) {
 	err = a.store.Add(devicestore.Record{
 		ID: d.Fingerprint, Label: d.Name, Kind: d.Kind, PairedAt: now.UTC().Format(time.RFC3339),
 		Key:            strings.TrimSpace(string(ssh.MarshalAuthorizedKey(d.Key))),
-		AuthorizedKeys: a.authKeys, State: devicestore.StatePaired,
+		AuthorizedKeys: a.authKeys, State: devicestore.StatePaired, PairedBy: a.pairedBy,
 	})
 	if err != nil {
 		// No key line without its record: a line the device list does not hold could never be
@@ -433,36 +440,86 @@ func shellWord(s string) (string, error) {
 	return "'" + s + "'", nil
 }
 
-// connectCommand is the forced command of a paired key: the gff-hab on PATH when it is this
-// binary (a stable link survives upgrades), else this binary's own path, then connect.
-func connectCommand(socket string) (string, error) {
+// connectCommand is the forced command of a paired key, gff-hab's connect, and a warning when its
+// path is one an upgrade removes. state is the state folder.
+func connectCommand(socket, state string) (cmd, warning string, err error) {
 	self, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	path := self
-	if p, err := exec.LookPath("gff-hab"); err == nil {
-		if abs, err := filepath.Abs(p); err == nil {
-			a, errA := os.Stat(abs)
-			b, errB := os.Stat(self)
-			if errA == nil && errB == nil && os.SameFile(a, b) {
-				path = abs
-			}
-		}
-	}
+	path, warning := stableExe(self, state, exec.LookPath)
 	w, err := shellWord(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	cmd := w + " connect"
+	cmd = w + " connect"
 	if socket != "" {
 		sw, err := shellWord(socket)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		cmd += " -socket " + sw
 	}
-	return cmd, nil
+	return cmd, warning, nil
+}
+
+// stableExe picks the path of this gff-hab, self, that a key line names: one that survives an
+// upgrade (transport.md 6.1.4).
+//
+//  1. The gff-hab on PATH, when it is this binary: the owner's CLI link.
+//  2. When self runs from a build folder, <state>/builds/<build>/... (macOS, macos-identity.md
+//     6.1), the same file under <state>/current, the link install moves to each new build.
+//  3. Else self. On Linux that is <state>/bin/gff-hab, which install replaces in place.
+//
+// A path still inside <state>/builds comes with a warning: install prunes old builds, and the
+// devices paired with it stop connecting after the next upgrade.
+func stableExe(self, state string, lookPath func(string) (string, error)) (path, warning string) {
+	if p, err := lookPath("gff-hab"); err == nil {
+		if abs, err := filepath.Abs(p); err == nil && sameFile(abs, self) {
+			return abs, ""
+		}
+	}
+	builds := []string{filepath.Join(state, "builds")}
+	if real, err := filepath.EvalSymlinks(state); err == nil && real != state {
+		builds = append(builds, filepath.Join(real, "builds"))
+	}
+	selves := []string{filepath.Clean(self)}
+	if real, err := filepath.EvalSymlinks(self); err == nil && real != selves[0] {
+		selves = append(selves, real)
+	}
+	for _, rel := range relsUnder(builds, selves) {
+		_, rest, ok := strings.Cut(rel, string(filepath.Separator))
+		if !ok {
+			continue
+		}
+		cur := filepath.Join(state, "current", rest)
+		if fi, err := os.Stat(cur); err == nil && fi.Mode().IsRegular() {
+			return cur, ""
+		}
+		return self, fmt.Sprintf("warning: the forced command names %s, inside a build folder that a later gff-hab install removes, so a device paired now stops connecting after that upgrade; %s is missing: run gff-hab install again, or put a gff-hab link on PATH, then pair", self, filepath.Join(state, "current"))
+	}
+	return self, ""
+}
+
+// relsUnder returns each path in paths relative to each folder in dirs that holds it.
+func relsUnder(dirs, paths []string) []string {
+	var out []string
+	for _, d := range dirs {
+		for _, p := range paths {
+			rel, err := filepath.Rel(d, p)
+			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../") {
+				out = append(out, rel)
+			}
+		}
+	}
+	return out
+}
+
+// sameFile says whether paths a and b name one file.
+func sameFile(a, b string) bool {
+	fa, errA := os.Stat(a)
+	fb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(fa, fb)
 }
 
 // sshdHostKeys reads the system sshd's Ed25519 and ECDSA host keys from dir, as authorized-key
@@ -513,6 +570,9 @@ func devicesCmd(args []string, out io.Writer, getenv func(string) string) error 
 			return errors.New("devices revoke is the owner's call; it does not run in an agent's pane")
 		}
 		r, n, err := store.Revoke(fs.Arg(0), time.Now())
+		if errors.Is(err, devicestore.ErrLineLeft) {
+			fmt.Fprintf(out, "revoked %s (%s) in the device list\n", r.Label, r.ID)
+		}
 		if err != nil {
 			return err
 		}

@@ -21,7 +21,8 @@ import (
 //
 //	<state>/builds/<build>/GFF Holder.app   bundle id <prefix>.hab-holder
 //	<state>/builds/<build>/GFF Hab.app      bundle id <prefix>.hab
-//	<state>/current -> builds/<build>       for a CLI symlink only; no job names it
+//	<state>/current -> builds/<build>       for a CLI symlink and the forced command of paired
+//	                                        key lines (transport.md 6.1.4); no job names it
 //
 // TCC keys bundled code on its bundle id and designated requirement, not its path, so holders of
 // two builds share every privacy grant. <build> is a hash of both bundles' content, so the same

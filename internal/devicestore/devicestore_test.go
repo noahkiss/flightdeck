@@ -278,3 +278,60 @@ func TestStoreEditRetries(t *testing.T) {
 		t.Errorf("revoke a label two devices share: %v", err)
 	}
 }
+
+// TestRevokeFailsClosed: revoke marks the record revoked before it removes the key line. When the
+// list cannot be written, nothing changes: the line stays and the device stays paired. When the
+// line cannot be removed, the device is revoked already, so a -device line refuses it, and the
+// error says the line is left (ErrLineLeft) and names the file.
+func TestRevokeFailsClosed(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes into read-only folders")
+	}
+	setup := func(t *testing.T) (state, keys string, s *Store, r Record) {
+		dir := t.TempDir()
+		state, keys = filepath.Join(dir, "state"), filepath.Join(dir, "ssh", "authorized_keys")
+		os.MkdirAll(state, 0o700)
+		os.MkdirAll(filepath.Dir(keys), 0o700)
+		os.WriteFile(keys, []byte("# keep\n"), 0o600)
+		pub := p256(t)
+		line, _ := KeyLine(pub, "gff-hab connect", "phone", day)
+		AppendAuthorizedKey(keys, pub, line)
+		s = Open(state)
+		r = Record{ID: ssh.FingerprintSHA256(pub), Label: "phone", Kind: "phone", PairedAt: day.Format(time.RFC3339),
+			Key: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), AuthorizedKeys: keys, State: StatePaired}
+		if err := s.Add(r); err != nil {
+			t.Fatal(err)
+		}
+		return state, keys, s, r
+	}
+	t.Run("list write fails", func(t *testing.T) {
+		state, keys, s, r := setup(t)
+		os.Chmod(state, 0o500)
+		defer os.Chmod(state, 0o700)
+		if _, _, err := s.Revoke(r.ID, day); err == nil || errors.Is(err, ErrLineLeft) {
+			t.Fatalf("revoke with a read-only state folder: %v", err)
+		}
+		if b, _ := os.ReadFile(keys); !strings.Contains(string(b), "flightdeck: phone") {
+			t.Fatalf("the line went though the record did not change:\n%s", b)
+		}
+		if got, err := s.Find(r.ID); err != nil || got.State != StatePaired {
+			t.Fatalf("the record: %+v %v", got, err)
+		}
+	})
+	t.Run("line removal fails", func(t *testing.T) {
+		_, keys, s, r := setup(t)
+		os.Chmod(filepath.Dir(keys), 0o500)
+		defer os.Chmod(filepath.Dir(keys), 0o700)
+		got, n, err := s.Revoke(r.ID, day)
+		if !errors.Is(err, ErrLineLeft) || !strings.Contains(err.Error(), keys) || n != 0 || got.ID != r.ID || got.State != StateRevoked {
+			t.Fatalf("revoke with a read-only key folder: %+v %d %v", got, n, err)
+		}
+		devs, _ := s.List()
+		if len(devs) != 1 || devs[0].State != StateRevoked {
+			t.Fatalf("the record is not revoked: %+v", devs)
+		}
+		if b, _ := os.ReadFile(keys); !strings.Contains(string(b), "flightdeck: phone") {
+			t.Fatalf("the line is gone from a read-only folder?\n%s", b)
+		}
+	})
+}

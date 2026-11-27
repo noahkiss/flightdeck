@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/devicestore"
 	"github.com/noahkiss/flightdeck/internal/pairing"
 	"golang.org/x/crypto/ssh"
@@ -117,29 +118,36 @@ func lastAnswer(t *testing.T, ch <-chan pairing.Answer) pairing.Answer {
 
 // TestDevicesPairConfirm: devices.pair opens the window in the running hab; devices.confirm
 // shows the waiting device with its code hidden, refuses a wrong code with the tries left, and
-// pairs it on the right one: the key line lands and devices.list shows the device. Only the
-// client that opened the window answers it, and one window is open at a time
-// (transport.md 6.1.7).
+// pairs it on the right one: the key line lands and devices.list shows the device, with its
+// opener recorded. Only the connection that opened the window answers it, not another
+// connection with the same client id (a reconnect); a code with no device waiting answers
+// conflict and is not held for the next device; one window is open at a time (transport.md 6.1.7).
 func TestDevicesPairConfirm(t *testing.T) {
 	f := newDevicesFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+	o, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(o.Endpoints) != 1 || !strings.HasPrefix(o.Endpoints[0], "127.0.0.1:") || o.ExpiresInMS != 30000 || len(o.Token) != 22 {
 		t.Fatalf("offer %+v", o)
 	}
-	if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindConflict {
+	if _, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindConflict {
 		t.Fatalf("a second window: %v", err)
 	}
-	if _, err := f.svc.Confirm(ctx, "c2", api.DevicesConfirmParams{}); errKindOf(err) != api.ErrorKindDenied {
+	if _, err := f.svc.Confirm(ctx, byConn(context.Background(), 2), api.DevicesConfirmParams{}); errKindOf(err) != api.ErrorKindDenied {
 		t.Fatalf("another client's confirm: %v", err)
+	}
+	if _, err := f.svc.Confirm(ctx, control.Caller{Conn: 3, Client: "c1", Ctx: context.Background()}, api.DevicesConfirmParams{}); errKindOf(err) != api.ErrorKindDenied {
+		t.Fatalf("a confirm from another connection with the opener's client id: %v", err)
+	}
+	if _, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{Code: "zzzz"}); errKindOf(err) != api.ErrorKindConflict {
+		t.Fatalf("a code with no device waiting: %v", err)
 	}
 	signer, fp := newPhoneKey(t)
 	answers := phone(t, o, signer)
-	w, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{})
+	w, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{})
 	if err != nil || w.State != "waiting" || w.Device == nil || w.Device.Name != "Owner's iPad" || w.Device.Kind != "tablet" ||
 		w.Device.Fingerprint != fp[:len(fp)-4]+"????" || w.Device.From != "127.0.0.1" {
 		t.Fatalf("waiting: %+v %v", w, err)
@@ -151,10 +159,10 @@ func TestDevicesPairConfirm(t *testing.T) {
 	if fp[len(fp)-4:] == wrong {
 		wrong = "yyyy"
 	}
-	if w, err = f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{Code: wrong}); err != nil || w.State != "waiting" || w.TriesLeft != 2 {
+	if w, err = f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{Code: wrong}); err != nil || w.State != "waiting" || w.TriesLeft != 2 {
 		t.Fatalf("a wrong code: %+v %v", w, err)
 	}
-	p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{Code: fp[len(fp)-4:]})
+	p, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{Code: fp[len(fp)-4:]})
 	if err != nil || p.State != "paired" || p.Paired == nil || p.Paired.ID != fp || p.Paired.Kind != "tablet" {
 		t.Fatalf("paired: %+v %v", p, err)
 	}
@@ -172,8 +180,11 @@ func TestDevicesPairConfirm(t *testing.T) {
 	if err != nil || len(devs) != 1 || devs[0].ID != fp || devs[0].State != "paired" {
 		t.Fatalf("list %+v %v", devs, err)
 	}
+	if r, err := f.svc.store.Find(fp); err != nil || r.PairedBy != devicestore.PairedByLocal {
+		t.Fatalf("the record's opener: %+v %v; want %q", r, err, devicestore.PairedByLocal)
+	}
 	// The window is closed: a later confirm reads the outcome; a new window may open.
-	if p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || p.State != "paired" {
+	if p, err := f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || p.State != "paired" {
 		t.Fatalf("after: %+v %v", p, err)
 	}
 
@@ -200,7 +211,7 @@ func TestDevicesConfirmDeclines(t *testing.T) {
 			f := newDevicesFixture(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+			o, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,20 +221,24 @@ func TestDevicesConfirmDeclines(t *testing.T) {
 			case "three wrong codes":
 				signer, _ := newPhoneKey(t)
 				answers = phone(t, o, signer)
+				// A code is checked only against a device that waits (6.1.7): wait first.
+				if p, err = f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || p.State != "waiting" {
+					t.Fatalf("waiting: %+v %v", p, err)
+				}
 				for i := 0; i < 3; i++ {
-					if p, err = f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{Code: "!!!!"}); err != nil {
+					if p, err = f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{Code: "!!!!"}); err != nil {
 						t.Fatal(err)
 					}
 				}
 			case "decline":
 				signer, _ := newPhoneKey(t)
 				answers = phone(t, o, signer)
-				if p, err = f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || p.State != "waiting" {
+				if p, err = f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{}); err != nil || p.State != "waiting" {
 					t.Fatalf("waiting: %+v %v", p, err)
 				}
-				p, err = f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{Decline: true})
+				p, err = f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{Decline: true})
 			case "close":
-				p, err = f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{Decline: true})
+				p, err = f.svc.Confirm(ctx, byConn(context.Background(), 1), api.DevicesConfirmParams{Decline: true})
 			}
 			if err != nil || p.State != "declined" {
 				t.Fatalf("%s: %+v %v", how, p, err)
@@ -236,7 +251,7 @@ func TestDevicesConfirmDeclines(t *testing.T) {
 			if b, _ := os.ReadFile(f.authKeys); string(b) != "# mine\n" {
 				t.Fatalf("authorized_keys:\n%s", b)
 			}
-			if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); err != nil {
+			if _, err := f.svc.Pair(byConn(context.Background(), 1), api.DevicesPairParams{}); err != nil {
 				t.Fatalf("a new window after the decline: %v", err)
 			}
 		})
@@ -289,4 +304,9 @@ func TestDevicesConcurrentRevokes(t *testing.T) {
 	if b, _ := os.ReadFile(keys); string(b) != "# mine\n" {
 		t.Errorf("authorized_keys after two revokes: %q", b)
 	}
+}
+
+// byConn is connection n of client "c<n>", whose connection context is ctx.
+func byConn(ctx context.Context, n uint64) control.Caller {
+	return control.Caller{Conn: n, Client: fmt.Sprintf("c%d", n), Ctx: ctx}
 }
