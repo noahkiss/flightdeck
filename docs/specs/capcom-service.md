@@ -251,7 +251,7 @@ uninstall` stops the engine once the logic job is gone.
 | This hab gets the mark (`capcom.assign`) | gff-hab starts the engine job |
 | This hab loses the mark | gff-hab asks the engine to stop after its turn (`shutdown`, 4.2), then stops the job. A turn is bounded by `max_turns` and `max_turn_usd` (3.5), so the wait is too. The thread stays here, read-only (7.1, 14). Groups Capcom coordinates move their home to the new Capcom home when it has their project (`groups.md` 5.7) |
 | gff-hab restarts | The engine keeps running. Its route drops; it reconnects with backoff (1 s doubling to `route_backoff_max`, 30 s; 19.2) and replays what it has not had acknowledged (4.3) |
-| The engine exits or crashes | The init job has no restart rule of its own: gff-hab watches the job and starts it again after `restart_delay` (5 s; 19.2). The engine resumes its last SDK session by id (3.4). gff-hab counts crashes; `crash_limit` crashes (5) in `crash_window` (10 minutes) stop the restarts, the session record shows `error` with the last stderr line, and the thread gets a note. `gff-hab capcom resume` clears the count. While gff-hab is down, nobody restarts a crashed engine; gff-hab does at its start |
+| The engine exits or crashes | The init job has no restart rule of its own: gff-hab watches the job and starts it again after `restart_delay` (5 s; 19.2). The engine resumes its last SDK session by id (3.4). gff-hab counts crashes; `crash_limit` crashes (5) in `crash_window` (10 minutes) stop the restarts, the session record shows `error` with the exit status and the engine's last error line in `capcom.log` by its message and type (never a stderr line, `diagnostics.md` 6.3), and the thread gets a note. `gff-hab capcom resume` clears the count. While gff-hab is down, nobody restarts a crashed engine; gff-hab does at its start |
 | An install of a new build | The running engine is never interrupted. gff-hab sends `shutdown`; the engine finishes its turn, exits, and gff-hab starts the new build's engine, which resumes the same SDK session. Messages sent meanwhile join that turn or wait. The old build's files stay until its engine exits, as a drained holder's build does (`hab-holder.md`) |
 | The host sleeps | Nothing runs. At wake the engine's model calls resume; a call that failed during sleep is retried once (14) |
 
@@ -399,8 +399,9 @@ From the engine to gff-hab:
 **Start.** gff-hab starts the engine as `node <engine file>` in `<state>/capcom/engine/`, with
 `GFF_HAB` (`http+unix://<hook socket>/hooks/<pane token>`, 3.3), `GFF_HAB_CAPCOM_TOKEN` (the
 engine route token), `GFF_HAB_CAPCOM_KIND` (`claude` or `codex`: the one bundle picks its
-engine by it) and, when set, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` in its environment. Nothing
-else in the environment names a credential.
+engine by it), `GFF_HAB_CAPCOM_LOG` (the path of `capcom.log`, where the engine writes its
+structured lines, `diagnostics.md` 4.9) and, when set, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` in its
+environment. Nothing else in the environment names a credential.
 
 **Connect.** The engine sends `POST /capcom/<GFF_HAB_CAPCOM_TOKEN>` on the hook socket with `Connection:
 Upgrade` and `Upgrade: gff-capcom/1`. gff-hab answers `101 Switching Protocols`, and the
@@ -438,7 +439,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | `compacted` | none |
 | `context.request` | `request` (an id), `for` (`reseed`, `compact`) |
 | `usage` | `reading` (object, 10.1) |
-| `error` | `text`, `kind` (`auth` for a refused credential, `start` for the start check, else empty), `exiting` (bool) |
+| `error` | `text`, `kind` (`auth` for a refused credential, `start` for the start check, else empty), `exiting` (bool). gff-hab logs the kind only, never `text` (`diagnostics.md` 4.9); the start check's `text` is the session row's reason |
 
 - **Resend.** The engine keeps each message it sent until it is acknowledged, and sends them
   again, in order and with new `seq` numbers, on the next connection. gff-hab drops a repeated

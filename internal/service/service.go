@@ -433,17 +433,18 @@ func holderPlists(c Config) ([]string, error) {
 }
 
 // jobLogs lists the other log files the installed jobs write in the log directory: gff-hab's
-// hab.log and hook.log, and the old files that rotation and copy-truncate leave beside them and
-// beside the job output files (diagnostics.md 4.3). Uninstall removes them with the jobs.
+// hab.log, hook.log and the Capcom engine's capcom.log, and the old files that rotation and
+// copy-truncate leave beside them and beside the job output files (diagnostics.md 4.3).
+// Uninstall removes them with the jobs.
 func jobLogs(c Config) []string {
 	dir := globEscape(c.LogDir())
 	var out []string
-	for _, base := range []string{"hab.log", "hook.log"} {
+	for _, base := range []string{"hab.log", "hook.log", "capcom.log"} {
 		if _, err := os.Lstat(filepath.Join(c.LogDir(), base)); err == nil {
 			out = append(out, filepath.Join(c.LogDir(), base))
 		}
 	}
-	for _, pat := range []string{"hab.log.*", "hook.log.*", "hab.stderr.*", "gff-hab-holder.*.log.*"} {
+	for _, pat := range []string{"hab.log.*", "hook.log.*", "capcom.log.*", "hab.stderr.*", "gff-hab-holder.*.log.*"} {
 		m, _ := filepath.Glob(filepath.Join(dir, pat))
 		for _, p := range m {
 			ext := filepath.Ext(p)

@@ -1180,7 +1180,7 @@ func serve(args []string) error {
 			eng, err := newCapcomEngine(capcomEngineSetup{
 				state: dir, configPath: cpath, exe: exe, hookSocket: hpath, device: key.Fingerprint(),
 				installed: *sf.init != "" && *sf.init != "none", job: engineJob(sf, dir), store: store, agents: agents, svc: capcomSvc,
-				logbook: lbVerbs, host: *hostID,
+				logbook: lbVerbs, host: *hostID, health: diag.engineCrash,
 				approval: func() time.Duration {
 					if v := setRef.Load(); v != nil {
 						var m int

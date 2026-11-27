@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 )
 
 // The fixture's made-up identity and secrets. Every value is invented: example hosts,
@@ -317,6 +319,62 @@ func keys(m map[string]string) []string {
 
 // TestArchive: the archive holds the folder's files under one top folder, with no user or group
 // name, and the same bytes.
+// TestBundleCapcomLog: the Capcom engine's capcom.log, in the form the engine writes it (the
+// golden file its own tests check, capcom-engine/test/fixtures), parses as structured lines
+// and goes through both passes (8.2, 8.3; 4.9). Its messages, error types and classes stay; a
+// name or an address that reached a value goes. Its old file comes too.
+func TestBundleCapcomLog(t *testing.T) {
+	now := time.Now()
+	golden, err := os.ReadFile(filepath.Join("..", "..", "capcom-engine", "test", "fixtures", "capcom.log.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := now.Add(-time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+	var lines []string
+	for _, l := range strings.Split(strings.TrimSpace(string(golden)), "\n") {
+		p, ok := diaglog.Parse(l)
+		if !ok || p.Proc != "capcom" || p.Msg == "" || p.Comp == "" {
+			t.Fatalf("the golden line does not parse: %s", l)
+		}
+		for _, kv := range p.Attrs {
+			if kv.Num && strings.Trim(kv.Val, "0123456789-") != "" {
+				t.Errorf("%s: a value that is neither a string nor an integer: %s", kv.Key, kv.Val)
+			}
+		}
+		lines = append(lines, `{"t":"`+ts+`"`+l[strings.Index(l, `,"lvl"`):])
+	}
+	// What an engine line could carry by mistake: a name and an address in a word's value, an
+	// email in text.
+	lines = append(lines, `{"t":"`+ts+`","lvl":"warn","msg":"set model failed","proc":"capcom","comp":"engine","model_text":"`+fxHost+` at `+fxDocIP+`","text":"mail `+fxEmail+`"}`)
+	state := filepath.Join(t.TempDir(), "state")
+	os.MkdirAll(filepath.Join(state, "logs"), 0o700)
+	os.WriteFile(filepath.Join(state, "logs", "capcom.log"), []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	os.WriteFile(filepath.Join(state, "logs", "capcom.log.1"), []byte(lines[0]+"\n"), 0o600)
+	dir := t.TempDir()
+	if _, err := Write(dir, New(fxIdentity(state)), Options{State: state, Since: now.Add(-48 * time.Hour), Until: now}); err != nil {
+		t.Fatal(err)
+	}
+	files := readAll(t, dir)
+	got := files["logs/capcom.log"]
+	if files["logs/capcom.log.1"] == "" {
+		t.Fatal("the old capcom.log is not in the bundle")
+	}
+	for _, s := range []string{`"msg":"session started"`, `"session":"sess-0a1b"`, `"msg":"sdk stderr"`, `"lines":4`, `"class":"rate_limit"`,
+		`"err_type":"TypeError"`, `"code":"ECONNREFUSED"`, `"entry":"auth.json"`, `"model":"claude-opus-4-1"`} {
+		if !strings.Contains(got, s) {
+			t.Errorf("the bundle's capcom.log lacks %s:\n%s", s, got)
+		}
+	}
+	for _, s := range []string{fxHost, "build-box", fxDocIP, fxEmail} {
+		if strings.Contains(got, s) {
+			t.Errorf("the bundle's capcom.log holds %q:\n%s", s, got)
+		}
+	}
+	if n := strings.Count(got, "\n"); n != len(lines) {
+		t.Errorf("%d lines, want %d:\n%s", n, len(lines), got)
+	}
+}
+
 func TestArchive(t *testing.T) {
 	now := time.Now()
 	state, habToml, peersToml := seedState(t, now)

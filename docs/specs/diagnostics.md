@@ -323,7 +323,8 @@ Rules:
 - **Gone holders.** launchd's sweep removes a gone holder's file (`internal/service`). gff-hab's
   sweep removes old files whose current file is gone, and a holder's file that no registered
   holder owns and that has not changed in 7 days.
-- **Uninstall.** `gff-hab uninstall` removes the job output files, `hab.log`, `hook.log` and
+- **Uninstall.** `gff-hab uninstall` removes the job output files, `hab.log`, `hook.log`,
+  `capcom.log` and
   their old files with the jobs. `crash/` and `health.jsonl` are gff-hab's state and stay.
 
 **Decision: rotate inside gff-hab, change no holder code.** macOS has no logrotate, and
@@ -471,15 +472,46 @@ with the line before it. Until the holder's next build, its lines carry local ti
 
 ### 4.9 The Capcom engine and the speech helper (stage 5)
 
-- The engine writes the same JSON line format to `capcom.log`, at a path gff-hab gives it.
+- The engine writes the same JSON line format to `capcom.log`, at the path gff-hab gives it in
+  `GFF_HAB_CAPCOM_LOG` (`<state>/logs/capcom.log`). Its code is `capcom-engine/src/log.ts`: the
+  fixed keys and their order, `proc` `capcom`, a constant message and component, values only from
+  its constructors under diaglog's keys (`session`, `kind`, a caller's key, `<key>_text` for a
+  value of the wrong form or a reserved key), each a string or an integer, a line at most 8 KiB.
+  The credential redactor runs on every value. With no path, the lines go to stderr.
+- The engine rotates `capcom.log` itself: at 5 MiB it renames the file to `.1`, keeps 2 old
+  files, and checks every 1,000 lines or 60 seconds that the path still names its file. A line
+  it cannot write is counted on the next one ("lines dropped"). It has no repeat limit (4.5): its
+  lines come per turn and per reconnect, with the route's backoff.
 - It adds handlers for an uncaught exception and an unhandled rejection. Each writes one `error`
-  line with the error's class and its stack frames' function names, then exits 1.
+  line, `uncaught exception` or `unhandled rejection`, with the error's constructor name
+  (`err_type`), a Node error code (`code`) and its stack frames' function names (`frames`), then
+  exits 1. The line never holds the error's message or a file path: the frames are read after the
+  stack's header, which holds the message.
 - **SDK stderr is never copied into `capcom.log`.** The engine counts its lines and bytes and
-  logs the counts once per turn. The raw lines stay only in `engine.log`, which no bundle includes.
-  The first line of a provider error (`capcom-engine/src/codex.ts:666,669,681,789`) is logged as
-  an error class (`auth`, `rate_limit`, `network`, `provider`, `other`), never its text.
-- The handler exception of 1.2 #12 is logged with its class, and the message is not acknowledged,
-  so it is resent.
+  logs the counts (`sdk stderr`, `lines`, `bytes`) once per turn and at exit. The raw lines,
+  credential-redacted, stay only in `engine.log`, which no bundle includes.
+- A provider's error is logged as an error class under `class` (`auth`, `rate_limit`, `network`,
+  `provider`, `other`), never its text: the Codex engine's failed turn, error event and error
+  item, and the Claude engine's SDK and summary failures. An error otherwise is logged by
+  `err_type` and `code` only.
+- The handler exception of 1.2 #12 is logged by `err_type` and `class`, and the message is not
+  acknowledged. gff-hab ignores acknowledgements and resends from its own state when a
+  connection opens (`capcom-service.md` 4.3), so the engine drops the connection, and leaves the
+  rest of that connection's messages unhandled, so the next connection brings them again in
+  order. A message that fails 3 times makes the engine exit 1, so gff-hab's crash limit ends a
+  loop instead of a message being lost.
+- gff-hab logs an engine's `error` message by its kind only, never its `text`, which can quote
+  an SDK's or a provider's. The start check's text is the session row's reason.
+- **The source check.** `capcom-engine/test/logcheck.test.ts` is the engine's half of 10.2. The
+  types in `log.ts` refuse a message, component or key that is not a string literal (a template
+  with a value, a variable), a reserved key, and a value that is no constructor's;
+  `test/log.test.ts` holds one `@ts-expect-error` case of each, so the type check fails when one
+  compiles. The check reads each source file's tokens and fails on `console`, a write to
+  `process.stderr` or `process.stdout` outside `log.ts`, a relay of raw text to `engine.log`
+  outside the engine's SDK stderr and its start failure, a logger call whose message is not a
+  quoted string, a value that is not one constructor call, a key that is not a quoted string, a
+  template or `+` in a safe constructor's value, a logger method used as a value, and a direct
+  `Log.line` or `new Attr`. Its fixture has one case per ban.
 - The speech helper's stderr lines stay in `hab.log`, at `debug`, as `text` class.
 
 ### 4.10 The app
@@ -638,6 +670,14 @@ At start, before it writes its own marker, a process reads the previous one:
 - **Capcom engine.** The supervisor's crash count stays (`capcom-service.md` 218). Each engine
   crash also writes a record. Its `cause` is a class: the exit code or signal, `start_check`,
   `crash_limit`. Never the last stderr line, which can hold a prompt fragment (1.5).
+  - gff-hab writes it, with `proc` `capcom` and `kind` `crash`. The cause is `exit <code>` or
+    `signal <number>` for an engine this gff-hab started, `unknown` for one it adopted or a
+    systemd unit's (the unit is gone once it ends), `start_check` when the start check failed,
+    and `crash_limit` for the crash that reaches the limit. It raises no crash notice: the
+    supervisor's note and notice cover the engine.
+  - The session row's reason names the exit status and the engine's last `error` line in
+    `capcom.log` of this run, by its message and `err_type` only: "the engine exited: uncaught
+    exception (TypeError), exit 1". The crash limit's log line holds the count and the window.
 
 ### 6.4 The app (stage 6)
 
@@ -1175,7 +1215,7 @@ Each test guards a promise in this spec, at the lowest layer that proves it (`do
 | 7 | A blocked loop (test seam) yields one stall line and one stack file; `SIGUSR1` yields a stack file | Integration | 2 | 4.7 |
 | 8 | Tallies: calls and errors per method and client kind; `--unused` against the method table; a key outside the surface stored as `other` only; the counter path allocates nothing | Unit and integration | 3 | 7 |
 | 9 | A request trace reaches the response and a peer's line; a malformed one is replaced | Integration and end to end | 4 | 5.2, 5.4 |
-| 10 | The source check fails its fixture (one case per ban of 10.2) and passes the tree | Unit (source) | 5 | 10.2 |
+| 10 | The source check fails its fixture (one case per ban of 10.2) and passes the tree; so does the Capcom engine's check (4.9) | Unit (source) | 5 | 10.2 |
 | 11 | **Canary.** One random string goes through pane input, terminal output (on screen at bundle time), a chat send, a hook payload, a permission request a pane is still blocked on (its command, description and transcript), a Capcom turn on a test engine that also echoes it on stderr and in a provider error, a config label and an environment value. Afterwards no file under `<state>/logs`, `<state>/tallies`, `<state>/health.jsonl`, the friction log tails, `gff-hab status` output or the bundle (including `detect.json`) contains it. The config label is a name, not content: `hab.log` may hold it under a name key or in a legacy line, and the bundle replaces it. So the label is a second string, checked in the bundle and the status output only. A session name in a friction note's text is a third, checked in the bundle only | End to end | 5 | 8.2, 10.1, 10.2 |
 | 12 | Bundle redaction: the seeded fixture leaks nothing; a value hashes alike within one bundle and differently across two; each probe of the stage 5 review (control sequences, an IPv6 address before a colon, the secret shapes, the other homes, a line's own fields and keys, user-chosen config keys, a holder file name, a tally key, a long line, a bad friction trace) is a case | Unit | 5 | 8.3 |
 | 13 | A failed hook writes one `hook.log` line, exits 0, and stays within its budget | Integration | 5 | 4.4 |

@@ -30,6 +30,7 @@ const (
 	habStderrFile = "hab.stderr" // the service manager's capture of gff-hab's stdout and stderr
 	healthFile    = "health.jsonl"
 	hookLogFile   = "hook.log"
+	capcomLogFile = "capcom.log" // the Capcom engine's structured lines; the engine writes and rotates it
 	crashDir      = "crash"
 	runDir        = "run"
 	habMarkerFile = "hab.json"
@@ -129,6 +130,12 @@ func (r *diagRef) touch() {
 func (r *diagRef) holderLost(instance, build string, panes int) {
 	if d := r.Load(); d != nil {
 		d.holderLost(instance, build, panes)
+	}
+}
+
+func (r *diagRef) engineCrash(rec health.Record) {
+	if d := r.Load(); d != nil {
+		d.engineCrash(rec)
 	}
 }
 
@@ -275,6 +282,14 @@ func (d *habDiag) holderLost(instance, build string, panes int) {
 		d.logf("health record: %v", err)
 	}
 	d.tally.Health("holder", r.Kind)
+}
+
+// engineCrash writes the record of a Capcom engine crash, whose cause the supervisor gives as
+// a class (6.3). It raises no crash notice: the supervisor's own note and notice cover the engine.
+func (d *habDiag) engineCrash(r health.Record) {
+	if err := health.Append(filepath.Join(d.state, healthFile), r); err != nil {
+		d.logf("health record: %v", err)
+	}
 }
 
 // serveHooks runs the hook server; the caller marks the endpoint up first. When it stops with an

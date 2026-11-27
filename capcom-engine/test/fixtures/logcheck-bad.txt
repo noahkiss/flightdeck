@@ -1,0 +1,28 @@
+// The source check's fixture (test/logcheck.test.ts): one case of each ban, marked "want: <ban>"
+// on its line. It is no module of the engine; tsc never reads it.
+import { Attr, count, errType, relayStderr, text, word } from '../../src/log.js';
+
+const quiet = '// console.log in a string is no use';
+/* console.log in a comment is no use */
+const re = /console\.log("x")/;
+
+export function bad(elog: any, log: any, v: string, e: unknown) {
+  console.log(v); // want: console
+  process.stderr.write(v); // want: stderr
+  relayStderr(v); // want: relay
+  elog.info(v); // want: message
+  elog.warn(`turn ${v}`); // want: message
+  elog.error('turn failed', v); // want: value
+  log.info('turn failed', { class: v }); // want: value
+  elog.info('turn failed', word(v, 'x')); // want: key
+  elog.info('turn failed', count(String(v), 1)); // want: key
+  elog.info('turn failed', word('model', 'a' + v)); // want: built
+  elog.info('turn failed', word('model', `m-${v}`)); // want: built
+  const f = elog.warn; // want: as-value
+  log.line('info', 'engine', v, []); // want: direct
+  log.for('engine').info(v); // want: message
+  const a = new Attr(Symbol(), 'k', v); // want: direct
+  // Allowed: a literal message, constructor values, text with a built value.
+  elog.info('turn failed', errType(e), text('a' + v), count('lines', 3));
+  return [quiet, re, f, a];
+}

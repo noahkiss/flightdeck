@@ -430,6 +430,7 @@ export interface Rig {
   sdk: FakeSdk;
   engine: Engine;
   logs: string[];
+  stderr: string[]; // the SDK stderr the engine relays to engine.log
   exitCode: () => number | undefined;
   stop: () => Promise<void>;
 }
@@ -453,6 +454,7 @@ export async function rig(opts: { hello?: Record<string, unknown>; setup?: (r: {
   await opts.setup?.({ cfg, cwd, sdk });
   await hab.start(dir);
   const logs: string[] = [];
+  const stderr: string[] = [];
   let code: number | undefined;
   const engine = new Engine({
     query: sdk.query,
@@ -462,6 +464,7 @@ export async function rig(opts: { hello?: Record<string, unknown>; setup?: (r: {
       code = c;
     },
     log: (l) => logs.push(l),
+    stderr: (s) => stderr.push(s),
     backoffStartMs: 50,
     flushTimeoutMs: 1000,
   });
@@ -474,6 +477,7 @@ export async function rig(opts: { hello?: Record<string, unknown>; setup?: (r: {
     sdk,
     engine,
     logs,
+    stderr,
     exitCode: () => code,
     stop: async () => {
       for (const q of sdk.queries) q.close();

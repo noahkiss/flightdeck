@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/capcomthread"
+	"github.com/noahkiss/flightdeck/internal/diaglog"
+	"github.com/noahkiss/flightdeck/internal/health"
 )
 
 type fakeProc struct {
@@ -488,4 +491,104 @@ func TestSupervisorNodeMissing(t *testing.T) {
 		t.Fatal(st.Reason)
 	}
 	s.noStart()
+}
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// An engine crash writes a health record whose cause is a class: the exit status, start_check,
+// crash_limit (diagnostics.md 6.3). The session row names the engine's last error line in
+// capcom.log by message and type, never a line of engine.log, and no log line holds the
+// engine's error text or its stderr (1.5, 4.9). The job gets capcom.log's path.
+func TestSupervisorCrashRecords(t *testing.T) {
+	const canary = "cnry" + "5up3rv"
+	var recs []health.Record
+	var mu sync.Mutex
+	s := newSup(t, func(s *supT) {
+		s.env["CLAUDE_CODE_OAUTH_TOKEN"] = "tok"
+		s.cfg.Limits.CrashLimit = 2
+	})
+	logs := &lockedBuf{}
+	diaglog.Setup(diaglog.Config{Proc: "hab", File: logs})
+	t.Cleanup(diaglog.Reset)
+	s.sup.cfg.LogPath = filepath.Join(s.dir, "logs", "capcom.log")
+	s.sup.cfg.Health = func(r health.Record) { mu.Lock(); recs = append(recs, r); mu.Unlock() }
+	causes := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		var out []string
+		for _, r := range recs {
+			if r.Proc != "capcom" || r.Kind != health.KindCrash {
+				t.Errorf("record %+v", r)
+			}
+			out = append(out, r.Cause)
+		}
+		return out
+	}
+	s.sup.Ensure(context.Background())
+	p := s.started()
+	s.job.mu.Lock()
+	env := s.job.starts[0].Env
+	s.job.mu.Unlock()
+	if !slices.Contains(env, LogVar+"="+s.sup.cfg.LogPath) {
+		t.Fatalf("env %v", env)
+	}
+	os.WriteFile(filepath.Join(s.dir, LogFile), []byte("sdk: the prompt was "+canary+"\n"), 0o600)
+	os.MkdirAll(filepath.Dir(s.sup.cfg.LogPath), 0o700)
+	os.WriteFile(s.sup.cfg.LogPath, []byte(`{"t":"`+s.clock.Now().UTC().Format(time.RFC3339Nano)+`","lvl":"error","msg":"uncaught exception","proc":"capcom","comp":"crash","err_type":"TypeError"}`+"\n"), 0o600)
+	s.sup.EngineError("", "the SDK stopped: "+canary, true)
+	p.exit()
+	st := s.waitState(StateError)
+	if st.Reason != "the engine exited: uncaught exception (TypeError), unknown" {
+		t.Fatalf("reason %q", st.Reason)
+	}
+	waitFor(t, "a record", func() bool { return len(causes()) == 1 })
+	s.clock.Advance(capcom.DefaultLimits.RestartDelay)
+	p = s.started()
+	p.exit()
+	st = s.waitState(StateError)
+	if !strings.Contains(st.Reason, "crashed 2 times") || strings.Contains(st.Reason, canary) {
+		t.Fatalf("reason %q", st.Reason)
+	}
+	waitFor(t, "the limit's record", func() bool { return len(causes()) == 2 })
+	if c := causes(); c[0] != "unknown" || c[1] != CauseCrashLimit {
+		t.Fatalf("causes %v", c)
+	}
+	// The start check: its text is the row's reason, and no log line's.
+	s.sup.Resume(context.Background())
+	p = s.started()
+	s.sup.EngineError(ErrKindStart, "start check: tool outside the Capcom surface: "+canary, true)
+	p.exit()
+	st = s.waitState(StateError)
+	if !strings.HasPrefix(st.Reason, "the engine's start check failed: start check: tool outside") {
+		t.Fatalf("reason %q", st.Reason)
+	}
+	waitFor(t, "the start check's record", func() bool { return len(causes()) == 3 })
+	if c := causes(); c[2] != CauseStartCheck {
+		t.Fatalf("causes %v", c)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "engine crash limit reached") || !strings.Contains(out, "engine start check failed") {
+		t.Fatalf("lines %s", out)
+	}
+	s.mu.Lock()
+	all := out + strings.Join(s.logs, "\n") + strings.Join(s.notes, "\n")
+	s.mu.Unlock()
+	if strings.Contains(all, canary) {
+		t.Fatalf("a log line holds the engine's text:\n%s", all)
+	}
 }

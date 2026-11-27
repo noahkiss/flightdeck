@@ -1,0 +1,6 @@
+{"t":"2026-11-27T10:11:12.345Z","lvl":"info","msg":"session started","proc":"capcom","comp":"engine","session":"sess-0a1b","why":"first"}
+{"t":"2026-11-27T10:11:12.345Z","lvl":"info","msg":"sdk stderr","proc":"capcom","comp":"sdk","lines":4,"bytes":180}
+{"t":"2026-11-27T10:11:12.345Z","lvl":"warn","msg":"turn failed","proc":"capcom","comp":"codex","class":"rate_limit"}
+{"t":"2026-11-27T10:11:12.345Z","lvl":"warn","msg":"route connect failed","proc":"capcom","comp":"route","err_type":"Error","code":"ECONNREFUSED","retry_ms":2000}
+{"t":"2026-11-27T10:11:12.345Z","lvl":"error","msg":"uncaught exception","proc":"capcom","comp":"crash","err_type":"TypeError","model":"claude-opus-4-1"}
+{"t":"2026-11-27T10:11:12.345Z","lvl":"info","msg":"home entry moved aside","proc":"capcom","comp":"home","entry":"auth.json"}

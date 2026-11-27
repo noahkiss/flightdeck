@@ -17,6 +17,7 @@ import { Route, type Msg } from './route.js';
 import { configDir, findTranscript, handedIds, MARKER_RE, markedUser } from './transcript.js';
 import { cleanSummary, seedText, SUMMARY_SYSTEM, summaryPrompt } from './context.js';
 import { admit, ContextAsks, type ContextMsg, type Credential, defaultSettings, EVENT_FETCH_REFUSAL, helloReseed, isUserKind, type Item, itemLines, mayHand, newTurnId, opensUserTurn, originOf, type Pace, PACE_OK, parseContext, parseCredential, parsePace, parseSettings, redactor, type Settings } from './contract.js';
+import { type ComponentLog, count, errClass, errorClass, errType, Log, relayStderr, session, type Sink, stderrSink, word } from './log.js';
 import { ENGINE_VERSION, SDK_VERSION } from './version.js';
 
 export const CAPABILITIES = [
@@ -50,7 +51,10 @@ export interface EngineDeps {
   env: NodeJS.ProcessEnv;
   cwd: string;
   exit: (code: number) => void;
-  log?: (line: string) => void;
+  // log takes each structured line for capcom.log (diagnostics.md 4.9); default stderr.
+  log?: Sink;
+  // stderr takes the SDK's raw stderr, credential-redacted: engine.log only (4.9).
+  stderr?: (text: string) => void;
   backoffStartMs?: number;
   flushTimeoutMs?: number;
 }
@@ -147,8 +151,20 @@ export class Engine {
   private model?: string; // the model the SDK session runs now; undefined: the SDK's default
   private nextOrigin?: 'user' | 'event'; // the origin of the turn the next hand begins
 
+  // The SDK's stderr since the last count was logged (4.9): counted, never copied to capcom.log.
+  private sdkLines = 0;
+  private sdkBytes = 0;
+
+  private redact = redactor(() => this.credential?.value);
+  private logs: Log;
+  private elog: ComponentLog;
+  private slog: ComponentLog;
+
   constructor(d: EngineDeps) {
     this.d = d;
+    this.logs = new Log(d.log ?? stderrSink, this.redact);
+    this.elog = this.logs.for('engine');
+    this.slog = this.logs.for('summary');
   }
 
   start(): void {
@@ -160,17 +176,35 @@ export class Engine {
       onHello: (m) => this.onHello(m),
       onMessage: (m) => this.onMessage(m),
       afterReady: () => this.resendApprovals(),
-      log: (l) => this.log(l),
+      log: this.logs.for('route'),
+      onFatal: () => void this.exit(1),
     });
     this.route.start();
   }
 
   // ---- logging and redaction ----
 
-  private redact = redactor(() => this.credential?.value);
+  // onSdkStderr counts the SDK's stderr and relays it, redacted, to engine.log only (4.9).
+  private onSdkStderr = (data: string): void => {
+    for (const l of data.split('\n')) {
+      if (!l.trim()) continue;
+      this.sdkLines++;
+      this.sdkBytes += Buffer.byteLength(l);
+    }
+    (this.d.stderr ?? relayStderr)(this.redact(data));
+  };
 
-  private log(line: string): void {
-    (this.d.log ?? ((l: string) => process.stderr.write(l + '\n')))(this.redact(line));
+  // logSdkStderr logs the count of the SDK's stderr lines since the last count, once per turn.
+  private logSdkStderr(): void {
+    if (this.sdkLines === 0) return;
+    this.logs.for('sdk').info('sdk stderr', count('lines', this.sdkLines), count('bytes', this.sdkBytes));
+    this.sdkLines = 0;
+    this.sdkBytes = 0;
+  }
+
+  // logError logs an error by its type and class, never its text (4.9).
+  private logError(e: unknown): void {
+    this.elog.warn('sdk error', errType(e), errClass(errorClass(e instanceof Error ? e.message : String(e))));
   }
 
   private send(type: string, fields: Record<string, unknown> = {}): void {
@@ -292,7 +326,7 @@ export class Engine {
       await this.q.setModel(want);
       this.model = want;
     } catch (e) {
-      this.log(`set the model to ${want ?? 'the default'}: ${(e as Error).message}`);
+      this.elog.warn('set model failed', word('model', want ?? 'default'), errType(e));
     }
   }
 
@@ -399,7 +433,7 @@ export class Engine {
     try {
       await this.q.interrupt();
     } catch (e) {
-      this.log(`interrupt failed: ${(e as Error).message}`);
+      this.elog.warn('interrupt failed', errType(e));
     }
   }
 
@@ -462,7 +496,7 @@ export class Engine {
     try {
       q = this.d.query({ prompt: input, options: this.summaryOptions() });
     } catch (e) {
-      this.log(`summary: the SDK did not start: ${(e as Error).message}`);
+      this.slog.warn('summary call did not start', errType(e));
       return undefined;
     }
     input.push({
@@ -487,7 +521,7 @@ export class Engine {
       }
       return undefined;
     })().catch((e) => {
-      this.log(`summary: ${(e as Error).message}`);
+      this.slog.warn('summary call failed', errType(e), errClass(errorClass((e as Error)?.message ?? '')));
       return undefined;
     });
     const got = await Promise.race([read, timeout]);
@@ -497,7 +531,7 @@ export class Engine {
     } catch {
       // already closed
     }
-    if (got === undefined) this.log('summary: no new summary; the old one stays');
+    if (got === undefined) this.slog.info('summary kept');
     return got;
   }
 
@@ -589,9 +623,7 @@ export class Engine {
       },
       // Echo each streamed user message back: the read mark (7.3).
       extraArgs: { 'replay-user-messages': null },
-      stderr: (data: string) => {
-        for (const l of data.split('\n')) if (l.trim()) this.log(`sdk: ${l}`);
-      },
+      stderr: this.onSdkStderr,
     };
     if (resume) opts.resume = resume;
     if (this.settings.model) opts.model = this.settings.model;
@@ -622,6 +654,7 @@ export class Engine {
     try {
       q = this.d.query({ prompt: input, options: this.buildOptions(resume) });
     } catch (e) {
+      this.logError(e);
       this.sendError(`the SDK did not start: ${(e as Error).message}`, '', true);
       await this.exit(1);
       return;
@@ -689,11 +722,13 @@ export class Engine {
           const servers = (((m as any).mcp_servers as { name?: string }[]) ?? []).map((x) => x?.name ?? '');
           const bad = ((m as any).tools as string[] ?? []).filter((t) => !onSurface(t, servers));
           if (bad.length) {
+            this.elog.error('start check failed', count('tools', bad.length));
             this.sendError(`start check: tool outside the Capcom surface: ${bad.join(', ')}`, 'start', true);
             await this.exit(1);
             return;
           }
           this.sessionId = (m as any).session_id ?? '';
+          this.elog.info('session started', session(this.sessionId), word('why', why));
           this.send('session.started', { session: this.sessionId, why });
           continue;
         }
@@ -710,8 +745,10 @@ export class Engine {
       }
     } catch (e) {
       if (gen !== this.gen || this.exiting) return;
+      this.logError(e);
       if (!sawInit && resume) {
         // The session would not resume: a re-seed replaces it (3.4).
+        this.elog.warn('resume failed', session(resume));
         this.sendError(`resume of ${resume} failed: ${(e as Error).message}`, '', false);
         this.reseedPending = 'restart_failed';
         this.maybeReseed();
@@ -724,12 +761,14 @@ export class Engine {
     }
     if (gen !== this.gen || this.exiting) return;
     if (!sawInit && resume) {
+      this.elog.warn('resume failed', session(resume));
       this.sendError(`resume of ${resume} failed`, '', false);
       this.reseedPending = 'restart_failed';
       this.maybeReseed();
       return;
     }
     // The SDK ended on its own.
+    this.elog.warn('sdk session ended');
     this.endTurn('error');
     this.sendError('the SDK session ended', '', true);
     await this.exit(1);
@@ -810,8 +849,10 @@ export class Engine {
       context_used: window > 0 ? Math.min(1, t.lastContext / window) : 0,
     });
     this.turn = undefined;
+    this.logSdkStderr();
     this.denyOpenApprovals('The turn ended.');
     if (t.authFailed) {
+      this.elog.warn('credential refused');
       this.sendError('the model provider refused the credential', 'auth', true);
       await this.exit(1);
       return;
@@ -837,6 +878,7 @@ export class Engine {
     if (!t) return;
     this.send('turn.ended', { turn: t.id, result, input_tokens: 0, output_tokens: 0, cost_usd: 0, context_used: 0 });
     this.turn = undefined;
+    this.logSdkStderr();
   }
 
   // A re-seed (6.2): ask gff-hab for the material, update the summary (not for a new
@@ -890,6 +932,8 @@ export class Engine {
   private async exit(code: number): Promise<void> {
     if (this.exiting) return;
     this.exiting = true;
+    this.logSdkStderr();
+    this.elog.info('engine exits', count('code', code));
     this.denyOpenApprovals('Capcom is stopping.');
     this.asks.drain();
     this.closeQuery();

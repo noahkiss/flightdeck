@@ -467,9 +467,9 @@ for (const kind of ['oauth_token', 'api_key'] as const) {
       r.sdk.last.fail(new Error(`boom ${PLANTED}`));
       await r.hab.wait('error');
       await until(() => r.exitCode() !== undefined);
-      const captured = JSON.stringify(r.hab.received) + '\n' + r.logs.join('\n');
+      const captured = JSON.stringify(r.hab.received) + '\n' + r.logs.join('\n') + r.stderr.join('\n');
       assert.ok(!captured.includes(PLANTED), 'the credential appears in no message or log line');
-      assert.ok(r.logs.some((l) => l.includes('[redacted]')));
+      assert.ok(r.stderr.some((l) => l.includes('[redacted]')), 'the SDK stderr reaches engine.log redacted');
       const files = await fs.readdir(r.dir, { recursive: true });
       for (const f of files) {
         const p = path.join(r.dir, String(f));
@@ -724,5 +724,31 @@ test('a Capcom job with fetch lets its event turn ask for an unseen URL; gff-hab
     await until(() => r.hab.of('turn.ended').length === 3);
     assert.deepEqual(verdicts, ['deny', 'deny']);
     assert.equal(r.hab.of('approval.request').length, 2);
+  });
+});
+
+// Diagnostics test 11, the Claude engine's leg: a string in the input, the SDK's stderr, a tool
+// input and an SDK failure is in no capcom.log line. The stderr is counted once per turn and
+// relayed whole to engine.log only (4.9).
+test('the SDK stderr is counted, never copied, and an SDK error is logged by its class', async () => {
+  const canary = 'cnry' + 'e9n1g7';
+  await withRig({}, async (r) => {
+    await started(r);
+    r.sdk.script = async (ctx) => {
+      ctx.options.stderr!(`warn: prompt was ${canary}\nsecond line\n`);
+      await ctx.tool('mcp__flightdeck__hosts', { query: canary });
+      ctx.say('ok');
+    };
+    r.hab.input('a', `hi ${canary}`);
+    await r.hab.wait('turn.ended');
+    await until(() => r.logs.some((l) => l.includes('"msg":"sdk stderr"')), 3000, 'the stderr count');
+    r.sdk.last.fail(new Error(`503 Service Unavailable: ${canary}`));
+    await r.hab.wait('error');
+    await until(() => r.exitCode() !== undefined);
+    const lines = r.logs.map((l) => JSON.parse(l));
+    assert.ok(!r.logs.join('').includes(canary), r.logs.join(''));
+    assert.deepEqual(lines.filter((o) => o.msg === 'sdk stderr').map((o) => [o.lines, o.bytes]), [[2, `warn: prompt was ${canary}`.length + 'second line'.length]]);
+    assert.ok(lines.some((o) => o.msg === 'sdk error' && o.class === 'provider' && o.err_type === 'Error'), r.logs.join(''));
+    assert.ok(r.stderr.join('').includes(canary), 'engine.log keeps the raw stderr');
   });
 });

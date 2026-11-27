@@ -289,8 +289,9 @@ func printStatus(out io.Writer, r statusReport) {
 	tw.Flush()
 }
 
-// logSources lists the log files gff-hab logs merges: hab.log, each holder's file and hook.log
-// (4.8). A holder's lines are in local time: the holder's log flags are the standard ones.
+// logSources lists the log files gff-hab logs merges: hab.log, each holder's file, hook.log and
+// capcom.log (4.8). A holder's lines are in local time: the holder's log flags are the standard
+// ones.
 func logSources(dir string) []logfile.Source {
 	logs := logsDir(dir)
 	out := []logfile.Source{{Kind: "hab", Name: "hab", Path: filepath.Join(logs, habLogFile)}}
@@ -302,10 +303,11 @@ func logSources(dir string) []logfile.Source {
 				Path: filepath.Join(logs, e.Name()), Loc: time.Local})
 		}
 	}
-	return append(out, logfile.Source{Kind: "hook", Name: "hook", Path: filepath.Join(logs, hookLogFile)})
+	return append(out, logfile.Source{Kind: "hook", Name: "hook", Path: filepath.Join(logs, hookLogFile)},
+		logfile.Source{Kind: "capcom", Name: "capcom", Path: filepath.Join(logs, capcomLogFile)})
 }
 
-var logKinds = []string{"hab", "holder", "hook"}
+var logKinds = []string{"hab", "holder", "hook", "capcom"}
 
 // logsCmd prints the hab's log files merged by time (4.8). It reads the files, so it works while
 // gff-hab is down.
