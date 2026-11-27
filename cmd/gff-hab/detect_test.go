@@ -152,6 +152,17 @@ func TestDetectExplain(t *testing.T) {
 	if !strings.Contains(js, `"chosen_by": "process"`) || !strings.Contains(js, `"rule": "live_prompt_box"`) {
 		t.Errorf("JSON output:\n%s", js)
 	}
+	// -no-text keeps the rules and drops the region text and the arguments (diagnostics.md 8.2).
+	if !strings.Contains(js, "❯") || !strings.Contains(js, `"args"`) {
+		t.Errorf("the JSON output lacks the region text or the arguments this check needs:\n%s", js)
+	}
+	for _, args := range [][]string{{"-json", "-no-text"}, {"-all", "-no-text"}} {
+		nt := run(t, append(append([]string{"detect", "explain", "-socket", e.sock}, args...), sc.Pane)...)
+		if strings.Contains(nt, "❯") || strings.Contains(nt, `"args"`) ||
+			!strings.Contains(nt, "live_prompt_box") || !strings.Contains(nt, "prompt_box_body") {
+			t.Errorf("detect explain %v:\n%s", args, nt)
+		}
+	}
 	cmd := exec.Command(bin, "detect", "explain", "-socket", e.sock, "nonesuch")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

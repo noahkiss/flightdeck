@@ -108,6 +108,17 @@ type Def struct {
 	// integer marks a whole-number setting: CheckGo refuses a TOML float for it, as Check
 	// refuses a JSON 30.0.
 	integer bool
+	// enum marks a setting whose value is one of a fixed set of words.
+	enum bool
+}
+
+// Plain reports whether the setting's value is an enum word, a number or a Boolean: a value
+// that holds no free text, so a diagnostics bundle may keep it (diagnostics.md 8.3).
+func (d Def) Plain() bool {
+	if d.enum || d.integer {
+		return true
+	}
+	return string(d.Default) == "true" || string(d.Default) == "false"
 }
 
 // Defs is every hab-side setting, in the order settings.get lists them.
@@ -115,7 +126,7 @@ var Defs = []Def{
 	{ID: StartElsewhere, Default: json.RawMessage(`false`), check: checkBool},
 	{ID: GroupPlan, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440), integer: true},
-	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents")},
+	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents"), enum: true},
 	{ID: PermissionWait, Default: json.RawMessage(`60`), check: checkInt(0, 120), integer: true},
 	{ID: HabitBrief, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: HabitReminder, Default: json.RawMessage(`true`), check: checkBool},
@@ -134,7 +145,7 @@ var Defs = []Def{
 	{ID: CapcomDailyTurns, Default: json.RawMessage(`200`), check: checkInt(0, 1000), integer: true},
 	{ID: CapcomBatchWindow, Default: json.RawMessage(`120`), check: checkInt(10, 3600), integer: true},
 	{ID: CapcomBatchMax, Default: json.RawMessage(`20`), check: checkInt(1, 200), integer: true},
-	{ID: CapcomEventActions, Default: json.RawMessage(`"allow"`), check: checkWord("off", "ask", "allow", "all")},
+	{ID: CapcomEventActions, Default: json.RawMessage(`"allow"`), check: checkWord("off", "ask", "allow", "all"), enum: true},
 	{ID: CapcomEventActionsPerTurn, Default: json.RawMessage(`10`), check: checkInt(0, 50), integer: true},
 	{ID: CapcomEventActionMaxAge, Default: json.RawMessage(`60`), check: checkInt(1, 1440), integer: true},
 	{ID: CapcomPaceDailyShare, Default: json.RawMessage(`15`), check: checkInt(1, 100), integer: true},
@@ -149,9 +160,9 @@ var Defs = []Def{
 	{ID: GroupFreshAfterCompacts, Default: json.RawMessage(`4`), check: checkInt(1, 20), integer: true},
 	{ID: GroupFreshTranscriptMB, Default: json.RawMessage(`4`), check: checkInt(1, 64), integer: true},
 	{ID: GroupHandoffAt, Default: json.RawMessage(`60`), check: checkInt(20, 95), integer: true},
-	{ID: AgentReadPanes, Default: json.RawMessage(`"all"`), check: checkWord("off", "project", "all")},
-	{ID: AgentDrivePanes, Default: json.RawMessage(`"agents"`), check: checkWord("off", "agents", "project", "all")},
-	{ID: AgentStartMode, Default: json.RawMessage(`"auto"`), check: checkWord("ask", "auto", "bypass")},
+	{ID: AgentReadPanes, Default: json.RawMessage(`"all"`), check: checkWord("off", "project", "all"), enum: true},
+	{ID: AgentDrivePanes, Default: json.RawMessage(`"agents"`), check: checkWord("off", "agents", "project", "all"), enum: true},
+	{ID: AgentStartMode, Default: json.RawMessage(`"auto"`), check: checkWord("ask", "auto", "bypass"), enum: true},
 }
 
 func mustJSON(v any) json.RawMessage {

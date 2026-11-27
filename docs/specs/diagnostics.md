@@ -1,8 +1,8 @@
 # Diagnostics: behaviour spec
 
-Status: stages 1 to 4 built. Stage 5: the structured lines and the source check built; the
-Capcom log, `hook.log`, `detect explain --no-text`, the bundle and the canary test proposed.
-Stage 6 proposed. Owner decisions are open in section 13.
+Status: stages 1 to 4 built. Stage 5: the structured lines, the source check, `hook.log`,
+`detect explain --no-text`, the bundle and the canary test built; the Capcom engine's log (4.9)
+and the canary's Capcom leg proposed. Stage 6 proposed. Owner decisions are open in section 13.
 
 This spec says how Flightdeck records logs, traces, crashes and local usage figures. The goal is
 that early daily use tells the maintainers three things: how the product is used, which bugs
@@ -337,6 +337,14 @@ nothing when it works.
 
 - When it fails (no hab, a timeout, an error status), it appends one line to `hook.log`: time,
   harness, event, the failure kind and the duration. It never writes the payload.
+- The line is a structured line (4.2) of `proc` `hook`, at `warn`: message "hook failed",
+  `harness`, `event`, `failure` and `took_ms`. `failure` is `no_hab` (nothing answers on the hook
+  socket), `timeout` (the run reached its budget), `status` (gff-hab answered an error status),
+  `payload` (the payload is not JSON or names no event) or `other`.
+- A run outside any pane gff-hab owns (no `GFF_HAB`) and a nested Claude Code run send nothing by
+  design, and write no line. The hard cap at the budget plus 50 ms ends the process from a timer;
+  that timer writes the `timeout` line before the exit.
+- The state folder is `$GFF_HAB_STATE`, which gff-hab sets in its panes, else the default (3).
 - A hook only appends. Each run opens the file fresh, so gff-hab's rename in the sweep is safe.
 - The exit code stays 0. A hook must never break the harness.
 - gff-hab logs "no hook reached gff-hab" for a session as a plain line, not under
@@ -736,7 +744,15 @@ machine, and the planned prune needs them from the first week. Latencies and app
 `gff-hab bundle [-o <file>] [--since 48h] [--no-friction]` writes one `.tar.gz`. By default it
 goes in the current directory as `flightdeck-diagnostics-<yyyymmdd-hhmm>.tar.gz`. It works while
 gff-hab is down. At the end it prints the archive path, its size, the count of replacements per
-rule, and one line: "Review the files before you share them."
+rule, each item it left out and why, and one line: "Review the files before you share them."
+
+- `-socket`, `-state`, `-holders` and `-config` name the hab as the other commands do. The peer
+  file is `$GFF_HAB_PEERS`, else its default (`mesh.md` 3.1).
+- The archive's files sit under one folder, `flightdeck-diagnostics-<yyyymmdd-hhmm>/`, with no
+  user or group name in its headers. The command builds the folder beside the archive, writes
+  the archive to a temporary file, renames it, and removes the folder.
+- The window has a start only: a line written while the bundle is made is kept. A start in the
+  future (a negative duration or a later time) is refused.
 
 ### 8.2 Contents
 
@@ -751,10 +767,20 @@ The bundle holds only these files.
 | `logs/` | `hab.log`, `holder.*.log`, `hook.log`, `capcom.log` within the window | Pass 1, then pass 2 |
 | `crash/` | Crash files and stack dumps within the window | Pass 2 |
 | `health.jsonl` | 6.3 | Pass 1, then pass 2 |
-| `tallies/` | Day files within the window and `seen.json` | Kept: names and numbers only |
-| `config/hab.toml`, `config/peers.toml` | The config files | Keys kept; values replaced unless allowlisted (8.3) |
+| `tallies/` | Day files within the window and `seen.json` | Pass 2 on every key and string: the writer keeps names from closed sets and numbers only, and the bundle does not trust the file |
+| `config/hab.toml`, `config/peers.toml` | The config files | Schema keys kept, other keys tokenized; values replaced unless allowlisted (8.3) |
 | `friction/` | Friction notes within the window (9) | Text: pass 2. Log snapshots: pass 1, then pass 2 |
 | `detect.json` | `gff-hab detect explain --json --no-text` for each live pane | Pass 2 |
+
+- `hab.stderr` is never read: it holds the text copy of `warn` and `error` lines that `hab.log`
+  holds by key (4.2), with no classes, and a crash's traceback, which the crash file holds too.
+- `service.txt` comes from the install record (`<state>/install.json`). It holds four parsed
+  fields per job: loaded, running, last exit, runs (launchd) or restarts (systemd), never the
+  init system's own output. With no install record it says so and asks nothing.
+- `detect.json` lists each live pane with its answer or its error kind. With gff-hab down it is
+  left out, and the manifest names it with the reason.
+- `logs/` keeps each file's name, old files included, after pass 2: a holder's file is named for
+  its instance.
 
 Never in a bundle: `engine.log`, `hab.stderr`, transcripts, terminal rings and snapshots,
 logbook contents, module state, the hab key, device keys, push keys, the Capcom credential,
@@ -764,7 +790,17 @@ environment files, secret sets, any file not in this table.
 `gff-hab detect explain` prints the winning rule's screen region (`cmd/gff-hab/detect.go:343-344`,
 `writeRegion` at 356-367): terminal output that no scrub can recognise. The bundle uses a new
 `--no-text` mode: rule ids, states, priorities and region coordinates, never the text. Test 11's
-canary is on screen in a live pane at bundle time, and must not appear in `detect.json`.
+canary is on screen in a live pane at bundle time, and must not appear in `detect.json`. The
+mode also drops:
+
+- each process's arguments (`args`), which can hold a prompt, and every name detection took from
+  them, such as the code of `node -e`. A process keeps the names from its own name and from
+  `argv[0]`, and the name that matched a manifest, which is the manifest's own word.
+- the open permission request but its `id` and `tool`: its command, files, folder, tool input,
+  title, description and context line are the agent's content.
+- the trust prompt's folder.
+
+It strips the answer in the client, so the method and the schema do not change.
 
 ### 8.3 Redaction
 
@@ -791,14 +827,63 @@ bundle command.
 
 | Rule | Replaced by |
 |---|---|
-| This machine's host name, user name and home path; every host, label and device id in `peers.toml` and `hab.toml`; the names of projects gff-hab knows. Exact, any case | The `n:` token |
+| This machine's host name, user name and home path; every host, label and device id in `peers.toml` and `hab.toml`; the names of projects, sessions, rounds and groups gff-hab knows. Exact, any case | The `n:` token; the home path `~` |
 | The hygiene scan's built-in rules (`ci-release.md` 9.4): private IPv4, CGNAT IPv4, tailnet IPv6, `<label>.ts.net` names, home paths | `<ip>`, `<ip>`, `<ip>`, `<host>`, `~/<path>` |
 | Any other IPv4 or IPv6 address | `<ip>` |
-| Email addresses | `<email>` |
 | A URL's user info, query and fragment | Removed |
+| Email addresses | `<email>` |
 | PEM blocks; `ssh-` and `ecdsa-` key lines; `SHA256:` fingerprints | `<key>` |
-| `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer` | `<secret>` |
+| `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer`; the whole value of a structured line's attribute whose key is, or ends in, `token`, `secret`, `password`, `passwd`, `authorization`, `api_key` or `private_key` | `<secret>` |
 | Runs of 32 or more base64, base64url or hex characters | `<blob>` |
+
+How each rule reads (the code is `internal/diagbundle`):
+
+- **Control sequences first.** Before both passes, every string loses its terminal control
+  sequences (CSI, OSC and the other ESC forms) and its C0 controls and DEL; tab and newline stay.
+  A coloured name such as `ESC[1m` + name would otherwise touch the sequence's final letter, and
+  raw escapes would reach the terminal of whoever reads the bundle. Where a removed run stood
+  between two letters or digits, a space takes its place.
+- **Names.** A name matches only as a word of its own: no letter or digit right before or after
+  it. A name shorter than 3 characters, or with no letter, is not used: it would hit common
+  words. A word the bundle's own fields use is not used either: a harness id, a process kind, a
+  level, a component, a structured line's key, a config key the schema owns, a name of the
+  state folder's fixed layout. A session named `claude` must not turn every harness id into a
+  token. The names are:
+  - the host name and its first label, the user name;
+  - the values of the config files' `label`, `device_id` and `name` keys, and of `host`,
+    `host_id` and `hostname` with their first label;
+  - the host part of each endpoint and URL, with its first label (not for an address);
+  - each project root's folder and the folders in it;
+  - the projects, their folders and the session names in `structure.json`, so they hold with
+    gff-hab down;
+  - from a running gff-hab: its host id with its first label, its projects, each session's
+    name and title, each round's name and each group's title.
+- **The home folder** becomes `~` in pass 1 and pass 2 alike, so a path reads the same in both.
+- **URL before email.** A URL's user info such as `user:pw@host` would otherwise read as an
+  address and leave the user name.
+- **Addresses.** An IPv6 address followed by `:`, as in `"%s: %w"`, is an address: the rule
+  trims the colon, reads the address and writes the colon back after `<ip>`. A colon followed
+  by a hex digit makes the run longer than an address, such as a time.
+- **Home paths.** Besides `/Users/<name>` and `/home/<name>`, the rule takes `/var/home/<name>`,
+  `/root`, and a macOS user's temporary folder, `/private/var/folders/<a>/<b>` (also without
+  `/private`).
+- **Secrets.** `bearer` takes the next word. The other words take the value after `:` or `=`, so
+  "the key is missing" keeps its words:
+  - A quote, `\` escaped or not, may stand on either side of the separator, as in JSON inside an
+    error string. `%3A`, `%3D` and `%22` stand for `:`, `=` and a quote in a URL-encoded value.
+  - A quoted value is taken to its closing quote: `password: "correct horse"` loses all of it.
+  - After the separator, an authorization scheme (`Basic`, `Bearer`, `Token`, `Digest`) stays
+    and the word after it goes.
+  - A command line flag that names a secret (`--token x`, `-password x`) loses its next word,
+    unless that word is another flag.
+  - A value that is already a placeholder, such as `<ip>`, stays.
+- **Short tokens are kept.** A token with no key before it is caught only by the blob rule, at
+  32 characters or more. A shorter one, such as an AWS `AKIA` key id or a short Slack token, is
+  kept. This is a known limit: the bundle is the second guard (10.2).
+- **Blobs.** A run must hold a letter and a digit. A UUID, the form of a pane id, is kept. A run
+  with `/` must also mix upper and lower case, so a path is not a blob.
+- Only the hygiene scan's built-in rules run; its private rules stay outside the repo and the
+  product.
 
 Pass 2 removes names and secrets. It cannot remove content such as a prompt fragment. Content is
 kept out at the source (10.2); the bundle is the second guard, not the first.
@@ -807,12 +892,38 @@ The manifest records each rule's hit count, never the matched text, as the hygie
 (`ci-release.md` 9.6).
 
 **Config allowlist.** A config value stays only when its key is a setting whose value is an enum,
-a number or a boolean in the settings registry. Every other value becomes `<value>`.
+a number or a boolean in the settings registry. Every other value becomes `<value>`. A key stays
+as written only when the schema owns it: a setting's id, or a key the config code names (the
+config structs' TOML keys, and the keys of the tables read as maps, such as `[capcom]`). Every
+other key becomes its `n:` token: a round's name, an alias, a secret set's name, a repository
+under `[logbook.habits_off]`.
+
+- The allowlist reads the `[settings]` table (`settings.Def.Plain`). A value outside its
+  setting's type becomes `<value>` too. The `[capcom]` `pace_*` keys, which lock settings by
+  another name, are not kept.
+- The file is written again from its parsed tree: comments go. A file that does not parse is
+  left out and named in the manifest.
+
+**Other strings.** A safe value of a structured line is kept (pass 1) and then scrubbed too: a
+minted id matches no rule, so it reads the same, and a value that only has a safe form cannot
+carry a name out. A line's own fields (`lvl`, `msg`, `proc`, `epoch`, `comp`, `trace`) and every
+key get pass 2 as well. A Go writer's constants read the same after it, and a line from another
+writer (`capcom.log`, an older holder, a friction tail) has no source check. `t` is written
+again from its parsed time. A health record, a friction note, a tally file and `detect.json` get
+pass 2 on every string and every JSON key; a friction tail line that is a structured line gets
+both passes. A line that starts as JSON but does not parse is left out and counted (12). A
+friction note's file name takes its trace only in the trace's own form.
+
+**Long lines.** A file is read a line at a time, each line at most 64 KiB. A longer line, such as
+a file a power loss filled with NUL bytes, is skipped to its end, left out and counted.
 
 ### 8.4 Review
 
-- `gff-hab bundle --dir <folder>` writes the files unpacked, for review, and makes no archive.
-- The manifest lists each file and its size.
+- `gff-hab bundle --dir <folder>` writes the files unpacked, for review, and makes no archive. The
+  folder must be new or empty.
+- The manifest lists each file and its size, the replacements per rule (every rule, zeros
+  included), the count of lines left out because they do not parse (`unparsed_lines`) or run
+  over 64 KiB (`long_lines`), and the items left out with why.
 - The bundle is never uploaded. The user attaches it to an issue by hand.
 
 ### 8.5 The app (stage 6)
@@ -1065,8 +1176,8 @@ Each test guards a promise in this spec, at the lowest layer that proves it (`do
 | 8 | Tallies: calls and errors per method and client kind; `--unused` against the method table; a key outside the surface stored as `other` only; the counter path allocates nothing | Unit and integration | 3 | 7 |
 | 9 | A request trace reaches the response and a peer's line; a malformed one is replaced | Integration and end to end | 4 | 5.2, 5.4 |
 | 10 | The source check fails its fixture (one case per ban of 10.2) and passes the tree | Unit (source) | 5 | 10.2 |
-| 11 | **Canary.** One random string goes through pane input, terminal output (on screen at bundle time), a chat send, a hook payload, a Capcom turn on a test engine that also echoes it on stderr and in a provider error, a config label and an environment value. Afterwards no file under `<state>/logs`, `<state>/tallies`, `<state>/health.jsonl`, the friction log tails, `gff-hab status` output or the bundle (including `detect.json`) contains it | End to end | 5 | 8.2, 10.1, 10.2 |
-| 12 | Bundle redaction: the seeded fixture leaks nothing; a value hashes alike within one bundle and differently across two | Unit | 5 | 8.3 |
+| 11 | **Canary.** One random string goes through pane input, terminal output (on screen at bundle time), a chat send, a hook payload, a permission request a pane is still blocked on (its command, description and transcript), a Capcom turn on a test engine that also echoes it on stderr and in a provider error, a config label and an environment value. Afterwards no file under `<state>/logs`, `<state>/tallies`, `<state>/health.jsonl`, the friction log tails, `gff-hab status` output or the bundle (including `detect.json`) contains it. The config label is a name, not content: `hab.log` may hold it under a name key or in a legacy line, and the bundle replaces it. So the label is a second string, checked in the bundle and the status output only. A session name in a friction note's text is a third, checked in the bundle only | End to end | 5 | 8.2, 10.1, 10.2 |
+| 12 | Bundle redaction: the seeded fixture leaks nothing; a value hashes alike within one bundle and differently across two; each probe of the stage 5 review (control sequences, an IPv6 address before a colon, the secret shapes, the other homes, a line's own fields and keys, user-chosen config keys, a holder file name, a tally key, a long line, a bad friction trace) is a case | Unit | 5 | 8.3 |
 | 13 | A failed hook writes one `hook.log` line, exits 0, and stays within its budget | Integration | 5 | 4.4 |
 | 14 | The app's logging wrapper defaults to `.private`, and export holds `app.log` and payloads | Swift unit | 2, 6 | 4.10, 6.4 |
 

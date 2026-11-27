@@ -82,7 +82,7 @@ var Default = Config{
 	ContentTypes: []string{api + ".ChatMessage", api + ".ChatMessages", api + ".ChatTool", api + ".PaneText"},
 	DiagPackages: []string{DiaglogPath, mod + "/internal/diaglog/check", mod + "/internal/logfile",
 		mod + "/internal/health", mod + "/internal/tallies", mod + "/internal/trace", mod + "/internal/friction",
-		mod + "/internal/stall"},
+		mod + "/internal/stall", mod + "/internal/diagbundle"},
 }
 
 // Finding is one ban broken.

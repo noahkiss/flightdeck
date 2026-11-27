@@ -455,3 +455,18 @@ func TestGroupPlanRow(t *testing.T) {
 		}
 	}
 }
+
+// TestPlain: an enum, number or Boolean setting is plain, so a diagnostics bundle keeps its value
+// (diagnostics.md 8.3); a free-text one is not.
+func TestPlain(t *testing.T) {
+	notPlain := map[string]bool{ContextNudgeText: true, CapcomQuietHours: true}
+	for _, d := range Defs {
+		if got := d.Plain(); got == notPlain[d.ID] {
+			t.Errorf("%s: Plain %v", d.ID, got)
+		}
+		// A plain setting refuses free text.
+		if _, err := d.CheckGo("went back to tmux"); d.Plain() && err == nil {
+			t.Errorf("%s: plain, but takes free text", d.ID)
+		}
+	}
+}

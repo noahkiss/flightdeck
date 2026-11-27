@@ -9,6 +9,7 @@
 //	gff-hab status  [-socket path] [-state dir] [-holders dir] [-json]
 //	gff-hab logs    [-state dir] [-f] [-since d|time] [-until d|time] [-proc kinds] [-grep text]
 //	gff-hab stacks  [-state dir]
+//	gff-hab bundle  [-socket path] [-state dir] [-o file | -dir folder] [-since d|time] [-no-friction]
 //	gff-hab debug   [-socket path | -via command] <duration>|off
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -167,6 +168,7 @@ const usage = `usage:
   gff-hab friction list [-state dir] [-days n]
   gff-hab friction show [-state dir] <trace>
   gff-hab tallies [-state dir] [-days n | -unused n] [-json] | -clear
+  gff-hab bundle  [-socket path] [-state dir] [-holders dir] [-config file] [-o file | -dir folder] [-since d|time] [-no-friction]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
@@ -197,7 +199,7 @@ const usage = `usage:
   gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
-  gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
+  gff-hab detect explain [-socket path | -via command] [-json] [-all] [-no-text] <pane|session>
   gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
   gff-hab lb [--json] [--socket path] [--state dir] <verb> [args]   (the same as gff lb)
   gff-hab heavy [--socket path] [--] <command> [args...]   (the same as gff heavy)
@@ -273,6 +275,8 @@ func main() {
 		err = debugCmd(os.Args[2:], os.Stdout)
 	case "tallies":
 		err = talliesCmd(os.Args[2:], os.Stdout)
+	case "bundle":
+		err = bundleCmd(os.Args[2:], os.Stdout)
 	case "api":
 		if len(os.Args) < 3 || os.Args[2] != "call" {
 			fmt.Fprint(os.Stderr, usage)

@@ -413,7 +413,12 @@ type StatusError struct {
 	Body   string
 }
 
-func (e *StatusError) Error() string { return fmt.Sprintf("hab answered %s: %s", e.Status, e.Body) }
+func (e *StatusError) Error() string {
+	if e.Body == "" {
+		return "hab answered " + e.Status
+	}
+	return fmt.Sprintf("hab answered %s: %s", e.Status, e.Body)
+}
 
 // Call makes one channel call from a pane through the address in its GFF_HAB value, and decodes
 // the result into result. An answer with an error returns a *control.Error of its kind; an HTTP

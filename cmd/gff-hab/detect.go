@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -215,6 +217,7 @@ func detectCmd(args []string, stdout io.Writer) error {
 	via := fs.String("via", "", "run this command and speak over its stdio, e.g. \"ssh <host> gff-hab connect\"")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
 	all := fs.Bool("all", false, "list every rule with the region text it read, not only the winner's")
+	noTextFlag := fs.Bool("no-text", false, "print no screen text and no process arguments: rule ids, states, priorities and regions only, as a diagnostics bundle takes it")
 	timeout := fs.Duration("timeout", 20*time.Second, "give up after this long")
 	fs.Parse(args[1:])
 	if fs.NArg() != 1 {
@@ -238,6 +241,9 @@ func detectCmd(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if *noTextFlag {
+		noText(&res)
+	}
 	if *asJSON {
 		b, err := json.MarshalIndent(res, "", "  ")
 		if err != nil {
@@ -246,12 +252,62 @@ func detectCmd(args []string, stdout io.Writer) error {
 		_, err = fmt.Fprintf(stdout, "%s\n", b)
 		return err
 	}
-	writeExplain(stdout, res, *all)
+	writeExplain(stdout, res, *all, *noTextFlag)
 	return nil
 }
 
+// noText removes the content of a detect.explain answer (diagnostics.md 8.2): each rule's region
+// text; each process's arguments, which can hold a prompt, and the names taken from them, such as
+// the code of node -e; and the open permission request, which holds the command, the tool input
+// and transcript text, but its id and tool. Rule ids, states, priorities, regions, the names
+// from a process's own name and argv[0], and a name that matched a manifest stay.
+func noText(r *api.DetectExplain) {
+	if a := r.Agent; a != nil {
+		if q := a.Request; q != nil {
+			a.Request = &api.PermissionRequest{ID: q.ID, Tool: q.Tool}
+		}
+		a.Trust = nil
+	}
+	for i := range r.Process.Processes {
+		p := &r.Process.Processes[i]
+		keep := []string{procName(p.Name)}
+		if len(p.Args) > 0 {
+			keep = append(keep, procName(p.Args[0]))
+		}
+		if p.Match != "" && r.Process.MatchPID == p.PID && r.Process.MatchName != "" {
+			keep = append(keep, r.Process.MatchName) // a manifest's own name
+		}
+		var names []string
+		for _, n := range p.Names {
+			if n != "" && slices.Contains(keep, n) {
+				names = append(names, n)
+			}
+		}
+		p.Names, p.Args = names, nil
+	}
+	if r.Process.Match == "" {
+		r.Process.MatchName = ""
+	}
+	if r.Screen == nil {
+		return
+	}
+	for i := range r.Screen.Rules {
+		r.Screen.Rules[i].Text, r.Screen.Rules[i].Truncated = "", false
+	}
+}
+
+// procName is a process name as detection writes it: the lower-case base name without .exe,
+// .js, .mjs, .cjs or .py (internal/detect).
+func procName(path string) string {
+	n := strings.ToLower(filepath.Base(path))
+	for _, ext := range []string{".exe", ".js", ".mjs", ".cjs", ".py"} {
+		n = strings.TrimSuffix(n, ext)
+	}
+	return n
+}
+
 // writeExplain prints a detect.explain result for a person.
-func writeExplain(w io.Writer, r api.DetectExplain, all bool) {
+func writeExplain(w io.Writer, r api.DetectExplain, all, noText bool) {
 	fmt.Fprintf(w, "pane      %s\n", r.Pane)
 
 	// The state, and the source that won.
@@ -340,7 +396,7 @@ func writeExplain(w io.Writer, r api.DetectExplain, all bool) {
 				won = "  <- won"
 			}
 			fmt.Fprintf(w, "          %s %s  %s  priority %d  %s%s\n", m, ru.ID, ru.State, ru.Priority, ru.Region, won)
-			if all || ru == win {
+			if (all || ru == win) && !noText {
 				writeRegion(w, ru)
 			}
 		}
