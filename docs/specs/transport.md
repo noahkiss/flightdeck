@@ -681,8 +681,8 @@ Who may call:
 | The opener's connection | The window lives as long as the connection that opened it, at most. When it ends, the window closes as `closed`, a waiting device is refused, and nothing is written. A client that reconnects with its reconnect token keeps its client id, but not the window. The old connection may drain for a few seconds (the close grace). Until it ends, the new connection's `devices.confirm` answers `denied` and its `devices.pair` answers `conflict`; after that, it opens a new window |
 
 `devices.list` returns the device records. `devices.revoke {id}` takes an id, an id prefix of at
-least 6 characters, or a label, as `gff-hab devices revoke` does: it removes the key line and keeps
-the record as a tombstone. The device's open sessions over the system sshd end within about two
+least 6 characters, or a label, as `gff-hab devices revoke` does: it marks the record revoked,
+then removes the key line, and keeps the record as a tombstone (6.1.4). The device's open sessions over the system sshd end within about two
 seconds, when its key line names it (6.6). The device's push registration is kept. A paired key
 lands in the authorized_keys of the user gff-hab runs as (or `authorized_keys` in `[pairing]`),
 with the forced command `gff-hab connect -device <id> -devices <list>` (and the `-socket` of
@@ -764,8 +764,8 @@ key this way is safe: it came over a pinned, authenticated channel.
 
 1. The owner runs `gff-hab devices revoke <id>` on any hab, or revokes from any paired client.
 2. That hab marks the key revoked in its authorized-keys file and closes the device's live SSH
-   connections at once. Over the system sshd (built): the revoke removes the key line and marks
-   the record revoked. Each session of the device runs the key line's forced command,
+   connections at once. Over the system sshd (built): the revoke marks the record revoked, then
+   removes the key line (6.1.4). Each session of the device runs the key line's forced command,
    `gff-hab connect -device <id> -devices <list>`. `connect` refuses to start unless the list
    holds the device as paired, and while it runs it reads the list again each second when the
    file changed. Once the device is revoked or gone, it closes the session. So a revoke ends the

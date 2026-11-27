@@ -375,6 +375,9 @@ func TestStableExe(t *testing.T) {
 	if got, warn := stableExe(self, state, func(string) (string, error) { return cli, nil }); got != cli || warn != "" {
 		t.Errorf("with a CLI link on PATH: %q, warning %q; want %q", got, warn, cli)
 	}
+	if got, _ := stableExe(self, state, func(string) (string, error) { return self, nil }); got != want {
+		t.Errorf("a PATH folder inside the build was named: %q", got)
+	}
 	other := filepath.Join(t.TempDir(), "gff-hab")
 	os.WriteFile(other, []byte("#!/bin/sh\n"), 0o700)
 	if got, _ := stableExe(self, state, func(string) (string, error) { return other, nil }); got != want {

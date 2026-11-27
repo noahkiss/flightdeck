@@ -474,14 +474,15 @@ func connectCommand(socket, state string) (cmd, warning string, err error) {
 // A path still inside <state>/builds comes with a warning: install prunes old builds, and the
 // devices paired with it stop connecting after the next upgrade.
 func stableExe(self, state string, lookPath func(string) (string, error)) (path, warning string) {
-	if p, err := lookPath("gff-hab"); err == nil {
-		if abs, err := filepath.Abs(p); err == nil && sameFile(abs, self) {
-			return abs, ""
-		}
-	}
 	builds := []string{filepath.Join(state, "builds")}
 	if real, err := filepath.EvalSymlinks(state); err == nil && real != state {
 		builds = append(builds, filepath.Join(real, "builds"))
+	}
+	if p, err := lookPath("gff-hab"); err == nil {
+		// A PATH folder inside a build is no more stable than the build itself.
+		if abs, err := filepath.Abs(p); err == nil && sameFile(abs, self) && len(relsUnder(builds, []string{abs})) == 0 {
+			return abs, ""
+		}
 	}
 	selves := []string{filepath.Clean(self)}
 	if real, err := filepath.EvalSymlinks(self); err == nil && real != selves[0] {
