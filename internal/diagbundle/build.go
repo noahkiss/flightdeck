@@ -25,6 +25,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/logfile"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/tallies"
+	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
 // Format is the bundle format version the manifest names.
@@ -92,8 +93,27 @@ type Manifest struct {
 	Replacements map[string]int `json:"replacements"`
 	// Unparsed counts the lines that do not parse, such as a line a crash cut short: they are
 	// left out (12).
-	Unparsed int       `json:"unparsed_lines"`
-	LeftOut  []LeftOut `json:"left_out,omitempty"`
+	Unparsed int `json:"unparsed_lines"`
+	// Long counts the lines over MaxLine: they are left out, never read whole (11).
+	Long    int       `json:"long_lines"`
+	LeftOut []LeftOut `json:"left_out,omitempty"`
+}
+
+// MaxLine is the longest line a bundle reads from a file. A longer one, such as a file a power
+// loss filled with NUL bytes, is read to its end in pieces and left out.
+const MaxLine = 64 << 10
+
+// readLine reads one line of at most MaxLine bytes from br, a reader with a MaxLine buffer.
+// long is true for a longer line: it is skipped to its end and its text is not returned.
+func readLine(br *bufio.Reader) (line string, long bool, err error) {
+	b, err := br.ReadSlice('\n')
+	if !errors.Is(err, bufio.ErrBufferFull) {
+		return string(b), false, err
+	}
+	for errors.Is(err, bufio.ErrBufferFull) {
+		_, err = br.ReadSlice('\n')
+	}
+	return "", true, err
 }
 
 // logFileRE matches the log files a bundle reads (8.2): hab.log, each holder's file, hook.log
@@ -116,7 +136,7 @@ func Write(dir string, r *Redactor, o Options) (Manifest, error) {
 		}
 	}
 	m := Manifest{Format: Format, Created: o.Until.UTC(), Since: o.Since.UTC(), Until: o.Until.UTC(), Files: b.files,
-		Replacements: r.Counts(), Unparsed: b.unparsed, LeftOut: append(o.LeftOut, b.leftOut...)}
+		Replacements: r.Counts(), Unparsed: b.unparsed, Long: b.long, LeftOut: append(o.LeftOut, b.leftOut...)}
 	sort.Slice(m.Files, func(i, j int) bool { return m.Files[i].Path < m.Files[j].Path })
 	data, err := marshal(m, true)
 	if err != nil {
@@ -134,6 +154,7 @@ type builder struct {
 	o        Options
 	files    []FileEntry
 	unparsed int
+	long     int
 	leftOut  []LeftOut
 }
 
@@ -254,16 +275,19 @@ func (b *builder) logFile(name string, loc *time.Location) error {
 	if st, err := src.Stat(); err != nil || st.ModTime().Before(b.o.Since) {
 		return err
 	}
-	f, done, err := b.create("logs/" + name)
+	f, done, err := b.create("logs/" + b.r.Scrub(name)) // a holder's file is named for its instance
 	if err != nil {
 		return err
 	}
 	w := bufio.NewWriter(f)
 	sc := b.r.Scrubber()
 	keep := true // a line before the first time stamp: its time is unknown, so kept
-	br := bufio.NewReaderSize(src, 64<<10)
+	br := bufio.NewReaderSize(src, MaxLine)
 	for {
-		line, rerr := br.ReadString('\n')
+		line, long, rerr := readLine(br)
+		if long {
+			b.long++
+		}
 		line = strings.TrimRight(line, "\r\n")
 		if line != "" {
 			if strings.HasPrefix(strings.TrimSpace(line), "{") {
@@ -329,9 +353,12 @@ func (b *builder) textFile(path, rel string) error {
 	}
 	w := bufio.NewWriter(f)
 	sc := b.r.Scrubber()
-	br := bufio.NewReaderSize(src, 64<<10)
+	br := bufio.NewReaderSize(src, MaxLine)
 	for {
-		line, rerr := br.ReadString('\n')
+		line, long, rerr := readLine(br)
+		if long {
+			b.long++
+		}
 		if line != "" {
 			if s, ok := sc.Line(strings.TrimRight(line, "\r\n")); ok {
 				w.WriteString(s + "\n")
@@ -361,9 +388,12 @@ func (b *builder) health() error {
 		return err
 	}
 	w := bufio.NewWriter(f)
-	br := bufio.NewReaderSize(src, 64<<10)
+	br := bufio.NewReaderSize(src, MaxLine)
 	for {
-		line, rerr := br.ReadString('\n')
+		line, long, rerr := readLine(br)
+		if long {
+			b.long++
+		}
 		if line = strings.TrimSpace(line); line != "" {
 			var rec health.Record
 			if json.Unmarshal([]byte(line), &rec) != nil {
@@ -389,8 +419,9 @@ func (b *builder) health() error {
 
 var dayFileRE = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2})\.json$`)
 
-// tallies copies the day files of the window and seen.json as they are: they hold names from
-// closed sets and numbers only (7.3).
+// tallies copies the day files of the window and seen.json. The writer holds them to names from
+// closed sets and numbers (7.3); the bundle does not trust the file, so every key and string
+// still gets pass 2 (diagnostics review L6). A file that does not parse is left out and counted.
 func (b *builder) tallies() error {
 	dir := b.state(tallies.DirName)
 	entries, err := os.ReadDir(dir)
@@ -410,7 +441,18 @@ func (b *builder) tallies() error {
 		if err != nil {
 			continue
 		}
-		if err := b.put("tallies/"+e.Name(), data); err != nil {
+		var v any
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if dec.Decode(&v) != nil {
+			b.unparsed++
+			continue
+		}
+		out, err := marshal(b.r.JSON(v), false)
+		if err != nil {
+			return err
+		}
+		if err := b.put("tallies/"+e.Name(), append(out, '\n')); err != nil {
 			return err
 		}
 	}
@@ -425,7 +467,13 @@ func (b *builder) friction() error {
 	}
 	b.unparsed += bad
 	s := b.r.Scrub
-	for _, n := range notes {
+	for i, n := range notes {
+		// The file name takes the trace only in its own form: a note's JSON could hold
+		// "../x" (diagnostics review L9).
+		id := n.Trace
+		if !trace.Valid(id) {
+			id = fmt.Sprintf("note%d", i+1)
+		}
 		n.Trace, n.Client, n.Session, n.Pane = s(n.Trace), s(n.Client), s(n.Session), s(n.Pane)
 		n.Text, n.Build, n.Version = s(n.Text), s(n.Build), s(n.Version)
 		for i := range n.Log {
@@ -444,7 +492,7 @@ func (b *builder) friction() error {
 		if err != nil {
 			return err
 		}
-		name := fmt.Sprintf("friction/%s-%s.json", n.T.UTC().Format("20060102T150405.000Z"), n.Trace)
+		name := fmt.Sprintf("friction/%s-%s.json", n.T.UTC().Format("20060102T150405.000Z"), id)
 		if err := b.put(name, append(data, '\n')); err != nil {
 			return err
 		}
@@ -482,12 +530,16 @@ func (b *builder) config() error {
 	return nil
 }
 
-// configTree is a config table with each value replaced, unless the allowlist keeps it. Keys go
-// through pass 2: a table may be named for a host.
+// configTree is a config table with each value replaced, unless the allowlist keeps it. A key
+// stays only when the schema owns it (schemaKey); every other key, such as a round's, an alias's
+// or a repository's, becomes its name token (diagnostics review M2).
 func (b *builder) configTree(t map[string]any, table string) map[string]any {
 	out := make(map[string]any, len(t))
 	for k, v := range t {
-		key := b.r.Scrub(k)
+		key := k
+		if !schemaKey(k) {
+			key = b.r.Name(k)
+		}
 		switch x := v.(type) {
 		case map[string]any:
 			out[key] = b.configTree(x, k)

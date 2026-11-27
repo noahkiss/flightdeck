@@ -47,6 +47,10 @@ const (
 	fxEngine   = "only-in-engine-log-z1x2c3"
 	fxOld      = "only-before-the-window-k4j5"
 	fxNudge    = "a nudge text of the owner's own"
+	fxRepo     = "github.com/acme/secret-repo"
+	fxAlias    = "acme-work"
+	fxRound    = "check-acme-invoices"
+	fxLong     = "only-in-a-long-line-p0o9"
 	// A pane id is a UUID: the blob rule keeps it (an id Flightdeck minted).
 	fxPane = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
 )
@@ -57,7 +61,8 @@ func pemBegin(kind string) string { return "-----" + "BEGIN " + kind + " PRIVATE
 // leaks are the strings no bundle file may hold, in any case.
 var leaks = []string{fxHome, fxHost, "build-box", fxUser, fxPeer, fxPeerHost, fxDevice, fxProject, fxDocIP, fxDocIP2,
 	fxPrivIP, fxCGNAT, fxTail6, fxDoc6, fxTailName, "/home/other", "secret-plans", fxEmail, fxURLUser, fxURLPass, fxQuery,
-	fxPEMBody, fxSSH, fxFinger, "op://", "Fixture Box", fxToken, fxBearer, fxBlob, fxStderr, fxEngine, fxOld, fxNudge}
+	fxPEMBody, fxSSH, fxFinger, "op://", "Fixture Box", fxToken, fxBearer, fxBlob, fxStderr, fxEngine, fxOld, fxNudge,
+	"secret-repo", fxAlias, fxRound, fxLong}
 
 func fxIdentity(state string) Identity {
 	return Identity{Home: fxHome, State: state, Names: []string{fxHost, "build-box", fxUser, fxPeer, fxPeerHost, fxDevice, fxProject}}
@@ -81,19 +86,25 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 			`{"t":"` + ts(20*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"fetch https://` + fxURLUser + `:` + fxURLPass + `@git.example.com/repo?access=` + fxQuery + `#frag"}`,
 			`{"t":"` + ts(10*time.Minute) + `","lvl":"error","msg":"legacy","proc":"hab","comp":"legacy","text":"key ssh-ed25519 ` + fxSSH + ` fp ` + fxFinger + ` ref ` + fxOpRef + `"}`,
 			`{"t":"` + ts(5*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"token=` + fxToken + ` Authorization: Bearer ` + fxBearer + ` digest ` + fxBlob + `"}`,
+			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"` + strings.Repeat("x", MaxLine) + fxLong + `"}`,
 			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"cut sh`, // a line a crash cut short
 		}, "\n") + "\n",
 		"logs/gff-hab-holder.one.log": "gff-hab-holder: " + local(time.Hour) + " pane " + fxPane + ": spawned in " + fxHome + "/develop/" + fxProject + "\n" +
 			"goroutine 1 [running]:\n\t" + fxHome + "/go/src/main.go:12\n",
+		// A holder's file named for its instance, which holds a known name (review L5).
+		"logs/gff-hab-holder." + fxUser + "-box.log": "gff-hab-holder: " + local(time.Hour) + " started\n",
 		"logs/hab.stderr":                "gff-hab: " + local(time.Hour) + " warn peers: pin failed label=" + fxPeer + " " + fxStderr + "\n",
 		"capcom/engine/engine.log":       "sdk: " + fxEngine + "\n",
 		"crash/hab-0011223344556677.txt": "panic: link to " + fxHost + " failed\n" + pemBegin("OPENSSH") + "\n" + fxPEMBody + "\n" + fxPEMBody + "\n-----END OPENSSH PRIVATE KEY-----\ngoroutine 7\n",
-		"health.jsonl":                   `{"t":"` + ts(time.Hour) + `","proc":"hab","kind":"crash","cause":"panic: dial ` + fxDocIP2 + `","run":"0011223344556677","crash_file":"hab-0011223344556677.txt"}` + "\nnot json\n",
-		"tallies/" + now.Local().Format("2006-01-02") + ".json": `{"calls":{"session.list":{"app":3}}}` + "\n",
+		"health.jsonl": `{"t":"` + ts(time.Hour) + `","proc":"hab","kind":"crash","cause":"panic: dial ` + fxDocIP2 + `","run":"0011223344556677","crash_file":"hab-0011223344556677.txt"}` + "\nnot json\n" +
+			strings.Repeat("y", MaxLine+10) + fxLong + "\n",
+		"tallies/" + now.Local().Format("2006-01-02") + ".json": `{"calls":{"session.list":{"app":3},"` + fxHost + `":{"app":1}}}` + "\n",
 		"tallies/seen.json": `{"since":"2026-11-01"}` + "\n",
 		"friction/20261127T120000.000Z-hABCDEFGHJKM.json": `{"t":"` + ts(15*time.Minute) + `","trace":"hABCDEFGHJKM","client":"app","text":"went back: mail ` + fxEmail + ` about ` + fxProject + `","log":[` +
 			`{"t":"` + ts(16*time.Minute) + `","proc":"hab","text":"{\"t\":\"` + ts(16*time.Minute) + `\",\"lvl\":\"info\",\"msg\":\"peer pinned\",\"proc\":\"hab\",\"comp\":\"peers\",\"label\":\"` + fxPeer + `\"}"},` +
 			`{"t":"` + ts(16*time.Minute) + `","proc":"holder one","text":"pane spawned in ` + fxHome + `/develop"}]}`,
+		// A note whose trace is not in its form must not name a file outside the bundle (L9).
+		"friction/20261127T120001.000Z-hABCDEFGHJKN.json": `{"t":"` + ts(14*time.Minute) + `","trace":"../../../../escape","client":"app","text":"x"}`,
 	}
 	for rel, data := range files {
 		p := filepath.Join(state, filepath.FromSlash(rel))
@@ -110,6 +121,15 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 "agent.start_mode" = "bypass"
 "heavy.slots" = 2
 "agent.context_nudge_text" = "`+fxNudge+`"
+
+[aliases]
+`+fxAlias+` = "claude"
+
+[logbook.habits_off]
+"`+fxRepo+`" = ["closeout"]
+
+[rounds.`+fxRound+`]
+mode = "fresh"
 
 [catalog]
 project_roots = ["`+fxHome+`/develop"]
@@ -197,10 +217,21 @@ func TestBundleRedaction(t *testing.T) {
 	if m.Unparsed != 2 { // the cut hab.log line and the health line that is not JSON
 		t.Errorf("unparsed %d, want 2", m.Unparsed)
 	}
+	if m.Long != 2 { // the long hab.log line and the long health line (review L8)
+		t.Errorf("long lines %d, want 2", m.Long)
+	}
+	for path := range files {
+		if strings.Contains(path, "escape") {
+			t.Errorf("a friction note's trace named the file %s", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escape.json")); err == nil {
+		t.Error("a friction note's trace named a file outside the bundle")
+	}
 
 	// The files of 8.2 only, and each one the manifest lists, at its size.
 	want := []string{"config/hab.toml", "config/peers.toml", "crash/hab-0011223344556677.txt", "detect.json",
-		"friction/", "health.jsonl", "logs/gff-hab-holder.one.log", "logs/hab.log", "manifest.json", "status.txt",
+		"friction/", "health.jsonl", "tallies/" + now.Local().Format("2006-01-02") + ".json", "logs/gff-hab-holder.one.log", "logs/hab.log", "manifest.json", "status.txt",
 		"tallies/seen.json", "versions.json"}
 	listed := map[string]int64{}
 	for _, f := range m.Files {
@@ -238,7 +269,8 @@ func TestBundleRedaction(t *testing.T) {
 		t.Errorf("status.txt: the home folder is not ~:\n%s", files["status.txt"])
 	}
 	cfg := files["config/hab.toml"]
-	for _, s := range []string{`"agent.start_mode" = "bypass"`, `"heavy.slots" = 2`, `"agent.context_nudge_text" = "<value>"`, `project_roots = "<value>"`} {
+	for _, s := range []string{`"agent.start_mode" = "bypass"`, `"heavy.slots" = 2`, `"agent.context_nudge_text" = "<value>"`, `project_roots = "<value>"`,
+		"[aliases]", "[logbook.habits_off]", `mode = "<value>"`, `[rounds."n:`} {
 		if !strings.Contains(cfg, s) {
 			t.Errorf("hab.toml: no %s:\n%s", s, cfg)
 		}
@@ -261,7 +293,7 @@ func TestBundleRedaction(t *testing.T) {
 	}
 	var fric string
 	for path, data := range files {
-		if strings.HasPrefix(path, "friction/") {
+		if strings.HasPrefix(path, "friction/") && strings.HasSuffix(path, "-hABCDEFGHJKM.json") {
 			fric = data
 		}
 	}
@@ -455,5 +487,40 @@ func TestLineKeys(t *testing.T) {
 	if v["host"] != r.token(fxHost) || v["text"] != "at <ip>" || v["n"] != float64(4) || v["flag"] != true ||
 		v["trace"] != "hABCDEFGHJKM" || v["msg"] != "m" {
 		t.Errorf("line: %s", out)
+	}
+}
+
+// TestConfigKeys: every toml tag of a config struct that reads hab.toml or peers.toml is a key
+// the bundle keeps, so a new key reads as written and not as a token. The other TOML files
+// (detection manifests, the client keymap, Codex's config, the notices list) are left out.
+func TestConfigKeys(t *testing.T) {
+	root := filepath.Join("..", "..")
+	other := regexp.MustCompile(`^internal/(detect|flightrules|gffclient|notices)/`)
+	tag := regexp.MustCompile("toml:\"([^\",]+)")
+	n := 0
+	for _, top := range []string{"internal", "cmd"} {
+		filepath.WalkDir(filepath.Join(root, top), func(p string, e fs.DirEntry, err error) error {
+			if err != nil || e.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+				return err
+			}
+			rel, _ := filepath.Rel(root, p)
+			if other.MatchString(filepath.ToSlash(rel)) {
+				return nil
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			for _, m := range tag.FindAllStringSubmatch(string(b), -1) {
+				n++
+				if !configKeys[m[1]] {
+					t.Errorf("%s: the toml key %q is not in configKeys", rel, m[1])
+				}
+			}
+			return nil
+		})
+	}
+	if n < 50 {
+		t.Fatalf("only %d toml tags found: the walk missed the tree", n)
 	}
 }
