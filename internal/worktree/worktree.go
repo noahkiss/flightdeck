@@ -26,6 +26,10 @@ var (
 	ErrConflict = errors.New("conflict")
 )
 
+// NoHooks is the -c setting that turns off git hooks. gff-hab's git calls need none, and a hook
+// runs code the repository holds, which an agent may have written (hab-logic-api.md 4.1).
+const NoHooks = "core.hooksPath=/dev/null"
+
 // Git runs the git binary. The zero value runs "git" from PATH with the process environment.
 type Git struct {
 	Bin string   // "" means "git" from PATH
@@ -71,7 +75,7 @@ func (g Git) cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	if bin == "" {
 		bin = "git"
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", dir, "-c", NoHooks}, args...)...)
 	cmd.Env = append(append(os.Environ(), "LC_ALL=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat"), g.Env...)
 	return cmd
 }

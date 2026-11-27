@@ -30,7 +30,7 @@ func (c *conn) handleDebug(m message) {
 		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "diag.debug needs the hab's state folder; the debug capability is absent"))
 		return
 	}
-	if c.peer != nil {
+	if c.peerLink() != nil {
 		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "diag.debug does not run over a peer link: send it to that hab"))
 		return
 	}

@@ -32,7 +32,7 @@ func (c *conn) dispatchDeviceContext(m message, s api.Seq) (any, *Error) {
 	if ct == nil {
 		return nil, appErr(api.ErrorKindUnavailable, hintNoCapcomThread, m.Method)
 	}
-	if c.peer != nil {
+	if c.peerLink() != nil {
 		return nil, appErr(api.ErrorKindInvalid, "device.context.put does not run over a peer link: device context stays on the Capcom home host")
 	}
 	c.mu.Lock()
@@ -60,7 +60,7 @@ func (c *conn) handleCapcomCard(m message) {
 		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintNoCapcomThread, m.Method))
 		return
 	}
-	if c.peer != nil {
+	if c.peerLink() != nil {
 		// An undo writes to Logbook as a person: only on the hab the person talks to (logbook.md D3).
 		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "capcom.card.answer does not run over a peer link: answer on the Capcom home host"))
 		return

@@ -1565,11 +1565,14 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
   inside one of the hab's panes: whatever its environment holds, the hab refuses it a word
   grant (`round.create` with `actions`, a `round.update` that adds a word), any change to a job
   the user let act but the removal of words, `confirm.answer`, `capcom.card.answer`,
-  `approval.answer`, `capcom.assign`, `settings.set`, and a `session.send` to the Capcom session,
-  which would open a user turn (`hab-logic-api.md` 4.1). The CLI
-  still refuses `-actions`, `confirm answer` and the like where `$GFF_HAB` is set, so the message
-  comes first. An agent that runs any code it likes can leave the panes' process tree (a service
-  manager, `ssh` to its own host) and reach the socket as the person; only a sandbox stops that.
+  `approval.answer`, `capcom.assign`, `settings.set`, `device.context.put`, and a
+  `session.send` to the Capcom session, which would open a user turn (`hab-logic-api.md` 4.1).
+  The CLI still refuses `-actions`, `confirm answer` and the like where `$GFF_HAB` is set, so
+  the message comes first. The check stops an agent that reaches the socket by mistake or
+  through the `gff` and `gff-hab` verbs. An agent that can start a process of its own choosing
+  (a service manager, `ssh` to its own host, a shell in a new pane) leaves the panes' process
+  tree and reaches the socket as the person; only a sandbox stops that (`hab-logic-api.md` 4.1
+  lists the escapes).
   The hab judges a route call by the turn that runs when it
   arrives: a call still in flight from an event turn the user stopped, landing after a user
   turn began, is judged as the user turn's. The SDK gives the route call no turn id to compare.

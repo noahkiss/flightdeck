@@ -3,10 +3,14 @@
 // socket directly. "direct" waits for that copy. "orphan" exits at once, so the copy loses its
 // parent and keeps only the pane's session. The copy writes what the hab answered to the out
 // file: one line per call, the call and its error kind, or "ok".
+//
+// "call" makes the calls named after the out file, each a method and its JSON params, in this
+// process, and writes one line per call the same way.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +26,10 @@ import (
 
 func main() {
 	mode, sock, out := os.Args[1], os.Args[2], os.Args[3]
+	if mode == "call" {
+		write(out, calls(sock, os.Args[4:]))
+		return
+	}
 	if mode == "dial" {
 		// The pane ends when its first process exits; its terminal then hangs up this copy.
 		signal.Ignore(syscall.SIGHUP)
@@ -82,6 +90,26 @@ func dial(sock string) string {
 		Peer: &api.PeerHello{DeviceID: "SHA256:claimed", Host: "elsewhere"}})
 	lines = append(lines, "hello-hab "+kind(err))
 	h.Close()
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// calls says hello, then sends each method with its params, given in pairs.
+func calls(sock string, pairs []string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, err := control.Dial(sock)
+	if err != nil {
+		return "dial " + err.Error()
+	}
+	defer c.Close()
+	if _, err := c.Hello(ctx, api.ClientInfo{Name: "panecaller", Version: "0", Kind: api.ClientKindCli}, "", ""); err != nil {
+		return "hello " + kind(err) + "\n"
+	}
+	var lines []string
+	for i := 0; i+1 < len(pairs); i += 2 {
+		err := c.Call(ctx, pairs[i], json.RawMessage(pairs[i+1]), nil)
+		lines = append(lines, pairs[i]+" "+kind(err))
+	}
 	return strings.Join(lines, "\n") + "\n"
 }
 

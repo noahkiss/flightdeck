@@ -28,7 +28,7 @@ func (c *conn) handleFriction(m message) {
 		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "diag.friction needs the hab's state folder; the friction capability is absent"))
 		return
 	}
-	if c.peer != nil {
+	if c.peerLink() != nil {
 		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "diag.friction does not run over a peer link: send the note to the session's own hab"))
 		return
 	}

@@ -89,6 +89,10 @@ var personOnlyCalls = []struct {
 	{"push.register", map[string]any{}},
 	{"devices.list", map[string]any{}},
 	{"devices.revoke", map[string]any{"id": "abcdef"}},
+	{"devices.pair", map[string]any{}},
+	{"devices.confirm", map[string]any{"id": "abcdef"}},
+	{"logbook.decide", map[string]any{"id": "p1", "decision": "approve"}},
+	{"device.context.put", map[string]any{"time_zone": "UTC"}},
 }
 
 // A process inside a pane cannot call a person-only method, whatever its environment holds: the
@@ -327,5 +331,38 @@ func TestPeerProofHeld(t *testing.T) {
 	}
 	if err := c.Call(ctx(t), "group.tell", map[string]any{}, nil); gateRefused(err) {
 		t.Fatalf("a proven link was refused by the gate: %v", err)
+	}
+}
+
+// A Logbook write or resolve from a process inside a pane reaches the Logbook as an agent's,
+// with PaneCall in its context, so the pane route's rules apply (spec 4.1); a caller outside
+// every pane writes as the person.
+func TestPaneCallerLogbook(t *testing.T) {
+	for _, pane := range []bool{true, false} {
+		lb := &fakeLogbook{}
+		path, _ := localHab(t, pane, func(c *Config) { c.Logbook = lb })
+		c := dial(t, path)
+		hello(t, c, "")
+		cl := api.Client{Caller: c}
+		if _, err := cl.LogbookWrite(ctx(t), api.LogbookWriteParams{Changes: []api.LogbookChange{{Op: api.LogbookChangeOpCreate, Type: "task", Title: "t"}}}); err != nil {
+			t.Fatalf("pane %v: write: %v", pane, err)
+		}
+		if _, err := cl.LogbookResolve(ctx(t), api.LogbookResolveParams{ID: "task-k3m9q2xz", Field: "title", Value: api.RawJSON(`"x"`)}); err != nil {
+			t.Fatalf("pane %v: resolve: %v", pane, err)
+		}
+		lb.mu.Lock()
+		want := "person"
+		if pane {
+			want = "agent"
+		}
+		if len(lb.actors) != 2 {
+			t.Fatalf("pane %v: %d calls reached the Logbook", pane, len(lb.actors))
+		}
+		for i, a := range lb.actors {
+			if a.Kind != want || lb.panes[i] != pane {
+				t.Errorf("pane %v: call %d: actor %s, PaneCall %v", pane, i, a.Kind, lb.panes[i])
+			}
+		}
+		lb.mu.Unlock()
 	}
 }

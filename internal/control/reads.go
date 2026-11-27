@@ -35,7 +35,7 @@ func isReadMethod(m string) bool {
 func (c *conn) handleReads(m message) {
 	seq := c.currentSeq()
 	rs := c.s.cfg.Reads
-	local := c.peer != nil
+	local := c.peerLink() != nil
 	var call func(ctx context.Context) (any, error)
 	var e *Error
 	switch m.Method {

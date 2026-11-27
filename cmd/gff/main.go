@@ -98,6 +98,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/gffclient"
 	"github.com/noahkiss/flightdeck/internal/habconn"
 	"github.com/noahkiss/flightdeck/internal/heavy"
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/hosts"
 	"github.com/noahkiss/flightdeck/internal/lbcli"
 	"github.com/noahkiss/flightdeck/internal/trace"
@@ -348,6 +349,21 @@ func workspaceHosts(path string, flags []string, single habconn.Transport, sshHo
 		specs = slices.DeleteFunc(specs, func(s hosts.Spec) bool { return s.Label == label }) // the flag wins
 		specs = append(specs, sp)
 	}
+	if err := commandInPane(); err != nil {
+		// A cmd: endpoint runs a shell command, which would leave the pane (hab-logic-api.md 4.1).
+		kept := specs[:0]
+		for _, sp := range specs {
+			n := len(sp.Endpoints)
+			sp.Endpoints = slices.DeleteFunc(sp.Endpoints, func(e hosts.Endpoint) bool { return e.Kind == hosts.EndpointCommand })
+			if len(sp.Endpoints) < n {
+				fmt.Fprintf(os.Stderr, "gff: host %s: its cmd: endpoint does not run: %v\n", sp.Label, err)
+			}
+			if len(sp.Endpoints) > 0 || n == 0 {
+				kept = append(kept, sp)
+			}
+		}
+		specs = kept
+	}
 	if len(specs) == 0 {
 		label := "local"
 		if sshHost != "" {
@@ -383,6 +399,17 @@ func hostProblems(path string, problems []string) []string {
 	return out
 }
 
+// commandInPane refuses a command that gff would run to reach a hab (-via, a cmd: endpoint)
+// while $GFF_HAB is set: a process inside a pane would start it, and it could leave the pane and
+// reach the hab as the person (hab-logic-api.md 4.1). Like the other $GFF_HAB checks, it stops a
+// mistake, not an agent that clears its environment.
+func commandInPane() error {
+	if os.Getenv(hook.Env) != "" {
+		return fmt.Errorf("gff runs no command to reach a hab inside a Flightdeck pane ($%s is set); use -socket or -ssh", hook.Env)
+	}
+	return nil
+}
+
 // transport picks how to reach the hab. local is true for the local socket.
 func transport(sock, via, host string) (habconn.Transport, bool, error) {
 	n := 0
@@ -396,6 +423,9 @@ func transport(sock, via, host string) (habconn.Transport, bool, error) {
 	}
 	switch {
 	case via != "":
+		if err := commandInPane(); err != nil {
+			return nil, false, fmt.Errorf("-via: %w", err)
+		}
 		return habconn.CommandTransport{Argv: []string{"/bin/sh", "-c", via}}, false, nil
 	case host != "":
 		return habconn.SSHTransport{Host: host}, false, nil

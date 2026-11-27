@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/peers"
 )
 
@@ -39,6 +41,11 @@ func peersCmd(args []string, out io.Writer) error {
 		return errors.New("peers accept needs one label")
 	case !accept && fs.NArg() != 0:
 		return errors.New("usage: gff-hab peers [-socket path] [-json], or gff-hab peers accept [-socket path] <label>")
+	}
+	if accept && os.Getenv(hook.Env) != "" {
+		// The hab refuses peers.accept from a pane caller anyway (hab-logic-api.md 4.1); this
+		// says so before the call.
+		return errors.New("peers accept is the owner's call; it does not run in an agent's pane")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

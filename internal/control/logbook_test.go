@@ -9,10 +9,12 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// fakeLogbook records the writes it gets and the actor of each.
+// fakeLogbook records the writes it gets, the actor of each, and whether its context carried
+// PaneCall.
 type fakeLogbook struct {
 	mu     sync.Mutex
 	actors []api.LogbookActor
+	panes  []bool
 }
 
 func (f *fakeLogbook) Brief(context.Context, api.LogbookBriefParams) (api.LogbookBrief, error) {
@@ -33,17 +35,18 @@ func (f *fakeLogbook) Ready(context.Context, api.LogbookReadyParams) (api.Logboo
 func (f *fakeLogbook) History(context.Context, api.LogbookHistoryParams) (api.LogbookHistory, error) {
 	return api.LogbookHistory{}, nil
 }
-func (f *fakeLogbook) Write(_ context.Context, a api.LogbookActor, _ api.LogbookWriteParams) (api.LogbookWritten, error) {
+func (f *fakeLogbook) Write(ctx context.Context, a api.LogbookActor, _ api.LogbookWriteParams) (api.LogbookWritten, error) {
 	f.mu.Lock()
 	f.actors = append(f.actors, a)
+	f.panes = append(f.panes, PaneCall(ctx))
 	f.mu.Unlock()
 	return api.LogbookWritten{State: api.LogbookWriteStateApplied, IDs: []string{"task-k3m9q2xz"}}, nil
 }
-func (f *fakeLogbook) Resolve(_ context.Context, a api.LogbookActor, _ api.LogbookResolveParams) (api.LogbookWritten, error) {
-	return f.Write(context.Background(), a, api.LogbookWriteParams{})
+func (f *fakeLogbook) Resolve(ctx context.Context, a api.LogbookActor, _ api.LogbookResolveParams) (api.LogbookWritten, error) {
+	return f.Write(ctx, a, api.LogbookWriteParams{})
 }
-func (f *fakeLogbook) Decide(_ context.Context, a api.LogbookActor, _ api.LogbookDecideParams) (api.LogbookWritten, error) {
-	return f.Write(context.Background(), a, api.LogbookWriteParams{})
+func (f *fakeLogbook) Decide(ctx context.Context, a api.LogbookActor, _ api.LogbookDecideParams) (api.LogbookWritten, error) {
+	return f.Write(ctx, a, api.LogbookWriteParams{})
 }
 func (f *fakeLogbook) Projects(context.Context) (api.LogbookProjects, error) {
 	return api.LogbookProjects{}, nil

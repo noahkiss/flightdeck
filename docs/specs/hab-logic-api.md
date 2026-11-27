@@ -1564,7 +1564,11 @@ project's identity, so the session files into the same project. No method of its
 
   The result is `pending` with the reason and both scripts (`script`, `teardown_script`), so
   the client shows what the yes covers. `worktree.setup` (or `setup: run` on create) is the yes.
-  Any control client may give it; the hab is single-user, as at the bar.
+  The person gives it, from any control client outside the hab's panes. A process inside a
+  pane (4.1) does not: from it, `setup: run` on create is `denied` before anything is made, and
+  so is a `worktree.setup` unless the mark already approves exactly the scripts there now; such
+  a rerun works. The mark sits in the repository's `.git` folder, which an agent that may write
+  there can edit; that is a same-user limit (4.1).
 - **The mark.** gff-hab writes `gff-worktree.json` in the worktree's private git folder
   (`.git/worktrees/<name>/`). It holds the source checkout, when it was made, whether its scripts
   are approved, a SHA-256 digest of the setup and teardown scripts approved, and why setup
@@ -2227,26 +2231,62 @@ the peer-only methods. The hab now judges the process, not its environment.
 
   | Signal | Catches | Escaped by |
   |---|---|---|
-  | An ancestor is a holder process (every holder the link's registry scan knows, draining ones too). A holder starts nothing but panes | Any process a pane started, also before the link learned the new pane's pid | Leaving the tree: the parent exits, so the process moves to `init` or a subreaper |
+  | An ancestor is a holder process: every live holder in the holder registry, unreachable ones (an older protocol) and draining ones included, and every holder the link is connected to. A holder starts nothing but panes | Any process a pane started, also before the link learned the new pane's pid | Leaving the tree: the parent exits, so the process moves to `init` or a subreaper |
+  | An ancestor is `gff-hab serve` itself. What it starts runs code an agent may have written: git and the hooks a repository names, lane checks, teardown scripts | A hook or a script that dials the socket from a call an agent made, such as `worktree.create` | The same as a holder's |
   | The caller or an ancestor is in the session of a pane's first process. Each pane's first process leads its pane's session (`hab-holder.md`); exited panes count until they are released | An orphan whose parent exited | `setsid`, or a release of the pane (`pane.close`) while the orphan runs on |
   | The caller's start-up environment holds `GFF_HAB` naming this hab's hook socket | A process that left the tree and the session but kept its environment | Starting with a cleared environment |
 
-  A process that escapes all three (a cleared environment, `setsid`, and a parent that exits)
-  counts as the person. So does one that a service manager or another host starts for it:
-  `launchctl submit`, `systemd-run --user`, `ssh localhost`. The check is a boundary against an
-  agent that runs only the tools its harness allows, such as `gff-hab` or `gff`. It is not a
-  boundary against an agent that runs any code it likes as the user; a sandbox is (`transport.md`
-  2).
+- **What the check stops, and what it does not.** It stops an agent that reaches the socket by
+  mistake, or through the `gff` and `gff-hab` verbs: those dial from inside the pane, and the
+  verbs that would start a command refuse to (below). It does not stop an agent that can start
+  a process of its own choosing; only a sandbox does (`transport.md` 2). Such a process leaves
+  the panes as the same user, and then counts as the person. These escapes come with the user
+  account and no check here closes them:
+  - a double fork with `setsid` and a cleared environment;
+  - an orphan that runs on after `pane.close` released its pane;
+  - a service manager: `launchctl submit`, `systemd-run --user`;
+  - `ssh localhost`;
+  - a new terminal or app: `open -a Terminal`, `osascript`;
+  - a detached multiplexer: `tmux new -d`;
+  - a scheduled job: `at`, cron.
+
+  An agent limited to `gff-hab` and `gff` can still start a shell: `pane.new` and `pane.type`
+  stay open to pane callers (Q11, 8).
+- **Commands the CLIs start.** Where `GFF_HAB` is set, `gff-hab -via`, `gff -via` and a
+  `cmd:` endpoint in gff's config or `-host` flags run no command: `-via` is refused, and a
+  `cmd:` endpoint is dropped with a note. The command could leave the pane and dial as the
+  person.
+- **Verbs that do not use the socket.** `gff-hab pair` writes `authorized_keys` and
+  `gff-hab devices revoke` the device list directly; `gff lb` opens the Logbook file when the
+  hab does not answer. Where `GFF_HAB` is set, `pair`, `devices revoke` and `peers accept`
+  refuse, and `gff lb` sends writes only through the pane route, never to the file. These are
+  environment checks: a process that clears its environment passes them, as it does the other
+  same-user limits above.
+- **gff-hab's git runs no hooks.** Every git call gff-hab makes passes
+  `-c core.hooksPath=/dev/null`: a hook is code the repository holds. The `gff-hab serve` root
+  above is what keeps such code from being the person; turning hooks off is a second layer.
+  Repository config has other ways to run a command (filters, `core.fsmonitor`,
+  `core.sshCommand`); the root covers those.
 - **It fails closed.** A caller the socket gave no pid for, a pid with no process, a process
   that started more than 1 s after the accept (a newer process took the pid), an ancestor that
   ended during the walk, an ancestor younger than its child (pid reuse), or a chain deeper than
-  256 counts as a pane's. On Linux a start time is the stat start ticks after a boot placed by
+  256 counts as a pane's. So does every caller while the holder registry cannot be read in
+  full: a file that does not parse may be a holder's. On Linux a start time is the stat start ticks after a boot placed by
   `CLOCK_BOOTTIME`, the clock the kernel counts them on, so a container's own `/proc/uptime`
   does not shift it.
 - **What a caller inside a pane may not call.**
   - The person-only methods (`control.PersonOnly`): `confirm.answer`, `trust.answer`,
     `approval.answer`, `capcom.card.answer`, `capcom.assign`, `settings.set`, `peers.accept`,
+    `logbook.decide`, `device.context.put` (the user's own location and calendar),
     `push.register`, `push.register_activity`, `push.unregister` and every `devices.*` method.
+  - A Logbook write as the person. `logbook.write` and `logbook.resolve` run as an agent's,
+    under the pane route's rules (`logbook.md` 10.5): no set of a proposal's `status` or
+    `decided_by`, no project marked `private`, nothing in a private project, and a proposal
+    while `logbook.approval` is `agents`. The hab does not know which pane the caller runs in,
+    so the write names no pane or session, and all such callers share one write limit.
+  - A yes to a worktree's scripts (3.10): `setup: run` on `worktree.create`, and a
+    `worktree.setup` whose scripts the user has not approved as they are now. A rerun of
+    approved scripts works.
   - `session.send` to the Capcom service session: a message there is the user's and opens a
     user turn, which acts without a job's words. An agent writes to Capcom with `channel_send`.
   - What the pane route keeps for the user in rounds (`capcom-service.md` 9.6, `rounds.md`): a
@@ -2262,6 +2302,11 @@ the peer-only methods. The hab now judges the process, not its environment.
   client, but it answers no confirmation, approval or card, changes no setting and touches no
   trust store. Q11 (8) asks the owner about this line. Harness hooks are unchanged: they use the pane route (`mesh.md` 6.5),
   not this socket.
+- **False positives.** Each counts the person as a pane caller, who then answers from the app:
+  - On Linux, a gff-hab in its own pid namespace (a container with the host's socket mounted)
+    gets pid 0 from `SO_PEERCRED` for a caller outside the namespace.
+  - A `tmux` or `screen` server first started inside a pane keeps that pane's `GFF_HAB` in
+    every window, also for the person who attaches later from a plain terminal.
 - **Races.** The verdict is made once, at accept, from the processes as they are then. A process
   inside a pane that connects, then hands its socket to a process outside, needs a process outside
   that cooperates; that one is the person already.

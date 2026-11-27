@@ -44,7 +44,7 @@ type conn struct {
 	clientID string
 	linked   bool           // a peer link reported to Peers.Linked
 	linkID   uint64         // its id
-	peer     *api.PeerHello // the hello's peer field from a client of kind hab, else nil
+	peer     *api.PeerHello // the hello's peer field from a client of kind hab, else nil; read with peerLink
 	// claim is the hello's peer field while a device that proved before has not proved on
 	// this link; peer stays nil until it does (transport.md 6.3).
 	claim *api.PeerHello
@@ -471,7 +471,7 @@ func (c *conn) handleLine(line []byte) {
 		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "%s: device %s proved its hab key to this hab before, so its link counts only after hab.prove (transport.md 6.3)", m.Method, c.claim.DeviceID))
 		return
 	}
-	if api.PeerOnly(m.Method) && c.peer == nil {
+	if api.PeerOnly(m.Method) && c.peerLink() == nil {
 		// Off the client surface (spec 3.9, Peer-link methods): only another hab calls these,
 		// over a peer link. The handlers check the link again.
 		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "%s comes over a peer link only: client.kind hab with the hello's peer field", m.Method))
@@ -922,6 +922,9 @@ func (c *conn) handleWorktree(m message) {
 		// worktree half made.
 		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), maxWorktreeTime)
 		defer cancel()
+		if c.class.pane {
+			ctx = WithPaneCall(ctx) // no yes to a foreign setup script (3.10, 4.1)
+		}
 		var res any
 		var pane string
 		var err error
@@ -1342,13 +1345,24 @@ func (c *conn) handleHello(m message) {
 	c.link(pc)
 }
 
-// link makes the connection a peer link from p's device.
+// link makes the connection a peer link from p's device. It runs on the read loop; c.mu guards
+// peer, since goroutines of earlier calls read it (peerLink).
 func (c *conn) link(p api.PeerHello) {
+	c.mu.Lock()
 	c.peer = &p
+	c.mu.Unlock()
 	if c.s.cfg.Peers != nil {
 		c.linked, c.linkID = true, linkIDs.Add(1)
 		c.s.cfg.Peers.Linked(c.linkID, p)
 	}
+}
+
+// peerLink returns the hello's peer field of a peer link, else nil. Do not call it with c.mu
+// held.
+func (c *conn) peerLink() *api.PeerHello {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.peer
 }
 
 // newNonce returns a fresh peer_nonce: 32 random bytes, base64.
@@ -1367,7 +1381,7 @@ func newNonce() string {
 func (c *conn) handleProve(m message) {
 	claim := c.claim
 	if claim == nil {
-		claim = c.peer
+		claim = c.peerLink()
 	}
 	nonce := c.nonce
 	c.nonce = ""
@@ -1649,8 +1663,8 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		}
 		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
-		if c.peer != nil {
-			ctx = WithCallerPeer(ctx, *c.peer) // report_to names a session on that hab
+		if peer := c.peerLink(); peer != nil {
+			ctx = WithCallerPeer(ctx, *peer) // report_to names a session on that hab
 		}
 		made, e := c.s.createIdem(ctx, p, func(pane string) {
 			if c.s.cfg.Size != nil {

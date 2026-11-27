@@ -1957,11 +1957,11 @@ func serve(args []string) error {
 	devicesCtl := newDeviceService(dir, logger.Printf)
 	caps = append(caps, "devices")
 	// The device ids that proved their hab key on a peer link (transport.md 6.3).
-	proofs, err := peers.OpenProofs(filepath.Join(dir, peerProofsFile))
-	if err != nil {
-		return err
-	}
+	proofs := peers.OpenProofs(filepath.Join(dir, peerProofsFile), logger.Printf)
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
+	// gff-hab's own pid is a root: what it starts (git hooks, lane checks) may run the agent's
+	// code (hab-logic-api.md 4.1).
+	callers := callerRoots{serve: os.Getpid(), holderDir: holderDirOf(*holders), lk: lk, hookSocket: hpath}
 	s := control.New(control.Config{
 		Epoch:    epoch,
 		Build:    build,
@@ -2014,13 +2014,13 @@ func serve(args []string) error {
 		Rounds:       roundsCtl,
 		Heavy:        heavyLock,
 		Groups:       groupsCtl,
-		Logbook:      lbVerbs,
+		Logbook:      socketLogbook{Service: lbVerbs, host: *hostID, approval: approvalAgents(setSvc.Value)},
 		FlightRules:  flightRules,
 		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
 		Debug:        debugSw,
 		Devices:      devicesCtl,
 		Tally:        controlTally(tl),
-		LocalCaller:  localCaller(lk, hpath, peerproc.System()),
+		LocalCaller:  localCaller(callers, peerproc.System()),
 		PeerProofs:   proofs,
 	})
 	srv.Store(s)
@@ -2388,6 +2388,12 @@ func (c *cmdConn) Close() error {
 
 func open(sock, via string) (*control.Client, error) {
 	if via != "" {
+		if os.Getenv(hook.Env) != "" {
+			// The command could leave the pane and reach the hab as the person (hab-logic-api.md
+			// 4.1). Like the other $GFF_HAB checks, this stops a mistake, not an agent that clears
+			// its environment.
+			return nil, fmt.Errorf("-via runs no command inside a Flightdeck pane ($%s is set); use -socket", hook.Env)
+		}
 		cmd := exec.Command("/bin/sh", "-c", via)
 		cmd.Stderr = os.Stderr
 		in, err := cmd.StdinPipe()

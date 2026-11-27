@@ -147,11 +147,11 @@ func (c *conn) handleGroups(m message) {
 			call = func(ctx context.Context) (any, error) { return api.Empty{}, gs.Message(ctx, p) }
 		}
 	case "group.sync":
-		if c.peer == nil {
+		if c.peerLink() == nil {
 			e = appErr(api.ErrorKindInvalid, "group.sync needs a peer link: client.kind hab with the hello's peer field")
 			break
 		}
-		from := *c.peer
+		from := *c.peerLink()
 		var p api.GroupSyncParams
 		if e = c.decodeUp(m, &p); e == nil {
 			call = func(context.Context) (any, error) { return api.Empty{}, gs.Sync(from, p) }
@@ -162,7 +162,7 @@ func (c *conn) handleGroups(m message) {
 			call = func(ctx context.Context) (any, error) { return gs.Move(ctx, p) }
 		}
 	case "group.adopt", "group.adopt_commit", "group.tell":
-		if c.peer == nil {
+		if c.peerLink() == nil {
 			e = appErr(api.ErrorKindDenied, "%s comes over a peer link only", m.Method)
 			break
 		}
@@ -190,7 +190,7 @@ func (c *conn) handleGroups(m message) {
 		c.reply(m, seq, nil, e)
 		return
 	}
-	peer := c.peer
+	peer := c.peerLink()
 	go func() {
 		limit := maxGroupTime
 		if m.Method == "group.move" {

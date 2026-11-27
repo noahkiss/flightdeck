@@ -93,11 +93,11 @@ func (c *conn) handleChannels(m message) {
 			call = func(ctx context.Context) (any, error) { return ch.Wait(ctx, p) }
 		}
 	case "mail.push", "mail.pull":
-		if c.peer == nil {
+		if c.peerLink() == nil {
 			e = appErr(api.ErrorKindInvalid, "%s needs a peer link: client.kind hab with the hello's peer field", m.Method)
 			break
 		}
-		from := *c.peer
+		from := *c.peerLink()
 		if m.Method == "mail.push" {
 			var p api.MailPushParams
 			if e = c.decodeUp(m, &p); e == nil {
@@ -117,7 +117,7 @@ func (c *conn) handleChannels(m message) {
 		c.reply(m, seq, nil, e)
 		return
 	}
-	fromPeer := c.peer != nil
+	fromPeer := c.peerLink() != nil
 	go func() {
 		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxChannelTime)
 		defer cancel()

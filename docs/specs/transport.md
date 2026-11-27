@@ -159,8 +159,10 @@ What we take: nothing (see 3).
 Out of scope: protecting the owner from a compromised account on a hab's own host. A process that
 runs as the owner can already reach the local socket. In scope: an agent in one of the hab's own
 panes. The hab tells a process inside its panes from one outside, and refuses it the owner's own
-decisions and a peer link (`hab-logic-api.md` 4.1). An agent that runs any code it likes can still
-leave the panes' process tree; only a sandbox stops that.
+decisions and a peer link (`hab-logic-api.md` 4.1). The check stops an agent that reaches the
+socket by mistake or through the `gff` and `gff-hab` verbs. It does not stop an agent that can
+start a process of its own choosing: that process leaves the panes and is the owner. Only a
+sandbox stops that; `hab-logic-api.md` 4.1 lists the escapes.
 
 ---
 
@@ -607,7 +609,7 @@ hab cannot tell which connection used which key. The device's push registration 
 | Rule | Value |
 |---|---|
 | Peer links | Every `devices.*` method is `denied`: a peer changes no trust store on another hab (6.2) |
-| Agents | The pane route does not take `devices.*`. On the control socket, the hab refuses every `devices.*` method from a process inside one of its panes, whatever its environment holds (`hab-logic-api.md` 4.1). `gff-hab api call devices.revoke` and `gff-hab devices revoke` also refuse to run where `GFF_HAB` is set, as `confirm.answer` does, so the message comes before the call |
+| Agents | The pane route does not take `devices.*`. On the control socket, the hab refuses every `devices.*` method from a process inside one of its panes, whatever its environment holds (`hab-logic-api.md` 4.1). `gff-hab api call devices.revoke` and `gff-hab devices revoke` also refuse to run where `GFF_HAB` is set, as `confirm.answer` does, so the message comes before the call. So does `gff-hab pair`, which writes `authorized_keys` without the socket; that check is the environment's only, and a cleared environment passes it |
 
 Pairing over the API (`devices.pair`): not built; proposed separately.
 
@@ -652,7 +654,9 @@ key this way is safe: it came over a pinned, authenticated channel.
      connection with `denied`.
    - A proven link carries the key's id: the Capcom mark (`hab-logic-api.md` 3.11) needs it.
    - The receiver remembers each proven id in `peer-proofs` in its state directory, one id per
-     line. A later hello that claims a remembered id is held: it is no peer link, and each
+     line. A file it cannot read in full (a read error, or one over 1 MiB) does not stop the
+     hab: it logs the problem and keeps the ids it read before it. A device whose id was lost
+     links unproven again, with no Capcom mark, until it proves once more. A later hello that claims a remembered id is held: it is no peer link, and each
      peer-only call gets `denied` with a hint that names `hab.prove`, until it proves the key. A
      hab moved back to a build before the proof stops linking to that receiver; removing its id
      from the receiver's `peer-proofs` lets it link again.

@@ -395,7 +395,7 @@ func (r runner) gitEnv(ctx context.Context, dir string, env []string, args ...st
 	if bin == "" {
 		bin = "git"
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, bin, append([]string{"-C", dir, "-c", worktree.NoHooks}, args...)...)
 	cmd.Env = append(append(append(os.Environ(), "LC_ALL=C", "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_EDITOR=true"), r.git.Env...), env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil && ctx.Err() != nil {

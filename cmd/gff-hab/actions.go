@@ -22,6 +22,7 @@ import (
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/worktree"
 )
 
 // Defaults for session.create (hab-logic-api.md 3.9).
@@ -710,7 +711,7 @@ func gitIdentity(ctx context.Context, dir string) (top, remote, root string, err
 
 // git runs git in dir and returns its trimmed output.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", worktree.NoHooks}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	var out bytes.Buffer
 	cmd.Stdout = &out

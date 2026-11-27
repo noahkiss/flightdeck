@@ -22,27 +22,39 @@ type Proofs struct {
 	ids  map[string]bool
 }
 
-// OpenProofs reads the proof file at path; a missing file is an empty set.
-func OpenProofs(path string) (*Proofs, error) {
+// OpenProofs reads the proof file at path; a missing file is an empty set. A file it cannot
+// read in full does not stop the hab: logf says so, and the ids read before the problem are
+// kept. A device whose id was lost links unproven again until it proves (transport.md 6.3).
+// logf may be nil.
+func OpenProofs(path string, logf func(string, ...any)) *Proofs {
 	p := &Proofs{path: path, ids: map[string]bool{}}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return p, nil
+		return p
 	}
 	if err != nil {
-		return nil, err
+		logf("peer proofs %s: %v; no proven device is remembered until it proves again", path, err)
+		return p
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(io.LimitReader(f, maxProofFile))
+	lr := &io.LimitedReader{R: f, N: maxProofFile}
+	sc := bufio.NewScanner(lr)
+	// A line may be as long as the whole file: a long line is a bad id, not a read error.
+	sc.Buffer(make([]byte, 0, 64<<10), maxProofFile+1)
 	for sc.Scan() {
 		if id := strings.TrimSpace(sc.Text()); id != "" {
 			p.ids[id] = true
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("peer proofs %s: %w", path, err)
+		logf("peer proofs %s: %v; kept the %d id(s) read before it", path, err, len(p.ids))
+	} else if lr.N == 0 {
+		logf("peer proofs %s: the file is over %d bytes; kept the %d id(s) in the first %d", path, maxProofFile, len(p.ids), maxProofFile)
 	}
-	return p, nil
+	return p
 }
 
 // Proved reports whether device proved its key here before.
