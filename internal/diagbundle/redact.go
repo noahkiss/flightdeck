@@ -140,7 +140,7 @@ func (r *Redactor) token(v string) string {
 
 // Name is pass 1 on a value of class name: its token. An empty value stays empty.
 func (r *Redactor) Name(v string) string {
-	if v == "" {
+	if v = clean(v); v == "" {
 		return v
 	}
 	r.count(RuleName, 1)
@@ -163,7 +163,7 @@ var stateFixedRE = regexp.MustCompile(`^(?:[a-z]+\.log\.[0-9]+|gff-hab-holder\.[
 // Path is pass 1 on a value of class path. The state folder becomes <state> and keeps its fixed
 // layout; the home folder becomes ~; every other component becomes its token.
 func (r *Redactor) Path(p string) string {
-	if p == "" {
+	if p = clean(p); p == "" {
 		return p
 	}
 	var prefix, rest string
@@ -203,8 +203,10 @@ func (r *Redactor) Value(key, v string) string {
 }
 
 // Line is both passes on one structured line (diagnostics.md 4.2), written back as JSON in the
-// order the sink writes: t, lvl, msg, proc, epoch, comp, trace, then the values. ok is false
-// for a line that is not a structured line.
+// order the sink writes: t, lvl, msg, proc, epoch, comp, trace, then the values. Every field
+// and every key gets pass 2 too: a Go writer's constants read the same after it, and a line from
+// another writer (capcom.log, an older holder) has no source check (diagnostics review M1). ok is
+// false for a line that is not a structured line.
 func (r *Redactor) Line(s string) (string, bool) {
 	l, ok := diaglog.Parse(s)
 	if !ok {
@@ -221,21 +223,18 @@ func (r *Redactor) Line(s string) (string, bool) {
 		writeJSONString(&b, v)
 	}
 	field(diaglog.KeyT, l.T.UTC().Format("2006-01-02T15:04:05.000Z07:00"))
-	field(diaglog.KeyLvl, r.word(l.Lvl))
-	field(diaglog.KeyMsg, r.word(l.Msg))
-	field(diaglog.KeyProc, r.word(l.Proc))
+	field(diaglog.KeyLvl, r.Scrub(l.Lvl))
+	field(diaglog.KeyMsg, r.Scrub(l.Msg))
+	field(diaglog.KeyProc, r.Scrub(l.Proc))
 	if l.Epoch != "" {
 		field(diaglog.KeyEpoch, r.Scrub(l.Epoch))
 	}
-	field(diaglog.KeyComp, r.word(l.Comp))
+	field(diaglog.KeyComp, r.Scrub(l.Comp))
 	if l.Trace != "" {
 		field(diaglog.KeyTrace, r.Scrub(l.Trace))
 	}
 	for _, kv := range l.Attrs {
-		key := kv.Key
-		if !keyForm(key) {
-			key = r.Scrub(key)
-		}
+		key := r.Scrub(kv.Key)
 		if kv.Num && plainJSON(kv.Val) {
 			b.WriteByte(',')
 			writeJSONString(&b, key)
@@ -247,27 +246,6 @@ func (r *Redactor) Line(s string) (string, bool) {
 	}
 	b.WriteByte('}')
 	return b.String(), true
-}
-
-// word keeps a line's own constant field (a level, a message, a process kind, a component) when
-// it has the form of one, else scrubs it.
-func (r *Redactor) word(s string) string {
-	if wordRE.MatchString(s) {
-		return s
-	}
-	return r.Scrub(s)
-}
-
-var wordRE = regexp.MustCompile(`^[A-Za-z0-9 ._:,;()'/-]{0,200}$`)
-
-func keyForm(k string) bool {
-	for i := 0; i < len(k); i++ {
-		c := k[i]
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
-			return false
-		}
-	}
-	return k != ""
 }
 
 // plainJSON reports whether a value written bare is a JSON number or Boolean.
@@ -314,20 +292,17 @@ func (r *Redactor) JSON(v any) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
-			if !keyForm(k) {
-				k = r.Scrub(k)
-			}
-			out[k] = r.JSON(e)
+			out[r.Scrub(k)] = r.JSON(e)
 		}
 		return out
 	}
 	return v
 }
 
-// Scrub is pass 2 on one string (8.3): each rule in order. A PEM block within the string is
+// Scrub is pass 2 on one string (8.3): control sequences out, then each rule in order. A PEM block within the string is
 // replaced whole; a log file's block that spans lines goes through a Scrubber.
 func (r *Redactor) Scrub(s string) string {
-	if s == "" {
+	if s = clean(s); s == "" {
 		return s
 	}
 	s = r.knownNames(s)
@@ -357,12 +332,17 @@ var (
 	opRefRE  = regexp.MustCompile(`op://[^/\n"'<>]+/[^/\n"'<>]+/[^\s"'<>]+|op://[^\s"'<>]+`)
 	urlRE    = regexp.MustCompile(`\b([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s/?#@"'<>]*@)?([^\s?#"'<>]*)(\?[^\s#"'<>]*)?(#[^\s"'<>]*)?`)
 	bearerRE = regexp.MustCompile(`(?i)\b(bearer\s+)([A-Za-z0-9._~+/=-]+)`)
-	secretRE = regexp.MustCompile(`(?i)((?:token|key|secret|password|passwd|authorization)[A-Za-z0-9_-]*\s*["']?\s*[:=]\s*["']?\s*)([^\s"',;&<][^\s"',;&]*)`)
-	homeRE   = regexp.MustCompile(`/(?:Users|home)/[A-Za-z0-9._-]+(?:/[^\s"'<>,;]*)?`)
-	ipv4RE   = regexp.MustCompile(`[0-9]{1,3}(?:\.[0-9]{1,3}){3}`)
-	ipv6RE   = regexp.MustCompile(`[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?:%[0-9A-Za-z]+)?`)
-	blobRE   = regexp.MustCompile(`[A-Za-z0-9+_=-]{32,}|[A-Za-z0-9+/]{40,}={0,2}`)
-	uuidRE   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	// secretKeyRE ends at the separator after a secret's key: an optional quote, \ escaped or
+	// not, then :, = or their URL encoding.
+	secretKeyRE = regexp.MustCompile(`(?i)(token|key|secret|password|passwd|authorization)[A-Za-z0-9_-]*(?:\\?["'])?\s*(?:[:=]|%3[ad])\s*`)
+	// secretFlagRE ends at the space after a command line flag that names a secret.
+	secretFlagRE = regexp.MustCompile(`(?i)(?:^|[\s"'=])--?[a-z0-9_-]*(?:token|secret|password|passwd|key)[a-z0-9_-]*[ \t]+`)
+	schemeRE     = regexp.MustCompile(`(?i)^(?:basic|bearer|token|digest)\s+`)
+	homeRE       = regexp.MustCompile(`/(?:Users|home|var/home)/[A-Za-z0-9._-]+(?:/[^\s"'<>,;]*)?|/root(?:/[^\s"'<>,;]*)?|(?:/private)?/var/folders/[^/\s"'<>,;]+/[^/\s"'<>,;]+(?:/[^\s"'<>,;]*)?`)
+	ipv4RE       = regexp.MustCompile(`[0-9]{1,3}(?:\.[0-9]{1,3}){3}`)
+	ipv6RE       = regexp.MustCompile(`[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?:%[0-9A-Za-z]+)?`)
+	blobRE       = regexp.MustCompile(`[A-Za-z0-9+_=-]{32,}|[A-Za-z0-9+/]{40,}={0,2}`)
+	uuidRE       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 // replace runs one rule: each match of re becomes f(match), counted under rule.
@@ -450,21 +430,25 @@ func (r *Redactor) ipv6(s string) string {
 		if i > 0 && (isHex(s[i-1]) || s[i-1] == ':' || s[i-1] == '.') {
 			return "", ""
 		}
-		if j < len(s) && (isAlnum(s[j]) || s[j] == ':') {
-			return "", ""
-		}
-		m := s[i:j]
-		if !strings.ContainsFunc(m, func(c rune) bool { return c != ':' }) {
-			return "", ""
-		}
+		m, tail := s[i:j], ""
 		a, err := netip.ParseAddr(m)
-		if err != nil || !a.Is6() {
+		if err != nil && strings.HasSuffix(m, ":") {
+			// "%s: %w" after an address: the match took the colon that follows it.
+			m, tail, j = m[:len(m)-1], ":", j-1
+			a, err = netip.ParseAddr(m)
+		}
+		// A colon after the address ends it unless a hex digit follows: then the run is longer
+		// than an address, such as a time or a MAC address.
+		if j < len(s) && (isAlnum(s[j]) || s[j] == ':' && j+1 < len(s) && isHex(s[j+1])) {
+			return "", ""
+		}
+		if err != nil || !a.Is6() || !strings.ContainsFunc(m, func(c rune) bool { return c != ':' }) {
 			return "", ""
 		}
 		if tailnet6.Contains(a.WithZone("")) {
-			return RuleTailnetIPv6, "<ip>"
+			return RuleTailnetIPv6, "<ip>" + tail
 		}
-		return RuleIP, "<ip>"
+		return RuleIP, "<ip>" + tail
 	})
 }
 
@@ -495,11 +479,16 @@ func (r *Redactor) each(s string, re *regexp.Regexp, f func(s string, i, j int) 
 }
 
 // homePaths replaces another user's home folder, and the path under it, with ~/<path>, where it
-// starts a path (the hygiene scan's home-path rule).
+// starts a path (the hygiene scan's home-path rule), and the other homes: /var/home, /root, and
+// a macOS user's temporary folder under /private/var/folders.
 func (r *Redactor) homePaths(s string) string {
 	return r.each(s, homeRE, func(s string, i, j int) (string, string) {
 		if i > 0 && (isAlnum(s[i-1]) || strings.IndexByte("._-/", s[i-1]) >= 0) {
 			return "", ""
+		}
+		if k := i + len("/root"); strings.HasPrefix(s[i:], "/root") && k < len(s) && s[k] != '/' &&
+			(isAlnum(s[k]) || strings.IndexByte("._-", s[k]) >= 0) {
+			return "", "" // /rootfs, not /root
 		}
 		return RuleHomePath, "~/<path>"
 	})
@@ -520,25 +509,84 @@ func (r *Redactor) urls(s string) string {
 	return out
 }
 
-// secrets replaces the value after a bearer, and after token, key, secret, password or
-// authorization followed by : or =.
+// secrets replaces the value after a bearer; after token, key, secret, password or
+// authorization followed by : or = (or %3A, %3D), with an optional quote, \ escaped or not, on
+// either side of it; and after a command line flag that names one, such as --token x. A quoted
+// value is taken to its closing quote. An authorization scheme (Basic, Bearer, Token, Digest)
+// stays and the word after it goes.
 func (r *Redactor) secrets(s string) string {
 	n := 0
 	s = bearerRE.ReplaceAllStringFunc(s, func(m string) string {
 		p := bearerRE.FindStringSubmatch(m)
-		if strings.HasPrefix(p[2], "<") {
+		if placeholderRE.MatchString(p[2]) {
 			return m
 		}
 		n++
 		return p[1] + "<secret>"
 	})
-	s = secretRE.ReplaceAllStringFunc(s, func(m string) string {
-		p := secretRE.FindStringSubmatch(m)
-		n++
-		return p[1] + "<secret>"
-	})
+	for _, re := range []*regexp.Regexp{secretKeyRE, secretFlagRE} {
+		var b strings.Builder
+		last := 0
+		for pos := 0; pos < len(s); {
+			loc := re.FindStringIndex(s[pos:])
+			if loc == nil {
+				break
+			}
+			k := pos + loc[1]
+			v0, v1, ok := secretValue(s, k, re == secretFlagRE)
+			if !ok {
+				pos = max(k, pos+1)
+				continue
+			}
+			b.WriteString(s[last:v0])
+			b.WriteString("<secret>")
+			last, pos = v1, v1
+			n++
+		}
+		if last > 0 {
+			b.WriteString(s[last:])
+			s = b.String()
+		}
+	}
 	r.count(RuleSecret, n)
 	return s
+}
+
+// secretQuotes are the quotes a secret's value may stand in, longest first.
+var secretQuotes = []string{`\"`, `\'`, "%22", `"`, `'`}
+
+// placeholderRE matches what an earlier rule wrote, which the secret rule keeps.
+var placeholderRE = regexp.MustCompile(`^<(?:secret|ip|host|email|key|blob|path|value)>`)
+
+// secretValue finds the value that starts at k: within its quotes, else after an authorization
+// scheme, up to white space, a quote, a backslash or , ; &. flag: the value of a command line
+// flag, which another flag does not start. ok is false for no value, or one a rule already wrote.
+func secretValue(s string, k int, flag bool) (v0, v1 int, ok bool) {
+	if !flag {
+		for _, q := range secretQuotes {
+			if !strings.HasPrefix(s[k:], q) {
+				continue
+			}
+			v0 = k + len(q)
+			v1 = len(s)
+			for i := v0; i < len(s); i++ {
+				if strings.HasPrefix(s[i:], q) && (len(q) > 1 || s[i-1] != '\\') {
+					v1 = i
+					break
+				}
+			}
+			return v0, v1, v1 > v0 && !placeholderRE.MatchString(s[v0:v1])
+		}
+		k += len(schemeRE.FindString(s[k:]))
+	}
+	v1 = k
+	for v1 < len(s) && strings.IndexByte(" \t\r\n\"',;&\\", s[v1]) < 0 {
+		v1++
+	}
+	if v1 == k || flag && s[k] == '-' || placeholderRE.MatchString(s[k:v1]) {
+		return 0, 0, false
+	}
+	return k, v1, true
 }
 
 // blobs replaces runs of 32 or more base64, base64url or hex characters that hold a letter and a
@@ -607,4 +655,76 @@ func isHex(c byte) bool   { return isDigit(c) || c >= 'a' && c <= 'f' || c >= 'A
 func isAlnum(c byte) bool { return isDigit(c) || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 func isLetter(c rune) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// clean removes terminal control sequences (CSI, OSC and the other ESC forms) and the C0
+// controls and DEL, keeping tab and newline, before both passes (diagnostics review M6): an SGR
+// sequence's final letter would otherwise touch a name, and raw escapes would reach the terminal
+// of whoever reads the bundle. Where a removed run stood between two letters or digits it leaves
+// a space, so the words on each side still stand as words.
+func clean(s string) string {
+	if !strings.ContainsFunc(s, isControl) {
+		return s
+	}
+	var b strings.Builder
+	cut := false
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == 0x1b:
+			i, cut = skipEscape(s, i), true
+			continue
+		case isControl(rune(c)):
+			i, cut = i+1, true
+			continue
+		}
+		if cut && b.Len() > 0 && isAlnum(b.String()[b.Len()-1]) && isAlnum(c) {
+			b.WriteByte(' ')
+		}
+		cut = false
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+func isControl(c rune) bool { return c < 0x20 && c != '\t' && c != '\n' || c == 0x7f }
+
+// skipEscape returns the index after the escape sequence that starts at s[i], an ESC: a CSI to
+// its final byte, an OSC, DCS, SOS, PM or APC string to BEL or ST, any other to its final byte.
+// A sequence the string cuts short runs to its end.
+func skipEscape(s string, i int) int {
+	i++
+	if i >= len(s) {
+		return i
+	}
+	switch s[i] {
+	case '[':
+		for i++; i < len(s); i++ {
+			if s[i] >= 0x40 && s[i] <= 0x7e {
+				return i + 1
+			}
+			if s[i] < 0x20 || s[i] > 0x7e {
+				return i
+			}
+		}
+		return i
+	case ']', 'P', 'X', '^', '_':
+		for i++; i < len(s); i++ {
+			if s[i] == 0x07 {
+				return i + 1
+			}
+			if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+				return i + 2
+			}
+		}
+		return i
+	}
+	for i < len(s) && s[i] >= 0x20 && s[i] <= 0x2f {
+		i++
+	}
+	if i < len(s) {
+		i++
+	}
+	return i
 }

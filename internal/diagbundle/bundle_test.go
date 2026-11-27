@@ -357,6 +357,32 @@ func TestScrubRules(t *testing.T) {
 		{"internal/diaglog/check/testdata/fixture/relay", "internal/diaglog/check/testdata/fixture/relay"},
 		{"TestBundleRedactionKeepsLongWordsWithoutDigits", "TestBundleRedactionKeepsLongWordsWithoutDigits"},
 		{"sum " + fxBlob, "sum <blob>"},
+		// Control sequences go before both passes (review M6); a cut between two letters
+		// leaves a space.
+		{"\x1b[1m" + fxHost + "\x1b[0m failed", tok + " failed"},
+		{"x\x1b[32m" + fxHost, "x " + tok},
+		{"copy \x1b]52;c;aGVsbG8=\x07done \x1b]0;title\x1b\\x", "copy done x"},
+		{"a\x00" + fxHost + "\rb\tc\nd\x7f", "a " + tok + " b\tc\nd"},
+		// An IPv6 address before a colon (review M4).
+		{"dial " + fxTail6 + ": refused", "dial <ip>: refused"},
+		{"dial fd7a:115c:a1e0:1111:2222:3333:4444:5555: refused", "dial <ip>: refused"},
+		{"dial 2001:db8::1: refused", "dial <ip>: refused"},
+		{"dial 2001:db8::: refused", "dial <ip>: refused"},
+		{"at 15:04:05: done", "at 15:04:05: done"},
+		// The secret shapes of review M5.
+		{"run --token abc123secret -password hunter2 --keep x", "run --token <secret> -password <secret> --keep x"},
+		{"Authorization: Basic dXNlcjpwYXNz", "Authorization: Basic <secret>"},
+		{"Authorization: Bearer abc123", "Authorization: Bearer <secret>"},
+		{`password: "correct horse battery" next`, `password: "<secret>" next`},
+		{`err {\"token\":\"abc123secret\",\"n\":1}`, `err {\"token\":\"<secret>\",\"n\":1}`},
+		{"q=token%3Dabc123secret&x=1", "q=token%3D<secret>&x=1"},
+		{"password=<hunter2", "password=<secret>"},
+		{"the key is missing", "the key is missing"},
+		// The other homes (review L2).
+		{"open /var/home/alice/x", "open ~/<path>"},
+		{"read /root/.ssh/id_fixture", "read ~/<path>"},
+		{"mount /rootfs/x", "mount /rootfs/x"},
+		{"tmp /private/var/folders/ab/cd0ef/T/x.sock", "tmp ~/<path>"},
 	} {
 		if got := r.Scrub(c.in); got != c.want {
 			t.Errorf("Scrub(%q) = %q, want %q", c.in, got, c.want)
@@ -372,6 +398,30 @@ func TestScrubRules(t *testing.T) {
 	}
 	if got := strings.Join(out, "|"); got != "before|x <key>| y|after" {
 		t.Errorf("PEM lines: %q", got)
+	}
+}
+
+// TestLineFields: pass 2 runs on a line's own fields and on every key, and on the keys of a
+// JSON value (review M1): a line from a writer with no source check can put a name there.
+func TestLineFields(t *testing.T) {
+	r := newWithSalt(Identity{Home: fxHome, Names: []string{fxUser, fxPeer}}, []byte("salt"))
+	out, ok := r.Line(`{"t":"2026-11-27T10:00:00.000Z","lvl":"info","msg":"open ` + fxHome + `/develop/` + fxProject + ` at ` + fxPrivIP +
+		` ` + fxPeer + `","proc":"` + fxPeer + `","comp":"` + fxPeer + `","` + fxPeer + `":"x","` + fxUser + `":1}`)
+	if !ok {
+		t.Fatal("not a line")
+	}
+	for _, s := range []string{fxUser, fxPeer, fxPrivIP, fxHome} {
+		if strings.Contains(out, s) {
+			t.Errorf("line holds %q: %s", s, out)
+		}
+	}
+	if !strings.Contains(out, `"`+r.token(fxPeer)+`":"x"`) || !strings.Contains(out, `"`+r.token(fxUser)+`":1`) ||
+		!strings.Contains(out, `"lvl":"info"`) {
+		t.Errorf("line: %s", out)
+	}
+	j, _ := marshal(r.JSON(map[string]any{fxUser: map[string]any{fxPeer: "x"}}), false)
+	if string(j) != `{"`+r.token(fxUser)+`":{"`+r.token(fxPeer)+`":"x"}}` {
+		t.Errorf("JSON keys: %s", j)
 	}
 }
 
