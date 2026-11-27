@@ -192,8 +192,11 @@ Trust is exactly `transport.md`. The mesh adds no new credential.
   the peer file. A different id later is refused until `gff-hab peers accept <label>`, which shows
   both ids (`transport.md` 6.3).
 - **The dialed hab learns the dialer.** A hab that dials sends its own device id in the hello
-  (`peer` field, 12). Over the system sshd that is a claim, not a proof; that is enough, because
-  the caller is already the owner. Over the embedded server the key proves it.
+  (`peer` field, 12), then proves it with `hab.prove`, a signature by its hab key over the
+  welcome's nonce (`transport.md` 6.3). Only a proven id holds the Capcom mark. A hab older than
+  the proof only claims its id; the link still works, since a caller over the system sshd is
+  already the owner. A process inside one of the dialed hab's panes cannot open a peer link
+  (`hab-logic-api.md` 4.1).
 - **Unknown dialers.** A hab that receives a link from a device id not in its own peer list still
   serves it (the caller is the owner) and shows it as "linked from <host id>, not in your peer
   list" with an add action.

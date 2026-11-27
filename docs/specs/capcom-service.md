@@ -1561,11 +1561,14 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
 - **gff.** `gff round add|edit -actions w,...` sets the words; `show` lists them; export and
   apply carry them. The board's `m` shows only `capcom` rounds, each with its words and its
   newest message's outcome.
-- **Stated assumptions and limits.** The control socket is the person: the hab trusts any call
-  on it. From a pane, the CLI refuses `-actions`, `confirm answer` and the like where
-  `$GFF_HAB` is set, but an agent with the user's shell and no sandbox can drop that variable
-  and reach the socket, as in the tools Flightdeck measures itself against. A peer-credential
-  check on the socket is not built. The hab judges a route call by the turn that runs when it
+- **Stated assumptions and limits.** The control socket is the person, except for a process
+  inside one of the hab's panes: whatever its environment holds, the hab refuses it a word
+  grant (`round.create` with `actions`, a `round.update` that adds a word), `confirm.answer`,
+  `capcom.card.answer`, `approval.answer` and `settings.set` (`hab-logic-api.md` 4.1). The CLI
+  still refuses `-actions`, `confirm answer` and the like where `$GFF_HAB` is set, so the message
+  comes first. An agent that runs any code it likes can leave the panes' process tree (a service
+  manager, `ssh` to its own host) and reach the socket as the person; only a sandbox stops that.
+  The hab judges a route call by the turn that runs when it
   arrives: a call still in flight from an event turn the user stopped, landing after a user
   turn began, is judged as the user turn's. The SDK gives the route call no turn id to compare.
 - **The app** (`app.md` 21.5). Capcom settings links to "Capcom jobs", the `capcom` rounds
