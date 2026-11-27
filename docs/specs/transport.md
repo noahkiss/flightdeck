@@ -462,8 +462,9 @@ the key without trusting a value the phone could copy.
 - **Token check.** The token is compared in constant time on its decoded 16 bytes. The token never
   appears in a log or an answer.
 - **sshd endpoints and host keys.** The endpoints are the window's addresses with port 22
-  (`-ssh-port` changes it). The host keys are the `ssh-ed25519` and `ecdsa-sha2-nistp*` lines of
-  `/etc/ssh/ssh_host_*_key.pub` (`-sshd-keys` names another folder). With none readable, the answer
+  (`-ssh-port` changes it; for `devices.pair`, `ssh_port` in `[pairing]`, 6.1.7). The host keys
+  are the `ssh-ed25519` and `ecdsa-sha2-nistp*` lines of `/etc/ssh/ssh_host_*_key.pub`
+  (`-sshd-keys` names another folder; for `devices.pair`, `sshd_keys`). With none readable, the answer
   has no host keys and the app falls back to comparing the key by hand.
 
 #### 6.1.3 The window
@@ -471,7 +472,7 @@ the key without trusting a value the phone could copy.
 | Rule | Value |
 |---|---|
 | Bind addresses | Every address of an up interface that is private IPv4 (10/8, 172.16/12, 192.168/16), a tailnet address in the CGNAT range (100.64/10), or IPv6 unique local (fc00::/7, the tailnet's range among them). A CGNAT address counts only on a tailnet-looking interface: a /32, or an interface named `tailscale*` or `utun*`. Elsewhere 100.64/10 may be an ISP's shared space, or a cellular or satellite uplink that other subscribers reach. Container and VM bridges (`docker*`, `br-*`, `veth*`, `virbr*`, `vmnet*`) are skipped: other containers and VMs reach them. Never loopback (unless named with `-listen`), link-local, multicast, a public address, or an unspecified address (`0.0.0.0`, `::`). One listener per address, eight at most. The terminal prints the addresses chosen |
-| `-listen addr` | Replaces the list; repeatable. An unspecified or public address is refused, even here |
+| `-listen addr` | Replaces the list; repeatable. An unspecified or public address is refused, even here. For `devices.pair`, `listen` in `[pairing]` (6.1.7) does the same, and the window library refuses such an address whoever names it |
 | Port | `-port`, else one free port the system picks for the first address, reused for the others where it is free |
 | Lifetime | At most five minutes (`-timeout`, capped at five). Closed after one pairing, a `declined` answer or Ctrl-C. Refused tokens never close it |
 | Banner | The library's default, `SSH-2.0-Go`: it names no product, so a scan does not learn it found a pairing window |
@@ -487,10 +488,23 @@ When no address qualifies, `gff-hab pair` says so and names `-listen`.
 
 **Cloud hosts.** A cloud VM (EC2, GCP, Azure and the like) sees only its private VPC address, and
 the provider maps a public address 1:1 onto it. A window on that "private" address is then
-reachable from the internet wherever the security group allows the port. gff-hab cannot tell this
-case apart from a LAN. So when it picks the addresses itself, it prints them with a note: on a cloud
-host, pair with `-listen <tailnet ip>`. The token and the owner's confirmation still guard the
-window, but the owner's rule is that pairing never listens on a public address.
+reachable from the internet wherever the security group allows the port. The token and the
+owner's confirmation still guard the window, but the owner's rule is that pairing never listens
+on a public address. So when gff-hab picks the addresses itself:
+
+- On Linux it reads the firmware strings in `/sys/class/dmi/id` (vendor, product, BIOS, chassis
+  tag). When they name a cloud provider (Amazon EC2, Google Compute Engine, Microsoft Azure,
+  DigitalOcean, Hetzner, Linode or Akamai, Vultr, Oracle Cloud, Scaleway, Alibaba Cloud,
+  OpenStack, UpCloud, Exoscale), the window takes only the tailnet addresses: CGNAT on a
+  tailnet-looking interface, and Tailscale's IPv6 unique local range. With none, it
+  refuses and names `-listen` (and `listen` in `[pairing]`).
+- Elsewhere, or when the strings name no provider, `gff-hab pair` prints the addresses with a
+  note: on a cloud host, pair with `-listen <tailnet ip>`. `devices.pair` has no terminal for the
+  note; the owner sets `listen` there.
+
+The check is a hint, not proof: a provider it does not know, or a VM that hides its firmware
+strings, looks like a LAN host. A false match (a laptop whose vendor string names a provider)
+only narrows the window to the tailnet.
 
 The window is a short, owner-started listener on LAN and tailnet addresses, which the owner
 approved for pairing (2026-11-02). Enabling the embedded server for normal traffic stays a
@@ -504,7 +518,7 @@ The key lands in two places:
    file). This is what makes the phone work today. One line is appended:
 
    ```
-   restrict,command="<gff-hab path> connect" ecdsa-sha2-nistp256 AAAA... flightdeck: <device name> (paired 2026-11-02)
+   restrict,command="<gff-hab path> connect -device SHA256:<key> -devices <state>/devices.json" ecdsa-sha2-nistp256 AAAA... flightdeck: <device name> (paired 2026-11-02)
    ```
 
    - `restrict` turns off port, agent and X11 forwarding, PTYs and `~/.ssh/rc`.
@@ -513,6 +527,9 @@ The key lands in two places:
      channel (`app.md` 10.6), so the forced command covers every use. The path is the `gff-hab`
      found on `PATH` when it is the binary running `pair`, else the running binary's own path.
      `-command` replaces the whole command; a `-socket` given to `pair` is passed on.
+   - `-device` and `-devices` name the device and the hab's device list, so `connect` can end the
+     device's sessions once it is revoked (6.6). They are added only to gff-hab's own command, not
+     to one given with `-command`.
    - The comment starts with `flightdeck:` and names the device. `gff-hab devices revoke` finds the
      line by its key and that prefix.
    - Other lines are never changed or reordered. The file gets one line at its end, with a newline
@@ -525,17 +542,21 @@ The key lands in two places:
    - The write goes through a temporary file in the same folder and a rename. The file ends at mode
      0600. Before the window opens, `pair` warns when group or others can write the file's folder
      (or the home folder above `~/.ssh`): sshd's `StrictModes` then ignores the key, and the phone
-     would fail later with no hint. The warning names the `chmod go-w` to run. A missing `~/.ssh` is made at 0700. A symbolic link is followed, and the rename replaces
+     would fail later with no hint. The warning names the `chmod go-w` to run. In the same way, as
+     StrictModes refuses keys, the window does not open when group or others can write the state
+     folder or `devices.json`, or read the hab's host key: they could add a device, or pose as the
+     window the code pins. The refusal names the `chmod` to run. A missing `~/.ssh` is made at 0700. A symbolic link is followed, and the rename replaces
      the file it points to. If the file changed between the read and the rename, the write starts
      again, at most three times.
 2. **gff-hab's own device list**, `<state>/devices.json` (0600): id, label, kind, paired at, the key
-   line, the file the key was written to, state. This is the trust store the embedded server will
+   line, the file the key was written to, state. When this write fails, the key line just added is
+   taken out again: a line with no record could never be revoked. This is the trust store the embedded server will
    read (4.2, 5); it never reads `~/.ssh`.
 
 `gff-hab devices list` prints the list. `gff-hab devices revoke <id|label>` removes the device's
 line from `authorized_keys` (other lines byte for byte) and keeps the record as a revoked tombstone.
-Over the system sshd a revoke stops new logins; a session already open runs until it drops. The
-device's push registration is kept. The hab and the CLI may write the list at once: each write
+Over the system sshd a revoke stops new logins, and `connect -device` ends the device's open
+sessions within about two seconds (6.6). The device's push registration is kept. The hab and the CLI may write the list at once: each write
 replaces the file only when it still holds what the writer read, else it reads again (three
 tries). The fan-out to peers (6.6) comes with the embedded server. The `devices.*` API methods do the same
 list and revoke for a client (6.1.7).
@@ -601,10 +622,26 @@ pairing of 6.1 without a terminal. The window is the same: the addresses, limits
 line and device record of 6.1.1 to 6.1.4. Only the confirmation moves from the terminal to the
 client.
 
+It is off by default. The `[pairing]` section of the hab's config file (`gff-hab serve -config`)
+turns it on and says where the window listens:
+
+```toml
+[pairing]
+api = true                  # devices.pair and devices.confirm work; default false
+listen = ["<tailnet ip>"]   # the window's addresses; default: chosen as 6.1.3 says
+ssh_port = 22               # the system sshd's port, told to the device
+sshd_keys = "/etc/ssh"      # folder with the system sshd's host keys
+authorized_keys = ""        # default: ~/.ssh/authorized_keys of the user gff-hab runs as
+```
+
+Off, `devices.pair` and `devices.confirm` answer `unavailable`. `listen` takes what `-listen`
+takes (6.1.3): a public or unspecified address makes the section an error, and pairing stays off.
+
 1. **`devices.pair {label?}`** opens the window in the running gff-hab and returns the offer:
-   the hab's device id, the window's endpoints, the token and the time left. The client shows it
-   as the QR code (`PairingCode(offer:)`). One window is open at a time; a second call answers
-   `conflict` until the first closes.
+   the hab's device id, the window's endpoints, the token, the time left, and `warnings`: one line
+   per problem the owner should fix, such as a `~/.ssh` that StrictModes would refuse (6.1.4). The
+   client shows the offer as the QR code (`PairingCode(offer:)`) and the warnings beside it. One
+   window is open at a time; a second call answers `conflict` until the first closes.
 2. **`devices.confirm {}`** waits until a device presents the token, then answers `waiting` with
    the device: its name, kind, key type, fingerprint with the last 4 characters as `????`, and
    source address. The call returns when the window closes too, with how it ended.
@@ -613,7 +650,8 @@ client.
    answers `waiting` with `tries_left`; the third declines. `devices.confirm {decline: true}`
    declines a waiting device, or closes the window when none waits.
 4. Outcomes: `paired`, `declined`, `expired`, `failed` (the key could not be saved) or `closed`
-   (the hab stopped). Each closes the window and spends the token.
+   (the hab stopped, or the client that opened the window disconnected). Each closes the window
+   and spends the token.
 
 Who may call:
 
@@ -623,13 +661,15 @@ Who may call:
 | Peer links | Every `devices.*` method is `denied`: a peer admits no key and changes no trust store on another hab (6.2) |
 | Agents | The pane route does not take `devices.*`. `gff-hab api call` refuses `devices.pair`, `devices.confirm` and `devices.revoke`, and `gff-hab devices revoke` refuses to run, inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
 | The code | The answer never carries the last 4 characters; the owner reads them off the device |
+| The opener's connection | The window lives as long as the connection that opened it, at most. When it ends, the window closes as `closed`, a waiting device is refused, and nothing is written. A client that reconnects with its reconnect token keeps its client id, but the window is gone; it opens a new one |
 
 `devices.list` returns the device records. `devices.revoke {id}` takes an id, an id prefix of at
 least 6 characters, or a label, as `gff-hab devices revoke` does: it removes the key line and keeps
-the record as a tombstone. A session already open over the system sshd runs until it drops: the
-hab cannot tell which connection used which key. The device's push registration is kept. The key
-lands in the authorized_keys of the user gff-hab runs as, with the forced command `gff-hab connect`
-(the `-socket` of `serve` when given).
+the record as a tombstone. The device's open sessions over the system sshd end within about two
+seconds, when its key line names it (6.6). The device's push registration is kept. A paired key
+lands in the authorized_keys of the user gff-hab runs as (or `authorized_keys` in `[pairing]`),
+with the forced command `gff-hab connect -device <id> -devices <list>` (and the `-socket` of
+`serve` when given).
 
 Why a caller gains nothing new: a local-socket caller runs as the hab's user and can write
 `~/.ssh/authorized_keys` itself. A paired device has a forced command and cannot, but it can
@@ -637,15 +677,20 @@ already start a shell with `session.create` and write the file from there. So th
 no access the caller lacks. The confirmation still proves the device in the owner's hand is the
 one asking.
 
-Not built in the API path, against `gff-hab pair`:
+What guards the window opened over the API, against `gff-hab pair`:
 
-- No `-listen`: the window takes every LAN and tailnet address (6.1.3). On a cloud host, where a
-  private address may be reachable from the internet, pair with `gff-hab pair -listen <tailnet
-  ip>` instead.
-- No StrictModes warning (6.1.4): the API caller sees no terminal line.
-- The sshd endpoints told to the device use port 22, and the host keys come from `/etc/ssh`.
-- A window whose opener disconnects stays open until it ends (at most five minutes); no other
-  client can confirm or close it, and `devices.pair` answers `conflict` until then.
+| Guard | Value |
+|---|---|
+| Off by default | `[pairing] api = true` turns it on |
+| Bind addresses | `listen` in `[pairing]`, else the choice of 6.1.3 with its cloud check. Never public or unspecified |
+| File modes | The state checks of 6.1.4 refuse the window; the StrictModes check of `authorized_keys` is a warning in the offer and a hab log line |
+| sshd port and host keys | `ssh_port` and `sshd_keys` in `[pairing]` |
+| An orphan window | Closes with its opener's connection, and at the end of its lifetime (five minutes at most) in any case. Neither leaves a key or a record |
+| Revoke | Ends the device's open sessions, as 6.6 says |
+
+Not covered: a socket caller that is an agent which means it (the Agents row above), and a
+client that answers `devices.confirm` without showing the owner the device. The confirmation
+proves the device in hand only when a person reads the code off it.
 
 ### 6.2 The phone and the other habs
 
@@ -694,7 +739,19 @@ key this way is safe: it came over a pinned, authenticated channel.
 
 1. The owner runs `gff-hab devices revoke <id>` on any hab, or revokes from any paired client.
 2. That hab marks the key revoked in its authorized-keys file and closes the device's live SSH
-   connections at once.
+   connections at once. Over the system sshd (built): the revoke removes the key line and marks
+   the record revoked. Each session of the device runs the key line's forced command,
+   `gff-hab connect -device <id> -devices <list>`. `connect` refuses to start unless the list
+   holds the device as paired, and while it runs it reads the list again each second when the
+   file changed. Once the device is revoked or gone, it closes the session. So a revoke ends the
+   device's open sessions within about two seconds, and an SSH connection that authenticated
+   before the revoke cannot open a new channel. It works the same for `gff-hab devices revoke`,
+   which writes the list without the hab. The check fails closed: a list that cannot be read or
+   parsed ends every session that names it. It cannot end a session whose key line has no
+   `-device`: a line written before this change, one written with `gff-hab pair -command`, or
+   one the app's password setup wrote (6.1.6). Such a session runs until it drops; pairing the
+   device again writes the new line. Removing a line from `authorized_keys` by hand, without a
+   revoke, ends nothing.
 3. It sends a revocation tombstone to every peer over the hab-to-hab path. Each peer revokes and
    closes too.
 4. A peer that is offline gets the tombstone from its peers' outbox when it comes back (the outbox
@@ -815,7 +872,7 @@ discussed before it is built.
 |---|---|---|
 | Enabling the embedded SSH server on any hab | A new listening port | Off. The owner enables it per hab, after the security review |
 | The pairing window of `gff-hab pair` (6.1.3) | A short-lived listening port | Approved by the owner (2026-11-02): LAN and tailnet addresses only, five minutes at most, one use, started by the owner in a terminal |
-| The same window opened by `devices.pair` (6.1.7) | An API call opens the short-lived port, and a client answers the confirmation | Proposed: the bind and lifetime rules of 6.1.3, only the client that opened the window confirms, never a peer link or an agent's pane. Built so the owner can review it; awaits the owner's approval and a security review before any real host relies on it |
+| The same window opened by `devices.pair` (6.1.7) | An API call opens the short-lived port, and a client answers the confirmation | Proposed: off unless `[pairing] api = true`; the bind, cloud and lifetime rules of 6.1.3; the window closes with its opener's connection; only the client that opened it confirms, never a peer link or an agent's pane. Built so the owner can review it; awaits the owner's approval and a security review before any real host turns it on |
 | The bind address: LAN, tailnet address, or both | Decides who can reach the port | One address per hab, never all interfaces |
 | The port number | A new port on each host | One fixed default in the 2700-9999 range, checked against ports in use, overridable by config |
 | Device keys in gff-hab's authorized-keys file | A new credential that authenticates to a hab | Yes, for the embedded server only; the system sshd and `~/.ssh` unchanged |

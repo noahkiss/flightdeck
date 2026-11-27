@@ -13,7 +13,9 @@ import (
 type Devices interface {
 	List() ([]api.Device, error)
 	Revoke(query string) error
-	Pair(client string, p api.DevicesPairParams) (api.PairingOffer, error)
+	// Pair opens a pairing window. conn ends when the calling connection does: the window closes
+	// then, so a window never outlives the only client that may answer it.
+	Pair(conn context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error)
 	// Confirm waits for a device, or answers it. It returns when ctx ends, with the state then.
 	Confirm(ctx context.Context, client string, p api.DevicesConfirmParams) (api.DevicePairing, error)
 }
@@ -54,7 +56,7 @@ func (c *conn) handleDevices(m message) {
 	case "devices.pair":
 		var p api.DevicesPairParams
 		if e = c.decodeUp(m, &p); e == nil && ds != nil {
-			call = func(context.Context) (any, error) { return ds.Pair(c.clientID, p) }
+			call = func(context.Context) (any, error) { return ds.Pair(c.ctx, c.clientID, p) }
 		}
 	case "devices.confirm":
 		var p api.DevicesConfirmParams

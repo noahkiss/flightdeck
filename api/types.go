@@ -364,6 +364,7 @@ type PairingOffer struct {
 	Endpoints   []string `json:"endpoints" doc:"The pairing window's addresses, host:port, in the order to try."`
 	Token       string   `json:"token" doc:"One-time pairing token."`
 	ExpiresInMS int      `json:"expires_in_ms"`
+	Warnings    []string `json:"warnings,omitempty" doc:"devices.pair: problems the owner should fix, one line each, such as an authorized_keys folder that sshd's StrictModes would refuse."`
 }
 
 type DevicesListParams struct{}
@@ -399,7 +400,7 @@ type PairingDevice struct {
 // DevicePairing answers devices.confirm.
 type DevicePairing struct {
 	Seq
-	State     PairingState   `json:"state" doc:"waiting: a device waits for the code; paired: it is in the trust store; declined, expired, failed (the key could not be saved), closed (the hab stopped): the window is closed and nothing paired."`
+	State     PairingState   `json:"state" doc:"waiting: a device waits for the code; paired: it is in the trust store; declined, expired, failed (the key could not be saved), closed (the hab stopped, or the client that opened the window disconnected): the window is closed and nothing paired."`
 	Device    *PairingDevice `json:"device,omitempty" doc:"With waiting, paired and declined: the device."`
 	Paired    *Device        `json:"paired,omitempty" doc:"With paired: its record."`
 	TriesLeft int            `json:"tries_left,omitempty" doc:"With waiting after a wrong code: the codes left before it is declined."`

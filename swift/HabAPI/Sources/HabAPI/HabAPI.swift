@@ -3759,7 +3759,7 @@ public struct DevicePairing: Codable, Sendable, Hashable {
     public var reason: String?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
-    /// waiting: a device waits for the code; paired: it is in the trust store; declined, expired, failed (the key could not be saved), closed (the hab stopped): the window is closed and nothing paired.
+    /// waiting: a device waits for the code; paired: it is in the trust store; declined, expired, failed (the key could not be saved), closed (the hab stopped, or the client that opened the window disconnected): the window is closed and nothing paired.
     public var state: PairingState
     /// With waiting after a wrong code: the codes left before it is declined.
     public var triesLeft: Int?
@@ -7291,6 +7291,8 @@ public struct PairingOffer: Codable, Sendable, Hashable {
     public var seq: UInt64
     /// One-time pairing token.
     public var token: String
+    /// devices.pair: problems the owner should fix, one line each, such as an authorized_keys folder that sshd's StrictModes would refuse.
+    public var warnings: [String]?
 
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
@@ -7298,14 +7300,16 @@ public struct PairingOffer: Codable, Sendable, Hashable {
         case expiresInMs = "expires_in_ms"
         case seq = "seq"
         case token = "token"
+        case warnings = "warnings"
     }
 
-    public init(deviceId: String, endpoints: [String], expiresInMs: Int, seq: UInt64, token: String) {
+    public init(deviceId: String, endpoints: [String], expiresInMs: Int, seq: UInt64, token: String, warnings: [String]? = nil) {
         self.deviceId = deviceId
         self.endpoints = endpoints
         self.expiresInMs = expiresInMs
         self.seq = seq
         self.token = token
+        self.warnings = warnings
     }
 }
 
@@ -11090,13 +11094,13 @@ public enum HabMethods {
     public static let paneSetDesiredSize = HabMethod<DesiredSizeParams, DesiredSizeResult>(name: "pane.set_desired_size")
     /// Send a fresh snapshot, or nudge the program to redraw (spec 6.7).
     public static let paneRedraw = HabMethod<RedrawParams, Empty>(name: "pane.redraw")
-    /// Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). One window at a time; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.
+    /// Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). Unavailable unless the [pairing] section of the hab's config file turns it on. One window at a time; it closes when the calling connection ends; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.
     public static let devicesPair = HabMethod<DevicesPairParams, PairingOffer>(name: "devices.pair")
     /// Wait for the device that presented the open window's token, or answer it: the last 4 characters of its key fingerprint pair it, decline refuses it (transport.md 6.1.7). Only the connection that opened the window. Needs the devices capability.
     public static let devicesConfirm = HabMethod<DevicesConfirmParams, DevicePairing>(name: "devices.confirm")
     /// List the devices in the hab's trust store (transport.md 5). Needs the devices capability.
     public static let devicesList = HabMethod<DevicesListParams, DeviceList>(name: "devices.list")
-    /// Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
+    /// Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). The device's open sessions end within seconds when its key line names it (paired by this gff-hab); a session of an older line runs until it drops. Its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
     public static let devicesRevoke = HabMethod<DevicesRevokeParams, Empty>(name: "devices.revoke")
     /// Start a program in a new pane and file it as a session (spec 3.9).
     public static let sessionCreate = HabMethod<SessionCreateParams, SessionCreated>(name: "session.create")

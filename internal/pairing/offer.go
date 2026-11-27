@@ -155,6 +155,15 @@ func PickLocal(ifs []IfAddr) []netip.Addr {
 
 // LocalAddrs lists the addresses of this host's up interfaces that PickLocal keeps.
 func LocalAddrs() ([]netip.Addr, error) {
+	all, err := Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	return PickLocal(all), nil
+}
+
+// Interfaces lists the addresses of this host's up interfaces, with their prefix lengths.
+func Interfaces() ([]IfAddr, error) {
 	ifs, err := net.Interfaces()
 	if err != nil {
 		return nil, err
@@ -185,7 +194,24 @@ func LocalAddrs() ([]netip.Addr, error) {
 			all = append(all, IfAddr{Name: ifc.Name, Prefix: netip.PrefixFrom(ip, ones)})
 		}
 	}
-	return PickLocal(all), nil
+	return all, nil
+}
+
+// tailnetV6 is the IPv6 range a Tailscale tailnet hands out.
+var tailnetV6 = netip.MustParsePrefix("fd7a:115c:a1e0::/48")
+
+// TailnetOnly keeps the tailnet addresses of a list PickLocal made: CGNAT addresses (PickLocal
+// kept only those on a tailnet-looking interface) and the tailnet's IPv6 range. On a cloud host
+// a private address may be the VPC address the provider maps a public one onto (transport.md
+// 6.1.3), so a window there binds only these on its own.
+func TailnetOnly(addrs []netip.Addr) []netip.Addr {
+	var out []netip.Addr
+	for _, a := range addrs {
+		if a = a.Unmap(); cgnat.Contains(a) || tailnetV6.Contains(a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // Pick keeps the addresses that qualify, without repeats, IPv4 first, at most MaxEndpoints.

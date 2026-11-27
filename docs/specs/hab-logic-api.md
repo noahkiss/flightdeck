@@ -552,7 +552,8 @@ Decision: proposed (this stage). Calls and the event: 3.9.
   `rpc.discover`. The calls the clients need are listed in 3.9.
 - `devices.pair`, `devices.confirm`, `devices.list` and `devices.revoke` manage the hab's trust
   store (`transport.md` 5, 6.1.7). They need the `devices` capability, and a peer link is refused
-  every one of them. Rename and rotate (`transport.md` 6.5) are added the same way when they are
+  every one of them. `devices.pair` and `devices.confirm` answer `unavailable` unless the
+  `[pairing]` section of the hab's config file turns them on. Rename and rotate (`transport.md` 6.5) are added the same way when they are
   built.
 
 Decision: proposed.
@@ -658,8 +659,8 @@ a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.update
 `channel.message` work, and that the hab sends `mesh.changed` to a peer link when mail waits for
 its dialer (`mesh.md` 6.5). `mesh.changed` is the one event a connection gets without
 `events.subscribe`: it goes only to a peer link, from the hab that link dialed.
-`devices` means the `devices.*` methods work: the device list, revoke, and a pairing window
-that a client opens and confirms (`transport.md` 6.1.7). It does not mean the embedded SSH server
+`devices` means the `devices.*` methods work: the device list and revoke, and, when the hab's
+config file turns it on, a pairing window that a client opens and confirms (`transport.md` 6.1.7). It does not mean the embedded SSH server
 is on; that server is not built (4.3). `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). `settings` means the hab-side settings work:
 `settings.get`, `settings.set`, `settings.updated`, and `settings` in a `host` snapshot

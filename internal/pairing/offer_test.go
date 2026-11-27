@@ -3,6 +3,8 @@ package pairing
 import (
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -198,5 +200,45 @@ func TestPickLocal(t *testing.T) {
 		if got[i].String() != want[i] {
 			t.Fatalf("got %v, want %v", got, want)
 		}
+	}
+}
+
+// TestCloudVendor: the DMI strings name a cloud VM; a laptop's, or no folder (macOS), name none.
+func TestCloudVendor(t *testing.T) {
+	for _, c := range []struct {
+		files map[string]string
+		want  string
+	}{
+		{map[string]string{"sys_vendor": "Amazon EC2\n", "product_name": "t3.micro\n"}, "Amazon EC2"},
+		{map[string]string{"bios_version": "4.11.amazon\n"}, "Amazon EC2"},
+		{map[string]string{"product_name": "Google Compute Engine\n"}, "Google Compute Engine"},
+		{map[string]string{"sys_vendor": "Microsoft Corporation\n", "chassis_asset_tag": "7783-7084-3265-9085-8269-3286-77\n"}, "Microsoft Azure"},
+		{map[string]string{"sys_vendor": "Hetzner\n"}, "Hetzner"},
+		{map[string]string{"sys_vendor": "DigitalOcean\n"}, "DigitalOcean"},
+		{map[string]string{"sys_vendor": "Microsoft Corporation\n", "product_name": "Virtual Machine\n"}, ""},
+		{map[string]string{"sys_vendor": "LENOVO\n", "product_name": "ThinkPad\n"}, ""},
+		{nil, ""},
+	} {
+		dir := t.TempDir()
+		for f, v := range c.files {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte(v), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := CloudVendor(dir); got != c.want {
+			t.Errorf("%v: %q, want %q", c.files, got, c.want)
+		}
+	}
+	if got := CloudVendor(filepath.Join(t.TempDir(), "none")); got != "" {
+		t.Errorf("no folder: %q", got)
+	}
+}
+
+// TestTailnetOnly keeps CGNAT and the tailnet's IPv6 range, nothing else.
+func TestTailnetOnly(t *testing.T) {
+	in := []netip.Addr{netip.MustParseAddr("10.0.0.5"), netip.MustParseAddr("100.64.1.2"), netip.MustParseAddr("fd7a:115c:a1e0::9"), netip.MustParseAddr("fd00::1")}
+	got := TailnetOnly(in)
+	if len(got) != 2 || got[0] != in[1] || got[1] != in[2] {
+		t.Fatalf("%v", got)
 	}
 }

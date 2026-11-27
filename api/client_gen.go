@@ -758,7 +758,7 @@ func (c Client) PaneRedraw(ctx context.Context, params RedrawParams) (Empty, err
 	return result, err
 }
 
-// DevicesPair calls devices.pair. Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). One window at a time; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.
+// DevicesPair calls devices.pair. Open a pairing window in the running hab and return its one-time offer, the content of the QR code (transport.md 6.1.7). Unavailable unless the [pairing] section of the hab's config file turns it on. One window at a time; it closes when the calling connection ends; the caller confirms the device with devices.confirm. Not over a peer link or the pane route. Needs the devices capability.
 func (c Client) DevicesPair(ctx context.Context, params DevicesPairParams) (PairingOffer, error) {
 	var result PairingOffer
 	err := c.Caller.Call(ctx, "devices.pair", params, &result)
@@ -779,7 +779,7 @@ func (c Client) DevicesList(ctx context.Context, params DevicesListParams) (Devi
 	return result, err
 }
 
-// DevicesRevoke calls devices.revoke. Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). A session already open runs until it drops, and its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
+// DevicesRevoke calls devices.revoke. Revoke a device: remove its key line and keep the record as a tombstone (transport.md 6.1.4, 6.6). The device's open sessions end within seconds when its key line names it (paired by this gff-hab); a session of an older line runs until it drops. Its push registration is kept. Not over a peer link or the pane route. Needs the devices capability.
 func (c Client) DevicesRevoke(ctx context.Context, params DevicesRevokeParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "devices.revoke", params, &result)

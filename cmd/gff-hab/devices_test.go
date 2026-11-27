@@ -30,19 +30,23 @@ type devicesFixture struct {
 	authKeys string
 }
 
-func newDevicesFixture(t *testing.T) devicesFixture {
+func newDevicesFixture(t *testing.T, change ...func(*deviceConfig)) devicesFixture {
 	t.Helper()
 	dir := t.TempDir()
 	keys := filepath.Join(dir, "ssh", "authorized_keys")
 	os.MkdirAll(filepath.Dir(keys), 0o700)
 	os.WriteFile(keys, []byte("# mine\n"), 0o600)
 	_, hk, _ := ed25519.GenerateKey(rand.Reader)
-	svc := newDeviceService(deviceConfig{
+	cfg := deviceConfig{
 		state: filepath.Join(dir, "state"), hostKey: hk, label: "devbox", authKeys: keys,
-		command: "/usr/local/bin/gff-hab connect", user: "owner", sshdKeys: filepath.Join(dir, "no-sshd"),
-		listen:   func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil },
-		lifetime: 30 * time.Second,
-	})
+		pair: true, command: "/usr/local/bin/gff-hab connect", user: "owner", sshdKeys: filepath.Join(dir, "no-sshd"),
+		sshPort: 2222, listen: []netip.Addr{netip.MustParseAddr("127.0.0.1")}, lifetime: 30 * time.Second,
+		auto: func() ([]netip.Addr, error) { t.Fatal("the test fixture picked real addresses"); return nil, nil },
+	}
+	for _, c := range change {
+		c(&cfg)
+	}
+	svc := newDeviceService(cfg)
 	t.Cleanup(svc.Close)
 	return devicesFixture{svc: svc, authKeys: keys}
 }
@@ -120,14 +124,14 @@ func TestDevicesPairConfirm(t *testing.T) {
 	f := newDevicesFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	o, err := f.svc.Pair("c1", api.DevicesPairParams{})
+	o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(o.Endpoints) != 1 || !strings.HasPrefix(o.Endpoints[0], "127.0.0.1:") || o.ExpiresInMS != 30000 || len(o.Token) != 22 {
 		t.Fatalf("offer %+v", o)
 	}
-	if _, err := f.svc.Pair("c1", api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindConflict {
+	if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindConflict {
 		t.Fatalf("a second window: %v", err)
 	}
 	if _, err := f.svc.Confirm(ctx, "c2", api.DevicesConfirmParams{}); errKindOf(err) != api.ErrorKindDenied {
@@ -154,12 +158,15 @@ func TestDevicesPairConfirm(t *testing.T) {
 	if err != nil || p.State != "paired" || p.Paired == nil || p.Paired.ID != fp || p.Paired.Kind != "tablet" {
 		t.Fatalf("paired: %+v %v", p, err)
 	}
-	if a := lastAnswer(t, answers); a.State != "paired" || a.User != "owner" || !a.ForcedCommand {
+	if a := lastAnswer(t, answers); a.State != "paired" || a.User != "owner" || !a.ForcedCommand ||
+		a.SSH == nil || len(a.SSH.Endpoints) != 1 || a.SSH.Endpoints[0] != "127.0.0.1:2222" {
 		t.Fatalf("the device heard %+v", a)
 	}
+	// The forced command names the device and its list, so a revoke ends its sessions (6.6).
 	b, _ := os.ReadFile(f.authKeys)
-	if !strings.HasPrefix(string(b), "# mine\nrestrict,command=\"/usr/local/bin/gff-hab connect\" ecdsa-sha2-nistp256 ") || !strings.Contains(string(b), "flightdeck: Owner's iPad") {
-		t.Fatalf("authorized_keys:\n%s", b)
+	want := "# mine\nrestrict,command=\"/usr/local/bin/gff-hab connect -device " + fp + " -devices " + f.svc.store.Path + "\" ecdsa-sha2-nistp256 "
+	if !strings.HasPrefix(string(b), want) || !strings.Contains(string(b), "flightdeck: Owner's iPad") {
+		t.Fatalf("authorized_keys:\n%s\nwant the start\n%s", b, want)
 	}
 	devs, err := f.svc.List()
 	if err != nil || len(devs) != 1 || devs[0].ID != fp || devs[0].State != "paired" {
@@ -193,7 +200,7 @@ func TestDevicesConfirmDeclines(t *testing.T) {
 			f := newDevicesFixture(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			o, err := f.svc.Pair("c1", api.DevicesPairParams{})
+			o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -229,7 +236,7 @@ func TestDevicesConfirmDeclines(t *testing.T) {
 			if b, _ := os.ReadFile(f.authKeys); string(b) != "# mine\n" {
 				t.Fatalf("authorized_keys:\n%s", b)
 			}
-			if _, err := f.svc.Pair("c1", api.DevicesPairParams{}); err != nil {
+			if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); err != nil {
 				t.Fatalf("a new window after the decline: %v", err)
 			}
 		})

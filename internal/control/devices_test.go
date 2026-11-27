@@ -62,7 +62,7 @@ func (f *fakeDevices) Revoke(q string) error {
 	f.revoked = append(f.revoked, q)
 	return nil
 }
-func (f *fakeDevices) Pair(client string, p api.DevicesPairParams) (api.PairingOffer, error) {
+func (f *fakeDevices) Pair(_ context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.clients = append(f.clients, client)

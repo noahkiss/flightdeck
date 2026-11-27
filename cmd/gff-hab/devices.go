@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,17 +27,22 @@ import (
 
 // deviceConfig sets up the device service.
 type deviceConfig struct {
-	state    string // the state folder, which holds devices.json
-	hostKey  ed25519.PrivateKey
-	label    string // the hab's label in the code; "": the host name up to the first dot
+	state   string // the state folder, which holds devices.json and the hab's host key
+	hostKey ed25519.PrivateKey
+	label   string // the hab's label in the code; "": the host name up to the first dot
+	// pair turns devices.pair and devices.confirm on ([pairing] api in the hab's config file).
+	// Off, they answer unavailable, as before pairing over the API was built.
+	pair     bool
 	authKeys string // the system sshd's authorized_keys; "": ~/.ssh/authorized_keys
-	command  string // the forced command of a key line
+	command  string // the forced command of a key line, this gff-hab's connect; "": no pairing
 	user     string // the login the device uses over the system sshd
-	sshPort  int
-	sshdKeys string // folder with the system sshd's host keys
-	// listen picks the window's addresses; nil: every LAN and tailnet address (6.1.3).
-	listen   func() ([]netip.Addr, error)
-	lifetime time.Duration // 0: pairing.MaxLifetime
+	sshPort  int    // the system sshd's port, told to the device; 0: 22
+	sshdKeys string // folder with the system sshd's host keys; "": /etc/ssh
+	// listen is the window's addresses, checked; none: auto picks them (6.1.3).
+	listen []netip.Addr
+	auto   func() ([]netip.Addr, error) // nil: autoPairAddrs
+	// lifetime is how long a window stays open; 0: pairing.MaxLifetime.
+	lifetime time.Duration
 	logf     func(string, ...any)
 }
 
@@ -56,17 +62,18 @@ type deviceService struct {
 
 // pairWindow is one window devices.pair opened, as devices.confirm sees it.
 type pairWindow struct {
-	owner    string // the client id that opened it: the only one that answers its device
-	cancel   context.CancelFunc
-	changed  chan struct{} // closed and made again at every change
-	waiting  bool          // a device waits for the owner's answer
-	answered bool
-	answer   chan bool // the owner's answer to the waiting device
-	code     string    // the last codeLen characters of the waiting device's fingerprint
-	tries    int
-	device   *api.PairingDevice
-	declined bool // the owner declined, or closed the window with nothing waiting
-	final    *api.DevicePairing
+	owner      string // the client id that opened it: the only one that answers its device
+	cancel     context.CancelFunc
+	changed    chan struct{} // closed and made again at every change
+	waiting    bool          // a device waits for the owner's answer
+	answered   bool
+	answer     chan bool // the owner's answer to the waiting device
+	code       string    // the last codeLen characters of the waiting device's fingerprint
+	tries      int
+	device     *api.PairingDevice
+	declined   bool // the owner declined, or closed the window with nothing waiting
+	openerGone bool // the connection that opened the window ended
+	final      *api.DevicePairing
 }
 
 func newDeviceService(cfg deviceConfig) *deviceService {
@@ -111,26 +118,45 @@ func (s *deviceService) Revoke(query string) error {
 	return nil
 }
 
-// Pair opens a window, unless one is open.
-func (s *deviceService) Pair(client string, p api.DevicesPairParams) (api.PairingOffer, error) {
+// pairOff says why devices.pair and devices.confirm do not work, or "" when they do.
+func (s *deviceService) pairOff() string {
+	switch {
+	case !s.cfg.pair:
+		return "pairing over the API is off; set api = true in the [pairing] section of the hab's config file, or pair with gff-hab pair on the host"
+	case s.cfg.command == "":
+		return "pairing over the API is off: this gff-hab cannot name its forced command; pair with gff-hab pair on the host"
+	}
+	return ""
+}
+
+// Pair opens a window, unless one is open. The window lives as long as opener, the opening
+// client's connection, at most: a window whose opener is gone closes, so nobody is left to
+// answer it (transport.md 6.1.7).
+func (s *deviceService) Pair(opener context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ctx.Err() != nil {
 		return api.PairingOffer{}, control.Errorf(api.ErrorKindUnavailable, "the hab is stopping")
 	}
-	if s.cfg.command == "" {
-		return api.PairingOffer{}, control.Errorf(api.ErrorKindUnavailable, "pairing over the API is off: this gff-hab cannot name its forced command; pair with gff-hab pair on the host")
+	if why := s.pairOff(); why != "" {
+		return api.PairingOffer{}, control.Errorf(api.ErrorKindUnavailable, "%s", why)
 	}
 	if s.win != nil && s.win.final == nil {
-		return api.PairingOffer{}, control.Errorf(api.ErrorKindConflict, "a pairing window is open already; it closes after one device, a decline, or five minutes")
+		return api.PairingOffer{}, control.Errorf(api.ErrorKindConflict, "a pairing window is open already; it closes after one device, a decline, five minutes, or when the client that opened it disconnects")
 	}
-	listen := s.cfg.listen
-	if listen == nil {
-		listen = func() ([]netip.Addr, error) { return pairAddrs(nil) }
-	}
-	addrs, err := listen()
-	if err != nil {
+	if err := stateTooOpen(s.cfg.state); err != nil {
 		return api.PairingOffer{}, control.Errorf(api.ErrorKindUnavailable, "%v", err)
+	}
+	addrs := s.cfg.listen
+	if len(addrs) == 0 {
+		auto := s.cfg.auto
+		if auto == nil {
+			auto = autoPairAddrs
+		}
+		var err error
+		if addrs, err = auto(); err != nil {
+			return api.PairingOffer{}, control.Errorf(api.ErrorKindUnavailable, "%v", err)
+		}
 	}
 	label := p.Label
 	if label == "" {
@@ -158,7 +184,11 @@ func (s *deviceService) Pair(client string, p api.DevicesPairParams) (api.Pairin
 		if err != nil {
 			return api.PairingOffer{}, err
 		}
-		authKeys = home + "/.ssh/authorized_keys"
+		authKeys = filepath.Join(home, ".ssh", "authorized_keys")
+	}
+	warnings := strictModesWarnings(authKeys)
+	for _, l := range warnings {
+		s.cfg.logf("devices: %s", l)
 	}
 	pw := &pairWindow{owner: client, changed: make(chan struct{})}
 	w, err := pairing.Open(pairing.Config{
@@ -171,8 +201,8 @@ func (s *deviceService) Pair(client string, p api.DevicesPairParams) (api.Pairin
 		Admit: func(d pairing.Device) (pairing.Paired, error) {
 			s.change.Lock()
 			defer s.change.Unlock()
-			return admitter{store: s.store, authKeys: authKeys, command: s.cfg.command, user: s.cfg.user,
-				endpoints: eps, hostKeys: sshdHostKeys(sshdKeys)}.admit(d)
+			return admitter{store: s.store, authKeys: authKeys, command: s.cfg.command, watch: s.store.Path,
+				user: s.cfg.user, endpoints: eps, hostKeys: sshdHostKeys(sshdKeys)}.admit(d)
 		},
 	})
 	if err != nil {
@@ -187,14 +217,23 @@ func (s *deviceService) Pair(client string, p api.DevicesPairParams) (api.Pairin
 	}
 	s.cfg.logf("devices: pairing window open for %s on %s, for client %s", w.Lifetime(), strings.Join(wins, ", "), client)
 	s.wg.Add(1)
+	// The opener's connection ends: close the window, whatever waits in it.
+	gone := context.AfterFunc(opener, func() {
+		s.mu.Lock()
+		pw.openerGone = true
+		s.mu.Unlock()
+		cancel()
+	})
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
+		defer gone()
 		dev, err := w.Wait(ctx)
 		s.finish(pw, dev, err)
 	}()
 	o := w.Offer()
-	return api.PairingOffer{DeviceID: o.DeviceID, Endpoints: o.Endpoints, Token: pairing.EncodeToken(o.Token), ExpiresInMS: int(w.Lifetime() / time.Millisecond)}, nil
+	return api.PairingOffer{DeviceID: o.DeviceID, Endpoints: o.Endpoints, Token: pairing.EncodeToken(o.Token),
+		ExpiresInMS: int(w.Lifetime() / time.Millisecond), Warnings: warnings}, nil
 }
 
 // changedLocked wakes the devices.confirm calls that wait. The caller holds s.mu.
@@ -248,11 +287,14 @@ func (s *deviceService) finish(pw *pairWindow, dev *pairing.Device, err error) {
 		f.State, f.Reason = "expired", "the pairing window expired; no device paired"
 	case errors.Is(err, context.Canceled):
 		s.mu.Lock()
-		declined := pw.declined
+		declined, gone := pw.declined, pw.openerGone
 		s.mu.Unlock()
-		if declined {
+		switch {
+		case declined:
 			f.State, f.Reason = "declined", "the window was closed before a device paired"
-		} else {
+		case gone:
+			f.State, f.Reason = "closed", "the client that opened the window disconnected; no device paired"
+		default:
 			f.State, f.Reason = "closed", "the hab stopped; no device paired"
 		}
 	default:
@@ -269,6 +311,9 @@ func (s *deviceService) finish(pw *pairWindow, dev *pairing.Device, err error) {
 
 // Confirm waits for the device, or answers it (transport.md 6.1.7).
 func (s *deviceService) Confirm(ctx context.Context, client string, p api.DevicesConfirmParams) (api.DevicePairing, error) {
+	if why := s.pairOff(); why != "" {
+		return api.DevicePairing{}, control.Errorf(api.ErrorKindUnavailable, "%s", why)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pw := s.win

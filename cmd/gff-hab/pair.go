@@ -85,13 +85,18 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		}
 		*authKeys = filepath.Join(home, ".ssh", "authorized_keys")
 	}
+	if err := stateTooOpen(dir); err != nil {
+		return err
+	}
 	for _, l := range strictModesWarnings(*authKeys) {
 		fmt.Fprintln(out, l)
 	}
+	watch := ""
 	if *command == "" {
 		if *command, err = connectCommand(*sock); err != nil {
 			return err
 		}
+		watch = devicestore.Open(dir).Path // our own connect: it can end the sessions of a revoked device
 	}
 	if *label == "" {
 		h, _ := os.Hostname()
@@ -119,7 +124,7 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		Confirm: func(ctx context.Context, d pairing.Device) (bool, error) {
 			return confirmDevice(ctx, d, lines, out, *authKeys)
 		},
-		Admit: admitter{store: store, authKeys: *authKeys, command: *command, user: u.Username, endpoints: sshEndpoints, hostKeys: hostKeys}.admit,
+		Admit: admitter{store: store, authKeys: *authKeys, command: *command, watch: watch, user: u.Username, endpoints: sshEndpoints, hostKeys: hostKeys}.admit,
 	})
 	if err != nil {
 		return err
@@ -140,7 +145,11 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	s := int(w.Lifetime()%time.Minute) / int(time.Second)
 	fmt.Fprintf(out, "Pairing window open for %d:%02d on %s.\n", m, s, strings.Join(eps, ", "))
 	if len(listen) == 0 {
-		fmt.Fprintln(out, "Those are this host's LAN and tailnet addresses. On a cloud host a private address can be reachable from the internet through the provider's NAT: pair there with -listen <tailnet ip>.")
+		if cloud := pairing.CloudVendor(pairing.DMIDir); cloud != "" {
+			fmt.Fprintf(out, "This host looks like a %s VM: the window took only its tailnet addresses.\n", cloud)
+		} else {
+			fmt.Fprintln(out, "Those are this host's LAN and tailnet addresses. On a cloud host a private address can be reachable from the internet through the provider's NAT: pair there with -listen <tailnet ip>.")
+		}
 	}
 	// The link holds the token in plain text, which stays in the terminal's scrollback: only on
 	// request.
@@ -171,9 +180,13 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 // system sshd's authorized_keys, then the record in the hab's device list. gff-hab pair and
 // devices.pair share it.
 type admitter struct {
-	store     *devicestore.Store
-	authKeys  string
-	command   string
+	store    *devicestore.Store
+	authKeys string
+	command  string
+	// watch is the device list that the forced command checks, when the command is this
+	// gff-hab's connect: the line then gets -device and -devices, so a revoke ends the device's
+	// open sessions (6.6). "": the owner's own -command, which gets nothing added.
+	watch     string
 	user      string
 	endpoints []string // the system sshd's, told to the device
 	hostKeys  []string
@@ -185,7 +198,19 @@ func (a admitter) admit(d pairing.Device) (pairing.Paired, error) {
 	if a.now != nil {
 		now = a.now()
 	}
-	line, err := devicestore.KeyLine(d.Key, a.command, d.Name, now)
+	command := a.command
+	if a.watch != "" {
+		id, err := shellWord(d.Fingerprint)
+		if err != nil {
+			return pairing.Paired{}, err
+		}
+		list, err := shellWord(a.watch)
+		if err != nil {
+			return pairing.Paired{}, err
+		}
+		command += " -device " + id + " -devices " + list
+	}
+	line, err := devicestore.KeyLine(d.Key, command, d.Name, now)
 	if err != nil {
 		return pairing.Paired{}, err
 	}
@@ -204,7 +229,12 @@ func (a admitter) admit(d pairing.Device) (pairing.Paired, error) {
 		AuthorizedKeys: a.authKeys, State: devicestore.StatePaired,
 	})
 	if err != nil {
-		return pairing.Paired{}, err
+		// No key line without its record: a line the device list does not hold could never be
+		// revoked. The line is the only one with this key (added says so), so take it out.
+		if _, rerr := devicestore.RemoveAuthorizedKey(a.authKeys, d.Key); rerr != nil {
+			return pairing.Paired{}, fmt.Errorf("%v; and the key line could not be taken out of %s again: %v; remove the line that ends %q by hand", err, a.authKeys, rerr, "flightdeck: "+d.Name)
+		}
+		return pairing.Paired{}, fmt.Errorf("%v; the key line was taken out of %s again", err, a.authKeys)
 	}
 	return pairing.Paired{User: a.user, SSH: pairing.SSHInfo{Endpoints: a.endpoints, HostKeys: a.hostKeys}, ForcedCommand: true}, nil
 }
@@ -298,6 +328,31 @@ func strictModesWarnings(authKeys string) []string {
 	return out
 }
 
+// stateTooOpen refuses a pairing window when group or others can change what it trusts, as
+// sshd's StrictModes refuses keys: the state folder or the device list writable by them, or the
+// hab's host key readable by them. A host key others can read lets them pose as the window the
+// code pins; a device list others can write lets them add a device.
+func stateTooOpen(state string) error {
+	checks := []struct {
+		path string
+		mask os.FileMode
+		what string
+		fix  string
+	}{
+		{state, 0o022, "group or others can write the state folder", "chmod go-w"},
+		{filepath.Join(state, devicestore.FileName), 0o022, "group or others can write the device list", "chmod 600"},
+		{filepath.Join(state, habkey.FileName), 0o077, "group or others can read the hab's host key", "chmod 600"},
+	}
+	for _, c := range checks {
+		fi, err := os.Stat(c.path)
+		if err != nil || fi.Mode().Perm()&c.mask == 0 {
+			continue
+		}
+		return fmt.Errorf("%s (%s, mode %04o), so the pairing window stays closed; run %s %s", c.what, c.path, fi.Mode().Perm(), c.fix, c.path)
+	}
+	return nil
+}
+
 // stdinIsTerminal says whether r is a terminal.
 func stdinIsTerminal(r io.Reader) bool {
 	f, ok := r.(*os.File)
@@ -315,17 +370,11 @@ func hostOf(a net.Addr) string {
 	return a.String()
 }
 
-// pairAddrs is the window's addresses: each -listen, checked, else every LAN and tailnet address.
+// pairAddrs is the window's addresses: each -listen, checked, else the addresses
+// autoPairAddrs picks.
 func pairAddrs(listen []string) ([]netip.Addr, error) {
 	if len(listen) == 0 {
-		addrs, err := pairing.LocalAddrs()
-		if err != nil {
-			return nil, err
-		}
-		if len(addrs) == 0 {
-			return nil, errors.New("this host has no LAN or tailnet address to open the pairing window on; name one with -listen")
-		}
-		return addrs, nil
+		return autoPairAddrs()
 	}
 	var out []netip.Addr
 	for _, s := range listen {
@@ -342,6 +391,33 @@ func pairAddrs(listen []string) ([]netip.Addr, error) {
 		return nil, fmt.Errorf("%d addresses; at most %d", len(out), pairing.MaxEndpoints)
 	}
 	return out, nil
+}
+
+// autoPairAddrs picks the window's addresses on this host (transport.md 6.1.3).
+func autoPairAddrs() ([]netip.Addr, error) {
+	ifs, err := pairing.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	return pickPairAddrs(ifs, pairing.CloudVendor(pairing.DMIDir))
+}
+
+// pickPairAddrs is the window's addresses when the owner names none: every LAN and tailnet
+// address, or, on a host whose firmware names a cloud provider (cloud), only the tailnet ones: a
+// private address there may be the VPC address the provider maps a public one onto.
+func pickPairAddrs(ifs []pairing.IfAddr, cloud string) ([]netip.Addr, error) {
+	addrs := pairing.PickLocal(ifs)
+	if cloud != "" {
+		addrs = pairing.TailnetOnly(addrs)
+		if len(addrs) == 0 {
+			return nil, fmt.Errorf("this host looks like a %s VM, where a private address can be reachable from the internet, and it has no tailnet address: the pairing window opens only on an address you name (-listen, or listen in the [pairing] section of the hab's config file)", cloud)
+		}
+		return addrs, nil
+	}
+	if len(addrs) == 0 {
+		return nil, errors.New("this host has no LAN or tailnet address to open the pairing window on; name one with -listen, or listen in the [pairing] section of the hab's config file")
+	}
+	return addrs, nil
 }
 
 var plainWord = regexp.MustCompile(`^[A-Za-z0-9/._+:@%=-]+$`)
@@ -442,7 +518,7 @@ func devicesCmd(args []string, out io.Writer, getenv func(string) string) error 
 		}
 		fmt.Fprintf(out, "revoked %s (%s)\n", r.Label, r.ID)
 		if r.AuthorizedKeys != "" {
-			fmt.Fprintf(out, "  removed %d line(s) from %s; a session already open runs until it drops\n", n, r.AuthorizedKeys)
+			fmt.Fprintf(out, "  removed %d line(s) from %s; its open sessions end within seconds when its key line named it (paired by this gff-hab), else they run until they drop\n", n, r.AuthorizedKeys)
 		}
 		fmt.Fprintln(out, "  its push registration is kept")
 		return nil

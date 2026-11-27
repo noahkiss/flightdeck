@@ -332,6 +332,19 @@ queued_move_days = 7
 [diagnostics]
 # tallies = false
 
+# The [pairing] table (docs/specs/transport.md 6.1.7): pairing a device from a client with
+# devices.pair and devices.confirm, without a terminal. Off unless api = true; read at start.
+# listen names the pairing window's addresses (a LAN, tailnet or loopback address, never a
+# public one); without it the window takes every LAN and tailnet address, or only the tailnet
+# ones on a host that looks like a cloud VM. ssh_port and sshd_keys describe the system sshd
+# the paired device uses afterwards.
+[pairing]
+# api = true
+# listen = ["<tailnet ip>"]
+# ssh_port = 22
+# sshd_keys = "/etc/ssh"
+# authorized_keys = ""      # default: ~/.ssh/authorized_keys
+
 # The [aliases] table: words an agent may name instead of a harness when it spawns a teammate
 # (docs/specs/harness-adapters.md, Spawn), so "a gpt reviewer" picks the right harness and
 # model. Each alias names a harness (claude, codex or opencode) and, optionally, a model. An
@@ -342,3 +355,4 @@ queued_move_days = 7
 # gpt = { harness = "codex", model = "gpt-5.5" }
 # opus = { harness = "claude", model = "opus" }
 # sonnet = { harness = "claude", model = "sonnet" }
+
