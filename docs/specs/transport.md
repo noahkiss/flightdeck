@@ -651,9 +651,11 @@ key this way is safe: it came over a pinned, authenticated channel.
      holds over its own id and the nonce. One attempt per nonce. A proof that fails closes the
      connection with `denied`.
    - A proven link carries the key's id: the Capcom mark (`hab-logic-api.md` 3.11) needs it.
-   - The receiver remembers each proven id in `peer-proofs` in its state directory. A later
-     hello that claims a remembered id is held: it is no peer link, and passes no peer-only gate,
-     until it proves the key.
+   - The receiver remembers each proven id in `peer-proofs` in its state directory, one id per
+     line. A later hello that claims a remembered id is held: it is no peer link, and each
+     peer-only call gets `denied` with a hint that names `hab.prove`, until it proves the key. A
+     hab moved back to a build before the proof stops linking to that receiver; removing its id
+     from the receiver's `peer-proofs` lets it link again.
    - **Older habs.** A hab from before the proof sends no `hab.prove`, and one that receives
      sends no `peer_nonce`, so the caller proves nothing. Such a link still works as a peer link
      under the id it claims, without the Capcom mark, until that id proves itself once. Any

@@ -467,6 +467,10 @@ func (c *conn) handleLine(line []byte) {
 		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "%s is the user's own decision, and this caller runs inside a Flightdeck pane; answer from the app, or from gff or gff-hab run outside Flightdeck's panes", m.Method))
 		return
 	}
+	if api.PeerOnly(m.Method) && c.claim != nil {
+		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "%s: device %s proved its hab key to this hab before, so its link counts only after hab.prove (transport.md 6.3)", m.Method, c.claim.DeviceID))
+		return
+	}
 	if api.PeerOnly(m.Method) && c.peer == nil {
 		// Off the client surface (spec 3.9, Peer-link methods): only another hab calls these,
 		// over a peer link. The handlers check the link again.
@@ -1053,6 +1057,9 @@ func (c *conn) handleAgent(m message) {
 	go func() {
 		ctx, cancel := context.WithTimeout(reqCtx(context.Background(), m), c.s.cfg.ActionTimeout)
 		defer cancel()
+		if c.class.pane {
+			ctx = WithPaneCall(ctx) // the Capcom service takes no user message from a pane (spec 4.1)
+		}
 		var err error
 		if m.Method == "session.send" {
 			key, bare := send.IdempotencyKey, send
@@ -1304,7 +1311,8 @@ func (c *conn) handleHello(m message) {
 	// A device that proved its key here before must prove it again before its link counts
 	// (transport.md 6.3): a hello that only claims its id is held as a claim.
 	held := peerHello && c.s.cfg.PeerProofs != nil && c.s.cfg.PeerProofs.Proved(p.Peer.DeviceID)
-	if peerHello {
+	if peerHello && c.s.cfg.DeviceID != "" {
+		// A proof names this hab's device id, so a hab with none asks for none.
 		c.nonce = newNonce()
 		w.PeerNonce = c.nonce
 	}

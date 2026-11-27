@@ -1983,6 +1983,21 @@ func (s *roundsService) updateLocked(ctx context.Context, p api.RoundUpdateParam
 			return api.Round{}, err
 		}
 	}
+	if control.PaneCall(ctx) {
+		// A process inside a pane gets the pane route's rules for what is the user's
+		// (hab-logic-api.md 4.1): it names no new secret set, and a job the user let act takes
+		// only the removal of words (capcom-service.md 9.6).
+		if r.Secrets != old.Round.Secrets {
+			return api.Round{}, control.Errorf(api.ErrorKindDenied, "round.update: from inside a Flightdeck pane, a round's secret set stays as it is; a person changes it from outside the panes")
+		}
+		cur, err := s.round(p.ID)
+		if err != nil {
+			return api.Round{}, err
+		}
+		if _, err := agentEdit(cur, p.Round, "round.update"); err != nil {
+			return api.Round{}, err
+		}
+	}
 	s.mu.Lock()
 	rev := max(s.revs[p.ID], 1)
 	s.mu.Unlock()

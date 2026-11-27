@@ -83,6 +83,7 @@ var personOnlyCalls = []struct {
 	{"trust.answer", map[string]any{"pane": "p1", "trust": true}},
 	{"approval.answer", map[string]any{"pane": "p1", "request": "r1", "decision": "allow"}},
 	{"capcom.card.answer", map[string]any{"id": "k1"}},
+	{"capcom.assign", map[string]any{"host": "desk"}},
 	{"settings.set", map[string]any{"id": "capcom.event_actions", "value": "all"}},
 	{"peers.accept", map[string]any{"label": "desk"}},
 	{"push.register", map[string]any{}},
@@ -114,13 +115,48 @@ func TestPaneCallerPersonOnly(t *testing.T) {
 
 // A process inside a pane cannot create a Capcom round that carries action words.
 func TestPaneCallerRoundWords(t *testing.T) {
-	path, _ := localHab(t, true, nil)
+	fr := grantedRounds{&fakeRounds{}}
+	path, _ := localHab(t, true, func(c *Config) { c.Rounds = fr })
 	c := dial(t, path)
 	hello(t, c, "")
 	err := c.Call(ctx(t), "round.create", api.RoundCreateParams{Round: api.RoundSpec{Name: "job", Actions: []api.RoundAction{"hand_off"}}}, nil)
 	if errKind(err) != api.ErrorKindDenied || !strings.Contains(err.Error(), "action words") {
 		t.Fatalf("round.create with words from a pane: %v", err)
 	}
+	err = c.Call(ctx(t), "round.create", api.RoundCreateParams{Round: api.RoundSpec{Name: "watch", Secrets: "mail"}}, nil)
+	if errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("round.create with a secret set from a pane: %v", err)
+	}
+	// A job the user let act is the user's: from a pane, no pause, run or delete. Another round
+	// takes them.
+	for _, method := range []string{"round.pause", "round.unpause", "round.run", "round.delete"} {
+		if err := c.Call(ctx(t), method, api.RoundRef{Name: "granted"}, nil); errKind(err) != api.ErrorKindDenied {
+			t.Errorf("%s of a granted job from a pane: %v", method, err)
+		}
+		if err := c.Call(ctx(t), method, api.RoundRef{Name: "plain"}, nil); err != nil {
+			t.Errorf("%s of a plain round from a pane: %v", method, err)
+		}
+	}
+	acted := 0
+	for _, call := range fr.calls() {
+		if !strings.HasPrefix(call, "get ") {
+			acted++
+		}
+	}
+	if acted != 4 {
+		t.Errorf("%d calls reached the service, want the plain round's 4: %q", acted, fr.calls())
+	}
+}
+
+// grantedRounds answers round.get with action words for the round named "granted".
+type grantedRounds struct{ *fakeRounds }
+
+func (g grantedRounds) Get(r api.RoundRef) (api.Round, error) {
+	got, err := g.fakeRounds.Get(r)
+	if r.Name == "granted" {
+		got.Name, got.Actions = "granted", []api.RoundAction{"hand_off"}
+	}
+	return got, err
 }
 
 // A process inside a pane cannot say hello as a hab, so it never reaches the peer-only methods;
@@ -147,7 +183,7 @@ func TestPaneCallerHelloAsHab(t *testing.T) {
 
 // gateRefused says whether err is the peer-only gate's refusal.
 func gateRefused(err error) bool {
-	return errKind(err) == api.ErrorKindDenied && strings.Contains(err.Error(), "peer link only")
+	return errKind(err) == api.ErrorKindDenied && (strings.Contains(err.Error(), "peer link only") || strings.Contains(err.Error(), "only after hab.prove"))
 }
 
 // fakeProofs is a PeerProofs in memory.

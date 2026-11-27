@@ -68,9 +68,13 @@ func TestClassify(t *testing.T) {
 		{name: "the pane's own process", pid: 200, pane: true, why: "session of pane process 200"},
 		{name: "an orphan that kept the pane's session", pid: 220, pane: true, why: "session of pane process 200"},
 		{name: "a detached orphan with the pane's environment", pid: 230, pane: true, why: "environment",
-			edit: func(f *fakeTable) { f.envs[230] = "A=1\x00" + hook.Env + "=" + hook.Addr("/run/gff/hooks.sock", "0123456789abcdef") + "\x00" }},
+			edit: func(f *fakeTable) {
+				f.envs[230] = "A=1\x00" + hook.Env + "=" + hook.Addr("/run/gff/hooks.sock", "0123456789abcdef") + "\x00"
+			}},
 		{name: "a detached orphan with another hab's environment", pid: 230, pane: false,
-			edit: func(f *fakeTable) { f.envs[230] = hook.Env + "=" + hook.Addr("/elsewhere/hooks.sock", "0123456789abcdef") + "\x00" }},
+			edit: func(f *fakeTable) {
+				f.envs[230] = hook.Env + "=" + hook.Addr("/elsewhere/hooks.sock", "0123456789abcdef") + "\x00"
+			}},
 		{name: "a detached orphan with a cleared environment", pid: 230, pane: false},
 		{name: "no pid", pid: 0, pane: true, why: "no caller pid"},
 		{name: "a caller that ended", pid: 999, pane: true, why: "caller 999"},

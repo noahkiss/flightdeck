@@ -2219,17 +2219,16 @@ drop the variable, or dial the socket itself, and be the person: answer a confir
 action card, grant a Capcom job's words, list or revoke devices, or say hello as a hab and call
 the peer-only methods. The hab now judges the process, not its environment.
 
-- **The caller's pid.** At accept, gff-hab reads the pid of the process that connected: `SO_PEERCRED`
-  on Linux, `LOCAL_PEERPID` on macOS (the last process that used the peer's socket; read at
-  accept, before the hello, it is the process that connected). It reads it once per connection
-  and never again.
+- **The caller's pid.** At accept, gff-hab reads the pid of the process that connected:
+  `SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS. It reads it once per connection, before the
+  hello, off the accept loop, and never again.
 - **What makes a caller a pane's.** gff-hab reads the caller's process and its ancestors, and
   counts the caller as a pane's when any of these holds:
 
   | Signal | Catches | Escaped by |
   |---|---|---|
   | An ancestor is a holder process (every holder the link's registry scan knows, draining ones too). A holder starts nothing but panes | Any process a pane started, also before the link learned the new pane's pid | Leaving the tree: the parent exits, so the process moves to `init` or a subreaper |
-  | The caller or an ancestor is in the session of a pane's first process. Each pane's first process leads its pane's session (`hab-holder.md`); exited panes count until they are released | An orphan whose parent exited | `setsid` |
+  | The caller or an ancestor is in the session of a pane's first process. Each pane's first process leads its pane's session (`hab-holder.md`); exited panes count until they are released | An orphan whose parent exited | `setsid`, or a release of the pane (`pane.close`) while the orphan runs on |
   | The caller's start-up environment holds `GFF_HAB` naming this hab's hook socket | A process that left the tree and the session but kept its environment | Starting with a cleared environment |
 
   A process that escapes all three (a cleared environment, `setsid`, and a parent that exits)
@@ -2241,19 +2240,27 @@ the peer-only methods. The hab now judges the process, not its environment.
 - **It fails closed.** A caller the socket gave no pid for, a pid with no process, a process
   that started more than 1 s after the accept (a newer process took the pid), an ancestor that
   ended during the walk, an ancestor younger than its child (pid reuse), or a chain deeper than
-  256 counts as a pane's.
-- **What a caller inside a pane may not call.** The person-only methods: `confirm.answer`,
-  `trust.answer`, `approval.answer`, `capcom.card.answer`, `settings.set`, `peers.accept`,
-  `push.register`, `push.register_activity`, `push.unregister` and every `devices.*` method. It
-  may not grant a Capcom job's words: `round.create` with `actions` is refused, `round.update`
-  that adds a word is refused as over a peer link (`capcom-service.md` 9.8), and no round it
-  makes is `by_person`. It may not say hello with `client.kind` `hab`, so it never reaches the
-  peer-only methods (3.9). Each refusal is `denied` with a hint that names the app or a client
-  outside Flightdeck's panes, and one log line with the method and the signal that decided.
+  256 counts as a pane's. On Linux a start time is the stat start ticks after a boot placed by
+  `CLOCK_BOOTTIME`, the clock the kernel counts them on, so a container's own `/proc/uptime`
+  does not shift it.
+- **What a caller inside a pane may not call.**
+  - The person-only methods (`control.PersonOnly`): `confirm.answer`, `trust.answer`,
+    `approval.answer`, `capcom.card.answer`, `capcom.assign`, `settings.set`, `peers.accept`,
+    `push.register`, `push.register_activity`, `push.unregister` and every `devices.*` method.
+  - `session.send` to the Capcom service session: a message there is the user's and opens a
+    user turn, which acts without a job's words. An agent writes to Capcom with `channel_send`.
+  - What the pane route keeps for the user in rounds (`capcom-service.md` 9.6, `rounds.md`): a
+    `round.create` with `actions` or `secrets`; a `round.update` that adds a word, changes the
+    secret set, or changes anything but the removal of words in a job the user let act; a pause,
+    unpause, run or delete of such a job. No round it makes is `by_person`.
+  - A hello with `client.kind` `hab`, so it never reaches the peer-only methods (3.9).
+
+  Each refusal is `denied` with a hint that names the app or a client outside Flightdeck's
+  panes, and one log line with the method and the signal that decided.
 - **What it may call.** Everything else on the client surface: reads, data streams, typing,
-  steering sessions. So `gff` in a console pane works as a client, but it answers no
-  confirmation, approval or card, changes no setting and touches no trust store. Q11 (8) asks the
-  owner about this line. Harness hooks are unchanged: they use the pane route (`mesh.md` 6.5),
+  steering sessions, rounds that are not the user's. So `gff` in a console pane works as a
+  client, but it answers no confirmation, approval or card, changes no setting and touches no
+  trust store. Q11 (8) asks the owner about this line. Harness hooks are unchanged: they use the pane route (`mesh.md` 6.5),
   not this socket.
 - **Races.** The verdict is made once, at accept, from the processes as they are then. A process
   inside a pane that connects, then hands its socket to a process outside, needs a process outside
@@ -2862,9 +2869,11 @@ keeps the client surface but the person-only methods. So `gff` in a console pane
 and steers, but answers no confirmation, approval or card, changes no setting and touches no
 trust store; the person does those from the app or a terminal outside Flightdeck.
 
-- **Tradeoff.** Typing and steering stay open to every process inside a pane. `pane.input`
-  from such a caller goes around `agent.drive_panes` (3.12): an agent allowed to run only
-  `gff-hab` can still type into a shell pane, and from that shell leave the panes' process tree.
+- **Tradeoff.** Typing and steering stay open to every process inside a pane. `pane.input`,
+  `pane.new`, `session.create` and `session.send` to an agent from such a caller go around
+  `agent.drive_panes` (3.12): an agent allowed to run only `gff-hab` can still type into a shell
+  pane, and from that shell leave the panes' process tree. `capcom.attach` still adds context to
+  the user's next Capcom message, as data.
 - **Option.** Treat a caller inside a pane as the pane it runs in: apply that pane's agent rules
   (`agent.read_panes`, `agent.drive_panes`) to its reads and writes on the control socket. `gff`
   in a console pane then types into agents' panes at Balanced, but into no shell.

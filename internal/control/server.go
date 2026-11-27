@@ -423,7 +423,9 @@ func (s *Server) Serve(l net.Listener) error {
 				nc.Close()
 				continue
 			}
-			go s.serveConn(nc, s.classify(uc, time.Now()))
+			// The check reads processes, which may block: off the accept loop.
+			at := time.Now()
+			go func() { s.serveConn(uc, s.classify(uc, at)) }()
 			continue
 		}
 		go s.ServeConn(nc)

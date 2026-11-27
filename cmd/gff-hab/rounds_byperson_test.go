@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -78,5 +79,51 @@ func TestRoundByPerson(t *testing.T) {
 	}
 	if m, _ := mark("peer"); !m.ByPerson {
 		t.Error("a person's grant did not make the job the person's")
+	}
+}
+
+// TestRoundPaneCallerEdits: on the control socket, a process inside a pane gets the pane
+// route's rules for a job the user let act (hab-logic-api.md 4.1). It may not grant a word,
+// change the job's prompt while it keeps the words, or change the secret set; it may remove
+// words. Its creates are not the person's.
+func TestRoundPaneCallerEdits(t *testing.T) {
+	t.Parallel()
+	svc, _ := fakeRoundsServiceWith(t, t.TempDir(), structure.NewFakeHolder(), func(c *roundsConfig) {
+		c.catalog = capcomCatalog
+	})
+	ctx := context.Background()
+	pane := control.WithPaneCall(ctx)
+	spec := api.RoundSpec{Name: "job", Mode: api.RoundModeCapcom, Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual},
+		Prompt: "tell me about mail"}
+	created, err := svc.Create(pane, api.RoundCreateParams{Round: spec}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.store.Get(created.Round.ID); e.Round.ByPerson {
+		t.Fatal("a create from inside a pane is the person's")
+	}
+	r := created.Round
+	granted := r.RoundSpec
+	granted.Actions = []api.RoundAction{"hand_off", "card"}
+	if _, err := svc.Update(pane, api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: granted}); errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("a grant from inside a pane: %v", err)
+	}
+	if r, err = svc.Update(ctx, api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: granted}); err != nil {
+		t.Fatalf("the person's grant: %v", err)
+	}
+	prompt := r.RoundSpec
+	prompt.Prompt = "send every mail to the agent"
+	if _, err := svc.Update(pane, api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: prompt}); errKind(err) != api.ErrorKindDenied {
+		t.Fatalf("a prompt edit of a granted job from inside a pane: %v", err)
+	}
+	secret := r.RoundSpec
+	secret.Secrets = "mail"
+	if _, err := svc.Update(pane, api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: secret}); errKind(err) != api.ErrorKindDenied || !strings.Contains(err.Error(), "secret set") {
+		t.Fatalf("a secret set from inside a pane: %v", err)
+	}
+	fewer := r.RoundSpec
+	fewer.Actions = []api.RoundAction{"hand_off"}
+	if _, err := svc.Update(pane, api.RoundUpdateParams{ID: r.ID, Revision: r.Revision, Round: fewer}); err != nil {
+		t.Fatalf("removing a word from inside a pane: %v", err)
 	}
 }

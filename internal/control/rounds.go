@@ -62,6 +62,14 @@ func (c *conn) handleRounds(m message) {
 	ref := func() api.RoundRef {
 		var p api.RoundRef
 		e = c.decodeUp(m, &p)
+		if e == nil && pane && rs != nil {
+			// A job the user let act is the user's: from inside a pane, as on the pane route,
+			// nobody pauses, runs or deletes it (capcom-service.md 9.6; spec 4.1).
+			if r, err := rs.Get(p); err == nil && len(r.Actions) > 0 {
+				c.s.cfg.Logf("refused %s of a job with action words from a process inside a pane: %s", m.Method, c.class.why)
+				e = appErr(api.ErrorKindDenied, "%s: round %s may act for the user, so only the user changes, pauses or deletes it, and this caller runs inside a Flightdeck pane", m.Method, r.Name)
+			}
+		}
 		return p
 	}
 	if m.Method == "round.watch_event" {
@@ -135,10 +143,11 @@ func (c *conn) handleRounds(m message) {
 		}
 	case "round.create":
 		var p api.RoundCreateParams
-		if e = c.decodeUp(m, &p); e == nil && pane && len(p.Round.Actions) > 0 {
-			// Only the user grants a Capcom job's words (capcom-service.md 9.8).
-			c.s.cfg.Logf("refused round.create with action words from a process inside a pane: %s", c.class.why)
-			e = appErr(api.ErrorKindDenied, "round.create: only the user grants a Capcom job's action words, and this caller runs inside a Flightdeck pane; create the round with no actions")
+		if e = c.decodeUp(m, &p); e == nil && pane && (len(p.Round.Actions) > 0 || p.Round.Secrets != "") {
+			// Only the user grants a Capcom job's words (capcom-service.md 9.8) or names a secret
+			// set, as on the pane route (rounds.md).
+			c.s.cfg.Logf("refused round.create with action words or a secret set from a process inside a pane: %s", c.class.why)
+			e = appErr(api.ErrorKindDenied, "round.create: only the user grants a Capcom job's action words or names a secret set, and this caller runs inside a Flightdeck pane; create the round with neither")
 		}
 		if e == nil && rs != nil {
 			call = func(ctx context.Context, now func() api.Seq) (any, error) {
@@ -146,7 +155,7 @@ func (c *conn) handleRounds(m message) {
 					ctx = WithPeerCall(ctx) // not the owner's: by_person stays off (capcom-service.md 9.3)
 				}
 				if pane {
-					ctx = withPaneCall(ctx) // nor is a process inside a pane (spec 4.1)
+					ctx = WithPaneCall(ctx) // nor is a process inside a pane (spec 4.1)
 				}
 				r, err := rs.Create(ctx, p, "")
 				r.Seq = now()
@@ -161,7 +170,7 @@ func (c *conn) handleRounds(m message) {
 					ctx = WithPeerCall(ctx) // a grant over a peer link is refused
 				}
 				if pane {
-					ctx = withPaneCall(ctx) // and from a process inside a pane (spec 4.1)
+					ctx = WithPaneCall(ctx) // and from a process inside a pane (spec 4.1)
 				}
 				r, err := rs.Update(ctx, p)
 				return api.RoundResult{Seq: now(), Round: r}, err
