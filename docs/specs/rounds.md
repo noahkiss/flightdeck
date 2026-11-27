@@ -1612,7 +1612,10 @@ Built (stage 4): `fresh` runs with a harness and a prompt
   request kind, which stays open. opencode has no interrupt yet.
 - **Restarts.** Whether a run's prompt went in is not stored; an adopted harness run reads
   its conversation once. Claude Code's session id comes back from the program's arguments
-  (`--session-id`). No user message: the prompt never went in, so the run waits for its first
+  (`--session-id`). A leader whose arguments cannot be read for a moment (on Linux, a process
+  in state D, as a shell is during each vfork) is listed again every 30 ms for up to 1 s;
+  after that the session id stays unknown, gff-hab logs it, and the conversation cannot be
+  read. No user message: the prompt never went in, so the run waits for its first
   `idle` again, under the readiness limit. An agent message after the user message: the turn
   may have ended while gff-hab was down, so the first `idle` (or `done`) ends the run
   `succeeded` with that message. Otherwise, or when the conversation cannot be read (a Codex

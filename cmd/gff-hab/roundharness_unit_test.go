@@ -8,11 +8,13 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/detect"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -436,4 +438,79 @@ func TestAdoptedTurn(t *testing.T) {
 			t.Errorf("%q: %q", argv, got)
 		}
 	}
+}
+
+// TestHarnessAdoptArgsUnread: an adopted Claude Code run whose program's arguments cannot be
+// read at the first listing (on Linux, a shell caught in state D during a vfork) gets its
+// session id from a later listing, so adoption reads the conversation by it. Arguments that
+// never come answer errArgsUnread after leaderArgsWait, and the run is taken to be in its
+// turn; a group whose leader is gone answers at once.
+func TestHarnessAdoptArgsUnread(t *testing.T) {
+	t.Parallel()
+	const pid = 4242
+	lister := func(unread int, calls *atomic.Int32) func(context.Context, int) (detect.Foreground, error) {
+		var mu sync.Mutex
+		return func(_ context.Context, pgid int) (detect.Foreground, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls.Add(1)
+			if unread > 0 {
+				unread--
+				return detect.Foreground{Leader: detect.Process{PID: pgid, Name: "sh"}}, nil
+			}
+			return detect.Foreground{Leader: detect.Process{PID: pgid, Name: "sh",
+				Args: []string{"/bin/sh", "/x/claude", "--session-id", "native-1"}}}, nil
+		}
+	}
+	adopt := func(t *testing.T, unread int) (*harnessWatch, string, int) {
+		var mu sync.Mutex
+		var calls atomic.Int32
+		read := ""
+		rig := newHarnessRig(t, func(c *roundsConfig) {
+			list := lister(unread, &calls)
+			c.argv = func(ctx context.Context, pid int) ([]string, error) { return leaderArgv(ctx, list, pid) }
+			c.messages = func(_ context.Context, _, _, native string) ([]api.ChatMessage, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				read = native
+				if native == "" {
+					return nil, errors.New("no agent session yet")
+				}
+				return []api.ChatMessage{{Kind: api.ChatKindUser, Text: "Do it."}, {Kind: api.ChatKindAgent, Text: "Done."}}, nil
+			}
+		})
+		h := &harnessWatch{kind: "claude", prompt: "Do it.", phase: phaseTurn}
+		rig.svc.adoptHarness("session-1", pid, h)
+		mu.Lock()
+		defer mu.Unlock()
+		return h, read, int(calls.Load())
+	}
+	t.Run("late", func(t *testing.T) {
+		t.Parallel()
+		h, read, calls := adopt(t, 3)
+		if h.native != "native-1" || read != "native-1" || !h.adoptDone || calls != 4 {
+			t.Errorf("native %q, read by %q, adoptDone %v, %d listings", h.native, read, h.adoptDone, calls)
+		}
+	})
+	t.Run("never", func(t *testing.T) {
+		t.Parallel()
+		h, _, calls := adopt(t, 1<<30)
+		if h.native != "" || h.adoptDone || h.phase != phaseTurn {
+			t.Errorf("native %q adoptDone %v phase %d", h.native, h.adoptDone, h.phase)
+		}
+		if calls < 2 || calls > int(leaderArgsWait/leaderArgsStep)+1 {
+			t.Errorf("gave up after %d listings, want at most %d", calls, int(leaderArgsWait/leaderArgsStep)+1)
+		}
+	})
+	t.Run("no leader", func(t *testing.T) {
+		t.Parallel()
+		calls := 0
+		gone := func(context.Context, int) (detect.Foreground, error) {
+			calls++
+			return detect.Foreground{Members: []detect.Process{{PID: pid + 1}}}, nil
+		}
+		if _, err := leaderArgv(context.Background(), gone, pid); err == nil || errors.Is(err, errArgsUnread) || calls != 1 {
+			t.Errorf("err %v after %d listings", err, calls)
+		}
+	})
 }
