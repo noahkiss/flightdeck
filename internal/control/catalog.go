@@ -45,13 +45,14 @@ func (c *conn) dispatchCatalog(m message, s api.Seq) (any, *Error) {
 			return nil, appErr(api.ErrorKindUnavailable, hintNoCatalog, m.Method)
 		}
 		// Only a peer link hands over a catalog, and only its own hab's (mesh.md 5.2: one hop).
-		if c.peer == nil {
+		peer := c.peerLink()
+		if peer == nil {
 			return nil, appErr(api.ErrorKindInvalid, "catalog.put needs a peer link: client.kind hab with the hello's peer field")
 		}
-		if p.Catalog.DeviceID != c.peer.DeviceID {
-			return nil, appErr(api.ErrorKindInvalid, "catalog.put: the catalog is device %s, the peer link is %s", p.Catalog.DeviceID, c.peer.DeviceID)
+		if p.Catalog.DeviceID != peer.DeviceID {
+			return nil, appErr(api.ErrorKindInvalid, "catalog.put: the catalog is device %s, the peer link is %s", p.Catalog.DeviceID, peer.DeviceID)
 		}
-		if err := cs.Put(*c.peer, p.Catalog); err != nil {
+		if err := cs.Put(*peer, p.Catalog); err != nil {
 			return nil, actionErr(m.Method, err)
 		}
 		return api.Empty{Seq: s}, nil

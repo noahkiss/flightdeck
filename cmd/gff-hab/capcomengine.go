@@ -922,6 +922,11 @@ type engineAgents struct {
 
 func (a engineAgents) Send(ctx context.Context, client string, p api.SessionSendParams) error {
 	if id := a.eng.Session(); id != "" && p.Session == id {
+		if control.PaneCall(ctx) {
+			// A message here is the user's and opens a user turn, which acts without a job's
+			// words; an agent writes to Capcom with channel_send (hab-logic-api.md 4.1).
+			return control.Errorf(api.ErrorKindDenied, "session.send: Capcom takes the user's own messages, and this caller runs inside a Flightdeck pane; an agent writes to Capcom with channel_send")
+		}
 		return a.eng.Send(client, p)
 	}
 	return a.Agents.Send(ctx, client, p)

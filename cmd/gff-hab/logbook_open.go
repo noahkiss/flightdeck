@@ -198,3 +198,57 @@ func approvalAgents(value func(id string) json.RawMessage) func() bool {
 }
 
 var _ control.Logbook = (*lbsvc.Service)(nil)
+
+// socketLogbook is the Logbook of the control socket. A call from a process inside a pane
+// (control.PaneCall, hab-logic-api.md 4.1) writes as an agent, under the pane route's rules
+// (logbook.md 10.5): no decision on a proposal, no project marked private, nothing in a private
+// project, and a proposal under logbook.approval = agents. The hab does not know which pane the
+// caller runs in, so its writes name no pane or session, and all such callers share one write
+// limit. A call from outside every pane is the person's, as before.
+type socketLogbook struct {
+	*lbsvc.Service
+	host     string
+	approval func() bool
+}
+
+var _ control.Logbook = socketLogbook{}
+
+// pane returns the pane a call from inside a pane writes as, or false for the person's call.
+func (l socketLogbook) pane(ctx context.Context) (lbsvc.Pane, bool) {
+	if !control.PaneCall(ctx) {
+		return lbsvc.Pane{}, false
+	}
+	return lbsvc.Pane{Host: l.host, Propose: l.approval != nil && l.approval()}, true
+}
+
+func (l socketLogbook) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWriteParams) (api.LogbookWritten, error) {
+	if pn, ok := l.pane(ctx); ok {
+		return l.Service.WritePane(ctx, pn, p)
+	}
+	return l.Service.Write(ctx, a, p)
+}
+
+func (l socketLogbook) Resolve(ctx context.Context, a api.LogbookActor, p api.LogbookResolveParams) (api.LogbookWritten, error) {
+	pn, ok := l.pane(ctx)
+	if !ok {
+		return l.Service.Resolve(ctx, a, p)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return api.LogbookWritten{}, err
+	}
+	res, err := l.Service.Dispatch(ctx, lbsvc.PaneActor(pn), &pn, "logbook.resolve", raw)
+	if err != nil {
+		return api.LogbookWritten{}, err
+	}
+	w, _ := res.(api.LogbookWritten)
+	return w, nil
+}
+
+func (l socketLogbook) Decide(ctx context.Context, a api.LogbookActor, p api.LogbookDecideParams) (api.LogbookWritten, error) {
+	if control.PaneCall(ctx) {
+		// The control server refuses it first (control.PersonOnly); this holds if that changes.
+		return api.LogbookWritten{}, control.Errorf(api.ErrorKindDenied, "only a person decides a proposal (logbook.md 9.2), and this caller runs inside a Flightdeck pane")
+	}
+	return l.Service.Decide(ctx, a, p)
+}

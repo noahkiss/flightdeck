@@ -1264,6 +1264,19 @@ func (l *Link) Panes() []PaneStatus {
 	return out
 }
 
+// HolderPIDs returns the pid of every holder the link's registry scan found, draining ones too.
+// Every pane descends from one of them (hab-logic-api.md 4.1).
+func (l *Link) HolderPIDs() []int {
+	hs := l.client.Holders()
+	out := make([]int, 0, len(hs))
+	for _, h := range hs {
+		if pid := h.Entry().Pid; pid > 0 {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
 // Screen returns pane u's parsed screen.
 func (l *Link) Screen(u hp.UUID) (Screen, error) {
 	p := l.pane(u)

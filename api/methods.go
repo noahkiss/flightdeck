@@ -65,6 +65,7 @@ type FrameDef struct {
 var Methods = []Method{
 	{"hab.hello", "First request on a control connection: agree a revision (spec 3.2).", HelloParams{}, Welcome{}},
 	{"hab.ping", "Client liveness; send every 15 s when idle (spec 3.5).", PingParams{}, Empty{}},
+	{"hab.prove", "A peer link proves its device id with its hab key, signing the welcome's peer_nonce; once per connection, right after the welcome. A bad proof closes the connection (transport.md 6.3).", HabProveParams{}, HabProved{}},
 	{"rpc.discover", "The schema of this API. Its result is the schema document and carries no seq.", DiscoverParams{}, RawJSON{}},
 	{"structure.get", "Read the whole structure of the host.", StructureGetParams{}, StructureResult{}},
 	{"events.subscribe", "Snapshot the objects in scope and start events (spec 3.5).", SubscribeParams{}, StructureResult{}},

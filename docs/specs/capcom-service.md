@@ -1561,11 +1561,19 @@ gff-hab's side is `cmd/gff-hab/capcomjobs.go`; the rounds side is in `internal/r
 - **gff.** `gff round add|edit -actions w,...` sets the words; `show` lists them; export and
   apply carry them. The board's `m` shows only `capcom` rounds, each with its words and its
   newest message's outcome.
-- **Stated assumptions and limits.** The control socket is the person: the hab trusts any call
-  on it. From a pane, the CLI refuses `-actions`, `confirm answer` and the like where
-  `$GFF_HAB` is set, but an agent with the user's shell and no sandbox can drop that variable
-  and reach the socket, as in the tools Flightdeck measures itself against. A peer-credential
-  check on the socket is not built. The hab judges a route call by the turn that runs when it
+- **Stated assumptions and limits.** The control socket is the person, except for a process
+  inside one of the hab's panes: whatever its environment holds, the hab refuses it a word
+  grant (`round.create` with `actions`, a `round.update` that adds a word), any change to a job
+  the user let act but the removal of words, `confirm.answer`, `capcom.card.answer`,
+  `approval.answer`, `capcom.assign`, `settings.set`, `device.context.put`, and a
+  `session.send` to the Capcom session, which would open a user turn (`hab-logic-api.md` 4.1).
+  The CLI still refuses `-actions`, `confirm answer` and the like where `$GFF_HAB` is set, so
+  the message comes first. The check stops an agent that reaches the socket by mistake or
+  through the `gff` and `gff-hab` verbs. An agent that can start a process of its own choosing
+  (a service manager, `ssh` to its own host, a shell in a new pane) leaves the panes' process
+  tree and reaches the socket as the person; only a sandbox stops that (`hab-logic-api.md` 4.1
+  lists the escapes).
+  The hab judges a route call by the turn that runs when it
   arrives: a call still in flight from an event turn the user stopped, landing after a user
   turn began, is judged as the user turn's. The SDK gives the route call no turn id to compare.
 - **The app** (`app.md` 21.5). Capcom settings links to "Capcom jobs", the `capcom` rounds

@@ -134,9 +134,11 @@ import (
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/panesize"
+	"github.com/noahkiss/flightdeck/internal/peerproc"
 	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/readtools"
+	"github.com/noahkiss/flightdeck/internal/servechild"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/speech"
@@ -481,6 +483,12 @@ func serve(args []string) error {
 	if stopped := waitPrivateSocketDirs([]string{path, hpath}, sigs, logger.Printf, socketDirPoll); stopped {
 		return nil
 	}
+	// The programs serve starts that may run a repository's code carry a mark and a session of
+	// their own, and on Linux serve adopts what they leave running, so none of it reaches the
+	// control socket as the person (hab-logic-api.md 4.1).
+	servechild.Enable(hpath)
+	startSubreaper(logger.Printf)
+	go sweepServeChildren(serveChildSweep)
 	dir, err := stateDir(*state)
 	if err != nil {
 		return err
@@ -1044,7 +1052,7 @@ func serve(args []string) error {
 		return err
 	}
 	pm, err := peers.Open(peers.Config{
-		Path: ppath, Self: key.Fingerprint(), Host: *hostID, Build: build,
+		Path: ppath, Self: key.Fingerprint(), Host: *hostID, Build: build, Prove: key.Prove,
 		Publish: func(p api.Peer) {
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: api.EventPeerUpdated, ID: p.Label, Data: p})
@@ -1961,7 +1969,13 @@ func serve(args []string) error {
 	// devices.list and devices.revoke (transport.md 5, 6.6) read the device list in the state folder.
 	devicesCtl := newDeviceService(dir, logger.Printf)
 	caps = append(caps, "devices")
+	// The device ids that proved their hab key on a peer link (transport.md 6.3).
+	proofs := peers.OpenProofs(filepath.Join(dir, peerProofsFile), logger.Printf)
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
+	// gff-hab's own pid is a root: what it starts (git hooks, lane checks) may run the agent's
+	// code (hab-logic-api.md 4.1).
+	callers := callerRoots{serve: os.Getpid(), holderDir: holderDirOf(*holders), lk: lk, hookSocket: hpath,
+		sessions: servechild.Sessions, junk: &junkWarn{logf: logger.Printf, now: time.Now}}
 	s := control.New(control.Config{
 		Epoch:    epoch,
 		Build:    build,
@@ -2014,12 +2028,14 @@ func serve(args []string) error {
 		Rounds:       roundsCtl,
 		Heavy:        heavyLock,
 		Groups:       groupsCtl,
-		Logbook:      lbVerbs,
+		Logbook:      socketLogbook{Service: lbVerbs, host: *hostID, approval: approvalAgents(setSvc.Value)},
 		FlightRules:  flightRules,
 		Friction:     &frictionNotes{state: dir, w: logw, logf: logger.Printf, now: time.Now},
 		Debug:        debugSw,
 		Devices:      devicesCtl,
 		Tally:        controlTally(tl),
+		LocalCaller:  localCaller(callers, peerproc.System()),
+		PeerProofs:   proofs,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -2386,6 +2402,12 @@ func (c *cmdConn) Close() error {
 
 func open(sock, via string) (*control.Client, error) {
 	if via != "" {
+		if os.Getenv(hook.Env) != "" {
+			// The command could leave the pane and reach the hab as the person (hab-logic-api.md
+			// 4.1). Like the other $GFF_HAB checks, this stops a mistake, not an agent that clears
+			// its environment.
+			return nil, fmt.Errorf("-via runs no command inside a Flightdeck pane ($%s is set); use -socket", hook.Env)
+		}
 		cmd := exec.Command("/bin/sh", "-c", via)
 		cmd.Stderr = os.Stderr
 		in, err := cmd.StdinPipe()

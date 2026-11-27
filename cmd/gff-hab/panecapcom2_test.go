@@ -55,17 +55,18 @@ func TestPaneCapcomMarkReads(t *testing.T) {
 	}
 }
 
-// TestPaneCapcomHelloDevice documents a limit (hab-logic-api.md 3.11): the far hab takes the
-// device id from the peer's own hello, so a peer link that names the Capcom home's device gets
-// Capcom's rule. It must move to the transport's key once a hab key may hold less than the
-// owner's door.
-func TestPaneCapcomHelloDevice(t *testing.T) {
+// TestPaneCapcomProvenDevice: the mark follows the peer caller's device id, which the control
+// server sets only from a proof of the hab key (transport.md 6.3; TestPeerProof in
+// internal/control). A link that proved nothing has no device id and gets no mark.
+func TestPaneCapcomProvenDevice(t *testing.T) {
 	t.Parallel()
 	r := newDriveRig(t)
 	r.s.capcomHome = func() string { return "home-device" }
-	c := r.s.markCapcom(controlCaller(control.PaneCaller{Peer: true, Conn: "any", Device: "home-device"}), "home-device", asCapcom)
-	if !c.isCapcom() {
-		t.Fatal("the hello's device id no longer decides the mark: update the spec's limit")
+	if c := r.s.markCapcom(controlCaller(control.PaneCaller{Peer: true, Conn: "any", Device: "home-device"}), "home-device", asCapcom); !c.isCapcom() {
+		t.Fatal("a link proven as the Capcom home has no mark")
+	}
+	if c := r.s.markCapcom(controlCaller(control.PaneCaller{Peer: true, Conn: "any"}), "", asCapcom); c.isCapcom() {
+		t.Fatal("an unproven link got the Capcom mark")
 	}
 }
 

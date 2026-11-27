@@ -10,3 +10,13 @@ func peerUID(fd int) (int, error) {
 	}
 	return int(cred.Uid), nil
 }
+
+// peerPID returns the pid of the process at the other end of a Unix socket: SO_PEERCRED, the
+// process that called connect.
+func peerPID(fd int) (int, error) {
+	cred, err := unix.GetsockoptUcred(fd, unix.SOL_SOCKET, unix.SO_PEERCRED)
+	if err != nil {
+		return 0, err
+	}
+	return int(cred.Pid), nil
+}

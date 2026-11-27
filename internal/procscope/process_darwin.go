@@ -43,6 +43,9 @@ func inspectProcess(pid int, token string) (process, bool) {
 	return p, ok && p == q
 }
 
+// Environ returns the environment a process started with, or nil when it cannot be read.
+func Environ(pid int) []byte { return procEnvironment(pid) }
+
 // A full kern.procargs2 reply contains argc, a padded executable path, argv,
 // then NUL-separated environment entries. A full buffer can be a truncated tail;
 // only replies shorter than the allocation prove a complete copy.

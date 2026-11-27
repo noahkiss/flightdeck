@@ -157,7 +157,12 @@ What we take: nothing (see 3).
 | One Mac alone | Works with the local socket only; no keys, no listener, no pairing |
 
 Out of scope: protecting the owner from a compromised account on a hab's own host. A process that
-runs as the owner can already reach the local socket.
+runs as the owner can already reach the local socket. In scope: an agent in one of the hab's own
+panes. The hab tells a process inside its panes from one outside, and refuses it the owner's own
+decisions and a peer link (`hab-logic-api.md` 4.1). The check stops an agent that reaches the
+socket by mistake or through the `gff` and `gff-hab` verbs. It does not stop an agent that can
+start a process of its own choosing: that process leaves the panes and is the owner. Only a
+sandbox stops that; `hab-logic-api.md` 4.1 lists the escapes.
 
 ---
 
@@ -604,7 +609,7 @@ hab cannot tell which connection used which key. The device's push registration 
 | Rule | Value |
 |---|---|
 | Peer links | Every `devices.*` method is `denied`: a peer changes no trust store on another hab (6.2) |
-| Agents | The pane route does not take `devices.*`. `gff-hab api call devices.revoke` and `gff-hab devices revoke` refuse to run inside a Flightdeck pane, as `confirm.answer` does. That check reads the pane's environment, so it stops an agent's mistake, not an agent that means it: a process of the same user can clear the variable or speak to the socket itself. A boundary needs the socket to check the caller's process, which is not built |
+| Agents | The pane route does not take `devices.*`. On the control socket, the hab refuses every `devices.*` method from a process inside one of its panes, whatever its environment holds (`hab-logic-api.md` 4.1). `gff-hab api call devices.revoke` and `gff-hab devices revoke` also refuse to run where `GFF_HAB` is set, as `confirm.answer` does, so the message comes before the call. So does `gff-hab pair`, which writes `authorized_keys` without the socket; that check is the environment's only, and a cleared environment passes it |
 
 Pairing over the API (`devices.pair`): not built; proposed separately.
 
@@ -634,6 +639,37 @@ key this way is safe: it came over a pinned, authenticated channel.
    approves it once.
 4. If an endpoint later presents a different id, the caller refuses it and says so, until
    `gff-hab peers accept <label>`.
+5. **The caller proves its own id.** The system sshd authenticates the user's SSH key, not the
+   calling hab, and `gff-hab connect` only copies bytes. So the hello's `peer.device_id` is a
+   claim. The receiving hab binds it to the hab key whose fingerprint it is:
+   - The welcome to a hello with `client.kind` `hab` and `peer` carries `peer_nonce`, 32 random
+     bytes in base64, fresh per connection.
+   - The caller's next call is `hab.prove` with its hab public key (`ssh-ed25519` and the blob)
+     and an Ed25519 signature over `flightdeck-peer-proof-v1`, the nonce, the receiver's device
+     id and its own device id, each ended by a NUL byte. The receiver's id is the pinned one, or
+     the welcome's on first contact. It stops a hab in the middle from passing on a proof meant
+     for itself.
+   - The receiver checks that the key's fingerprint is the claimed id and that the signature
+     holds over its own id and the nonce. One attempt per nonce. A proof that fails closes the
+     connection with `denied`.
+   - A proven link carries the key's id: the Capcom mark (`hab-logic-api.md` 3.11) needs it.
+   - The receiver remembers each proven id in `peer-proofs` in its state directory, one id per
+     line. A file it cannot read in full (a read error, or one over 1 MiB) does not stop the
+     hab: it logs the problem and keeps the ids it read before it. A device whose id was lost
+     links unproven again, with no Capcom mark, until it proves once more. A later hello that claims a remembered id is held: it is no peer link, and each
+     peer-only call gets `denied` with a hint that names `hab.prove`, until it proves the key. A
+     hab moved back to a build before the proof stops linking to that receiver; removing its id
+     from the receiver's `peer-proofs` lets it link again.
+   - **Older habs.** A hab from before the proof sends no `hab.prove`, and one that receives
+     sends no `peer_nonce`, so the caller proves nothing. Such a link still works as a peer link
+     under the id it claims, without the Capcom mark, until that id proves itself once. Any
+     process outside the panes can make such a claim for an id that never proved itself; it has
+     the owner's door anyway. Section 8 asks the owner when to stop taking these links.
+   - First contact is trust on first use: a hab in the middle that a caller reaches first, and
+     that claims another hab's id in its welcome, gets a proof for that id. The caller's
+     `known_hosts` entry for the endpoint's sshd is what stops it.
+   - When the embedded server (4.2) admits hab keys, the transport key and the proven key are
+     the same key.
 
 ### 6.4 The desktop client and `gff`
 
@@ -780,6 +816,7 @@ discussed before it is built.
 | The port number | A new port on each host | One fixed default in the 2700-9999 range, checked against ports in use, overridable by config |
 | Device keys in gff-hab's authorized-keys file | A new credential that authenticates to a hab | Yes, for the embedded server only; the system sshd and `~/.ssh` unchanged |
 | Introduction between habs (6.2) | Trust spreads from one hab to others | Off; pair each hab |
+| Refusing peer links that prove nothing (6.3) | Changes how a hab authenticates its peers; habs of v0.6.0 and earlier prove nothing | This build takes them, with no Capcom mark, and refuses a claim of an id that proved itself here before. Proposed: the next minor release refuses them, so a mixed fleet has one release to update |
 | Any off-LAN reach: a relay, an embedded tailnet node in the app, a router port forward | Reach beyond the LAN, or a new tailnet node that may need an ACL change | Later, each its own proposal; port forward not recommended |
 
 Not discuss-first: the local socket, SSH stdio over the system sshd, the hab making its own host

@@ -5262,6 +5262,40 @@ public struct GroupVerdict: Codable, Sendable, Hashable {
     }
 }
 
+public struct HabProveParams: Codable, Sendable, Hashable {
+    /// The dialing hab's public hab key in authorized_keys form: ssh-ed25519 and the base64 key blob.
+    public var key: String
+    /// Base64 Ed25519 signature by that key over the proof message: flightdeck-peer-proof-v1, the welcome's peer_nonce, this hab's device id and the dialer's device id, each ended by a NUL byte (transport.md 6.3).
+    public var signature: String
+
+    enum CodingKeys: String, CodingKey {
+        case key = "key"
+        case signature = "signature"
+    }
+
+    public init(key: String, signature: String) {
+        self.key = key
+        self.signature = signature
+    }
+}
+
+public struct HabProved: Codable, Sendable, Hashable {
+    /// The device id the link now carries: the key's SHA-256 fingerprint.
+    public var deviceId: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case seq = "seq"
+    }
+
+    public init(deviceId: String, seq: UInt64) {
+        self.deviceId = deviceId
+        self.seq = seq
+    }
+}
+
 public struct HabStatsParams: Codable, Sendable, Hashable {
     public init() {
     }
@@ -10665,6 +10699,8 @@ public struct Welcome: Codable, Sendable, Hashable {
     /// Random id of this gff-hab process.
     public var epoch: String
     public var host: HostInfo
+    /// Sent only to a hello of client kind hab with peer: a fresh random challenge, base64. The dialing hab signs it with its own hab key in hab.prove, so this hab takes the link's device id from the key, not the hello (transport.md 6.3). Absent from a hab that does not check peer proofs.
+    public var peerNonce: String?
     public var reconnectToken: String
     /// The revision this connection uses.
     public var revision: Int
@@ -10682,6 +10718,7 @@ public struct Welcome: Codable, Sendable, Hashable {
         case deviceId = "device_id"
         case epoch = "epoch"
         case host = "host"
+        case peerNonce = "peer_nonce"
         case reconnectToken = "reconnect_token"
         case revision = "revision"
         case seq = "seq"
@@ -10689,13 +10726,14 @@ public struct Welcome: Codable, Sendable, Hashable {
         case version = "version"
     }
 
-    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64, time: String? = nil, version: String? = nil) {
+    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, peerNonce: String? = nil, reconnectToken: String, revision: Int, seq: UInt64, time: String? = nil, version: String? = nil) {
         self.build = build
         self.capabilities = capabilities
         self.clientId = clientId
         self.deviceId = deviceId
         self.epoch = epoch
         self.host = host
+        self.peerNonce = peerNonce
         self.reconnectToken = reconnectToken
         self.revision = revision
         self.seq = seq
@@ -10980,6 +11018,8 @@ public enum HabMethods {
     public static let habHello = HabMethod<HelloParams, Welcome>(name: "hab.hello")
     /// Client liveness; send every 15 s when idle (spec 3.5).
     public static let habPing = HabMethod<PingParams, Empty>(name: "hab.ping")
+    /// A peer link proves its device id with its hab key, signing the welcome's peer_nonce; once per connection, right after the welcome. A bad proof closes the connection (transport.md 6.3).
+    public static let habProve = HabMethod<HabProveParams, HabProved>(name: "hab.prove")
     /// The schema of this API. Its result is the schema document and carries no seq.
     public static let rpcDiscover = HabMethod<DiscoverParams, JSONValue>(name: "rpc.discover")
     /// Read the whole structure of the host.

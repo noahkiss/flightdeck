@@ -143,6 +143,11 @@ func (w *worktrees) CreateWorktree(ctx context.Context, client string, p api.Wor
 	if err != nil {
 		return api.WorktreeCreated{}, err
 	}
+	if p.Setup == "run" && control.PaneCall(ctx) {
+		// setup: run is the user's yes to scripts that may come from someone else
+		// (hab-logic-api.md 3.10); a process inside a pane does not give it.
+		return api.WorktreeCreated{}, control.Errorf(api.ErrorKindDenied, "setup run is the user's yes to the worktree's scripts, and this caller runs inside a Flightdeck pane; use setup auto, and the user approves a pending script from the app or a terminal outside Flightdeck")
+	}
 	pr, _ := w.a.store.Project(project)
 	defer w.lock(project)()
 
@@ -229,6 +234,11 @@ func (w *worktrees) SetupWorktree(ctx context.Context, client string, p api.Work
 	mark, ok, err := w.git.ReadMark(ctx, wt.Path)
 	if err != nil {
 		w.logf("worktree %s: read its mark: %v", wt.Path, err)
+	}
+	if control.PaneCall(ctx) && (!ok || !mark.Allows(cfg)) {
+		// From a pane, only a rerun of scripts the user already approved, unchanged since
+		// (hab-logic-api.md 3.10).
+		return api.WorktreeSetup{}, control.Errorf(api.ErrorKindDenied, "worktree.setup here would be the user's yes to scripts not approved as they are now, and this caller runs inside a Flightdeck pane; the user approves them from the app or a terminal outside Flightdeck")
 	}
 	if !ok {
 		mark = worktree.Mark{Source: w.mainPath(ctx, dir), Created: w.now().UTC()}

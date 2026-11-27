@@ -25,11 +25,36 @@ func Addr(socket, token string) string {
 	return Scheme + socket + "/hooks/" + token
 }
 
+// childPath ends the GFF_HAB value of a program gff-hab serve starts (ChildAddr).
+const childPath = "/serve-child"
+
+// ChildAddr is the GFF_HAB value gff-hab serve gives each program it starts that may run code a
+// repository holds: git, lane checks, worktree scripts (hab-logic-api.md 4.1). It names the hook
+// socket, so the pane caller check counts such a program as a pane's, but it holds no token, so
+// it reaches no hook and names no pane. ParseAddr refuses it.
+func ChildAddr(socket string) string { return Scheme + socket + childPath }
+
+// ParseChildAddr returns the hook socket a ChildAddr value names.
+func ParseChildAddr(s string) (socket string, ok bool) {
+	rest, ok := strings.CutPrefix(s, Scheme)
+	if !ok {
+		return "", false
+	}
+	socket, ok = strings.CutSuffix(rest, childPath)
+	if !ok || !strings.HasPrefix(socket, "/") {
+		return "", false
+	}
+	return socket, true
+}
+
 // ParseAddr splits a GFF_HAB value into the socket path and the pane token.
 func ParseAddr(s string) (socket, token string, err error) {
 	rest, ok := strings.CutPrefix(s, Scheme)
 	if !ok {
 		return "", "", fmt.Errorf("hook address %q does not start with %s", s, Scheme)
+	}
+	if _, child := ParseChildAddr(s); child {
+		return "", "", fmt.Errorf("hook address %q is the mark gff-hab serve gives the programs it starts: it reaches no hook", s)
 	}
 	i := strings.LastIndex(rest, "/hooks/")
 	if i <= 0 {

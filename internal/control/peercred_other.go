@@ -8,3 +8,8 @@ import "errors"
 func peerUID(int) (int, error) {
 	return -1, errors.New("peer credentials are not supported on this system")
 }
+
+// peerPID is not implemented on this system.
+func peerPID(int) (int, error) {
+	return 0, errors.New("peer credentials are not supported on this system")
+}

@@ -37,6 +37,10 @@ type Config struct {
 	DeviceID string
 	// Peer, when set, goes in the hello: this Conn is a peer link from that hab (mesh.md 3.2).
 	Peer *api.PeerHello
+	// Prove, when set with Peer, signs a welcome's peer_nonce with this hab's key for hab.prove
+	// (transport.md 6.3): receiver is the pinned id, else the welcome's. A welcome with no
+	// peer_nonce comes from a hab that takes no proof, and the Conn goes on without one.
+	Prove func(nonce, receiver string) (key, signature string)
 	// NoSubscribe skips events.subscribe: the Conn goes online after the hello, with an empty
 	// structure, and makes calls only. A peer link subscribes to nothing (mesh.md 4.2).
 	NoSubscribe bool
@@ -361,6 +365,19 @@ func (c *Conn) open(ctx context.Context) (*session, error) {
 	if pinned != "" && w.DeviceID != pinned {
 		cl.Close()
 		return nil, errPermanent{&DeviceChangedError{Pinned: pinned, Got: w.DeviceID}}
+	}
+	if c.cfg.Peer != nil && c.cfg.Prove != nil && w.PeerNonce != "" {
+		// Prove this hab's device id before any other call, so the far hab counts each one
+		// as from the proven device (transport.md 6.3).
+		receiver := pinned
+		if receiver == "" {
+			receiver = w.DeviceID
+		}
+		key, sig := c.cfg.Prove(w.PeerNonce, receiver)
+		if _, err := (api.Client{Caller: cl}).HabProve(ctx, api.HabProveParams{Key: key, Signature: sig}); err != nil {
+			cl.Close()
+			return nil, fmt.Errorf("habconn: prove: %w", err)
+		}
 	}
 	cl.KeepAlive(c.cfg.PingInterval)
 	if c.cfg.NoSubscribe {

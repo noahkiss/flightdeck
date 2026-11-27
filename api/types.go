@@ -68,6 +68,20 @@ type Welcome struct {
 	ReconnectToken string   `json:"reconnect_token"`
 	DeviceID       string   `json:"device_id,omitempty" doc:"SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5). Optional, so a newer client accepts a welcome from an older revision 1 hab."`
 	Time           string   `json:"time,omitempty" doc:"The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab."`
+	// PeerNonce was added after v0.6.0 (transport.md 6.3).
+	PeerNonce string `json:"peer_nonce,omitempty" doc:"Sent only to a hello of client kind hab with peer: a fresh random challenge, base64. The dialing hab signs it with its own hab key in hab.prove, so this hab takes the link's device id from the key, not the hello (transport.md 6.3). Absent from a hab that does not check peer proofs."`
+}
+
+// HabProveParams proves a peer link's device id (transport.md 6.3).
+type HabProveParams struct {
+	Key       string `json:"key" doc:"The dialing hab's public hab key in authorized_keys form: ssh-ed25519 and the base64 key blob."`
+	Signature string `json:"signature" doc:"Base64 Ed25519 signature by that key over the proof message: flightdeck-peer-proof-v1, the welcome's peer_nonce, this hab's device id and the dialer's device id, each ended by a NUL byte (transport.md 6.3)."`
+}
+
+// HabProved is the device id a peer link proved.
+type HabProved struct {
+	Seq
+	DeviceID string `json:"device_id" doc:"The device id the link now carries: the key's SHA-256 fingerprint."`
 }
 
 // --- Structure (spec 2.2) ---

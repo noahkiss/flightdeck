@@ -582,6 +582,7 @@ The first request on a control connection must be `hab.hello`.
 | `reconnect_token` | Token to resume this client within the grace period |
 | `device_id` | The hab's host-key fingerprint, `SHA256:` plus base64 (`transport.md` 5). Optional in the schema, so a newer client accepts an older hab's welcome; this build always sends it |
 | `time` | The hab's clock as it answers the hello: RFC 3339 in UTC with milliseconds (`2026-03-01T08:30:00.007Z`). Clients measure reset times and ages against it, and may compute their clock's offset (`app.md` 14.5). Optional in the schema, like `device_id`; this build always sends it |
+| `peer_nonce` | Only to a hello with `client.kind` `hab` and `peer`: a fresh challenge the dialing hab signs in `hab.prove`, its next call (`transport.md` 6.3). Optional; a hab older than the proof sends none |
 | `seq` | Always 0: no event has been queued yet |
 
 If no revision fits, gff-hab answers with an error of kind `revision_unsupported` that carries both
@@ -594,6 +595,8 @@ Built choices (`internal/control`):
 - A first request other than `hab.hello`, a second `hab.hello`, a `client.kind` outside its word
   set, or a `revision` below `min_revision` is refused with `invalid`. A refused hello closes the
   connection.
+- A hello with `client.kind` `hab` from a process inside one of the hab's panes is refused with
+  `denied` (4.1).
 - The hab key is an Ed25519 key in the state directory, made on first start, mode 0600
   (`internal/habkey`).
 
@@ -876,8 +879,10 @@ surface:
 
 - **The hab refuses them from a client.** A connection that is not a peer link (`client.kind`
   `hab` with the hello's `peer` field) gets `denied` for each, before the method's own checks.
-  This tidies the client surface; it authenticates nothing. The `peer` field is what the caller
-  says, and nothing binds it to the peer's key until the transport does (`mesh.md` 4).
+  A process inside one of the hab's panes cannot open a peer link (4.1). A hello that names a
+  device that proved its hab key here before is no peer link until it proves the key again
+  (`transport.md` 6.3). An older hab that proves nothing still opens one, under the id it
+  claims; such a caller runs outside every pane, so it already has the owner's door.
 - **The schema marks them.** Each carries `"x-peer-only": true`, and `api.PeerMethods` lists
   them. The Swift package leaves them out. The Go client keeps them, because the peer code calls
   them through it.
@@ -930,6 +935,7 @@ surface:
 | `capcom.attach`, `capcom.detach`, `capcom.pending`, `capcom.open`'s `context` | Attach a notification, session, file, console command or Logbook record to a Capcom session's next message, remove one, or read what waits (read-only); the next `session.send` delivers it as blocks before the user's text, or alone when the send has no text (capability `capcom`; `capcom.md` 8.1, 8.4) | Yes |
 | `devices.list`, `devices.revoke` | List the trust store; revoke a device (capability `devices`; `transport.md` 6.1.7) | Yes |
 | `devices.pair` | Pairing over the API: not built, proposed separately; answers `unavailable` | No |
+| `hab.prove` | A peer link proves its device id with its hab key, signing the welcome's `peer_nonce`; once, right after the welcome (`transport.md` 6.3) | Yes |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
@@ -1558,7 +1564,11 @@ project's identity, so the session files into the same project. No method of its
 
   The result is `pending` with the reason and both scripts (`script`, `teardown_script`), so
   the client shows what the yes covers. `worktree.setup` (or `setup: run` on create) is the yes.
-  Any control client may give it; the hab is single-user, as at the bar.
+  The person gives it, from any control client outside the hab's panes. A process inside a
+  pane (4.1) does not: from it, `setup: run` on create is `denied` before anything is made, and
+  so is a `worktree.setup` unless the mark already approves exactly the scripts there now; such
+  a rerun works. The mark sits in the repository's `.git` folder, which an agent that may write
+  there can edit; that is a same-user limit (4.1).
 - **The mark.** gff-hab writes `gff-worktree.json` in the worktree's private git folder
   (`.git/worktrees/<name>/`). It holds the source checkout, when it was made, whether its scripts
   are approved, a SHA-256 digest of the setup and teardown scripts approved, and why setup
@@ -1762,22 +1772,22 @@ may read. It binds the two doors an agent's call comes through:
   its own value. From any other peer it ignores `as`, and the peer door's rule applies. A hab
   that does not know `as` ignores it too. The mark is as strong as the peer door itself: a paired
   hab is trusted as far as the user is (below).
-- **Limit, must fix before narrower hab keys.** The far hab reads the caller's device id from
-  the peer's own hello, not from the transport's key. Today any caller that can say that hello
-  can also say hello as `app` and be the owner, so the mark gives nothing more. Once the
-  embedded SSH server (4.3) admits paired hab keys with less than the owner's door, the device
-  id must come from the authenticated key, and a hello that names another device must lose the
-  mark. `TestPaneCapcomHelloDevice` documents the current behaviour.
-- **Any other client is the owner.** The app, `gff`, and `gff-hab` run outside a pane read every
-  pane at every level: they already see every pane through data streams (5). The rule binds the
-  agent doors only. It is not a boundary against a process of the same user. An agent that runs
-  `gff-hab screen -socket <path>` uses the owner's door, as one that runs `gff-hab api call
-  pane.input` already types into any pane (`mesh.md` 6.5, Trust; `capcom.md` 5.3). The rule
-  stops an agent that reads through its own tools by mistake, not a hostile process.
+- **The mark's device id comes from the hab key.** The far hab takes the device id for the mark
+  only from a peer link that proved its hab key (`transport.md` 6.3). A link that proved
+  nothing, from a hab older than the proof, has no device id here and never holds the mark; the
+  peer door's rule applies to it. `TestPeerProof` and `TestPaneCapcomProvenDevice` check it.
+- **Any other client is the owner.** The app, `gff`, and `gff-hab` read every pane at every
+  level: they already see every pane through data streams (5). A process inside a pane that
+  dials the socket itself reads the same way: reading, typing and steering stay open to it
+  (4.1, Q11). The rule binds the agent doors only. An agent that runs `gff-hab screen -socket
+  <path>` uses the owner's door, as one that runs `gff-hab api call pane.input` already types
+  into any pane (`mesh.md` 6.5, Trust; `capcom.md` 5.3). The rule stops an agent that reads
+  through its own tools by mistake, not a hostile process.
 - **The peer door is cooperative in the same way.** The hab knows a peer link by the client kind
-  its hello declares. A peer that says hello as `app` is the owner here, and a peer's own
-  `gff-hab connect` over SSH already has the control socket's full powers (4.2). The peer column
-  binds a peer that follows the protocol; it is not a boundary against a paired host.
+  its hello declares, and a process inside a pane cannot declare it (4.1). A peer that says
+  hello as `app` is the owner here, and a peer's own `gff-hab connect` over SSH already has the
+  control socket's full powers (4.2). The peer column binds a peer that follows the protocol; it
+  is not a boundary against a paired host.
 - The hab checks the rule at each call, so a change applies to the next read or wait. A wait
   already running finishes under the value it started with.
 - **Screen text is untrusted program output.** The hab never interprets it. The CLI help says
@@ -1821,9 +1831,9 @@ Built choices (`internal/panetext`, `cmd/gff-hab/panes.go`, `internal/control/pa
   chunk (bytes lost). A subscription that falls behind is opened again from the last offset read.
 - Listing, typing and creating are `pane.list`, `pane.type` and `pane.new` (3.12).
 - The Capcom route's reads and its forward (A10). The forward sets `as` only for the Capcom
-  route; the params of any other caller lose it. The far hab compares the peer link's device id
-  from its hello with the Capcom home in its own belief, and takes `as` only on a match that is
-  not itself. `as` is in the params of `pane.read`, `pane.wait`, `pane.list` and `pane.type`,
+  route; the params of any other caller lose it. The far hab compares the peer link's proven
+  device id with the Capcom home in its own belief, and takes `as` only on a match that is not
+  itself. `as` is in the params of `pane.read`, `pane.wait`, `pane.list` and `pane.type`,
   never in an MCP tool's schema.
 
 Limits:
@@ -2043,6 +2053,7 @@ rules. Their descriptions say that screen text is untrusted program output.
 | The MCP pane tools, the read ones marked untrusted, the driving ones destructive and open-world | `TestPaneToolsUntrusted` |
 | The Capcom route: reads under `project` and `all`, refused under `off` with no forward; types under each value of `agent.drive_panes` with every project as its scope; the raw line only under `all`; control keys and Enter alone still refused; another agent's text stays enveloped; starts a pane only under `all`; each forward carries `as: "capcom"` | `TestPaneCapcomRead`, `TestPaneCapcomType`, `TestPaneCapcomNew`, `TestPaneCapcomRawLine`, `TestMayDrive`, `TestMayRead` |
 | The far hab takes `as: "capcom"` only from the peer that holds the Capcom mark; another peer, no mark, itself, the owner's door and a pane's route are judged under their own rule | `TestPaneCapcomMark` |
+| The mark needs a proven device id; an unproven link gets none | `TestPaneCapcomProvenDevice`, `TestPeerProof` |
 
 Built choices (`cmd/gff-hab/panedrive.go`, `cmd/gff-hab/panetools.go`):
 
@@ -2194,6 +2205,8 @@ Tests: `TestSessionActionClear`, `TestSessionActionCompact`, `TestSessionActionR
   first message tells which one it is: `hab.hello` for control, a data hello with a ticket for data.
 - Authentication is the socket's file permissions plus a peer-credential check that the caller runs
   as the same user.
+- The hab also tells whether the caller runs inside one of its own panes. Such a caller is not
+  the person: it may not make the person's own decisions (below, "Callers inside a pane").
 
 Decision: proposed.
 
@@ -2203,6 +2216,118 @@ mode 0700 and owned by the user; while it is open to other users, gff-hab waits 
 once (`hab-holder.md` 5.5). gff-hab peeks at the first byte of each connection: the hello
 frame's kind byte (1) makes it a data connection, anything else a control connection. With the
 holder link off, a data hello gets a reject frame (`unavailable`).
+
+**Callers inside a pane.** Agents run in the hab's own panes, as the user. Before this check,
+the hab knew an agent only by `GFF_HAB` in its environment, which the CLI read. An agent could
+drop the variable, or dial the socket itself, and be the person: answer a confirmation or an
+action card, grant a Capcom job's words, list or revoke devices, or say hello as a hab and call
+the peer-only methods. The hab now judges the process, not its environment.
+
+- **The caller's pid.** At accept, gff-hab reads the pid of the process that connected:
+  `SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS. It reads it once per connection, before the
+  hello, off the accept loop, and never again.
+- **What makes a caller a pane's.** gff-hab reads the caller's process and its ancestors, and
+  counts the caller as a pane's when any of these holds:
+
+  | Signal | Catches | Escaped by |
+  |---|---|---|
+  | An ancestor is a holder process: every live holder in the holder registry, unreachable ones (an older protocol) and draining ones included, and every holder the link is connected to. A holder starts nothing but panes | Any process a pane started, also before the link learned the new pane's pid | Leaving the tree: the parent exits, so the process moves to `init` or a subreaper |
+  | An ancestor is `gff-hab serve` itself. What it starts runs code an agent may have written: git and what a repository names for it (hooks, filters), lane checks, worktree scripts. On Linux serve is a child subreaper (`PR_SET_CHILD_SUBREAPER`), so a process whose parent exits moves to serve, not `init` | A hook, a filter or a script that dials the socket from a call an agent made, such as `worktree.create`; on Linux also what it leaves running | On macOS, the same as a holder's: the next two rows catch most of it. On Linux, the escapes below that start a process outside serve (a service manager, `ssh localhost`, `at`); where serve is no subreaper (Go waits without a pidfd), the same as on macOS |
+  | The caller or an ancestor is in the session of a pane's first process. Each pane's first process leads its pane's session (`hab-holder.md`); exited panes count until they are released | An orphan whose parent exited | `setsid`, or a release of the pane (`pane.close`) while the orphan runs on |
+  | The caller or an ancestor is in the session of a program serve started that may run a repository's code (the list in the first row). Each such program leads a session of its own; its session counts while it runs and after, until no process is left in it. Every 5 s serve drops a session with no process left, or one whose leader's pid a newer process took | What such a program leaves running after it exits, with its environment cleared | `setsid`; a gff-hab restart, which forgets the sessions. Under launchd the leftover outlives the restart (launchd ends only the job's process group, which the session left); under systemd the hab's unit stops its whole control group, the leftover too |
+  | The caller's start-up environment holds `GFF_HAB` naming this hab's hook socket: a pane's address, or the mark serve gives each program of the first row (the hook socket and no token, so it reaches no hook and names no pane) | A process that left the tree and the session but kept its environment | Starting with a cleared environment |
+
+- **What the check stops, and what it does not.** It stops an agent that reaches the socket by
+  mistake, or through the `gff` and `gff-hab` verbs: those dial from inside the pane, and the
+  verbs that would start a command refuse to (below). It does not stop an agent that can start
+  a process of its own choosing; only a sandbox does (`transport.md` 2). Such a process leaves
+  the panes as the same user, and then counts as the person. These escapes come with the user
+  account and no check here closes them:
+  - a double fork with `setsid` and a cleared environment;
+  - on macOS, the same from a process that a program serve started leaves running (a git filter
+    that backgrounds a child); on Linux serve adopts it;
+  - on macOS, such a leftover with a cleared environment that outlives a gff-hab restart: the new
+    serve does not know its session;
+  - an orphan that runs on after `pane.close` released its pane;
+  - a service manager: `launchctl submit`, `systemd-run --user`;
+  - `ssh localhost`;
+  - a new terminal or app: `open -a Terminal`, `osascript`;
+  - a detached multiplexer: `tmux new -d`;
+  - a scheduled job: `at`, cron.
+
+  An agent limited to `gff-hab` and `gff` can still start a shell: `pane.new` and `pane.type`
+  stay open to pane callers (Q11, 8).
+- **Commands the CLIs start.** Where `GFF_HAB` is set, `gff-hab -via`, `gff -via` and a
+  `cmd:` endpoint in gff's config or `-host` flags run no command: `-via` is refused, and a
+  `cmd:` endpoint is dropped with a note. The command could leave the pane and dial as the
+  person.
+- **Verbs that do not use the socket.** `gff-hab pair` writes `authorized_keys` and
+  `gff-hab devices revoke` the device list directly; `gff-hab install` and `uninstall` write and
+  load service jobs, which run a program of the caller's choosing outside every pane; `gff lb`
+  opens the Logbook file when the hab does not answer. Where `GFF_HAB` is set, `pair`,
+  `devices revoke`, `peers accept`, `install` and `uninstall` refuse (`install -dry-run` runs), and `gff lb` sends writes only through the pane route, never to the file. These are
+  environment checks: a process that clears its environment passes them, as it does the other
+  same-user limits above.
+- **gff-hab's git.** A hook and `core.fsmonitor` are commands the repository names. Every git
+  call gff-hab makes passes `-c core.fsmonitor=false`, and each passes
+  `-c core.hooksPath=/dev/null` but the merge lane's two pushes. Those keep the repository's
+  hooks, so a `pre-push` the owner set up (git-lfs, a leak scan) runs as it does for the owner's
+  own push; the lane makes no plain commit, and its checkout, rebase and worktree calls run no
+  hook. Inside such a program `GFF_HAB` is the mark, which reaches no hook: there `gff lb`,
+  the `gff-hab` read tools and channel sends fail, and a lane check or worktree script cannot use
+  them. Other config still runs a command: a filter's `smudge` and `clean`, `core.sshCommand`,
+  a credential helper. Only the marks above keep that code, and the hooks that run, from being
+  the person; turning hooks and fsmonitor off is a second layer.
+- **It fails closed.** A caller the socket gave no pid for, a pid with no process, a process
+  that started more than 1 s after the accept (a newer process took the pid), an ancestor that
+  ended during the walk, an ancestor younger than its child (pid reuse), or a chain deeper than
+  256 counts as a pane's. So does every caller while the holder registry cannot be read in
+  full: a file that does not parse may be a holder's. That locks the person's clients out too,
+  so gff-hab logs a `WARNING` line naming the file, at most once per 10 minutes while it lasts. On Linux a start time is the stat start ticks after a boot placed by
+  `CLOCK_BOOTTIME`, the clock the kernel counts them on, so a container's own `/proc/uptime`
+  does not shift it.
+- **What a caller inside a pane may not call.**
+  - The person-only methods (`control.PersonOnly`): `confirm.answer`, `trust.answer`,
+    `approval.answer`, `capcom.card.answer`, `capcom.assign`, `settings.set`, `peers.accept`,
+    `logbook.decide`, `device.context.put` (the user's own location and calendar),
+    `push.register`, `push.register_activity`, `push.unregister` and every `devices.*` method.
+  - A Logbook write as the person. `logbook.write` and `logbook.resolve` run as an agent's,
+    under the pane route's rules (`logbook.md` 10.5): no set of a proposal's `status` or
+    `decided_by`, no project marked `private`, nothing in a private project, and a proposal
+    while `logbook.approval` is `agents`. The hab does not know which pane the caller runs in,
+    so the write names no pane or session, and all such callers share one write limit.
+  - A yes to a worktree's scripts (3.10): `setup: run` on `worktree.create`, and a
+    `worktree.setup` whose scripts the user has not approved as they are now. A rerun of
+    approved scripts works.
+  - `session.send` to the Capcom service session: a message there is the user's and opens a
+    user turn, which acts without a job's words. An agent writes to Capcom with `channel_send`.
+  - What the pane route keeps for the user in rounds (`capcom-service.md` 9.6, `rounds.md`): a
+    `round.create` with `actions` or `secrets`; a `round.update` that adds a word, changes the
+    secret set, or changes anything but the removal of words in a job the user let act; a pause,
+    unpause, run or delete of such a job. No round it makes is `by_person`.
+  - A hello with `client.kind` `hab`, so it never reaches the peer-only methods (3.9).
+
+  Each refusal is `denied` with a hint that names the app or a client outside Flightdeck's
+  panes, and one log line with the method and the signal that decided.
+- **What it may call.** Everything else on the client surface: reads, data streams, typing,
+  steering sessions, rounds that are not the user's. So `gff` in a console pane works as a
+  client, but it answers no confirmation, approval or card, changes no setting and touches no
+  trust store. Q11 (8) asks the owner about this line. Harness hooks are unchanged: they use the pane route (`mesh.md` 6.5),
+  not this socket.
+- **False positives.** Each counts the person as a pane caller, who then answers from the app:
+  - On Linux, a gff-hab in its own pid namespace (a container with the host's socket mounted)
+    gets pid 0 from `SO_PEERCRED` for a caller outside the namespace.
+  - A `tmux` or `screen` server first started inside a pane keeps that pane's `GFF_HAB` in
+    every window, also for the person who attaches later from a plain terminal.
+- **Races.** The verdict is made once, at accept, from the processes as they are then. A process
+  inside a pane that connects, then hands its socket to a process outside, needs a process outside
+  that cooperates; that one is the person already.
+- **Where it lives.** `internal/peerproc` reads processes (`sysctl` and `getsid` on macOS,
+  `/proc` on Linux) and decides; `internal/servechild` starts serve's programs with the mark and
+  a session of their own and keeps their sessions; serve reaps only the zombies it adopted, those
+  no Go process handle (a pidfd) holds, and stays no subreaper where Go waits without a pidfd; `control.Config.LocalCaller` receives the verdict, and the
+  control server enforces it. `control.Server.ServeConn`, which tests use with `net.Pipe`,
+  treats its caller as the person.
 
 ### 4.2 `gff-hab connect` over SSH stdio
 
@@ -2795,6 +2920,24 @@ Decision: keep the defaults: Safe `off`, Balanced `agents` in the envelope, Bypa
 `pane.new` at Balanced stays refused (owner).
 
 ---
+
+### Q11. What may a process inside a pane do on the control socket (owner)
+
+The hab now tells a caller inside one of its panes from one outside (4.1). Built: such a caller
+keeps the client surface but the person-only methods. So `gff` in a console pane views, types
+and steers, but answers no confirmation, approval or card, changes no setting and touches no
+trust store; the person does those from the app or a terminal outside Flightdeck.
+
+- **Tradeoff.** Typing and steering stay open to every process inside a pane. `pane.input`,
+  `pane.new`, `session.create` and `session.send` to an agent from such a caller go around
+  `agent.drive_panes` (3.12): an agent allowed to run only `gff-hab` can still type into a shell
+  pane, and from that shell leave the panes' process tree. `capcom.attach` still adds context to
+  the user's next Capcom message, as data.
+- **Option.** Treat a caller inside a pane as the pane it runs in: apply that pane's agent rules
+  (`agent.read_panes`, `agent.drive_panes`) to its reads and writes on the control socket. `gff`
+  in a console pane then types into agents' panes at Balanced, but into no shell.
+- **Recommendation.** Keep the built line now; add the pane rules to the control socket in a
+  follow-up, since they need a door per caller on every input path (control and data).
 
 ## Notes for later stages
 

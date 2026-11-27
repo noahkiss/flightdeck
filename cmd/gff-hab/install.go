@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/noahkiss/flightdeck/internal/capcom"
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"io"
 	"os"
 	"os/exec"
@@ -153,6 +154,17 @@ func serveStarter(f *serviceFlags, logf func(string, ...any)) (service.Starter, 
 	return st, nil
 }
 
+// ownerOnlyVerb refuses a verb that loads a service job where GFF_HAB is set
+// (hab-logic-api.md 4.1). The job runs a program of the caller's choosing outside every pane, as
+// the person, and it does not go through the control socket, so only this check stands in its
+// way; like pair's, it stops a mistake, not an agent that clears its environment.
+func ownerOnlyVerb(verb string) error {
+	if os.Getenv(hook.Env) != "" {
+		return fmt.Errorf("gff-hab %s is the owner's call; it does not run in an agent's pane or a program gff-hab started", verb)
+	}
+	return nil
+}
+
 // install writes and loads the jobs.
 func install(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
@@ -162,6 +174,11 @@ func install(args []string, stdout io.Writer) error {
 	gffBin := fs.String("gff-bin", "", "macOS: the gff client to copy into <state>/bin (default: gff beside GFF Hab.app, when there is one)")
 	dry := fs.Bool("dry-run", false, "print the job files and change nothing")
 	fs.Parse(args)
+	if !*dry {
+		if err := ownerOnlyVerb("install"); err != nil {
+			return err
+		}
+	}
 	c, err := installConfig(sf)
 	if err != nil {
 		return err
@@ -253,6 +270,9 @@ func uninstall(args []string, stdin io.Reader, stdout io.Writer) error {
 	sf := addServiceFlags(fs, "init system: systemd or launchd (default: this system's)")
 	yes := fs.Bool("yes", false, "end running programs without asking")
 	fs.Parse(args)
+	if err := ownerOnlyVerb("uninstall"); err != nil {
+		return err
+	}
 	c, err := installConfig(sf)
 	if err != nil {
 		return err

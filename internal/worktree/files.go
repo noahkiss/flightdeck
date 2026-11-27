@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/servechild"
 )
 
 // IncludeFile names the ignored files to copy into a new worktree, in gitignore syntax. It is read
@@ -309,7 +311,7 @@ func RunScript(ctx context.Context, dir, s string, env []string) (int, string, e
 	cmd.Stdin = bytes.NewReader(nil)
 	cmd.WaitDelay = time.Second
 	ownGroup(cmd) // at the deadline the script's children go with it
-	err := cmd.Run()
+	err := servechild.Run(cmd)
 	out := string(tail.b)
 	if err == nil {
 		return 0, out, nil

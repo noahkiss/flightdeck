@@ -8,7 +8,9 @@ import (
 
 // Logbook serves the logbook.* methods (logbook.md 10.3). gff-hab implements it with
 // internal/lbsvc over its Logbook replica. A write's actor is the client: a person by the
-// client's label (logbook.md 2.5). An error that is an *Error keeps its kind.
+// client's label (logbook.md 2.5). A call from a process inside a pane carries PaneCall in its
+// context and an actor of kind agent; the implementation applies the pane route's rules (spec
+// 4.1). An error that is an *Error keeps its kind.
 type Logbook interface {
 	Brief(ctx context.Context, p api.LogbookBriefParams) (api.LogbookBrief, error)
 	Find(ctx context.Context, p api.LogbookFindParams) (api.LogbookRecords, error)
@@ -46,6 +48,10 @@ func (c *conn) handleLogbook(m message) {
 	c.mu.Lock()
 	who := api.LogbookActor{Kind: "person", Device: c.label}
 	c.mu.Unlock()
+	if c.class.pane {
+		// Not the person (spec 4.1): the Logbook writes it as an agent, and refuses a decision.
+		who.Kind = "agent"
+	}
 	var call func(ctx context.Context) (any, error)
 	var e *Error
 	write := m.Method == "logbook.write" || m.Method == "logbook.resolve" || m.Method == "logbook.decide"
@@ -106,11 +112,12 @@ func (c *conn) handleLogbook(m message) {
 			call = func(ctx context.Context) (any, error) { return lb.Status(ctx) }
 		}
 	}
+	peer := c.peerLink() != nil
 	switch {
 	case e != nil:
 	case call == nil:
 		e = appErr(api.ErrorKindUnavailable, "%s needs Logbook, which this hab is running without; the logbook capability is absent", m.Method)
-	case write && c.peer != nil:
+	case write && peer:
 		// Origins are habs: a client's write becomes an op on the hab it talks to, and peers get
 		// it by sync (logbook.md 2.5, D3).
 		e = appErr(api.ErrorKindInvalid, "%s does not run over a peer link: write on the hab you talk to, and sync carries the ops", m.Method)
@@ -122,8 +129,11 @@ func (c *conn) handleLogbook(m message) {
 	go func() {
 		ctx, cancel := context.WithTimeout(reqCtx(c.ctx, m), maxReadTime)
 		defer cancel()
-		if c.peer != nil {
+		if peer {
 			ctx = WithPeerCall(ctx)
+		}
+		if c.class.pane {
+			ctx = WithPaneCall(ctx)
 		}
 		res, err := call(ctx)
 		seq := c.currentSeq()

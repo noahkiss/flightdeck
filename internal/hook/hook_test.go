@@ -57,6 +57,23 @@ func TestAddr(t *testing.T) {
 	}
 }
 
+// TestChildAddr: the mark gff-hab serve gives its programs names the hook socket and reaches no
+// hook: ParseAddr refuses it.
+func TestChildAddr(t *testing.T) {
+	m := ChildAddr("/run/u/gff/hook.sock")
+	if sock, ok := ParseChildAddr(m); !ok || sock != "/run/u/gff/hook.sock" {
+		t.Fatalf("round trip: %q %v", sock, ok)
+	}
+	if _, _, err := ParseAddr(m); err == nil || !strings.Contains(err.Error(), "reaches no hook") {
+		t.Fatalf("ParseAddr(%q): %v", m, err)
+	}
+	for _, bad := range []string{"", Addr("/s.sock", "0123456789abcdef"), "http+unix://rel.sock/serve-child"} {
+		if _, ok := ParseChildAddr(bad); ok {
+			t.Errorf("ParseChildAddr(%q) accepted", bad)
+		}
+	}
+}
+
 type recorder struct {
 	mu   sync.Mutex
 	got  []harness.Envelope

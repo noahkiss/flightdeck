@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/servechild"
 )
 
 // Change is one entry of git status: a path relative to the repository's top folder, in slash
@@ -89,7 +91,7 @@ func (r Reader) gitRaw(ctx context.Context, dir string, max int, args ...string)
 	if bin == "" {
 		bin = "git"
 	}
-	full := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false"}, args...)
+	full := append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=false"}, args...)
 	cmd := exec.CommandContext(ctx, bin, full...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanEnv(), r.Env...)
@@ -97,7 +99,7 @@ func (r Reader) gitRaw(ctx context.Context, dir string, max int, args ...string)
 	out := &capped{max: max}
 	var errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = out, &errb
-	err := cmd.Run()
+	err := servechild.Run(cmd)
 	if ctx.Err() != nil {
 		return nil, false, fmt.Errorf("git %s: %w", strings.Join(args, " "), ctx.Err())
 	}

@@ -57,6 +57,12 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	if fs.NArg() != 0 {
 		return errors.New("usage: gff-hab pair [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd]")
 	}
+	if os.Getenv(hook.Env) != "" {
+		// Pairing admits a device to the system sshd, the owner's call (transport.md 6.1.7). It
+		// does not go through the control socket, so only this check stands in its way; like the
+		// others, it stops a mistake, not an agent that clears its environment.
+		return errors.New("gff-hab pair is the owner's call; it does not run in an agent's pane")
+	}
 	if *timeout <= 0 || *timeout > pairing.MaxLifetime {
 		return fmt.Errorf("-timeout %v: the window stays open at most %v", *timeout, pairing.MaxLifetime)
 	}

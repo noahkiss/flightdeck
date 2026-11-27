@@ -26,18 +26,18 @@ func (c *conn) handleLogbookSync(m message) {
 	var call func(ctx context.Context) (any, error)
 	var e *Error
 	switch {
-	case c.peer == nil:
+	case c.peerLink() == nil:
 		e = appErr(api.ErrorKindInvalid, "%s needs a peer link: client.kind hab with the hello's peer field", m.Method)
 	case m.Method == "logbook.pull":
 		var p api.LogbookPullParams
 		if e = c.decodeUp(m, &p); e == nil {
-			from := *c.peer
+			from := *c.peerLink()
 			call = func(ctx context.Context) (any, error) { return ls.Pull(ctx, from, p) }
 		}
 	default:
 		var p api.LogbookPushParams
 		if e = c.decodeUp(m, &p); e == nil {
-			from := *c.peer
+			from := *c.peerLink()
 			call = func(ctx context.Context) (any, error) { return ls.Push(ctx, from, p) }
 		}
 	}

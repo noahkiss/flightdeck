@@ -68,6 +68,7 @@ final class GoldenTests: XCTestCase {
         add("result.logbook.push", LogbookPushResult.self)
         result(HabMethods.habHello)
         result(HabMethods.habPing)
+        result(HabMethods.habProve)
         result(HabMethods.structureGet)
         result(HabMethods.eventsSubscribe)
         result(HabMethods.paneInput)

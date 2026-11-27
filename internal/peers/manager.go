@@ -28,6 +28,9 @@ type Config struct {
 	Self  string // this hab's device id
 	Host  string // this hab's host id
 	Build string // this hab's build, sent as the client version
+	// Prove signs a far hab's peer_nonce with this hab's key (transport.md 6.3). Nil: the links
+	// prove nothing, and the far hab counts them as unproven.
+	Prove func(nonce, receiver string) (key, signature string)
 	// Publish, when set, gets each peer whose state changed: the peer.updated event. Calls come
 	// one at a time, in the order the rows were made, so the last one is the peer's state.
 	Publish func(api.Peer)
@@ -126,6 +129,7 @@ func Open(cfg Config) (*Manager, error) {
 		Label:  cfg.Host,
 		Conn: func(c *habconn.Config) {
 			c.Peer = &api.PeerHello{DeviceID: cfg.Self, Host: cfg.Host}
+			c.Prove = cfg.Prove
 			c.NoSubscribe = true
 			c.RetryRefused = true
 			if cfg.Conn != nil {

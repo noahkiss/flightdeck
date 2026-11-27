@@ -255,6 +255,21 @@ type Config struct {
 	Observe func(structure.Event)
 	// Tally counts every reply and every event sent (diagnostics.md 7). Nil: none.
 	Tally Tally
+	// LocalCaller decides whether the process at the far end of a Unix connection runs inside
+	// a pane (hab-logic-api.md 4.1). pid comes from the socket at accept (0 when it gave none);
+	// at is the accept time. why is one line for the log. Serve calls it once per connection,
+	// off the accept loop. Nil: every local caller is the person; gff-hab always sets it.
+	LocalCaller func(pid int, at time.Time) (pane bool, why string)
+	// PeerProofs remembers the device ids that proved their hab key on a peer link
+	// (transport.md 6.3). Nil: nothing is remembered, so every unproven link stays legacy.
+	PeerProofs PeerProofs
+}
+
+// PeerProofs remembers which device ids proved their hab key here (transport.md 6.3). A device
+// that proved once must prove on every later link.
+type PeerProofs interface {
+	Proved(device string) bool
+	Record(device string) error
 }
 
 // Tally counts replies and events for gff-hab's tallies (diagnostics.md 7). Its methods run on
@@ -408,15 +423,46 @@ func (s *Server) Serve(l net.Listener) error {
 				nc.Close()
 				continue
 			}
+			// The check reads processes, which may block: off the accept loop.
+			at := time.Now()
+			go func() { s.serveConn(uc, s.classify(uc, at)) }()
+			continue
 		}
 		go s.ServeConn(nc)
 	}
 }
 
-// ServeConn runs one connection until it closes. Tests use it with net.Pipe. The first byte
-// tells a data connection from a control connection (spec 4.1): a data hello frame starts with
-// its kind byte, a control connection with the JSON of hab.hello.
-func (s *Server) ServeConn(nc net.Conn) {
+// callerClass is what the hab knows of a local connection's process (spec 4.1).
+type callerClass struct {
+	pane bool   // the caller runs inside a pane: no person-only method, no hello as a hab
+	why  string // for the log line of a refusal
+}
+
+// classify reads the caller's pid from the socket and asks LocalCaller about it, once. A pid
+// the socket cannot give is 0, which LocalCaller treats as a pane's.
+func (s *Server) classify(uc *net.UnixConn, at time.Time) callerClass {
+	if s.cfg.LocalCaller == nil {
+		return callerClass{}
+	}
+	pid := 0
+	if raw, err := uc.SyscallConn(); err == nil {
+		raw.Control(func(fd uintptr) {
+			if p, err := peerPID(int(fd)); err == nil {
+				pid = p
+			}
+		})
+	}
+	pane, why := s.cfg.LocalCaller(pid, at)
+	return callerClass{pane: pane, why: why}
+}
+
+// ServeConn runs one connection until it closes, with the caller as the person. Tests use it
+// with net.Pipe. The first byte tells a data connection from a control connection (spec 4.1):
+// a data hello frame starts with its kind byte, a control connection with the JSON of
+// hab.hello.
+func (s *Server) ServeConn(nc net.Conn) { s.serveConn(nc, callerClass{}) }
+
+func (s *Server) serveConn(nc net.Conn, class callerClass) {
 	br := bufio.NewReaderSize(nc, 64<<10)
 	if s.cfg.Data != nil {
 		nc.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
@@ -432,6 +478,7 @@ func (s *Server) ServeConn(nc net.Conn) {
 		}
 	}
 	c := newConn(s, nc, br)
+	c.class = class
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
