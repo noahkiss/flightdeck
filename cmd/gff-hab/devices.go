@@ -187,6 +187,10 @@ func (s *deviceService) Pair(opener context.Context, client string, p api.Device
 		authKeys = filepath.Join(home, ".ssh", "authorized_keys")
 	}
 	warnings := strictModesWarnings(authKeys)
+	if len(s.cfg.listen) == 0 {
+		// The API caller has no terminal for the note of gff-hab pair (6.1.3).
+		warnings = append(warnings, "listen is not set in the [pairing] section of the hab's config file, so gff-hab chose the window's addresses; on a cloud host it may not see that a private address is reachable from the internet: set listen to the tailnet address there")
+	}
 	for _, l := range warnings {
 		s.cfg.logf("devices: %s", l)
 	}

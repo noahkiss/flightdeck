@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 )
@@ -51,6 +52,7 @@ type fakeDevices struct {
 	mu      sync.Mutex
 	clients []string
 	revoked []string
+	opener  context.Context // the conn context devices.pair got
 }
 
 func (f *fakeDevices) List() ([]api.Device, error) {
@@ -62,10 +64,11 @@ func (f *fakeDevices) Revoke(q string) error {
 	f.revoked = append(f.revoked, q)
 	return nil
 }
-func (f *fakeDevices) Pair(_ context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error) {
+func (f *fakeDevices) Pair(conn context.Context, client string, p api.DevicesPairParams) (api.PairingOffer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.clients = append(f.clients, client)
+	f.opener = conn
 	return api.PairingOffer{DeviceID: "SHA256:hab", Endpoints: []string{"192.0.2.1:1234"}, Token: "t", ExpiresInMS: 1000}, nil
 }
 func (f *fakeDevices) Confirm(_ context.Context, client string, p api.DevicesConfirmParams) (api.DevicePairing, error) {
@@ -96,6 +99,14 @@ func TestDevicesMethods(t *testing.T) {
 	if err := cl.Call(ctx(t), "devices.pair", api.DevicesPairParams{}, &offer); err != nil || offer.Token != "t" || len(offer.Endpoints) != 1 {
 		t.Fatalf("devices.pair: %+v %v", offer, err)
 	}
+	// devices.pair gets the connection's context, not the request's: the window lives on after
+	// the call returns, and closes when the connection ends (transport.md 6.1.7).
+	fd.mu.Lock()
+	opener := fd.opener
+	fd.mu.Unlock()
+	if opener == nil || opener.Err() != nil {
+		t.Fatalf("devices.pair's connection context after the call: %v", opener)
+	}
 	var dp api.DevicePairing
 	if err := cl.Call(ctx(t), "devices.confirm", api.DevicesConfirmParams{Code: "abcd"}, &dp); err != nil || dp.State != "paired" {
 		t.Fatalf("devices.confirm: %+v %v", dp, err)
@@ -115,6 +126,12 @@ func TestDevicesMethods(t *testing.T) {
 		t.Errorf("the service saw clients %v, revoked %v; want %s", fd.clients, fd.revoked, w.ClientID)
 	}
 	fd.mu.Unlock()
+	cl.Close()
+	select {
+	case <-opener.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("devices.pair's connection context lives on after the client closed")
+	}
 
 	peer := dial(t, path)
 	if _, err := peer.HelloAs(ctx(t), api.HelloParams{Client: api.ClientInfo{Name: "gff-hab", Version: "0", Kind: api.ClientKindHab},

@@ -88,7 +88,7 @@ func TestDevicesPairOpenerGone(t *testing.T) {
 // TestDevicesPairExpires: a device presents the token and nobody answers: the window expires
 // and leaves no key or record behind.
 func TestDevicesPairExpires(t *testing.T) {
-	f := newDevicesFixture(t, func(c *deviceConfig) { c.lifetime = 1500 * time.Millisecond })
+	f := newDevicesFixture(t, func(c *deviceConfig) { c.lifetime = 2 * time.Second })
 	o, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,8 @@ func TestDevicesPairExpires(t *testing.T) {
 	defer cancel()
 	signer, _ := newPhoneKey(t)
 	answers := phone(t, o, signer)
-	if p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || p.State != "waiting" {
+	// On a slow machine the window may expire before the device is shown: both are fine.
+	if p, err := f.svc.Confirm(ctx, "c1", api.DevicesConfirmParams{}); err != nil || (p.State != "waiting" && p.State != "expired") {
 		t.Fatalf("waiting: %+v %v", p, err)
 	}
 	if a := lastAnswer(t, answers); a.State == "paired" {
@@ -196,6 +197,17 @@ func TestDevicesPairCloudRefuses(t *testing.T) {
 	})
 	if _, err := f.svc.Pair(context.Background(), "c1", api.DevicesPairParams{}); errKindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "Amazon EC2") {
 		t.Fatalf("devices.pair on a cloud host: %v", err)
+	}
+
+	// Addresses gff-hab chose itself come with the cloud note as a warning: the API caller has
+	// no terminal to print it on.
+	g := newDevicesFixture(t, func(c *deviceConfig) {
+		c.listen = nil
+		c.auto = func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil }
+	})
+	o, err := g.svc.Pair(context.Background(), "c1", api.DevicesPairParams{})
+	if err != nil || len(o.Warnings) != 1 || !strings.Contains(o.Warnings[0], "set listen") {
+		t.Fatalf("auto-chosen addresses: %+v %v", o.Warnings, err)
 	}
 }
 

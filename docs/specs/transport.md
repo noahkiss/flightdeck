@@ -682,7 +682,7 @@ What guards the window opened over the API, against `gff-hab pair`:
 | Guard | Value |
 |---|---|
 | Off by default | `[pairing] api = true` turns it on |
-| Bind addresses | `listen` in `[pairing]`, else the choice of 6.1.3 with its cloud check. Never public or unspecified |
+| Bind addresses | `listen` in `[pairing]`, else the choice of 6.1.3 with its cloud check, and the offer carries the cloud note as a warning. Never public or unspecified |
 | File modes | The state checks of 6.1.4 refuse the window; the StrictModes check of `authorized_keys` is a warning in the offer and a hab log line |
 | sshd port and host keys | `ssh_port` and `sshd_keys` in `[pairing]` |
 | An orphan window | Closes with its opener's connection, and at the end of its lifetime (five minutes at most) in any case. Neither leaves a key or a record |
