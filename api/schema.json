@@ -134,6 +134,38 @@
       }
     },
     {
+      "name": "hab.prove",
+      "summary": "A peer link proves its device id with its hab key, signing the welcome's peer_nonce; once per connection, right after the welcome. A bad proof closes the connection (transport.md 6.3).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "key",
+          "description": "The dialing hab's public hab key in authorized_keys form: ssh-ed25519 and the base64 key blob.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "signature",
+          "description": "Base64 Ed25519 signature by that key over the proof message: flightdeck-peer-proof-v1, the welcome's peer_nonce, this hab's device id and the dialer's device id, each ended by a NUL byte (transport.md 6.3).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/HabProved"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/HabProveParams"
+      }
+    },
+    {
       "name": "rpc.discover",
       "summary": "The schema of this API. Its result is the schema document and carries no seq.",
       "paramStructure": "by-name",
@@ -11258,6 +11290,41 @@
           "at"
         ]
       },
+      "HabProveParams": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The dialing hab's public hab key in authorized_keys form: ssh-ed25519 and the base64 key blob."
+          },
+          "signature": {
+            "type": "string",
+            "description": "Base64 Ed25519 signature by that key over the proof message: flightdeck-peer-proof-v1, the welcome's peer_nonce, this hab's device id and the dialer's device id, each ended by a NUL byte (transport.md 6.3)."
+          }
+        },
+        "required": [
+          "key",
+          "signature"
+        ]
+      },
+      "HabProved": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "description": "The device id the link now carries: the key's SHA-256 fingerprint."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "device_id"
+        ]
+      },
       "HabStatsParams": {
         "type": "object"
       },
@@ -17045,6 +17112,10 @@
           },
           "host": {
             "$ref": "#/components/schemas/HostInfo"
+          },
+          "peer_nonce": {
+            "type": "string",
+            "description": "Sent only to a hello of client kind hab with peer: a fresh random challenge, base64. The dialing hab signs it with its own hab key in hab.prove, so this hab takes the link's device id from the key, not the hello (transport.md 6.3). Absent from a hab that does not check peer proofs."
           },
           "reconnect_token": {
             "type": "string"

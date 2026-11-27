@@ -51,7 +51,7 @@ const (
 func (c *conn) handlePanes(m message) {
 	seq := c.currentSeq()
 	c.mu.Lock()
-	from := PaneCaller{Peer: c.kind == api.ClientKindHab, Conn: c.clientID, Device: c.linkFrom}
+	from := PaneCaller{Peer: c.kind == api.ClientKindHab, Conn: c.clientID, Device: c.proven}
 	c.mu.Unlock()
 	ps := c.s.cfg.Panes
 	var call func(ctx context.Context) (any, error)

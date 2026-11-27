@@ -133,6 +133,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/panesize"
+	"github.com/noahkiss/flightdeck/internal/peerproc"
 	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/readtools"
@@ -1038,7 +1039,7 @@ func serve(args []string) error {
 		return err
 	}
 	pm, err := peers.Open(peers.Config{
-		Path: ppath, Self: key.Fingerprint(), Host: *hostID, Build: build,
+		Path: ppath, Self: key.Fingerprint(), Host: *hostID, Build: build, Prove: key.Prove,
 		Publish: func(p api.Peer) {
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: api.EventPeerUpdated, ID: p.Label, Data: p})
@@ -1955,6 +1956,11 @@ func serve(args []string) error {
 	// devices.list and devices.revoke (transport.md 5, 6.6) read the device list in the state folder.
 	devicesCtl := newDeviceService(dir, logger.Printf)
 	caps = append(caps, "devices")
+	// The device ids that proved their hab key on a peer link (transport.md 6.3).
+	proofs, err := peers.OpenProofs(filepath.Join(dir, peerProofsFile))
+	if err != nil {
+		return err
+	}
 	caps = append(caps, frictionCapability, debugCapability, control.TraceCapability)
 	s := control.New(control.Config{
 		Epoch:    epoch,
@@ -2014,6 +2020,8 @@ func serve(args []string) error {
 		Debug:        debugSw,
 		Devices:      devicesCtl,
 		Tally:        controlTally(tl),
+		LocalCaller:  localCaller(lk, hpath, peerproc.System()),
+		PeerProofs:   proofs,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

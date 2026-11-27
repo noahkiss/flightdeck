@@ -679,6 +679,13 @@ func (c Client) HabPing(ctx context.Context, params PingParams) (Empty, error) {
 	return result, err
 }
 
+// HabProve calls hab.prove. A peer link proves its device id with its hab key, signing the welcome's peer_nonce; once per connection, right after the welcome. A bad proof closes the connection (transport.md 6.3).
+func (c Client) HabProve(ctx context.Context, params HabProveParams) (HabProved, error) {
+	var result HabProved
+	err := c.Caller.Call(ctx, "hab.prove", params, &result)
+	return result, err
+}
+
 // RpcDiscover calls rpc.discover. The schema of this API. Its result is the schema document and carries no seq.
 func (c Client) RpcDiscover(ctx context.Context, params DiscoverParams) (RawJSON, error) {
 	var result RawJSON

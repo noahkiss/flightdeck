@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/trace"
 )
@@ -42,6 +45,11 @@ type conn struct {
 	linked   bool           // a peer link reported to Peers.Linked
 	linkID   uint64         // its id
 	peer     *api.PeerHello // the hello's peer field from a client of kind hab, else nil
+	// claim is the hello's peer field while a device that proved before has not proved on
+	// this link; peer stays nil until it does (transport.md 6.3).
+	claim *api.PeerHello
+	nonce string      // the welcome's peer_nonce until hab.prove takes it
+	class callerClass // set before the read loop starts (spec 4.1)
 
 	mu       sync.Mutex
 	queue    [][]byte
@@ -53,6 +61,7 @@ type conn struct {
 	kind     api.ClientKind // from hello
 	label    string         // from hello: the label, else the client name
 	linkFrom string         // from hello: the device id of a peer link's dialer, else ""
+	proven   string         // the device id a peer link proved with hab.prove, else ""
 	sub      *filter        // nil until events.subscribe
 	seeding  bool           // a subscribe is taking its snapshot; events wait in pending
 	pending  []pubEvent     // events that arrived while seeding, in order
@@ -445,6 +454,17 @@ func (c *conn) handleLine(line []byte) {
 			return
 		}
 		c.handleHello(m)
+		return
+	}
+	if m.Method == "hab.prove" {
+		c.handleProve(m)
+		return
+	}
+	if c.class.pane && PersonOnly(m.Method) {
+		// The person's own decisions (spec 4.1): a process inside a pane never makes them, with
+		// or without GFF_HAB in its environment.
+		c.s.cfg.Logf("refused %s from a process inside a pane: %s", m.Method, c.class.why)
+		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "%s is the user's own decision, and this caller runs inside a Flightdeck pane; answer from the app, or from gff or gff-hab run outside Flightdeck's panes", m.Method))
 		return
 	}
 	if api.PeerOnly(m.Method) && c.peer == nil {
@@ -1243,6 +1263,13 @@ func (c *conn) handleHello(m message) {
 		c.finish(response(m.ID, m.Trace, nil, appErr(api.ErrorKindInvalid, "revision %d and min_revision %d do not form a range", p.Revision, p.MinRevision)))
 		return
 	}
+	if p.Client.Kind == api.ClientKindHab && c.class.pane {
+		// A peer link comes from another hab through gff-hab connect, never from a pane: an
+		// agent that says hello as a hab would pass the peer-only gate (spec 4.1).
+		c.s.cfg.Logf("refused a hello as a hab from a process inside a pane: %s", c.class.why)
+		c.finish(response(m.ID, m.Trace, nil, appErr(api.ErrorKindDenied, "client.kind hab is another hab's peer link; this caller runs inside a Flightdeck pane")))
+		return
+	}
 	chosen := min(p.Revision, api.Revision)
 	if chosen < max(p.MinRevision, api.MinRevision) {
 		e := appErr(api.ErrorKindRevisionUnsupported,
@@ -1273,6 +1300,14 @@ func (c *conn) handleHello(m message) {
 		DeviceID:       c.s.cfg.DeviceID,
 		Time:           c.s.cfg.Now().UTC().Format(welcomeTime),
 	}
+	peerHello := p.Client.Kind == api.ClientKindHab && p.Peer != nil && p.Peer.DeviceID != ""
+	// A device that proved its key here before must prove it again before its link counts
+	// (transport.md 6.3): a hello that only claims its id is held as a claim.
+	held := peerHello && c.s.cfg.PeerProofs != nil && c.s.cfg.PeerProofs.Proved(p.Peer.DeviceID)
+	if peerHello {
+		c.nonce = newNonce()
+		w.PeerNonce = c.nonce
+	}
 	c.mu.Lock()
 	c.revision = chosen
 	c.kind = p.Client.Kind
@@ -1280,21 +1315,86 @@ func (c *conn) handleHello(m message) {
 	if c.label == "" {
 		c.label = p.Client.Name
 	}
-	if p.Client.Kind == api.ClientKindHab && p.Peer != nil {
+	if p.Client.Kind == api.ClientKindHab && p.Peer != nil && !held {
 		c.linkFrom = p.Peer.DeviceID // set with the welcome queued, so no notice goes before it
 	}
 	c.enqueueLocked(c.encodeReply(m, 0, w, nil))
 	c.mu.Unlock()
+	if !peerHello {
+		return
+	}
+	pc := *p.Peer
+	if held {
+		c.claim = &pc
+		return
+	}
 	// A hab that dials this one says who it is (mesh.md 3.2). It counts as a link from that
-	// device for as long as the connection lasts.
-	if p.Client.Kind == api.ClientKindHab && p.Peer != nil && p.Peer.DeviceID != "" {
-		pc := *p.Peer
-		c.peer = &pc
-	}
-	if p.Client.Kind == api.ClientKindHab && p.Peer != nil && p.Peer.DeviceID != "" && c.s.cfg.Peers != nil {
+	// device for as long as the connection lasts. Until it proves its key the id is only
+	// claimed: the link works as a peer link but carries no Capcom mark (transport.md 6.3).
+	c.link(pc)
+}
+
+// link makes the connection a peer link from p's device.
+func (c *conn) link(p api.PeerHello) {
+	c.peer = &p
+	if c.s.cfg.Peers != nil {
 		c.linked, c.linkID = true, linkIDs.Add(1)
-		c.s.cfg.Peers.Linked(c.linkID, *p.Peer)
+		c.s.cfg.Peers.Linked(c.linkID, p)
 	}
+}
+
+// newNonce returns a fresh peer_nonce: 32 random bytes, base64.
+func newNonce() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// handleProve answers hab.prove (transport.md 6.3): the dialing hab signs the welcome's nonce
+// with its hab key. A good proof makes the key's fingerprint the link's device id; a held link
+// becomes a peer link then. A proof that fails closes the connection. Each welcome's nonce
+// serves one attempt.
+func (c *conn) handleProve(m message) {
+	claim := c.claim
+	if claim == nil {
+		claim = c.peer
+	}
+	nonce := c.nonce
+	c.nonce = ""
+	if claim == nil || nonce == "" {
+		c.reply(m, c.currentSeq(), nil, appErr(api.ErrorKindDenied, "hab.prove comes once, on a peer link, right after the welcome that carried peer_nonce"))
+		return
+	}
+	var p api.HabProveParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.finish(response(m.ID, m.Trace, nil, c.withSeq(e)))
+		return
+	}
+	if err := habkey.VerifyProof(p.Key, p.Signature, nonce, c.s.cfg.DeviceID, claim.DeviceID); err != nil {
+		c.s.cfg.Logf("refused a peer link that claimed %s: %v", claim.DeviceID, err)
+		c.finish(response(m.ID, m.Trace, nil, c.withSeq(appErr(api.ErrorKindDenied, "the proof does not hold: %v", err))))
+		return
+	}
+	c.mu.Lock()
+	c.proven = claim.DeviceID
+	if c.claim != nil {
+		c.linkFrom = claim.DeviceID
+	}
+	c.mu.Unlock()
+	if c.claim != nil {
+		c.link(*c.claim)
+		c.claim = nil
+	}
+	// A hab that reached itself (its own entry in a shared peer file) proves nothing worth keeping.
+	if pp := c.s.cfg.PeerProofs; pp != nil && claim.DeviceID != c.s.cfg.DeviceID && !pp.Proved(claim.DeviceID) {
+		if err := pp.Record(claim.DeviceID); err != nil {
+			c.s.cfg.Logf("peer proofs: %v", err)
+		}
+	}
+	seq := c.currentSeq()
+	c.reply(m, seq, api.HabProved{Seq: api.Seq{Seq: seq}, DeviceID: claim.DeviceID}, nil)
 }
 
 // handleSubscribe answers events.subscribe (spec 3.5). It marks the connection subscribed and

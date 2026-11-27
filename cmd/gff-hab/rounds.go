@@ -1886,7 +1886,7 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	// A person owns the round only when the owner's door made it with no creator: a peer
 	// link's create (another hab's agent or confirmation) and every route create are not
 	// (capcom-service.md 9.3).
-	r.ByPerson = createdBy == "" && !control.PeerCall(ctx)
+	r.ByPerson = createdBy == "" && control.ByPerson(ctx)
 	e, run, err := s.sched.Create(r, createdBy, p.RunNow)
 	if err != nil && e.Round.ID == "" {
 		return api.RoundCreated{}, roundErr(err)
@@ -1986,10 +1986,15 @@ func (s *roundsService) updateLocked(ctx context.Context, p api.RoundUpdateParam
 	s.mu.Lock()
 	rev := max(s.revs[p.ID], 1)
 	s.mu.Unlock()
-	if control.PeerCall(ctx) && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
+	if !control.ByPerson(ctx) && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
 		// Only a person grants a word, on this hab's own door: a peer link is another hab, not
-		// the owner (capcom-service.md 9.3, 9.6).
-		return api.Round{}, errGrant("round.update over a peer link")
+		// the owner, and a process inside a pane is an agent's (capcom-service.md 9.3, 9.6;
+		// hab-logic-api.md 4.1).
+		what := "round.update over a peer link"
+		if !control.PeerCall(ctx) {
+			what = "round.update from a process inside a pane"
+		}
+		return api.Round{}, errGrant(what)
 	}
 	if !cardGrant && p.Revision == 0 && len(rounds.Granted(old.Round.Actions, r.Actions)) > 0 {
 		// A grant names the revision the person read, so the prompt they let act is the one
