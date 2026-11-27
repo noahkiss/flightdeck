@@ -495,23 +495,27 @@ with the line before it. Until the holder's next build, its lines carry local ti
   item, and the Claude engine's SDK and summary failures. An error otherwise is logged by
   `err_type` and `code` only.
 - The handler exception of 1.2 #12 is logged by `err_type` and `class`, and the message is not
-  acknowledged. gff-hab ignores acknowledgements and resends from its own state when a
-  connection opens (`capcom-service.md` 4.3), so the engine drops the connection, and leaves the
-  rest of that connection's messages unhandled, so the next connection brings them again in
-  order. A message that fails 3 times makes the engine exit 1, so gff-hab's crash limit ends a
-  loop instead of a message being lost.
+  acknowledged. gff-hab ignores acknowledgements. When a connection opens it sends `hello`, the
+  pace and every input past the last take (`capcom-service.md` 4.3), so the engine drops the
+  connection and leaves that connection's later inputs unhandled: the next connection brings
+  them again, in order. Its other messages run as they come. A message that fails 3 times makes
+  the engine exit 1, so gff-hab's crash limit ends a loop instead of a message being lost.
+  Known limit: a one-off message whose handler fails (`interrupt`, `shutdown`, `reseed`, an
+  approval answer, a context answer) is not sent again; its line records the failure.
 - gff-hab logs an engine's `error` message by its kind only, never its `text`, which can quote
   an SDK's or a provider's. The start check's text is the session row's reason.
 - **The source check.** `capcom-engine/test/logcheck.test.ts` is the engine's half of 10.2. The
   types in `log.ts` refuse a message, component or key that is not a string literal (a template
-  with a value, a variable), a reserved key, and a value that is no constructor's;
-  `test/log.test.ts` holds one `@ts-expect-error` case of each, so the type check fails when one
-  compiles. The check reads each source file's tokens and fails on `console`, a write to
+  with a value, a variable), a reserved key, and a value that is no constructor's, an object of
+  an `Attr`'s shape included; `test/log.test.ts` holds one `@ts-expect-error` case of each, so
+  the type check fails when one compiles. The check reads each source file's tokens and fails on `console`, a write to
   `process.stderr` or `process.stdout` outside `log.ts`, a relay of raw text to `engine.log`
   outside the engine's SDK stderr and its start failure, a logger call whose message is not a
   quoted string, a value that is not one constructor call, a key that is not a quoted string, a
-  template or `+` in a safe constructor's value, a logger method used as a value, and a direct
-  `Log.line` or `new Attr`. Its fixture has one case per ban.
+  template or `+` in a safe constructor's value, a logger method used as a value, a direct
+  `Log.line` or `new Attr`, and a `Log.for` component that is not a quoted string. A call of a
+  `debug`, `info`, `warn` or `error` method counts as a logger call whatever its receiver. Its
+  fixture has one case per ban.
 - The speech helper's stderr lines stay in `hab.log`, at `debug`, as `text` class.
 
 ### 4.10 The app

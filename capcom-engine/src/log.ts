@@ -54,15 +54,22 @@ const KEY_CODE = 'code'; // a Node error code, such as ECONNRESET
 const KEY_FRAMES = 'frames'; // a stack's function names
 
 // Attr is one key and value of a line. Only this file's constructors make one: the constructor
-// takes a token no other file holds.
+// takes a token no other file holds, and the private fields make the type nominal, so an
+// object literal of the same shape is no Attr. A line writes only real Attrs (marshal).
 const MINT: unique symbol = Symbol('attr');
 export class Attr {
-  readonly key: string;
-  readonly val: string | number;
+  readonly #key: string;
+  readonly #val: string | number;
   constructor(mint: typeof MINT, key: string, val: string | number) {
     if (mint !== MINT) throw new TypeError('an Attr comes from the constructors of log.ts');
-    this.key = key;
-    this.val = val;
+    this.#key = key;
+    this.#val = val;
+  }
+  get key(): string {
+    return this.#key;
+  }
+  get val(): string | number {
+    return this.#val;
   }
 }
 const attr = (key: string, val: string | number) => new Attr(MINT, key, val);
@@ -238,7 +245,7 @@ export function encode(t: Date, lvl: Level, comp: string, msg: string, attrs: At
 function marshal(t: Date, lvl: Level, comp: string, msg: string, attrs: Attr[], redact: (s: string) => string, limit: number): string {
   const o: Record<string, string | number> = { t: t.toISOString(), lvl, msg, proc: 'capcom', comp };
   for (const a of attrs) {
-    if (!a.key || a.key in o) continue;
+    if (!(a instanceof Attr) || !a.key || a.key in o) continue;
     o[a.key] = typeof a.val === 'number' ? a.val : cut(redact(a.val), limit);
   }
   return JSON.stringify(o) + '\n';

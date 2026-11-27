@@ -200,12 +200,10 @@ func TestCanaryCapcom(t *testing.T) {
 	if !strings.Contains(string(health), `"proc":"capcom","kind":"crash","cause":"exit 3"`) {
 		t.Fatalf("health.jsonl: %s", health)
 	}
-	if out := run(t, "logs", "-state", e.state, "-proc", "capcom"); !strings.Contains(out, "uncaught exception") {
-		t.Fatalf("gff-hab logs -proc capcom:\n%s", out)
-	}
-	if !strings.Contains(habLog(t, e.state), "engine reported") {
-		t.Fatal("hab.log lacks the engine's error line")
-	}
+	waitUntil(t, "gff-hab logs -proc capcom to show the crash line", func() bool {
+		return strings.Contains(run(t, "logs", "-state", e.state, "-proc", "capcom"), "uncaught exception")
+	})
+	waitUntil(t, "the engine's error line in hab.log", func() bool { return strings.Contains(habLog(t, e.state), "engine reported") })
 
 	d := shortDir(t)
 	status := runEnv(t, e.env, "status", "-socket", e.sock, "-state", e.state, "-holders", e.hdir)

@@ -47,6 +47,8 @@ export function typeChecks(l: ComponentLog, v: string): void {
   count('session', 1);
   // @ts-expect-error a reserved key
   dur('text', 1);
+  // @ts-expect-error an object literal of an Attr's shape
+  l.info('turn failed', { key: 'session', val: v });
   // @ts-expect-error a component that is a variable
   new Log(() => {}).for(v);
 }
@@ -207,7 +209,7 @@ test('the golden capcom.log matches what the engine writes', () => {
 });
 
 // 1.2 #12: a message whose handler fails is not acknowledged; the connection drops, so gff-hab
-// sends it again on the next one, and the messages after it on the dropped one wait for that.
+// sends it again on the next one, and the inputs after it on the dropped one wait for that.
 test('a failed handler leaves its message unacknowledged and drops the connection', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-route-'));
   const hab = new FakeHab();
@@ -232,17 +234,17 @@ test('a failed handler leaves its message unacknowledged and drops the connectio
     route.start();
     await until(() => hab.of('ready').length === 1, 5000, 'ready');
     const seq = hab.send('boom', { n: 1 });
-    hab.send('after', {});
+    hab.send('input', { item: { id: 'i1' } });
     await until(() => hab.connections === 2, 5000, 'a new connection');
     const acks1 = hab.received.filter((m) => m.type === 'ack' && m.conn === 1).map((m) => m.ack);
     assert.ok(!acks1.includes(seq), 'the failed message is not acknowledged');
-    assert.deepEqual(handled, [], 'the message after it waits');
-    // gff-hab sends both again on the new connection.
+    assert.ok(!handled.includes('input'), 'an input after it waits for the next connection');
+    // gff-hab sends the inputs past the last take again on the new connection.
     await until(() => hab.of('ready').length === 2, 5000, 'ready again');
     hab.send('boom', { n: 1 });
-    hab.send('after', {});
-    await until(() => handled.length === 2, 5000, 'handled');
-    assert.deepEqual(handled, ['boom', 'after']);
+    hab.send('input', { item: { id: 'i1' } });
+    await until(() => handled.includes('input'), 5000, 'handled');
+    assert.deepEqual(handled.filter((h) => h !== 'pace'), ['boom', 'input']);
     assert.equal(fatal, 0);
     const failed = raw.map((l) => JSON.parse(l)).filter((o) => o.msg === 'route handler failed');
     assert.equal(failed.length, 1);

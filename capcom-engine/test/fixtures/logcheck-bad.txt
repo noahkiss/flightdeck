@@ -6,7 +6,7 @@ const quiet = '// console.log in a string is no use';
 /* console.log in a comment is no use */
 const re = /console\.log("x")/;
 
-export function bad(elog: any, log: any, v: string, e: unknown) {
+export function bad(elog: any, log: any, crash: any, v: string, e: unknown) {
   console.log(v); // want: console
   process.stderr.write(v); // want: stderr
   relayStderr(v); // want: relay
@@ -22,6 +22,9 @@ export function bad(elog: any, log: any, v: string, e: unknown) {
   log.line('info', 'engine', v, []); // want: direct
   log.for('engine').info(v); // want: message
   const a = new Attr(Symbol(), 'k', v); // want: direct
+  crash.error(v); // want: message
+  log.for(v); // want: component
+  log.for(`c${v}`).info('turn failed'); // want: component
   // Allowed: a literal message, constructor values, text with a built value.
   elog.info('turn failed', errType(e), text('a' + v), count('lines', 3));
   return [quiet, re, f, a];

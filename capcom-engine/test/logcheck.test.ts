@@ -17,7 +17,7 @@ test('the source check finds each ban of its fixture, at its line', async () => 
     if (m) want.push({ line: i + 1, ban: m[1]! });
   });
   const bans = new Set(want.map((w) => w.ban));
-  for (const b of ['console', 'stderr', 'relay', 'message', 'value', 'key', 'built', 'as-value', 'direct']) assert.ok(bans.has(b), `the fixture has a case of ${b}`);
+  for (const b of ['console', 'stderr', 'relay', 'message', 'value', 'key', 'built', 'as-value', 'direct', 'component']) assert.ok(bans.has(b), `the fixture has a case of ${b}`);
   const got = check('bad.ts', src).map((f) => ({ line: f.line, ban: f.ban }));
   assert.deepEqual(got, want);
 });

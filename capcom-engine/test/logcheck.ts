@@ -1,7 +1,7 @@
 // The engine's source check (docs/specs/diagnostics.md 10.2): the TypeScript side of
 // internal/diaglog/check, so the engine cannot become the hole the Go check closes. The types in
 // src/log.ts refuse a message, component or key that is not a literal at compile time
-// (test/logtypes.test.ts); this check refuses what the types cannot see. It reads each file's
+// (test/log.test.ts); this check refuses what the types cannot see. It reads each file's
 // tokens, so a ban in a comment or a string does not count.
 //
 // Bans, by id:
@@ -14,6 +14,8 @@
 // - built: a template or a + inside a safe constructor's arguments.
 // - as-value: a logger method or Log.line used as a value, not called.
 // - direct: Log.line called outside src/log.ts, or new Attr anywhere else.
+// - component: a Log.for argument that is not a plain quoted string.
+// A call of debug, info, warn or error is a logger call whatever its receiver.
 
 export interface Finding {
   line: number;
@@ -243,16 +245,26 @@ export function check(name: string, src: string): Finding[] {
       if (!inImport) found.push({ line: x.line, ban: 'relay' });
     }
     if (x.v === 'Attr' && t[i - 1]?.v === 'new') found.push({ line: x.line, ban: 'direct' });
-    if (!prevDot || !isLogger(t, i - 1)) continue;
-    if (x.v === 'line') {
+    if (!prevDot) continue;
+    const called = t[i + 1]?.v === '(';
+    if (x.v === 'for' && called) {
+      // A component, as a message: a quoted string. Only a Log has a for method.
+      const as = args(t, i + 1, close(t, i + 1));
+      if (as.length !== 1 || !plainString(as[0]!)) found.push({ line: x.line, ban: 'component' });
+      continue;
+    }
+    if (x.v === 'line' && isLogger(t, i - 1)) {
       found.push({ line: x.line, ban: 'direct' });
       continue;
     }
     if (!METHODS.has(x.v)) continue;
-    if (t[i + 1]?.v !== '(') {
-      found.push({ line: x.line, ban: 'as-value' });
+    if (!called) {
+      // Used as a value: the receiver tells a logger from another object's field (ev.error).
+      if (isLogger(t, i - 1)) found.push({ line: x.line, ban: 'as-value' });
       continue;
     }
+    // Every call of a level's method is a logger's, whatever its receiver: the engine has no
+    // other debug, info, warn or error method.
     const shut = close(t, i + 1);
     const as = args(t, i + 1, shut);
     if (!as[0] || !plainString(as[0])) found.push({ line: x.line, ban: 'message' });

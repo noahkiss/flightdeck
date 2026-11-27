@@ -203,10 +203,10 @@ export class Route {
     }
     const sock = this.sock;
     // Messages are handled one at a time, in order, then acked. After a handler failed, the
-    // rest of that connection's messages are left: gff-hab sends them again, in order, on the
-    // next one.
+    // later inputs of that connection are left: gff-hab sends every input past the last take
+    // again, in order, on the next one. Other messages run: gff-hab sends them once.
     this.inQueue = this.inQueue.then(async () => {
-      if (sock && sock === this.failedSock) return;
+      if (sock && sock === this.failedSock && m.type === 'input') return;
       try {
         if (m.type === 'hello') {
           const ready = await this.o.onHello(m);
@@ -219,7 +219,7 @@ export class Route {
           await this.o.onMessage(m);
         }
       } catch (e) {
-        this.handlerFailed(m, line, sock, e);
+        this.handlerFailed(m, sock, e);
         return;
       }
       if (this.sock === sock && typeof m.seq === 'number') this.raw({ type: 'ack', ack: m.seq });
@@ -229,8 +229,10 @@ export class Route {
   // handlerFailed logs the failure by class, never its text, and leaves the message
   // unacknowledged: the connection drops, and gff-hab sends it again (diagnostics.md 1.2 #12,
   // 4.9). After HANDLER_TRIES failures of one message the engine exits instead.
-  private handlerFailed(m: Msg, line: string, sock: Duplex | undefined, e: unknown): void {
-    const digest = createHash('sha256').update(line.replace(/^\{"seq":\d+,/, '{')).digest('hex');
+  private handlerFailed(m: Msg, sock: Duplex | undefined, e: unknown): void {
+    // The digest leaves out seq, which each connection numbers anew, wherever the key stands.
+    const { seq: _seq, ...body } = m;
+    const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex');
     const n = (this.failures.get(digest) ?? 0) + 1;
     if (this.failures.size >= 64) this.failures.clear();
     this.failures.set(digest, n);
