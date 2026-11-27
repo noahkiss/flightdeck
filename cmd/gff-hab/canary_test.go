@@ -21,17 +21,19 @@ import (
 // TestCanary is diagnostics test 11, the end-to-end guard of 10.1 and 10.2: one random string
 // goes through pane input, terminal output (still on screen when the bundle is made, and in the
 // region a detection rule reads), a chat send, a hook payload (sent, and failed), and an
-// environment value. Afterwards no file under <state>/logs or <state>/tallies, no health record,
-// no friction log tail, no gff-hab status output and no bundle file, detect.json included,
-// holds it. A second string, a peer's label in the config, is a name: logs may hold it, under a
-// name key or in a legacy line, and the bundle replaces it, so only the bundle and status are
-// checked for it (8.3).
+// environment value, and a permission request a pane is still blocked on (its command, its
+// description and its transcript). Afterwards no file under <state>/logs or <state>/tallies, no
+// health record, no friction log tail, no gff-hab status output and no bundle file, detect.json
+// included, holds it. A second string, a peer's label in the config, is a name: logs may hold
+// it, under a name key or in a legacy line, and the bundle replaces it, so only the bundle and
+// status are checked for it (8.3). A third, a session's name, is in a friction note's text,
+// which only the name rule scrubs: the bundle and the archive are checked for it.
 //
 // The Capcom leg (a turn on a test engine that echoes the string on stderr and in a provider
 // error) waits for the engine's capcom.log; see the spec's stage 5.
 func TestCanary(t *testing.T) {
 	t.Parallel()
-	canary, label := "cnry"+randHex(6), "lbl"+randHex(6)
+	canary, label, sessName := "cnry"+randHex(6), "lbl"+randHex(6), "ses"+randHex(6)
 	e := newHolderEnv(t, 0)
 	d := shortDir(t)
 	peersFile := filepath.Join(d, "peers.toml")
@@ -58,10 +60,21 @@ func TestCanary(t *testing.T) {
 printf '{"prompt":"%s","hook_event_name":"UserPromptSubmit","session_id":"canary","cwd":"/"}' "$CANARY_ENV" | "$BIN" hook claude UserPromptSubmit
 printf 'hook sent\n'
 exec cat`
-	if err := c.Call(ctx, "session.create", api.SessionCreateParams{Name: "canary-shell", Cwd: "/", Cols: 80, Rows: 24, Env: env,
+	if err := c.Call(ctx, "session.create", api.SessionCreateParams{Name: sessName, Cwd: "/", Cols: 80, Rows: 24, Env: env,
 		Argv: []string{"/bin/sh", "-c", script}}, &shell); err != nil {
 		t.Fatal(err)
 	}
+	// A pane blocked on a permission request whose command, description and transcript hold the
+	// string, still blocked when the bundle is made (diagnostics review H1).
+	writeFile(t, filepath.Join(e.work, "transcript.jsonl"), `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will fetch `+canary+`"}]}}`+"\n")
+	writeFile(t, filepath.Join(e.work, "permission.json"), `{"session_id":"canary-perm","cwd":"/","hook_event_name":"PermissionRequest","tool_name":"Bash",`+
+		`"tool_input":{"command":"curl https://example.org/`+canary+`","description":"fetch `+canary+`"},"transcript_path":"`+filepath.Join(e.work, "transcript.jsonl")+`"}`)
+	var perm api.SessionCreated
+	if err := c.Call(ctx, "session.create", api.SessionCreateParams{Name: "canary-perm", Cwd: "/", Cols: 80, Rows: 24, Env: env,
+		Argv: []string{"/bin/sh", "-c", `printf '\033]7501;state=working:app=claude\033\\'; "$BIN" hook claude PermissionRequest < "$DIR/permission.json"; exec "$DIR/claude" 600`}}, &perm); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, e.sock, perm.Pane, "blocked on the request", func(s api.AgentState) bool { return s.State == api.AgentStatusBlocked && s.Request != nil })
 	waitUntil(t, "the shell to send its hook", func() bool { return strings.Contains(screenOf(t, e, shell.Pane), "hook sent") })
 	if err := c.Call(ctx, "pane.input", api.InputParams{Pane: shell.Pane, Text: "typed " + canary + "\n"}, nil); err != nil {
 		t.Fatal(err)
@@ -76,7 +89,7 @@ exec cat`
 		t.Fatal(err)
 	}
 	var noted api.FrictionNoted
-	if err := c.Call(ctx, "diag.friction", api.FrictionParams{Text: "went back to another terminal", Session: shell.Session}, &noted); err != nil {
+	if err := c.Call(ctx, "diag.friction", api.FrictionParams{Text: "went back to another terminal from " + sessName, Session: shell.Session}, &noted); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,6 +101,10 @@ exec cat`
 		withText = run(t, "detect", "explain", "-socket", e.sock, "-json", agent.Pane)
 		return strings.Contains(withText, canary) && strings.Contains(withText, "live_prompt_box")
 	})
+	// Detection with text shows the open request's command: -no-text must drop it.
+	if js := run(t, "detect", "explain", "-socket", e.sock, "-json", perm.Pane); !strings.Contains(js, `"command": "curl https://example.org/`+canary) {
+		t.Fatalf("detect explain shows no open request:\n%s", js)
+	}
 	if b, _ := os.ReadFile(filepath.Join(logsDir(e.state), hookLogFile)); !strings.Contains(string(b), "hook failed") {
 		t.Fatalf("hook.log: %q", b)
 	}
@@ -131,10 +148,12 @@ exec cat`
 			t.Logf("%s:\n%s", p, data)
 		}
 	}
-	for _, s := range []string{canary, label} {
-		check("gff-hab status", status, s)
-		if _, ok := bundle["detect.json"]; !ok || !strings.Contains(bundle["detect.json"], "live_prompt_box") {
-			t.Fatalf("detect.json in the bundle: %v\n%s", ok, bundle["detect.json"])
+	if dj := bundle["detect.json"]; !strings.Contains(dj, "live_prompt_box") || !strings.Contains(dj, `"tool": "Bash"`) {
+		t.Fatalf("detect.json in the bundle:\n%s", dj)
+	}
+	for _, s := range []string{canary, label, sessName} {
+		if s != sessName {
+			check("gff-hab status", status, s)
 		}
 		for p, data := range bundle {
 			check("bundle "+p, data, s)

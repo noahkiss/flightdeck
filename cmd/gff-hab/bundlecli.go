@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/user"
@@ -59,6 +60,9 @@ func bundleCmd(args []string, out io.Writer) error {
 	from, err := parseWhen(*since, now)
 	if err != nil {
 		return fmt.Errorf("bundle: -since: %v", err)
+	}
+	if from.After(now) {
+		return fmt.Errorf("bundle: -since %s starts in the future: give a positive duration or a past time", *since)
 	}
 	habCfg, _ := habConfigPath(*config)
 	peersFile, _ := peers.DefaultPath()
@@ -250,8 +254,9 @@ func errorKindWord(err error) string {
 }
 
 // bundleNames are the names pass 2 replaces wherever they stand (8.3): this machine's host and
-// user names; each host, label and device id of the config files; the projects gff-hab knows,
-// from its structure file, the project roots, and a running gff-hab.
+// user names; each host, label and device id of the config files, a host's first label with it;
+// the projects and sessions gff-hab knows, from its structure file and the project roots; and
+// from a running gff-hab, its host id, projects, session names and titles, rounds and groups.
 func bundleNames(habCfg, peersFile, state string, st *api.Structure) []string {
 	var names []string
 	add := func(vs ...string) {
@@ -261,9 +266,18 @@ func bundleNames(habCfg, peersFile, state string, st *api.Structure) []string {
 			}
 		}
 	}
+	// A host adds its first label too: a log line may name a peer by its short name.
+	addHost := func(vs ...string) {
+		for _, h := range vs {
+			add(h)
+			if _, err := netip.ParseAddr(h); err != nil {
+				short, _, _ := strings.Cut(h, ".")
+				add(short)
+			}
+		}
+	}
 	if h, err := os.Hostname(); err == nil {
-		short, _, _ := strings.Cut(h, ".")
-		add(h, short)
+		addHost(h)
 	}
 	if u, err := user.Current(); err == nil {
 		add(u.Username)
@@ -275,7 +289,7 @@ func bundleNames(habCfg, peersFile, state string, st *api.Structure) []string {
 			continue
 		}
 		if _, err := toml.DecodeFile(p, &tree); err == nil {
-			configNames(tree, add)
+			configNames(tree, add, addHost)
 		}
 	}
 	if b, err := os.ReadFile(filepath.Join(state, structure.StateFile)); err == nil {
@@ -284,6 +298,9 @@ func bundleNames(habCfg, peersFile, state string, st *api.Structure) []string {
 				Name string   `json:"name"`
 				Dirs []string `json:"dirs"`
 			} `json:"projects"`
+			Sessions []struct {
+				Name string `json:"name"`
+			} `json:"sessions"`
 		}
 		if json.Unmarshal(b, &f) == nil {
 			for _, p := range f.Projects {
@@ -292,12 +309,24 @@ func bundleNames(habCfg, peersFile, state string, st *api.Structure) []string {
 					add(filepath.Base(d))
 				}
 			}
+			for _, s := range f.Sessions {
+				add(s.Name)
+			}
 		}
 	}
 	if st != nil {
-		add(st.Host.ID)
+		addHost(st.Host.ID)
 		for _, p := range st.Projects {
 			add(p.Name)
+		}
+		for _, s := range st.Sessions {
+			add(s.Name, s.Title)
+		}
+		for _, r := range st.Rounds {
+			add(r.Name)
+		}
+		for _, g := range st.Groups {
+			add(g.Title)
 		}
 	}
 	return names
@@ -306,18 +335,22 @@ func bundleNames(habCfg, peersFile, state string, st *api.Structure) []string {
 // configNames walks a config file's tree for names: the values under the keys that hold a
 // host, a label, a device id or a name, the host part of each endpoint and URL, and each
 // project root's folder and the projects in it.
-func configNames(v any, add func(...string)) {
+func configNames(v any, add, addHost func(...string)) {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, e := range x {
 			switch k {
-			case "label", "host", "host_id", "hostname", "device", "device_id", "name":
+			case "label", "device", "device_id", "name":
 				if s, ok := e.(string); ok {
 					add(s)
 				}
+			case "host", "host_id", "hostname":
+				if s, ok := e.(string); ok {
+					addHost(s)
+				}
 			case "endpoints", "url", "urls", "endpoint":
 				for _, s := range stringsOf(e) {
-					add(endpointHost(s))
+					addHost(endpointHost(s))
 				}
 			case "project_roots":
 				for _, root := range stringsOf(e) {
@@ -331,15 +364,15 @@ func configNames(v any, add func(...string)) {
 					}
 				}
 			}
-			configNames(e, add)
+			configNames(e, add, addHost)
 		}
 	case []any:
 		for _, e := range x {
-			configNames(e, add)
+			configNames(e, add, addHost)
 		}
 	case []map[string]any:
 		for _, e := range x {
-			configNames(e, add)
+			configNames(e, add, addHost)
 		}
 	}
 }

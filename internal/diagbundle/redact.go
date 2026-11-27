@@ -57,7 +57,9 @@ type Identity struct {
 	State string
 	// Names are replaced by their token wherever they stand, in any case: this machine's host
 	// name and user name, each host, label and device id of the config files, the projects
-	// gff-hab knows. A name shorter than MinName is left out.
+	// gff-hab knows. A name shorter than MinName is left out, and so is a word the bundle's own
+	// fields use (reservedName): a session named claude must not turn every harness id into a
+	// token.
 	Names []string
 }
 
@@ -98,7 +100,7 @@ func newWithSalt(id Identity, salt []byte) *Redactor {
 	seen := map[string]bool{}
 	for _, n := range id.Names {
 		n = asciiLower(strings.TrimSpace(n))
-		if len(n) < MinName || seen[n] || !strings.ContainsFunc(n, isLetter) {
+		if len(n) < MinName || seen[n] || !strings.ContainsFunc(n, isLetter) || reservedName(n) {
 			continue
 		}
 		seen[n] = true
@@ -108,6 +110,20 @@ func newWithSalt(id Identity, salt []byte) *Redactor {
 		slices.SortFunc(r.names[k], func(a, b string) int { return len(b) - len(a) })
 	}
 	return r
+}
+
+// reservedWords are words of a bundle's own fields that no name replaces: the harness ids, the
+// process kinds, the levels, the components and keys of a structured line.
+var reservedWords = setOf("claude", "codex", "opencode", "hab", "holder", "gff", "gff-hab", "gff-hab-holder",
+	"hook", "capcom", "engine", "app", "cli", "script", "debug", "info", "warn", "error", "legacy", "modhost",
+	"trust", "speech", "peers", "rounds", "groups", "fixture", "session", "pane", "method", "kind", "trace",
+	"harness", "event", "client", "client_id", "host", "label", "device", "was", "project", "branch", "title",
+	"group", "path", "err", "text", "count", "dur", "epoch", "comp", "proc", "msg", "suppressed")
+
+// reservedName reports whether a lower-case name is a word of the bundle's own: a reserved word,
+// a config key the schema owns, or a name of the state folder's fixed layout.
+func reservedName(n string) bool {
+	return reservedWords[n] || configKeys[n] || stateFixed[n]
 }
 
 // Counts returns the replacements per rule so far, every rule included.

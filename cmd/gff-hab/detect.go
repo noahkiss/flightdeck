@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -254,12 +256,37 @@ func detectCmd(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// noText removes the content of a detect.explain answer: each rule's region text and each
-// process's arguments, which can hold a prompt (diagnostics.md 8.2). Rule ids, states,
-// priorities, regions and process names stay.
+// noText removes the content of a detect.explain answer (diagnostics.md 8.2): each rule's region
+// text; each process's arguments, which can hold a prompt, and the names taken from them, such as
+// the code of node -e; and the open permission request, which holds the command, the tool input
+// and transcript text, but its id and tool. Rule ids, states, priorities, regions, the names
+// from a process's own name and argv[0], and a name that matched a manifest stay.
 func noText(r *api.DetectExplain) {
+	if a := r.Agent; a != nil {
+		if q := a.Request; q != nil {
+			a.Request = &api.PermissionRequest{ID: q.ID, Tool: q.Tool}
+		}
+		a.Trust = nil
+	}
 	for i := range r.Process.Processes {
-		r.Process.Processes[i].Args = nil
+		p := &r.Process.Processes[i]
+		keep := []string{procName(p.Name)}
+		if len(p.Args) > 0 {
+			keep = append(keep, procName(p.Args[0]))
+		}
+		if p.Match != "" && r.Process.MatchPID == p.PID && r.Process.MatchName != "" {
+			keep = append(keep, r.Process.MatchName) // a manifest's own name
+		}
+		var names []string
+		for _, n := range p.Names {
+			if n != "" && slices.Contains(keep, n) {
+				names = append(names, n)
+			}
+		}
+		p.Names, p.Args = names, nil
+	}
+	if r.Process.Match == "" {
+		r.Process.MatchName = ""
 	}
 	if r.Screen == nil {
 		return
@@ -267,6 +294,16 @@ func noText(r *api.DetectExplain) {
 	for i := range r.Screen.Rules {
 		r.Screen.Rules[i].Text, r.Screen.Rules[i].Truncated = "", false
 	}
+}
+
+// procName is a process name as detection writes it: the lower-case base name without .exe,
+// .js, .mjs, .cjs or .py (internal/detect).
+func procName(path string) string {
+	n := strings.ToLower(filepath.Base(path))
+	for _, ext := range []string{".exe", ".js", ".mjs", ".cjs", ".py"} {
+		n = strings.TrimSuffix(n, ext)
+	}
+	return n
 }
 
 // writeExplain prints a detect.explain result for a person.
