@@ -3,6 +3,7 @@ package diagbundle
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -192,7 +193,9 @@ func (b *builder) extras() error {
 			data = e.Data
 		case KindJSON:
 			var v any
-			if err := json.Unmarshal(e.Data, &v); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(e.Data))
+			dec.UseNumber() // a pid or a size stays as written
+			if err := dec.Decode(&v); err != nil {
 				return fmt.Errorf("%s: %w", e.Path, err)
 			}
 			out, err := marshal(b.r.JSON(v), true)
