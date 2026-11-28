@@ -439,7 +439,7 @@ unknown fields are ignored. gff-hab speaks first, with `hello`; the engine answe
 | `compacted` | none |
 | `context.request` | `request` (an id), `for` (`reseed`, `compact`) |
 | `usage` | `reading` (object, 10.1) |
-| `error` | `text`, `kind` (`auth` for a refused credential, `start` for the start check, else empty), `exiting` (bool). gff-hab logs the kind only, never `text` (`diagnostics.md` 4.9); the start check's `text` is the session row's reason |
+| `error` | `text`, `kind` (`auth` for a refused credential, `start` for the start check, else empty), `exiting` (bool). gff-hab logs the kind only, never `text` (`diagnostics.md` 4.9); the start check's `text` is the session row's reason, and names an error by its class, never its message |
 
 - **Resend.** The engine keeps each message it sent until it is acknowledged, and sends them
   again, in order and with new `seq` numbers, on the next connection. gff-hab drops a repeated

@@ -522,7 +522,10 @@ with the line before it. Until the holder's next build, its lines carry local ti
   and the re-seed or the compaction goes on without a new summary, as when no answer comes in
   time. Its line records the failure.
 - gff-hab logs an engine's `error` message by its kind only, never its `text`, which can quote
-  an SDK's or a provider's. The start check's text is the session row's reason.
+  an SDK's or a provider's. The start check's text is the session row's reason. On the Codex engine
+  a start check that cannot read `.mcp.json`, and a Codex home that cannot be made, give a fixed
+  phrase and the error's class (its Node code such as `ENOENT`, else its kind such as
+  `SyntaxError`), never the error's message, which can name a path or quote the file.
 - **The source check.** `capcom-engine/test/logcheck.test.ts` is the engine's half of 10.2. The
   types in `log.ts` refuse a message, component or key that is not a string literal (a template
   with a value, a variable), a reserved key, and a value that is no constructor's, an object of

@@ -531,9 +531,24 @@ test('an engine home that cannot be made stops the engine with error start', asy
   await withRig({ setup: ({ cwd }) => fs.writeFile(path.join(cwd, ENGINE_HOME), 'not a folder') }, async (r) => {
     const err = await r.hab.wait('error');
     assert.equal(err.kind, 'start');
-    assert.match(err.text, /Codex home/);
+    assert.match(err.text, /Codex home cannot be made \([A-Za-z0-9_]+\)$/);
+    assert.ok(!err.text.includes(r.cwd), err.text); // a class, not the message with its path
     await until(() => r.exitCode() === 1, 5000, 'exit 1');
     assert.equal(r.codex.turns.length, 0);
+  });
+});
+
+test('a .mcp.json that does not load fails the start check with a class, not its text', async () => {
+  const planted = 'mcpcanary' + 'q4w5e6';
+  await withRig({ setup: ({ cwd }) => fs.writeFile(path.join(cwd, '.mcp.json'), `{"mcpServers": ${planted}`) }, async (r) => {
+    const err = await r.hab.wait('error');
+    assert.equal(err.kind, 'start');
+    assert.equal(err.text, "start check: the engine's .mcp.json does not load (SyntaxError)");
+    await until(() => r.exitCode() === 1, 5000, 'exit 1');
+  });
+  await withRig({ mcp: { mcpServers: {} } }, async (r) => {
+    const err = await r.hab.wait('error');
+    assert.equal(err.text, "start check: the engine's .mcp.json does not load (NO_FLIGHTDECK_SERVER)");
   });
 });
 
