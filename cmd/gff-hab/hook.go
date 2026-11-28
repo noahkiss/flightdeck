@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -69,8 +70,26 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	}
 	start := time.Now()
 	var failed sync.Once
+	// The event: the argument, else the payload's once hook.Run reads it. The payload's is its
+	// own text, so it is kept only when it is an event a hook config posts (4.4). The cap's timer
+	// reads it on its own goroutine.
+	var event atomic.Pointer[string]
+	if e := fs.Arg(1); e != "" {
+		event.Store(&e)
+	}
+	onEvent := func(e string) {
+		if fs.Arg(1) == "" && hook.KnownEvent(e) {
+			event.Store(&e)
+		}
+	}
 	fail := func(kind string) {
-		failed.Do(func() { writeHookLog(os.Getenv, fs.Arg(0), fs.Arg(1), kind, time.Since(start)) })
+		failed.Do(func() {
+			ev := ""
+			if p := event.Load(); p != nil {
+				ev = *p
+			}
+			writeHookLog(os.Getenv, fs.Arg(0), ev, kind, time.Since(start))
+		})
 	}
 	// The cap ends the process without a return from hook.Run, so it writes its own line.
 	timer := time.AfterFunc(budget+50*time.Millisecond, func() { fail(hook.FailTimeout); os.Exit(0) })
@@ -78,7 +97,7 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	inv := hook.Invocation{Harness: fs.Arg(0), Event: fs.Arg(1), T: *stamp, Stdin: stdin, Getenv: os.Getenv, Stdout: stdout,
-		Wait: *wait, FileBrief: fileBrief}
+		Wait: *wait, FileBrief: fileBrief, OnEvent: onEvent}
 	err := hook.Run(ctx, inv)
 	if kind := hook.FailureKind(err); kind != "" {
 		if ctx.Err() != nil {

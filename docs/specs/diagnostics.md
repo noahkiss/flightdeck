@@ -348,6 +348,10 @@ nothing when it works.
   `harness`, `event`, `failure` and `took_ms`. `failure` is `no_hab` (nothing answers on the hook
   socket), `timeout` (the run reached its budget), `status` (gff-hab answered an error status),
   `payload` (the payload is not JSON or names no event) or `other`.
+- `event` is the command's argument. With none, it is the payload's `hook_event_name` once the
+  run has read it, and only when it is an event a hook config posts (`internal/hook/config.go`,
+  and `StatusLine`): the payload's other words are its own text. Otherwise the line has no
+  `event`.
 - A run outside any pane gff-hab owns (no `GFF_HAB`) and a nested Claude Code run send nothing by
   design, and write no line. The hard cap at the budget plus 50 ms ends the process from a timer;
   that timer writes the `timeout` line before the exit.

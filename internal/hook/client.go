@@ -163,6 +163,9 @@ type Invocation struct {
 	// FileBrief builds the brief from the hab's file when gff-hab does not answer at the brief
 	// event (logbook.md 11.3), for the working folder cwd (the payload's, else ""). Nil: none.
 	FileBrief func(ctx context.Context, cwd string) (string, error)
+	// OnEvent, if set, is called with the event once Run knows it: Event, else the payload's
+	// hook_event_name. Run calls it on its own goroutine.
+	OnEvent func(event string)
 }
 
 // Run reads the payload, wraps it and posts it. It returns why nothing was sent, or the post
@@ -197,6 +200,9 @@ func Run(ctx context.Context, in Invocation) error {
 		if event == "" {
 			return fmt.Errorf("%w: no event name: give one after the harness", ErrPayload)
 		}
+	}
+	if in.OnEvent != nil {
+		in.OnEvent(event)
 	}
 	now := time.Now
 	if in.Now != nil {

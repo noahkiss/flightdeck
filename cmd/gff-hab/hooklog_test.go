@@ -109,13 +109,65 @@ func TestHookLog(t *testing.T) {
 		}
 	}
 
-	// Outside any pane (no GFF_HAB), and with no logs folder: nothing.
+	// Outside any pane (no GFF_HAB): nothing.
 	runHook("GFF_HAB=")
 	if n := len(lines()); n != 3 {
 		t.Errorf("a run outside any pane wrote a line: %d", n)
 	}
+
+	// The event from the payload when no argument names it; a payload event that no hook config
+	// posts is its own text, so the line has no event at all (review part 2 L12).
+	none := "GFF_HAB=" + hook.Addr(filepath.Join(d, "none.sock"), token)
+	for i, c := range []struct{ payload, event string }{
+		{`{"hook_event_name":"Notification","message":"` + secret + `"}`, "Notification"},
+		{`{"hook_event_name":"` + secret + `"}`, ""},
+	} {
+		cmd := exec.Command(bin, "hook", "claude")
+		cmd.Env = append(os.Environ(), "GFF_HAB_STATE="+state, "GFF_HOOK_DEBUG=", none)
+		cmd.Stdin = strings.NewReader(c.payload)
+		if out, err := cmd.CombinedOutput(); err != nil || len(out) != 0 {
+			t.Fatalf("hook from the payload: %v\n%s", err, out)
+		}
+		ls := lines()
+		if len(ls) != 4+i {
+			t.Fatalf("payload %d: %d lines", i, len(ls))
+		}
+		l := ls[len(ls)-1]
+		ev, ok := l.Get("event")
+		_, text := l.Get("event_text")
+		if kind, _ := l.Get("failure"); kind != hook.FailNoHab || ev != c.event || ok != (c.event != "") || text {
+			t.Errorf("payload %d: line %+v", i, l)
+		}
+	}
+
+	// The hard cap: a harness that never closes stdin. The cap's timer writes the timeout line,
+	// with the argument's event, and the run exits 0.
+	cmd := exec.Command(bin, "hook", "claude", "Stop")
+	cmd.Env = append(os.Environ(), "GFF_HAB_STATE="+state, "GFF_HOOK_DEBUG=", none, noRaceExitSleep)
+	w, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	start := time.Now()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("the capped run: %v", err)
+	}
+	if took := time.Since(start); took > budget+scaleTimeout(time.Second) {
+		t.Errorf("the capped run took %v", took)
+	}
+	ls := lines()
+	if len(ls) != 6 {
+		t.Fatalf("the capped run: %d lines", len(ls))
+	}
+	capEv, _ := ls[5].Get("event")
+	if capKind, _ := ls[5].Get("failure"); capEv != "Stop" || capKind != hook.FailTimeout || ls[5].Msg != "hook failed" {
+		t.Errorf("the capped run's line %+v", ls[5])
+	}
+
+	// With no logs folder: nothing.
 	other := filepath.Join(d, "other")
-	cmd := exec.Command(bin, "hook", "claude", "Notification")
+	cmd = exec.Command(bin, "hook", "claude", "Notification")
 	cmd.Env = append(os.Environ(), "GFF_HAB_STATE="+other, "GFF_HAB="+hook.Addr(filepath.Join(d, "none.sock"), token))
 	cmd.Stdin = strings.NewReader(`{}`)
 	if err := cmd.Run(); err != nil {
