@@ -140,7 +140,7 @@ exec cat`
 		t.Fatalf("friction notes %d", len(notes))
 	}
 	for _, l := range notes[0].Log {
-		check("a friction tail", l.Text, canary)
+		check("a friction tail", string(l.Line)+l.Text, canary)
 	}
 	bundle := filesUnder(t, bundleDir)
 	if testing.Verbose() {

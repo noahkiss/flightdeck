@@ -1030,7 +1030,7 @@ user one line of text.
 | `blocker` | `true` for a blocker (9.1); absent for a preference |
 | `text` | The user's own text, at most 2,000 characters |
 | `build`, `version` | gff-hab's |
-| `log` | The merged log tail (4.8) of the last 10 minutes, at most 500 entries: each with its time, its process (`hab`, `holder <instance>`, `hook`) and its text as the file holds it |
+| `log` | The merged log tail (4.8) of the last 10 minutes, at most 500 entries: each with its time and its process (`hab`, `holder <instance>`, `hook`). A structured line (4.2) is under `line`, as the JSON object the file holds, and its continuation lines (such as a partial line) under `text`; a text line is under `text` with its continuation lines. Each entry is one compact line of the file, so more of the tail fits in 256 KiB. A note written before `line` existed holds a structured line's JSON in `text`, and readers take both |
 | `log_cut` | Older tail entries dropped so the file stays within 256 KiB (11) |
 
 - gff-hab answers with the note's trace. The client shows it.

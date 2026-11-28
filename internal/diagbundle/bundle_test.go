@@ -2,6 +2,7 @@ package diagbundle
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"io"
@@ -104,6 +105,9 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 		"tallies/seen.json": `{"since":"2026-11-01"}` + "\n",
 		"friction/20261127T120000.000Z-hABCDEFGHJKM.json": `{"t":"` + ts(15*time.Minute) + `","trace":"hABCDEFGHJKM","client":"app","text":"went back: mail ` + fxEmail + ` about ` + fxProject + `","log":[` +
 			`{"t":"` + ts(16*time.Minute) + `","proc":"hab","text":"{\"t\":\"` + ts(16*time.Minute) + `\",\"lvl\":\"info\",\"msg\":\"peer pinned\",\"proc\":\"hab\",\"comp\":\"peers\",\"label\":\"` + fxPeer + `\"}"},` +
+			// A structured line as its own object, with continuation lines: one a path, one that
+			// starts as JSON and cannot parse (review L7).
+			`{"t":"` + ts(16*time.Minute) + `","proc":"hab","line":{"t":"` + ts(16*time.Minute) + `","lvl":"warn","msg":"pin failed","proc":"hab","comp":"peers","label":"` + fxPeer + `"},"text":"at ` + fxHome + `/develop\n{\"half\":"},` +
 			`{"t":"` + ts(16*time.Minute) + `","proc":"holder one","text":"pane spawned in ` + fxHome + `/develop"}]}`,
 		// A note whose trace is not in its form must not name a file outside the bundle (L9).
 		"friction/20261127T120001.000Z-hABCDEFGHJKN.json": `{"t":"` + ts(14*time.Minute) + `","trace":"../../../../escape","client":"app","text":"x"}`,
@@ -216,8 +220,8 @@ func TestBundleRedaction(t *testing.T) {
 			t.Errorf("rule %s: no replacement counted: %v", rule, m.Replacements)
 		}
 	}
-	if m.Unparsed != 2 { // the cut hab.log line and the health line that is not JSON
-		t.Errorf("unparsed %d, want 2", m.Unparsed)
+	if m.Unparsed != 3 { // the cut hab.log line, the health line that is not JSON, the tail's half line
+		t.Errorf("unparsed %d, want 3", m.Unparsed)
 	}
 	if m.Long != 2 { // the long hab.log line and the long health line (review L8)
 		t.Errorf("long lines %d, want 2", m.Long)
@@ -301,6 +305,23 @@ func TestBundleRedaction(t *testing.T) {
 	}
 	if !strings.Contains(fric, labelTok[0][1]) {
 		t.Errorf("the friction tail's label is not the same token %s:\n%s", labelTok[0][1], fric)
+	}
+	// The tail's structured line kept its form and got pass 1; its continuation got pass 2, and
+	// the half line went (review L7).
+	var note struct {
+		Log []struct {
+			Line json.RawMessage `json:"line"`
+			Text string          `json:"text"`
+		} `json:"log"`
+	}
+	if err := json.Unmarshal([]byte(fric), &note); err != nil || len(note.Log) != 3 {
+		t.Fatalf("the friction note: %v\n%s", err, fric)
+	}
+	var line bytes.Buffer
+	json.Compact(&line, note.Log[1].Line)
+	if l := note.Log[1]; !strings.Contains(line.String(), `"msg":"pin failed"`) || !strings.Contains(line.String(), `"label":"`+labelTok[0][1]+`"`) ||
+		l.Text != "at ~/develop" {
+		t.Errorf("the tail's structured line: %s %q", l.Line, l.Text)
 	}
 	dir2, _ := build(t, New(fxIdentity(state)), state, habToml, peersToml, now)
 	hab2 := readAll(t, dir2)["logs/hab.log"]

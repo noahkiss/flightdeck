@@ -155,7 +155,12 @@ func frictionShow(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "log tail: %d lines%s\n", len(n.Log), cut)
 		for _, l := range n.Log {
 			text := l.Text
-			if p, ok := diaglog.Parse(text); ok { // a structured line (diagnostics.md 4.2)
+			if p, ok := diaglog.Parse(string(l.Line)); ok { // a structured line (diagnostics.md 4.2)
+				text = p.Text()
+				if l.Text != "" {
+					text += "\n" + l.Text // its continuation lines
+				}
+			} else if p, ok := diaglog.Parse(text); ok { // a note written before Line held it
 				text = p.Text()
 			}
 			fmt.Fprintf(out, "%s %-15s %s\n", l.T.Local().Format("2006-01-02 15:04:05.000000"), l.Proc, text)

@@ -75,7 +75,7 @@ func TestFrictionNotes(t *testing.T) {
 			if l.T.IsZero() || l.Proc == "" {
 				t.Errorf("note %d: tail line %+v", i, l)
 			}
-			found = found || strings.Contains(l.Text, res.Pane)
+			found = found || strings.Contains(l.Text, res.Pane) || strings.Contains(string(l.Line), res.Pane)
 		}
 		if !found {
 			t.Errorf("note %d: the tail holds no line about the session's pane %s: %+v", i, res.Pane, n.Log)
@@ -132,5 +132,50 @@ func TestFrictionNoHab(t *testing.T) {
 	out, err := exec.Command(bin, "friction", "-socket", filepath.Join(d, "none.sock"), "a note").CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "is gff-hab running?") {
 		t.Fatalf("gff-hab friction with no hab: %v\n%s", err, out)
+	}
+}
+
+// TestFrictionTailForm: the tail keeps a structured line as its JSON object, not an escaped
+// string, and keeps its continuation lines apart in text; show prints both (review L7).
+func TestFrictionTailForm(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	if err := os.MkdirAll(logsDir(state), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	at := now.Add(-time.Minute).Format("2006-01-02T15:04:05.000Z07:00")
+	log := `{"t":"` + at + `","lvl":"warn","proc":"hab","comp":"link","msg":"read failed","err":"eof"}` + "\n" +
+		"  a partial line\n" + "  another\n"
+	if err := os.WriteFile(filepath.Join(logsDir(state), habLogFile), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tail := logTail(state, now)
+	if len(tail) != 1 {
+		t.Fatalf("tail %+v", tail)
+	}
+	l := tail[0]
+	if !strings.HasPrefix(string(l.Line), `{"t":`) || !strings.Contains(string(l.Line), `"msg":"read failed"`) ||
+		l.Text != "  a partial line\n  another" {
+		t.Fatalf("tail line %s %q", l.Line, l.Text)
+	}
+	tr := trace.New(trace.Hab)
+	if err := friction.Write(frictionDir(state), friction.Note{T: now, Trace: tr, Client: "cli", Text: "n", Log: tail}, now); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join(frictionDir(state), "*.json"))
+	if len(files) != 1 {
+		t.Fatalf("notes %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	if strings.Contains(string(b), `\"msg\"`) || !strings.Contains(string(b), `"line":{"t":`) {
+		t.Errorf("the note's file holds the line escaped or indented:\n%s", b)
+	}
+	var out bytes.Buffer
+	if err := frictionShow([]string{"-state", state, tr}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if s := out.String(); !strings.Contains(s, "read failed") || !strings.Contains(s, "a partial line") || strings.Contains(s, `"msg"`) {
+		t.Errorf("show:\n%s", s)
 	}
 }

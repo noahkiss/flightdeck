@@ -7,6 +7,7 @@
 package friction
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,12 +52,16 @@ type Note struct {
 	Dropped bool `json:"log_dropped,omitempty"`
 }
 
-// Line is one entry of the merged log tail, as gff-hab logs reads it: its time, the process
-// it came from, and the text as the file holds it.
+// Line is one entry of the merged log tail, as gff-hab logs reads it: its time and the process it
+// came from. A structured line (diagnostics.md 4.2) is in Line, as the JSON object the file holds,
+// so a bundle redacts it by key, and its continuation lines, if any, are in Text. A text line is
+// in Text, with its continuation lines. A note written before Line existed holds a structured
+// line's JSON in Text.
 type Line struct {
-	T    time.Time `json:"t,omitzero"`
-	Proc string    `json:"proc"`
-	Text string    `json:"text"`
+	T    time.Time       `json:"t,omitzero"`
+	Proc string          `json:"proc"`
+	Line json.RawMessage `json:"line,omitempty"`
+	Text string          `json:"text,omitempty"`
 }
 
 // CheckText returns the text a note stores, or why it is refused: empty, or longer than MaxText
@@ -114,7 +119,7 @@ func Write(dir string, n Note, now time.Time) error {
 // encode marshals n, dropping its oldest tail lines while the result is over MaxBytes.
 func encode(n *Note) ([]byte, error) {
 	for {
-		b, err := json.MarshalIndent(n, "", "  ")
+		b, err := marshal(n)
 		if err != nil {
 			return nil, err
 		}
@@ -125,6 +130,33 @@ func encode(n *Note) ([]byte, error) {
 		n.Log = n.Log[cut:]
 		n.LogCut += cut
 	}
+}
+
+// marshal writes the note indented, except its log tail: one compact object per line, so the
+// indent adds no space inside a structured line and more of the tail fits in MaxBytes.
+func marshal(n *Note) ([]byte, error) {
+	head := *n
+	head.Log = nil
+	b, err := json.MarshalIndent(head, "", "  ")
+	if err != nil || len(n.Log) == 0 {
+		return b, err
+	}
+	var out bytes.Buffer
+	out.Write(bytes.TrimSuffix(b, []byte("\n}")))
+	out.WriteString(",\n  \"log\": [")
+	for i := range n.Log {
+		lb, err := json.Marshal(&n.Log[i])
+		if err != nil {
+			return nil, err
+		}
+		if i > 0 {
+			out.WriteByte(',')
+		}
+		out.WriteString("\n    ")
+		out.Write(lb)
+	}
+	out.WriteString("\n  ]\n}")
+	return out.Bytes(), nil
 }
 
 // names lists the note files in dir, oldest first.
