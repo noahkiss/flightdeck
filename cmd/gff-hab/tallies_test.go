@@ -13,6 +13,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/tallies"
 )
 
@@ -168,5 +169,32 @@ func TestChannelTally(t *testing.T) {
 	}
 	if w.Sum.Features["channel.send"] != 1 || w.Sum.Features["channel.expired"] != 1 {
 		t.Fatalf("features %v", w.Sum.Features)
+	}
+}
+
+// TestEngineCrashTally: a Capcom engine crash counts under the process kind capcom, as a lost
+// holder counts under holder (7.1, diagnostics review part 3 L7).
+func TestEngineCrashTally(t *testing.T) {
+	t.Parallel()
+	state, dir := t.TempDir(), t.TempDir()
+	tl := tallies.New(tallies.Config{Dir: dir, Surface: tallies.Current()})
+	d := &habDiag{state: state, logf: t.Logf, now: time.Now, tally: tl}
+	d.engineCrash(health.Record{T: time.Now().UTC(), Proc: "capcom", Kind: health.KindCrash, Cause: "exit 3"})
+	d.holderLost("0011223344556677", "b1", 2)
+	if err := tl.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	w, err := tallies.ReadWindow(dir, time.Now(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := w.Sum.Health["capcom"]; h == nil || h.Crashes != 1 {
+		t.Errorf("capcom health %+v (all %v)", h, w.Sum.Health)
+	}
+	if h := w.Sum.Health["holder"]; h == nil || h.Unclean != 1 {
+		t.Errorf("holder health %+v", h)
+	}
+	if h := w.Sum.Health["other"]; h != nil {
+		t.Errorf("a crash counted under other: %+v", h)
 	}
 }

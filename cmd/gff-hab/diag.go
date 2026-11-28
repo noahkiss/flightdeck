@@ -287,11 +287,13 @@ func (d *habDiag) holderLost(instance, build string, panes int) {
 }
 
 // engineCrash writes the record of a Capcom engine crash, whose cause the supervisor gives as
-// a class (6.3). It raises no crash notice: the supervisor's own note and notice cover the engine.
+// a class (6.3), and counts it in the tallies as a holder loss is (7.1). It raises no crash
+// notice: the supervisor's own note and notice cover the engine.
 func (d *habDiag) engineCrash(r health.Record) {
 	if err := health.Append(filepath.Join(d.state, healthFile), r); err != nil {
 		d.logf("health record: %v", err)
 	}
+	d.tally.Health(r.Proc, r.Kind)
 }
 
 // serveHooks runs the hook server; the caller marks the endpoint up first. When it stops with an

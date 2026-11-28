@@ -737,7 +737,7 @@ crashes a signal handler cannot catch.
 | Hook envelopes | harness, event | count, refused count (unknown token, bad envelope, over the size cap) |
 | Features | a fixed word list (7.2) | count |
 | Settings | setting id from the settings registry (`internal/settings/registry.go`) | `set` count (rows `settings.set` wrote), and `in_config` (the hab's config or a flag locks the id at a flush) |
-| Health | process kind: `hab`, `holder` | starts, crashes, unclean ends: gff-hab counts its own start, the previous run's end at the next start, and a lost holder (6.3) |
+| Health | process kind: `hab`, `holder`, `capcom` | starts, crashes, unclean ends: gff-hab counts its own start, the previous run's end at the next start, a lost holder, and a Capcom engine crash (6.3) |
 
 - A call on the pane route (`POST /channel/<token>`, `mesh.md` 6.5) has no hello. It counts
   under client kind `route`, by its method, with the error kind when it failed.

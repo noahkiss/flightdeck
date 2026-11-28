@@ -43,7 +43,7 @@ func RouteOnly() []string {
 // Current is this build's surface: the method table and event types of package api, the hook
 // events of package hook, the hab-side settings registry.
 func Current() Surface {
-	s := Surface{Procs: []string{"hab", "holder"}}
+	s := Surface{Procs: []string{"hab", "holder", "capcom"}}
 	for _, m := range api.Methods {
 		s.Methods = append(s.Methods, m.Name)
 	}
