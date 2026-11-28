@@ -323,7 +323,7 @@ One row per test command: what it covers, and the spec section it proves where o
 | `go test -race -run 'TestLayoutTree\|TestStackArrange\|TestFocusAcrossNestedLayout\|TestNewPane' ./internal/gffclient/ && go test -race -run 'TestCreateCwdOf\|TestLsofName' ./cmd/gff-hab` | New panes, splits and stacks (`gff-client.md` 5.4) |
 | `go test -race -run 'TestTabRenameCloseLast\|TestWorkspaceConfig' ./internal/gffclient/` | Tab actions and the workspace name (`gff-client.md` 5.5) |
 | `go test -race -run 'TestWorkspaceSaved\|TestStartupTabs\|TestWorkspaceFile' ./internal/gffclient/` | The saved workspace (`gff-client.md` 5.6) |
-| `go test -race -run 'TestWheelScrollsLocally\|TestParseMouse' ./internal/gffclient/` | Scrollback and the mouse (`gff-client.md` 5.7) |
+| `go test -race -run 'TestWheelScrollsLocally\|TestNumberRow\|TestParseMouse' ./internal/gffclient/` | Scrollback and the mouse (`gff-client.md` 5.7) |
 | `go test -race -run 'TestLayoutReopen\|TestReopen\|TestShellAfterExit\|TestShellKeyRebound\|TestExitedKeymapConfig' ./internal/gffclient/` | Reopen a closed view and a shell after a command exits (`gff-client.md` 5.8); `TestShellAfterExitInFolder` runs the real holder and gff-hab |
 | `go test -race ./internal/grants/ ./cmd/gff/ ./cmd/gff-hab/` | Permission check |
 | `go test ./api/modules/` | Block vocabulary and manifest (`docs/specs/modules.md` 6.5) |

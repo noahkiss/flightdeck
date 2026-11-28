@@ -68,13 +68,13 @@ func TestWheelScrollsLocally(t *testing.T) {
 	hst.waitScreen("its view", func(s string) bool { return strings.Contains(s, " sh · one") })
 	var empty api.Empty
 	call(t, other, "pane.input", api.InputParams{Pane: pane, Data: []byte("\n")}, &empty)
-	hst.waitScreen("the numbers", func(s string) bool { return line(s, "100") > 0 })
+	hst.waitScreen("the numbers", func(s string) bool { return numberRow(s, "100") > 0 })
 	waitUntil(t, "cat running", func() bool { _, err := os.Stat(typed); return err == nil })
 
 	// A cell in the pane's content: right of the sidebar, under the bars and the frame row.
 	at := "60;10"
 	hst.typ("\x1b[<64;" + at + "M")
-	hst.waitScreen("three rows up", func(s string) bool { return strings.Contains(s, "scrolled 3") && line(s, "100") < 0 })
+	hst.waitScreen("three rows up", func(s string) bool { return strings.Contains(s, "scrolled 3") && numberRow(s, "100") < 0 })
 	before := hst.screen()
 	time.Sleep(200 * time.Millisecond)
 	if b, _ := os.ReadFile(typed); len(b) != 0 {
@@ -82,15 +82,15 @@ func TestWheelScrollsLocally(t *testing.T) {
 	}
 	hst.typ("zz")
 	waitUntil(t, "the typed keys at the program", func() bool { b, _ := os.ReadFile(typed); return string(b) == "zz" })
-	if s := hst.screen(); !strings.Contains(s, "scrolled 3") || line(s, "100") >= 0 || paneText(s) != paneText(before) {
+	if s := hst.screen(); !strings.Contains(s, "scrolled 3") || numberRow(s, "100") >= 0 || paneText(s) != paneText(before) {
 		t.Fatalf("typing moved the view:\n%s", s)
 	}
 	hst.typ("\x1b[<65;" + at + "M")
-	hst.waitScreen("back at the bottom", func(s string) bool { return !strings.Contains(s, "scrolled") && line(s, "100") > 0 })
+	hst.waitScreen("back at the bottom", func(s string) bool { return !strings.Contains(s, "scrolled") && numberRow(s, "100") > 0 })
 	hst.typ("\x1b[5;2~")
-	hst.waitScreen("a page up", func(s string) bool { return strings.Contains(s, "scrolled 23") && line(s, "100") < 0 })
+	hst.waitScreen("a page up", func(s string) bool { return strings.Contains(s, "scrolled 23") && numberRow(s, "100") < 0 })
 	hst.typ("\x1b[1;2F")
-	hst.waitScreen("Shift+End: the bottom", func(s string) bool { return !strings.Contains(s, "scrolled") && line(s, "100") > 0 })
+	hst.waitScreen("Shift+End: the bottom", func(s string) bool { return !strings.Contains(s, "scrolled") && numberRow(s, "100") > 0 })
 	if b, _ := os.ReadFile(typed); string(b) != "zz" {
 		t.Fatalf("scroll keys reached the program: %q", b)
 	}
@@ -139,6 +139,35 @@ func TestWheelScrollsLocally(t *testing.T) {
 	hst.waitScreen("the alternate screen", func(s string) bool { return strings.Contains(s, "alt-on") })
 	hst.typ("\x1b[<64;" + at + "M")
 	waitUntil(t, "three arrow keys at the program", func() bool { b, _ := os.ReadFile(arrows); return string(b) == "\x1b[A\x1b[A\x1b[A" })
+}
+
+// numberRow returns the screen row where the pane's content starts with the number n, or -1.
+// The view's header and the status rows hold numbers too (an owner id such as 54100416, the
+// clock, cpu and memory), so a search of the whole screen for n can match one of them.
+func numberRow(s, n string) int {
+	return line(s, "│"+n+" ")
+}
+
+// TestNumberRow: a screen scrolled up, from a CI run, whose header names an owner id that holds
+// "100". Row 100 is not on it.
+func TestNumberRow(t *testing.T) {
+	s := " 1:1                0 need you · 1/1 hosts · 05:32\n" +
+		"  sessions · by project     │ sh · one · scrolled 3 · owner 54100416 80x24\n" +
+		" ▸  sh                  one │98                                  \n" +
+		"                            │····································\n" +
+		" Ctrl+G lock                     one cpu 100% mem 7% disk 41% up 1m"
+	if line(s, "100") < 0 {
+		t.Fatal("the fixture lost the owner id that holds 100")
+	}
+	if r := numberRow(s, "100"); r != -1 {
+		t.Errorf("row 100 found on row %d", r)
+	}
+	if r := numberRow(s, "98"); r != 2 {
+		t.Errorf("row 98 on row %d, want 2", r)
+	}
+	if r := numberRow(s, "9"); r != -1 {
+		t.Errorf("row 9 found on row %d; it is only the start of 98", r)
+	}
 }
 
 // paneText is the screen without its top row (the clock) and bottom row (system info).
