@@ -96,7 +96,7 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 		// A holder's file named for its instance, which holds a known name (review L5).
 		"logs/gff-hab-holder." + fxUser + "-box.log": "gff-hab-holder: " + local(time.Hour) + " started\n",
 		"logs/hab.stderr":                "gff-hab: " + local(time.Hour) + " warn peers: pin failed label=" + fxPeer + " " + fxStderr + "\n",
-		"capcom/engine/engine.log":       "sdk: " + fxEngine + "\n",
+		"capcom/engine.log":              "sdk: " + fxEngine + "\n",
 		"crash/hab-0011223344556677.txt": "panic: link to " + fxHost + " failed\n" + pemBegin("OPENSSH") + "\n" + fxPEMBody + "\n" + fxPEMBody + "\n-----END OPENSSH PRIVATE KEY-----\ngoroutine 7\n",
 		"health.jsonl": `{"t":"` + ts(time.Hour) + `","proc":"hab","kind":"crash","cause":"panic: dial ` + fxDocIP2 + `","run":"0011223344556677","crash_file":"hab-0011223344556677.txt"}` + "\nnot json\n" +
 			strings.Repeat("y", MaxLine+10) + fxLong + "\n",

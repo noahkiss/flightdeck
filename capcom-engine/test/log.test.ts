@@ -189,7 +189,8 @@ test('a line the sink could not write is counted on the next one', () => {
 
 // The crash handlers run in a child: tests keep their own handlers.
 for (const how of ['throw', 'reject', 'bad stack'] as const) {
-  test(`an uncaught ${how} writes one crash line with no message, then exit 1`, async () => {
+  const title = how === 'bad stack' ? 'an uncaught error whose stack getter throws still exits 1' : `an uncaught ${how} writes one crash line with no message, then exit 1`;
+  test(title, async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-crash-'));
     try {
       const file = path.join(dir, 'capcom.log');

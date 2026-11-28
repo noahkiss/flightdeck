@@ -756,25 +756,30 @@ test('the SDK stderr is counted, never copied, and an SDK error is logged by its
 // 1.2 #12 through the real engine. A seam makes input handling throw after the item was queued:
 // the input is not acknowledged, the connection drops, and gff-hab sends it again on the next.
 // The resend is dropped as already held, so the model gets the input once, in one turn.
-function failInput(r: Rig, times: number, after: boolean): void {
+// failInput returns the count of calls of the input handler.
+function failInput(r: Rig, times: number, after: boolean): () => number {
   const eng = r.engine as any;
   const real = eng.onInput.bind(eng);
+  let calls = 0;
   eng.onInput = (item: unknown) => {
+    calls++;
     if (after) real(item);
     if (times-- > 0) throw new Error('input handling failed');
     if (!after) real(item);
   };
+  return () => calls;
 }
 
 test('an input whose handling throws once reaches the model once, as one turn', async () => {
   await withRig({}, async (r) => {
     await started(r);
-    failInput(r, 1, true);
+    const calls = failInput(r, 1, true);
     r.sdk.script = async (ctx) => ctx.say('ok');
     const marker = 'once-' + 'm4rk';
     r.hab.input('a', marker);
     await r.hab.wait('ready', (m) => m.conn === 2);
     r.hab.input('a', marker);
+    await until(() => calls() === 2, 5000, 'the resend handled');
     await r.hab.wait('turn.ended');
     await sleep(200);
     const users = r.sdk.last.received.filter((u) => JSON.stringify(u.message.content).includes(marker));

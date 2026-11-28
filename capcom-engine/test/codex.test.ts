@@ -780,25 +780,30 @@ test('a provider error reaches capcom.log as its class, never its text', async (
 
 // 1.2 #12 through the Codex engine: input handling throws once after the item was queued; the
 // resend on the next connection is dropped as already held, so Codex runs one turn.
-function failInput(r: CodexRig, times: number, after: boolean): void {
+// failInput returns the count of calls of the input handler.
+function failInput(r: CodexRig, times: number, after: boolean): () => number {
   const eng = r.engine as any;
   const real = eng.onInput.bind(eng);
+  let calls = 0;
   eng.onInput = (item: unknown) => {
+    calls++;
     if (after) real(item);
     if (times-- > 0) throw new Error('input handling failed');
     if (!after) real(item);
   };
+  return () => calls;
 }
 
 test('an input whose handling throws once runs one Codex turn', async () => {
   await withRig({}, async (r) => {
     r.codex.script = async (ctx) => ctx.say('done');
     await codexStarted(r);
-    failInput(r, 1, true);
+    const calls = failInput(r, 1, true);
     const marker = 'once-' + 'c0dx';
     r.hab.input('it1', marker);
     await r.hab.wait('ready', (m) => m.conn === 2);
     r.hab.input('it1', marker);
+    await until(() => calls() === 2, 5000, 'the resend handled');
     await r.hab.wait('turn.ended');
     await sleep(200);
     assert.equal(r.codex.turns.filter((t) => t.text.includes(marker)).length, 1, 'one Codex turn');
