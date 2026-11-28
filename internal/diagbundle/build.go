@@ -593,9 +593,17 @@ func writeFile(p string, data []byte) error {
 }
 
 // Archive writes the bundle folder dir as a .tar.gz at dst, its files under the folder top. It
-// writes a temporary file beside dst and renames it, so dst is never half written.
-func Archive(dst, dir, top string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".flightdeck-diagnostics-*.tar.gz")
+// writes a temporary file and renames it, so dst is never half written. The temporary file is
+// tmpPath, a new file in dst's folder that the caller named so it can remove it on a signal;
+// an empty tmpPath makes a new temporary file beside dst.
+func Archive(dst, dir, top, tmpPath string) error {
+	var tmp *os.File
+	var err error
+	if tmpPath == "" {
+		tmp, err = os.CreateTemp(filepath.Dir(dst), ".flightdeck-diagnostics-*.tar.gz")
+	} else {
+		tmp, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
 	if err != nil {
 		return err
 	}

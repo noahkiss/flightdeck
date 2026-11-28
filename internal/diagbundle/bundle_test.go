@@ -407,7 +407,7 @@ func TestArchive(t *testing.T) {
 	state, habToml, peersToml := seedState(t, now)
 	dir, _ := build(t, New(fxIdentity(state)), state, habToml, peersToml, now)
 	dst := filepath.Join(t.TempDir(), "b.tar.gz")
-	if err := Archive(dst, dir, "flightdeck-diagnostics-x"); err != nil {
+	if err := Archive(dst, dir, "flightdeck-diagnostics-x", ""); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(dst)

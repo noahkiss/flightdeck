@@ -11,11 +11,14 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -116,7 +119,7 @@ func bundleCmd(args []string, out io.Writer) error {
 	stamp := now.Format("20060102-1504")
 	top := "flightdeck-diagnostics-" + stamp
 	target := *dir
-	var archive string
+	var archive, archiveTmp string
 	if target == "" {
 		archive = *outFile
 		if archive == "" {
@@ -125,10 +128,19 @@ func bundleCmd(args []string, out io.Writer) error {
 		if archive, err = filepath.Abs(archive); err != nil {
 			return err
 		}
+		// Ctrl-C or a TERM removes the hidden work folder and the archive's temporary file,
+		// which a deferred call would not (diagnostics review L10). The handler is set before
+		// the folder exists, so no signal can come between.
+		sc := removeOnSignal()
+		defer sc.stop()
 		if target, err = os.MkdirTemp(filepath.Dir(archive), ".flightdeck-diagnostics-"); err != nil {
 			return err
 		}
+		archiveTmp = target + ".tar.gz"
+		sc.add(target, archiveTmp)
 		defer os.RemoveAll(target)
+		defer os.Remove(archiveTmp)
+		bundleHoldSeam(target)
 	} else if err := emptyDir(target); err != nil {
 		return err
 	}
@@ -142,7 +154,7 @@ func bundleCmd(args []string, out io.Writer) error {
 		size += f.Size
 	}
 	if archive != "" {
-		if err := diagbundle.Archive(archive, target, top); err != nil {
+		if err := diagbundle.Archive(archive, target, top, archiveTmp); err != nil {
 			return fmt.Errorf("bundle: %w", err)
 		}
 		where = archive
@@ -413,3 +425,51 @@ func endpointHost(s string) string {
 	}
 	return s
 }
+
+// signalCleanup removes its paths and exits 130 when an interrupt, a TERM or a HUP arrives
+// before stop.
+type signalCleanup struct {
+	mu    sync.Mutex
+	paths []string
+	done  chan struct{}
+}
+
+func removeOnSignal() *signalCleanup {
+	c := &signalCleanup{done: make(chan struct{})}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		defer signal.Stop(sigs)
+		select {
+		case <-sigs:
+		case <-c.done:
+			return
+		}
+		c.mu.Lock() // held to the exit: no path is added after the removal
+		// The bundle may still be writing into the folder, so remove it until it stays gone.
+		for range 50 {
+			gone := true
+			for _, p := range c.paths {
+				os.RemoveAll(p)
+				if _, err := os.Lstat(p); err == nil {
+					gone = false
+				}
+			}
+			if gone {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		fmt.Fprintln(os.Stderr, "gff-hab bundle: stopped; its work folder is removed")
+		os.Exit(130)
+	}()
+	return c
+}
+
+func (c *signalCleanup) add(paths ...string) {
+	c.mu.Lock()
+	c.paths = append(c.paths, paths...)
+	c.mu.Unlock()
+}
+
+func (c *signalCleanup) stop() { close(c.done) }

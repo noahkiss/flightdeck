@@ -814,6 +814,9 @@ rule, each item it left out and why, and one line: "Review the files before you 
 - The archive's files sit under one folder, `flightdeck-diagnostics-<yyyymmdd-hhmm>/`, with no
   user or group name in its headers. The command builds the folder beside the archive, writes
   the archive to a temporary file, renames it, and removes the folder.
+- An interrupt, a TERM or a HUP while the command runs removes the hidden folder and the
+  temporary file, and the command exits 130. A folder given with `-dir` is the user's, and
+  stays as far as it was written.
 - The window has a start only: a line written while the bundle is made is kept. A start in the
   future (a negative duration or a later time) is refused.
 
