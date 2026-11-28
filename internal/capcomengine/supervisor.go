@@ -277,6 +277,9 @@ func (s *Supervisor) Ensure(ctx context.Context) {
 		}
 		s.mu.Lock()
 		s.proc, s.token, s.paneToken, s.cred, s.planned = p, token, paneToken, cred, planned
+		// An adopted engine's crash reason reads capcom.log from the adoption on: an earlier
+		// run's error line, such as yesterday's failed start, is not this one's.
+		s.lastStart = s.cfg.Now()
 		s.drainNew = rec.Build != "" && rec.Build != s.cfg.Build()
 		if why != "" {
 			s.cfg.Logf("capcom: adopted the running engine, but %s", why)

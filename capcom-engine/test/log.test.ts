@@ -3,10 +3,10 @@
 // (1.2 #12). No line holds an error's text.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { promises as fs, readFileSync, writeFileSync } from 'node:fs';
+import fsSync, { promises as fs, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   type ComponentLog,
@@ -148,6 +148,33 @@ test('capcom.log rotates at its cap, keeps two old files, and reopens a removed 
   }
 });
 
+// A rename that fails (EACCES, say) leaves the file to grow: rotation waits for the next
+// periodic check instead of closing, renaming and reopening on every line.
+test('after a failed rename capcom.log rotates again only at the next check', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-log-'));
+  const rename = mock.method(fsSync, 'renameSync', () => {
+    throw Object.assign(new Error('denied'), { code: 'EACCES' });
+  });
+  try {
+    const file = path.join(dir, 'capcom.log');
+    const sink = new FileSink(file, 200, 2);
+    const log = new Log(sink.write);
+    for (let i = 0; i < 20; i++) log.for('engine').info('summary kept', count('n', i));
+    assert.equal(rename.mock.callCount(), 2, 'one rotation: capcom.log.1 and capcom.log');
+    assert.match(readFileSync(file, 'utf8'), /"n":19/, 'the lines are still written');
+    (sink as any).checked = 0;
+    log.for('engine').info('summary kept', count('n', 20));
+    assert.equal(rename.mock.callCount(), 4, 'the check lets one more rotation try');
+    rename.mock.restore();
+    (sink as any).checked = 0;
+    log.for('engine').info('summary kept', count('n', 21));
+    assert.deepEqual((await fs.readdir(dir)).sort(), ['capcom.log', 'capcom.log.1']);
+  } finally {
+    rename.mock.restore();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a line the sink could not write is counted on the next one', () => {
   const raw: string[] = [];
   let full = true;
@@ -161,7 +188,7 @@ test('a line the sink could not write is counted on the next one', () => {
 });
 
 // The crash handlers run in a child: tests keep their own handlers.
-for (const how of ['throw', 'reject'] as const) {
+for (const how of ['throw', 'reject', 'bad stack'] as const) {
   test(`an uncaught ${how} writes one crash line with no message, then exit 1`, async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-crash-'));
     try {
@@ -172,11 +199,18 @@ for (const how of ['throw', 'reject'] as const) {
         script,
         `import { installCrashHandlers, Log, sinkFromEnv } from ${JSON.stringify(logts)};\n` +
           `installCrashHandlers(new Log(sinkFromEnv(process.env)), (c) => process.exit(c));\n` +
-          `function provider() { ${how === 'throw' ? 'throw ' : 'void Promise.reject('}new RangeError(${JSON.stringify('provider said ' + CANARY)})${how === 'throw' ? '' : ')'}; }\n` +
+          (how === 'bad stack'
+            ? // An error whose stack getter throws: the line cannot be made, the exit still runs.
+              `function provider() { const e = new RangeError(${JSON.stringify('provider said ' + CANARY)}); Object.defineProperty(e, 'stack', { get() { throw new Error('no stack'); } }); throw e; }\n`
+            : `function provider() { ${how === 'throw' ? 'throw ' : 'void Promise.reject('}new RangeError(${JSON.stringify('provider said ' + CANARY)})${how === 'throw' ? '' : ')'}; }\n`) +
           `setTimeout(provider, 1);\n`,
       );
       const r = spawnSync(process.execPath, ['--import', 'tsx', script], { env: { ...process.env, GFF_HAB_CAPCOM_LOG: file }, encoding: 'utf8', cwd: path.join(here, '..') });
       assert.equal(r.status, 1, r.stderr);
+      if (how === 'bad stack') {
+        assert.ok(!(fsSync.existsSync(file) ? readFileSync(file, 'utf8') : '').includes(CANARY));
+        return;
+      }
       const lines = readFileSync(file, 'utf8').trim().split('\n');
       assert.equal(lines.length, 1);
       const o = JSON.parse(lines[0]!);
@@ -190,6 +224,17 @@ for (const how of ['throw', 'reject'] as const) {
     }
   });
 }
+
+// A cast passes the type and the source check; the value is checked again when the line is
+// written, so text cast to a class never reaches class, a plain key (4.9).
+test('errClass writes other for a value that is not one of the five classes', () => {
+  const c = capture();
+  for (const k of ['auth', 'rate_limit', 'network', 'provider', 'other'] as const) c.log.for('codex').warn('turn failed', errClass(k));
+  c.log.for('codex').warn('turn failed', errClass(`provider said ${CANARY}` as any));
+  c.log.for('codex').warn('turn failed', errClass(42 as any));
+  assert.deepEqual(c.lines().map((o) => o.class), ['auth', 'rate_limit', 'network', 'provider', 'other', 'other', 'other']);
+  assert.ok(!c.raw.join('').includes(CANARY));
+});
 
 // A golden file of engine-written lines, which a Go test reads with diaglog.Parse and puts
 // through the bundle's two passes (internal/diagbundle).
@@ -261,6 +306,49 @@ test('a failed handler leaves its message unacknowledged and drops the connectio
       if (i < HANDLER_TRIES - 1) await until(() => hab.connections === conns + 1, 5000, 'a new connection');
     }
     await until(() => fatal === 1, 5000, 'the exit');
+  } finally {
+    route.close();
+    await hab.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// A message handled after it failed starts its count again: an interrupt that fails now and
+// then, with successes between, is no loop and makes no exit.
+test('a failure count ends when its message is later handled', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'capcom-route-'));
+  const hab = new FakeHab();
+  await hab.start(dir);
+  const plan = [true, false, true, false, true]; // true: the handler throws
+  let fatal = 0;
+  let handled = 0;
+  const route = new Route({
+    socket: hab.socket,
+    token: hab.token,
+    backoffStartMs: 20,
+    onHello: () => ({}),
+    onMessage: (m) => {
+      if (m.type !== 'interrupt') return;
+      if (plan.shift()) throw new Error('transient');
+      handled++;
+    },
+    log: new Log(() => {}).for('route'),
+    onFatal: () => fatal++,
+  });
+  try {
+    route.start();
+    await until(() => hab.of('ready').length === 1, 5000, 'ready');
+    for (let i = 0; i < 5; i++) {
+      const conns = hab.connections;
+      await until(() => hab.of('ready').length === conns, 5000, 'ready');
+      const before = handled;
+      hab.send('interrupt');
+      if (i % 2 === 0) await until(() => hab.connections === conns + 1, 5000, 'a new connection');
+      else await until(() => handled === before + 1, 5000, 'handled');
+    }
+    assert.equal(handled, 2);
+    assert.equal(fatal, 0);
+    assert.equal((route as any).failures.size, 1, 'only the last failure is counted');
   } finally {
     route.close();
     await hab.close();

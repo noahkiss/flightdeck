@@ -15,7 +15,13 @@
 // - as-value: a logger method or Log.line used as a value, not called.
 // - direct: Log.line called outside src/log.ts, or new Attr anywhere else.
 // - component: a Log.for argument that is not a plain quoted string.
+// - text: a call of text outside src/log.ts. The engine writes no free text (4.9).
+// - computed: a logger method or Log.line named by a string in brackets (log['warn']).
 // A call of debug, info, warn or error is a logger call whatever its receiver.
+//
+// freeSites lists the other kind of risk: each word, session or kind call whose value is not a
+// quoted string. Its value is checked for its form when the line is written, so the site list
+// in test/logcheck.test.ts pins each one, and a new site fails until someone adds it there.
 
 export interface Finding {
   line: number;
@@ -29,7 +35,8 @@ export const RELAY_FILES = ['engine.ts', 'main.ts'];
 const METHODS = new Set(['debug', 'info', 'warn', 'error']);
 const CONSTRUCTORS = new Set(['session', 'kind', 'word', 'count', 'dur', 'errClass', 'errType', 'frames', 'text']);
 const KEYED = new Set(['word', 'count', 'dur']);
-const TEXT_CLASS = new Set(['text']);
+// The constructors whose value is a string that only its form check guards.
+const FORMED = new Set(['word', 'session', 'kind']);
 
 type Tok = { k: 'id' | 'str' | 'tpl' | 'num' | 're' | 'p'; v: string; line: number };
 
@@ -215,12 +222,10 @@ function checkValue(a: Tok[], found: { push: (f: Finding) => unknown }): void {
   }
   const inner = args(a, 1, a.length - 1);
   if (KEYED.has(name.v) && !(inner[0] && plainString(inner[0]))) found.push({ line: at, ban: 'key' });
-  if (!TEXT_CLASS.has(name.v)) {
-    for (const x of a) {
-      if (x.k === 'tpl' || (x.k === 'p' && (x.v === '+' || x.v === '+='))) {
-        found.push({ line: x.line, ban: 'built' });
-        break;
-      }
+  for (const x of a) {
+    if (x.k === 'tpl' || (x.k === 'p' && (x.v === '+' || x.v === '+='))) {
+      found.push({ line: x.line, ban: 'built' });
+      break;
     }
   }
 }
@@ -235,6 +240,10 @@ export function check(name: string, src: string): Finding[] {
   const result = () => all;
   for (let i = 0; i < t.length; i++) {
     const x = t[i]!;
+    if (x.k === 'str' && t[i - 1]?.v === '[' && t[i + 1]?.v === ']' && (METHODS.has(x.v.slice(1, -1)) || x.v.slice(1, -1) === 'line')) {
+      found.push({ line: x.line, ban: 'computed' });
+      continue;
+    }
     if (x.k !== 'id') continue;
     const prevDot = t[i - 1]?.k === 'p' && (t[i - 1]!.v === '.' || t[i - 1]!.v === '?.');
     if (x.v === 'console' && !prevDot) found.push({ line: x.line, ban: 'console' });
@@ -245,6 +254,7 @@ export function check(name: string, src: string): Finding[] {
       if (!inImport) found.push({ line: x.line, ban: 'relay' });
     }
     if (x.v === 'Attr' && t[i - 1]?.v === 'new') found.push({ line: x.line, ban: 'direct' });
+    if (x.v === 'text' && !prevDot && t[i + 1]?.v === '(' && t[i - 1]?.v !== 'function' && name !== 'log.ts') found.push({ line: x.line, ban: 'text' });
     if (!prevDot) continue;
     const called = t[i + 1]?.v === '(';
     if (x.v === 'for' && called) {
@@ -271,4 +281,43 @@ export function check(name: string, src: string): Finding[] {
     for (const a of as.slice(1)) checkValue(a, found);
   }
   return result();
+}
+
+// A free site: a word, session or kind call whose value is not a quoted string, with the
+// message of the logger call it stands in ('' when it stands in none).
+export interface FreeSite {
+  line: number;
+  msg: string;
+  site: string; // word:<key>, session or kind
+}
+
+// freeSites returns one file's free sites, in source order.
+export function freeSites(src: string): FreeSite[] {
+  const t = lex(src);
+  const out: FreeSite[] = [];
+  for (let i = 0; i < t.length; i++) {
+    const x = t[i]!;
+    const prevDot = t[i - 1]?.k === 'p' && (t[i - 1]!.v === '.' || t[i - 1]!.v === '?.');
+    if (x.k !== 'id' || !FORMED.has(x.v) || prevDot || t[i + 1]?.v !== '(' || t[i - 1]?.v === 'function') continue;
+    const shut = close(t, i + 1);
+    const as = args(t, i + 1, shut);
+    const val = x.v === 'word' ? as[1] : as[0];
+    if (val && plainString(val)) continue;
+    const key = x.v === 'word' && as[0] && plainString(as[0]) ? as[0][0]!.v.slice(1, -1) : '?';
+    out.push({ line: x.line, msg: enclosingMessage(t, i), site: x.v === 'word' ? `word:${key}` : x.v });
+  }
+  return out;
+}
+
+// enclosingMessage is the quoted message of the innermost logger call around the token at i.
+function enclosingMessage(t: Tok[], i: number): string {
+  for (let j = i - 1; j >= 1; j--) {
+    if (!(t[j]!.k === 'p' && t[j]!.v === '(')) continue;
+    const m = t[j - 1]!;
+    if (m.k !== 'id' || !METHODS.has(m.v) || t[j - 2]?.v !== '.') continue;
+    if (close(t, j) < i) continue;
+    const first = args(t, j, close(t, j))[0];
+    return first && plainString(first) ? first[0]!.v.slice(1, -1) : '';
+  }
+  return '';
 }

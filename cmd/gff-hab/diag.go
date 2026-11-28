@@ -383,7 +383,7 @@ func (d *habDiag) sweep() {
 		}
 	}
 	capFile(filepath.Join(logs, habStderrFile), stderrMax, stderrKeep)
-	capFile(filepath.Join(d.state, "capcom", "engine", capcomengine.LogFile), capcomengine.LogMax, engineLogKeep)
+	capFile(filepath.Join(d.state, capcomFolders, capcomengine.LogFile), capcomengine.LogMax, engineLogKeep)
 	if _, err := logfile.RenameCap(filepath.Join(logs, hookLogFile), hookLogMax, hookLogKeep); err != nil {
 		d.logf("logs: %v", err)
 	}

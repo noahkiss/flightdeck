@@ -752,3 +752,52 @@ test('the SDK stderr is counted, never copied, and an SDK error is logged by its
     assert.ok(r.stderr.join('').includes(canary), 'engine.log keeps the raw stderr');
   });
 });
+
+// 1.2 #12 through the real engine. A seam makes input handling throw after the item was queued:
+// the input is not acknowledged, the connection drops, and gff-hab sends it again on the next.
+// The resend is dropped as already held, so the model gets the input once, in one turn.
+function failInput(r: Rig, times: number, after: boolean): void {
+  const eng = r.engine as any;
+  const real = eng.onInput.bind(eng);
+  eng.onInput = (item: unknown) => {
+    if (after) real(item);
+    if (times-- > 0) throw new Error('input handling failed');
+    if (!after) real(item);
+  };
+}
+
+test('an input whose handling throws once reaches the model once, as one turn', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    failInput(r, 1, true);
+    r.sdk.script = async (ctx) => ctx.say('ok');
+    const marker = 'once-' + 'm4rk';
+    r.hab.input('a', marker);
+    await r.hab.wait('ready', (m) => m.conn === 2);
+    r.hab.input('a', marker);
+    await r.hab.wait('turn.ended');
+    await sleep(200);
+    const users = r.sdk.last.received.filter((u) => JSON.stringify(u.message.content).includes(marker));
+    assert.equal(users.length, 1, 'one SDK user message');
+    assert.equal(new Set(r.hab.of('turn.started').map((m) => m.turn)).size, 1, 'one turn');
+    assert.equal(r.exitCode(), undefined);
+    const failed = r.logs.map((l) => JSON.parse(l)).filter((o) => o.msg === 'route handler failed');
+    assert.deepEqual(failed.map((o) => [o.type, o.tries]), [['input', 1]]);
+  });
+});
+
+test('an input whose handling throws 3 times makes the engine exit 1', async () => {
+  await withRig({}, async (r) => {
+    await started(r);
+    failInput(r, 100, false);
+    for (let conn = 1; conn <= 3; conn++) {
+      await r.hab.wait('ready', (m) => m.conn === conn);
+      r.hab.input('a', 'never handled');
+      if (conn < 3) await r.hab.wait('ready', (m) => m.conn === conn + 1);
+    }
+    await until(() => r.exitCode() !== undefined, 5000, 'the exit');
+    assert.equal(r.exitCode(), 1);
+    assert.ok(r.logs.some((l) => l.includes('"msg":"route message failed every try"')));
+    assert.equal(r.hab.of('turn.started').length, 0);
+  });
+});

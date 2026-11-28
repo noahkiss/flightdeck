@@ -777,3 +777,47 @@ test('a provider error reaches capcom.log as its class, never its text', async (
     assert.ok(lines.some((o) => o.msg === 'turn failed' && o.class === 'rate_limit'), r.logs.join(''));
   });
 });
+
+// 1.2 #12 through the Codex engine: input handling throws once after the item was queued; the
+// resend on the next connection is dropped as already held, so Codex runs one turn.
+function failInput(r: CodexRig, times: number, after: boolean): void {
+  const eng = r.engine as any;
+  const real = eng.onInput.bind(eng);
+  eng.onInput = (item: unknown) => {
+    if (after) real(item);
+    if (times-- > 0) throw new Error('input handling failed');
+    if (!after) real(item);
+  };
+}
+
+test('an input whose handling throws once runs one Codex turn', async () => {
+  await withRig({}, async (r) => {
+    r.codex.script = async (ctx) => ctx.say('done');
+    await codexStarted(r);
+    failInput(r, 1, true);
+    const marker = 'once-' + 'c0dx';
+    r.hab.input('it1', marker);
+    await r.hab.wait('ready', (m) => m.conn === 2);
+    r.hab.input('it1', marker);
+    await r.hab.wait('turn.ended');
+    await sleep(200);
+    assert.equal(r.codex.turns.filter((t) => t.text.includes(marker)).length, 1, 'one Codex turn');
+    assert.equal(new Set(r.hab.of('turn.started').map((m) => m.turn)).size, 1);
+    assert.equal(r.exitCode(), undefined);
+  });
+});
+
+test('an input whose handling throws 3 times makes the Codex engine exit 1', async () => {
+  await withRig({}, async (r) => {
+    await codexStarted(r);
+    failInput(r, 100, false);
+    for (let conn = 1; conn <= 3; conn++) {
+      await r.hab.wait('ready', (m) => m.conn === conn);
+      r.hab.input('it1', 'never handled');
+      if (conn < 3) await r.hab.wait('ready', (m) => m.conn === conn + 1);
+    }
+    await until(() => r.exitCode() !== undefined, 5000, 'the exit');
+    assert.equal(r.exitCode(), 1);
+    assert.equal(r.hab.of('turn.started').length, 0);
+  });
+});

@@ -6,7 +6,7 @@
 //
 // The source check (test/logcheck.test.ts) keeps the other files to these rules (10.2): no
 // console, no direct stderr write, messages and keys as plain literals, no template or
-// concatenation in a safe value.
+// concatenation in a constructor's value, and no text outside this file.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -119,7 +119,9 @@ export function dur<K extends string>(key: Key<K>, ms: number): Attr {
 }
 
 // The error classes of a provider's error (4.9). Never the error's text.
-export type ErrClass = 'auth' | 'rate_limit' | 'network' | 'provider' | 'other';
+const ERR_CLASSES = ['auth', 'rate_limit', 'network', 'provider', 'other'] as const;
+export type ErrClass = (typeof ERR_CLASSES)[number];
+const errClasses = new Set<string>(ERR_CLASSES);
 
 // errorClass reads an error's text for its class only: the text itself is never logged, since a
 // provider can echo a prompt fragment in it (1.5).
@@ -131,9 +133,11 @@ export function errorClass(text: string): ErrClass {
   return 'other';
 }
 
-// errClass is the class of an error's text, under class.
+// errClass is the class of an error's text, under class. The value is checked at run time too:
+// a cast (as ErrClass) passes the type and the source check, and class is a plain key, so a
+// value that is not one of the five classes is written as other.
 export function errClass(c: ErrClass): Attr {
-  return attr(KEY_CLASS, c);
+  return attr(KEY_CLASS, typeof c === 'string' && errClasses.has(c) ? c : 'other');
 }
 
 // errType is what an error is, never what it says: its constructor's name under err_type and a
@@ -167,7 +171,7 @@ export function frames(e: unknown): Attr {
 }
 
 // text is free text (class text): a bundle gives it pass 2 only. The engine writes no content
-// with it; it is here for the same rules as diaglog.
+// with it: only this file calls it, for the CUT marker; the source check bans it elsewhere.
 export function text(s: string): Attr {
   return attr('text', s);
 }
@@ -265,13 +269,17 @@ export function cut(s: string, limit: number): string {
 // FileSink appends lines to capcom.log, the engine its only writer (4.3). It renames the file
 // to .1 at its cap, the older files one step on; at every CHECK_LINES lines or CHECK_MS it
 // checks that its path still names the open file, and reopens it when not (the user removed the
-// logs folder, 12). A write that fails, as on a full disk, drops the line; Log counts it.
+// logs folder, 12). A rename that fails leaves the file to grow until that check. A write that
+// fails, as on a full disk, drops the line; Log counts it.
 export class FileSink {
   private fd = -1;
   private ino = 0;
   private size = 0;
   private lines = 0;
   private checked = 0;
+  // stuck: the last rotation could not rename the file (EACCES, say). Rotation waits for the next
+  // periodic check instead of running again on every line.
+  private stuck = false;
   constructor(
     readonly file: string,
     private max = LOG_MAX,
@@ -280,7 +288,10 @@ export class FileSink {
 
   write = (line: string): boolean => {
     try {
-      if (this.fd < 0 || ++this.lines >= CHECK_LINES || Date.now() - this.checked >= CHECK_MS) this.check();
+      if (this.fd < 0 || ++this.lines >= CHECK_LINES || Date.now() - this.checked >= CHECK_MS) {
+        this.stuck = false;
+        this.check();
+      }
       const n = Buffer.byteLength(line);
       if (this.size > 0 && this.size + n > this.max) this.rotate();
       fs.writeSync(this.fd, line);
@@ -315,6 +326,8 @@ export class FileSink {
   }
 
   private rotate(): void {
+    if (this.stuck) return;
+    const ino = this.ino;
     this.close();
     for (let i = this.keep; i >= 1; i--) {
       const from = i === 1 ? this.file : `${this.file}.${i - 1}`;
@@ -325,6 +338,8 @@ export class FileSink {
       }
     }
     this.check();
+    // The same file reopened: its rename failed.
+    if (this.ino === ino) this.stuck = true;
   }
 
   close(): void {
@@ -367,12 +382,20 @@ export function sinkFromEnv(env: NodeJS.ProcessEnv): Sink {
 // this process and keep their own handlers.
 export function installCrashHandlers(log: Log, exit: (code: number) => void): void {
   const crash = log.for('crash');
+  // The exit runs even when the line throws (a Proxy, a stack getter that throws): the crash is
+  // still counted, with no line.
   process.on('uncaughtException', (e) => {
-    crash.error('uncaught exception', errType(e), frames(e));
-    exit(1);
+    try {
+      crash.error('uncaught exception', errType(e), frames(e));
+    } finally {
+      exit(1);
+    }
   });
   process.on('unhandledRejection', (e) => {
-    crash.error('unhandled rejection', errType(e), frames(e));
-    exit(1);
+    try {
+      crash.error('unhandled rejection', errType(e), frames(e));
+    } finally {
+      exit(1);
+    }
   });
 }

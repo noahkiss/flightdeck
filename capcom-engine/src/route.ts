@@ -36,6 +36,13 @@ interface Out {
   seq?: number; // seq on the current connection, once sent
 }
 
+// digestOf names a message by its body: it leaves out seq, which each connection numbers anew,
+// wherever the key stands.
+function digestOf(m: Msg): string {
+  const { seq: _seq, ...body } = m;
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex');
+}
+
 export class Route {
   private o: RouteOptions;
   private sock?: Duplex;
@@ -222,17 +229,19 @@ export class Route {
         this.handlerFailed(m, sock, e);
         return;
       }
+      // A message handled after it failed starts its count again: three unrelated failures of
+      // one repeated body (an interrupt, the same pace) days apart are no loop.
+      if (this.failures.size > 0) this.failures.delete(digestOf(m));
       if (this.sock === sock && typeof m.seq === 'number') this.raw({ type: 'ack', ack: m.seq });
     });
   }
 
   // handlerFailed logs the failure by class, never its text, and leaves the message
   // unacknowledged: the connection drops, and gff-hab sends it again (diagnostics.md 1.2 #12,
-  // 4.9). After HANDLER_TRIES failures of one message the engine exits instead.
+  // 4.9). After HANDLER_TRIES failures of one message, with no success between, the engine
+  // exits instead.
   private handlerFailed(m: Msg, sock: Duplex | undefined, e: unknown): void {
-    // The digest leaves out seq, which each connection numbers anew, wherever the key stands.
-    const { seq: _seq, ...body } = m;
-    const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+    const digest = digestOf(m);
     const n = (this.failures.get(digest) ?? 0) + 1;
     if (this.failures.size >= 64) this.failures.clear();
     this.failures.set(digest, n);

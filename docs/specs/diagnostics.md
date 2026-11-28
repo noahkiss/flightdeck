@@ -51,7 +51,7 @@ What each component records at the commit this spec starts from. Paths are repo-
 | `gff-hab-holder` | Standard `log`, text (`cmd/gff-hab-holder/main.go:57`) | stderr. launchd: `<state>/logs/gff-hab-holder.<instance>.log`. systemd: journald | None | None |
 | `gff` | Passes no `Logf` to its libraries (`cmd/gff/main.go:221,230,234,271`), so they log nothing (`internal/gffclient/client.go:275`, `internal/habconn/conn.go:175`). Prints one error line at exit | The user's terminal | None | n/a |
 | Hook (`gff-hab hook`) | Prints its error only when `GFF_HOOK_DEBUG` is set (`cmd/gff-hab/hook.go:74-76`) | The harness's stderr capture, usually nowhere | None | n/a |
-| Capcom engine (TypeScript) | One custom function, plain text to stderr, ad hoc prefixes (`capcom-engine/src/engine.ts:172-173`). A redactor masks the credential value only (`capcom-engine/src/contract.ts:176-180`) | gff-hab appends stdout and stderr to `<state>/capcom/engine/engine.log` (`internal/capcomengine/supervisor.go:29,354`, `internal/capcomengine/job.go:81-87`, `internal/capcomengine/systemd.go:44-45`) | None | None |
+| Capcom engine (TypeScript) | One custom function, plain text to stderr, ad hoc prefixes (`capcom-engine/src/engine.ts:172-173`). A redactor masks the credential value only (`capcom-engine/src/contract.ts:176-180`) | gff-hab appends stdout and stderr to `<state>/capcom/engine.log` (`internal/capcomengine/supervisor.go:29,354`, `internal/capcomengine/job.go:81-87`, `internal/capcomengine/systemd.go:44-45`) | None | None |
 | Speech helper | Its stderr reaches the gff-hab log one line at a time (`internal/speech/helper.go:82-85`) | gff-hab's log | None | n/a |
 | Flightdeck app | `os.Logger`, one subsystem, 14 categories (for example `apple/FlightdeckKit/Sources/FlightdeckKit/Board/Fleet.swift:112`). Privacy markers are mixed: some errors that can name a host are `.public` (`SSHSetup.swift:446`) | The unified log | debug, info, notice, error | The system's |
 
@@ -296,8 +296,8 @@ All files are in `<state>/logs/`, mode 0600, in a directory of mode 0700.
 | `crash/` | Crash output and stack dumps (6, 4.7) | gff-hab's sweep, oldest first | 20 crash files, and apart from them 5 stack dumps |
 
 `gff.log` sits in `gff`'s own state directory: 1 MiB, 1 old file, rotated by `gff` itself.
-`<state>/capcom/engine/engine.log` keeps the engine's raw stdout and stderr; gff-hab
-copy-truncates it at each engine start and in the sweep, to 1 MiB.
+`<state>/capcom/engine.log` keeps the engine's raw stdout and stderr; gff-hab copy-truncates it
+at each engine start and in the hourly sweep, to 1 MiB.
 
 Rules:
 
@@ -480,28 +480,37 @@ with the line before it. Until the holder's next build, its lines carry local ti
   The credential redactor runs on every value. With no path, the lines go to stderr.
 - The engine rotates `capcom.log` itself: at 5 MiB it renames the file to `.1`, keeps 2 old
   files, and checks every 1,000 lines or 60 seconds that the path still names its file. A line
-  it cannot write is counted on the next one ("lines dropped"). It has no repeat limit (4.5): its
+  it cannot write is counted on the next one ("lines dropped"). A rename that fails leaves the
+  file to grow, and rotation waits for the next check. It has no repeat limit (4.5): its
   lines come per turn and per reconnect, with the route's backoff.
 - It adds handlers for an uncaught exception and an unhandled rejection. Each writes one `error`
   line, `uncaught exception` or `unhandled rejection`, with the error's constructor name
   (`err_type`), a Node error code (`code`) and its stack frames' function names (`frames`), then
   exits 1. The line never holds the error's message or a file path: the frames are read after the
-  stack's header, which holds the message.
+  stack's header, which holds the message. The exit runs even when the line cannot be made (a
+  stack getter that throws).
 - **SDK stderr is never copied into `capcom.log`.** The engine counts its lines and bytes and
   logs the counts (`sdk stderr`, `lines`, `bytes`) once per turn and at exit. The raw lines,
   credential-redacted, stay only in `engine.log`, which no bundle includes.
 - A provider's error is logged as an error class under `class` (`auth`, `rate_limit`, `network`,
   `provider`, `other`), never its text: the Codex engine's failed turn, error event and error
-  item, and the Claude engine's SDK and summary failures. An error otherwise is logged by
+  item, and the Claude engine's SDK and summary failures. `errClass` checks its value when the
+  line is written, so a cast that passes the type writes `other`. An error otherwise is logged by
   `err_type` and `code` only.
 - The handler exception of 1.2 #12 is logged by `err_type` and `class`, and the message is not
   acknowledged. gff-hab ignores acknowledgements. When a connection opens it sends `hello`, the
   pace and every input past the last take (`capcom-service.md` 4.3), so the engine drops the
   connection and leaves that connection's later inputs unhandled: the next connection brings
-  them again, in order. Its other messages run as they come. A message that fails 3 times makes
-  the engine exit 1, so gff-hab's crash limit ends a loop instead of a message being lost.
-  Known limit: a one-off message whose handler fails (`interrupt`, `shutdown`, `reseed`, an
-  approval answer, a context answer) is not sent again; its line records the failure.
+  them again, in order. Its other messages run as they come. A message that fails 3 times with no
+  success between makes the engine exit 1, so gff-hab's crash limit ends a loop instead of a
+  message being lost; once the message is handled, its count starts again.
+  Known limit: gff-hab sends a one-off message once. `interrupt`, `shutdown` and `reseed` cannot
+  fail in either engine's handler. On the Claude engine a failed approval answer is recovered:
+  the request stays open, the next connection's `ready` asks for the card again, and gff-hab
+  sends the held answer again. The Codex engine opens no card and ignores an approval answer. The
+  real loss is a context answer on either engine: the request it answers waits to its timeout,
+  and the re-seed or the compaction goes on without a new summary, as when no answer comes in
+  time. Its line records the failure.
 - gff-hab logs an engine's `error` message by its kind only, never its `text`, which can quote
   an SDK's or a provider's. The start check's text is the session row's reason.
 - **The source check.** `capcom-engine/test/logcheck.test.ts` is the engine's half of 10.2. The
@@ -513,9 +522,12 @@ with the line before it. Until the holder's next build, its lines carry local ti
   outside the engine's SDK stderr and its start failure, a logger call whose message is not a
   quoted string, a value that is not one constructor call, a key that is not a quoted string, a
   template or `+` in a safe constructor's value, a logger method used as a value, a direct
-  `Log.line` or `new Attr`, and a `Log.for` component that is not a quoted string. A call of a
+  `Log.line` or `new Attr`, a `Log.for` component that is not a quoted string, a call of `text`
+  outside `log.ts`, and a logger method named by a string in brackets (`log['warn']`). A call of a
   `debug`, `info`, `warn` or `error` method counts as a logger call whatever its receiver. Its
-  fixture has one case per ban.
+  fixture has one case per ban. As Go's `TestFreeTextSites` does, a site list pins each `word`,
+  `session` and `kind` call whose value is not a quoted string, by file, message and
+  constructor; a new site fails the test until it is added.
 - The speech helper's stderr lines stay in `hab.log`, at `debug`, as `text` class.
 
 ### 4.10 The app
@@ -681,7 +693,8 @@ At start, before it writes its own marker, a process reads the previous one:
     supervisor's note and notice cover the engine.
   - The session row's reason names the exit status and the engine's last `error` line in
     `capcom.log` of this run, by its message and `err_type` only: "the engine exited: uncaught
-    exception (TypeError), exit 1". The crash limit's log line holds the count and the window.
+    exception (TypeError), exit 1". For an adopted engine, the run starts at the adoption. The
+    crash limit's log line holds the count and the window.
 
 ### 6.4 The app (stage 6)
 
@@ -951,8 +964,9 @@ under `[logbook.habits_off]`.
 **Other strings.** A safe value of a structured line is kept (pass 1) and then scrubbed too: a
 minted id matches no rule, so it reads the same, and a value that only has a safe form cannot
 carry a name out. A line's own fields (`lvl`, `msg`, `proc`, `epoch`, `comp`, `trace`) and every
-key get pass 2 as well. A Go writer's constants read the same after it, and a line from another
-writer (`capcom.log`, an older holder, a friction tail) has no source check. `t` is written
+key get pass 2 as well. A Go writer's constants read the same after it. A line from another writer
+(an older holder, a friction tail) has no source check, and `capcom.log`'s source check is the
+engine's own, so the bundle does not lean on it. `t` is written
 again from its parsed time. A health record, a friction note, a tally file and `detect.json` get
 pass 2 on every string and every JSON key; a friction tail line that is a structured line gets
 both passes. A line that starts as JSON but does not parse is left out and counted (12). A

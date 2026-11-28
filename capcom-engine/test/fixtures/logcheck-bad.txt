@@ -25,7 +25,9 @@ export function bad(elog: any, log: any, crash: any, v: string, e: unknown) {
   crash.error(v); // want: message
   log.for(v); // want: component
   log.for(`c${v}`).info('turn failed'); // want: component
-  // Allowed: a literal message, constructor values, text with a built value.
-  elog.info('turn failed', errType(e), text('a' + v), count('lines', 3));
+  elog.info('turn failed', text(v)); // want: text
+  log['warn']('turn failed'); // want: computed
+  // Allowed: a literal message, constructor values.
+  elog.info('turn failed', errType(e), count('lines', 3));
   return [quiet, re, f, a];
 }

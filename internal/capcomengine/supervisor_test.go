@@ -592,3 +592,26 @@ func TestSupervisorCrashRecords(t *testing.T) {
 		t.Fatalf("a log line holds the engine's text:\n%s", all)
 	}
 }
+
+// An adopted engine's crash reason names no error line written before the adoption: lastStart
+// is the adoption, not the zero time (diagnostics.md 6.3).
+func TestSupervisorAdoptedCrashReason(t *testing.T) {
+	s := newSup(t, func(s *supT) {
+		s.env["CLAUDE_CODE_OAUTH_TOKEN"] = "tok"
+		s.cfg.Limits.CrashLimit = 1
+	})
+	s.sup.cfg.LogPath = filepath.Join(s.dir, "logs", "capcom.log")
+	os.MkdirAll(filepath.Dir(s.sup.cfg.LogPath), 0o700)
+	earlier := s.clock.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	os.WriteFile(s.sup.cfg.LogPath, []byte(`{"t":"`+earlier+`","lvl":"error","msg":"engine did not start","proc":"capcom","comp":"engine","err_type":"Error"}`+"\n"), 0o600)
+	old := &fakeProc{pid: 77, done: make(chan struct{})}
+	s.job.adopt = old
+	s.sup.Ensure(context.Background())
+	s.noStart()
+	s.job.adopt = nil
+	old.exit()
+	st := s.waitState(StateError)
+	if strings.Contains(st.Reason, "engine did not start") {
+		t.Fatalf("the reason names an earlier run's line: %q", st.Reason)
+	}
+}
