@@ -25,6 +25,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/governor"
 	"github.com/noahkiss/flightdeck/internal/harness"
+	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/push"
@@ -159,6 +160,8 @@ type capcomEngineSetup struct {
 	// quietEnded pushes, once quiet hours end, how many Capcom messages they held (9.2).
 	quietEnded func(held int, session string)
 	logf       func(string, ...any)
+	// health records an engine crash (diagnostics.md 6.3); nil: none.
+	health func(health.Record)
 	// The usage governor (10.1): nil runs Capcom unpaced, with no pace message.
 	governor *governor.Governor
 	usage    *habusage.Store
@@ -340,6 +343,9 @@ func newCapcomEngine(s capcomEngineSetup) (*capcomEngine, error) {
 		},
 		Notice: s.notify,
 		Logf:   s.logf,
+		// The engine writes its structured lines beside hab.log (diagnostics.md 4.3, 4.9).
+		LogPath: filepath.Join(logsDir(s.state), capcomLogFile),
+		Health:  s.health,
 	})
 	return e, nil
 }

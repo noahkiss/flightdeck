@@ -40,6 +40,7 @@ import { toolSummary } from './policy.js';
 import { codexHome, findRollout, rolloutHandedIds, rolloutTurnEnd } from './rollout.js';
 import { Route, type Msg } from './route.js';
 import { START_CHECK_KEY, startProbe } from './startcheck.js';
+import { type ComponentLog, count, errClass, errorClass, errType, Log, session, type Sink, stderrSink, word } from './log.js';
 import { CODEX_SDK_VERSION, ENGINE_VERSION } from './version.js';
 
 // What the Codex engine has (4.1). It lacks mid_turn_input, approval_callback and
@@ -74,7 +75,8 @@ export interface CodexDeps {
   env: NodeJS.ProcessEnv;
   cwd: string;
   exit: (code: number) => void;
-  log?: (line: string) => void;
+  // log takes each structured line for capcom.log (diagnostics.md 4.9); default stderr.
+  log?: Sink;
   backoffStartMs?: number;
   flushTimeoutMs?: number;
   startCheckTimeoutMs?: number;
@@ -108,7 +110,7 @@ async function moveAside(at: string): Promise<string | undefined> {
 // linkTo makes `at` a link to target. A wrong link is replaced; anything else is moved aside,
 // never deleted. Racing calls (a summary run and a session start) converge: each pass removes
 // only a link that points elsewhere, so no call undoes a correct link another call made.
-async function linkTo(target: string, at: string, log: (l: string) => void): Promise<void> {
+async function linkTo(target: string, at: string, log: ComponentLog): Promise<void> {
   for (let pass = 0; ; pass++) {
     let st;
     try {
@@ -122,7 +124,7 @@ async function linkTo(target: string, at: string, log: (l: string) => void): Pro
       if (to !== undefined) await fs.rm(at, { force: true });
     } else if (st) {
       const aside = await moveAside(at);
-      if (aside) log(`engine home: moved ${path.basename(at)} aside to ${path.basename(aside)}`);
+      if (aside) log.info('home entry moved aside', word('entry', path.basename(at)));
     }
     try {
       await fs.symlink(target, at);
@@ -187,8 +189,16 @@ export class CodexEngine {
   private asks = new ContextAsks();
   private exiting = false;
 
+  private redact = redactor(() => this.credential?.value);
+  private logs: Log;
+  private elog: ComponentLog;
+  private clog: ComponentLog;
+
   constructor(d: CodexDeps) {
     this.d = d;
+    this.logs = new Log(d.log ?? stderrSink, this.redact);
+    this.elog = this.logs.for('engine');
+    this.clog = this.logs.for('codex');
   }
 
   start(): void {
@@ -199,18 +209,14 @@ export class CodexEngine {
       backoffStartMs: this.d.backoffStartMs,
       onHello: (m) => this.onHello(m),
       onMessage: (m) => this.onMessage(m),
-      log: (l) => this.log(l),
+      log: this.logs.for('route'),
+      onFatal: () => void this.exit(1),
     });
     this.route.start();
   }
 
-  // ---- logging ----
-
-  private redact = redactor(() => this.credential?.value);
-
-  private log(line: string): void {
-    (this.d.log ?? ((l: string) => process.stderr.write(l + '\n')))(this.redact(line));
-  }
+  // A provider's error is logged by its class, never its text, which can echo a prompt
+  // fragment (diagnostics.md 1.5, 4.9).
 
   private send(type: string, fields: Record<string, unknown> = {}): void {
     this.route.send(type, fields);
@@ -390,11 +396,11 @@ export class CodexEngine {
       }
       if (done && out !== undefined) return out;
     } catch (e) {
-      if (!ac.signal.aborted) this.log(`summary: ${(e as Error).message}`);
+      if (!ac.signal.aborted) this.logs.for('summary').warn('summary call failed', errType(e), errClass(errorClass((e as Error)?.message ?? '')));
     } finally {
       clearTimeout(timer);
     }
-    this.log('summary: no new summary; the old one stays');
+    this.logs.for('summary').info('summary kept');
     return undefined;
   }
 
@@ -484,7 +490,7 @@ export class CodexEngine {
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
     await fs.mkdir(path.join(user, 'sessions'), { recursive: true, mode: 0o700 });
     for (const n of HOME_DENY) await fs.rm(path.join(home, n), { recursive: true, force: true });
-    const log = (l: string) => this.log(l);
+    const log = this.logs.for('home');
     await linkTo(path.join(user, 'sessions'), path.join(home, 'sessions'), log);
     const auth = path.join(home, 'auth.json');
     if (this.credential?.kind === 'login') await linkTo(path.join(user, 'auth.json'), auth, log);
@@ -492,7 +498,7 @@ export class CodexEngine {
       // Under an API key the home holds no login: a link goes, a saved login is kept aside.
       const st = await fs.lstat(auth).catch(() => undefined);
       if (st?.isSymbolicLink()) await fs.rm(auth, { force: true });
-      else if (st && (await moveAside(auth))) log('engine home: moved auth.json aside');
+      else if (st && (await moveAside(auth))) log.info('home entry moved aside', word('entry', 'auth.json'));
     }
   }
 
@@ -500,6 +506,7 @@ export class CodexEngine {
   private async startCheck(): Promise<boolean> {
     if (this.checked) return true;
     const fail = async (text: string): Promise<false> => {
+      this.elog.error('start check failed');
       this.sendError(`start check: ${text}`, 'start', true);
       await this.exit(1);
       return false;
@@ -524,7 +531,7 @@ export class CodexEngine {
           // the probe's one turn runs to its end
         }
       } catch (e) {
-        if (probe.body() === undefined) this.log(`start check: ${(e as Error).message}`);
+        if (probe.body() === undefined) this.elog.warn('start check run failed', errType(e));
       } finally {
         clearTimeout(timer);
         ac.abort();
@@ -663,10 +670,10 @@ export class CodexEngine {
             break;
           case 'turn.failed':
             if (isAuthFailure(ev.error?.message ?? '')) t.authFailed = true;
-            this.log(`codex: the turn failed: ${ev.error?.message ?? ''}`);
+            this.clog.warn('turn failed', errClass(errorClass(ev.error?.message ?? '')));
             break;
           case 'error':
-            this.log(`codex: ${ev.message}`);
+            this.clog.warn('provider error', errClass(errorClass(ev.message ?? '')));
             break;
         }
         if (t.violation) {
@@ -678,7 +685,7 @@ export class CodexEngine {
       const msg = (e as Error).message ?? String(e);
       if (!t.interrupted && !t.violation && !this.exiting) {
         if (isAuthFailure(msg)) t.authFailed = true;
-        this.log(`codex: ${msg.split('\n')[0]}`);
+        this.clog.warn('turn stopped', errClass(errorClass(msg)));
         if (result === 'success') result = 'error';
       }
     }
@@ -709,6 +716,7 @@ export class CodexEngine {
       return;
     }
     if (t.authFailed) {
+      this.elog.warn('credential refused');
       this.sendError('the model provider refused the Codex login or API key', 'auth', true);
       await this.exit(1);
       return;
@@ -747,6 +755,7 @@ export class CodexEngine {
   private onThreadStarted(id: string): void {
     if (this.sessionId || !id) return;
     this.sessionId = id;
+    this.elog.info('session started', session(id), word('why', this.sessionWhy));
     this.send('session.started', { session: id, why: this.sessionWhy });
   }
 
@@ -786,7 +795,7 @@ export class CodexEngine {
         if (phase === 'item.completed' && item.text.trim()) this.send('reply', { turn: t.id, part: t.part++, text: item.text });
         break;
       case 'error':
-        if (phase === 'item.completed') this.log(`codex: ${item.message.split('\n')[0]}`);
+        if (phase === 'item.completed') this.clog.warn('item error', errClass(errorClass(item.message)));
         break;
       default:
         break;
@@ -796,6 +805,7 @@ export class CodexEngine {
   private async exit(code: number): Promise<void> {
     if (this.exiting) return;
     this.exiting = true;
+    this.elog.info('engine exits', count('code', code));
     this.gen++;
     this.ready = false;
     this.turn?.ac.abort();

@@ -30,6 +30,7 @@ const (
 	habStderrFile = "hab.stderr" // the service manager's capture of gff-hab's stdout and stderr
 	healthFile    = "health.jsonl"
 	hookLogFile   = "hook.log"
+	capcomLogFile = "capcom.log" // the Capcom engine's structured lines; the engine writes and rotates it
 	crashDir      = "crash"
 	runDir        = "run"
 	habMarkerFile = "hab.json"
@@ -129,6 +130,12 @@ func (r *diagRef) touch() {
 func (r *diagRef) holderLost(instance, build string, panes int) {
 	if d := r.Load(); d != nil {
 		d.holderLost(instance, build, panes)
+	}
+}
+
+func (r *diagRef) engineCrash(rec health.Record) {
+	if d := r.Load(); d != nil {
+		d.engineCrash(rec)
 	}
 }
 
@@ -277,6 +284,14 @@ func (d *habDiag) holderLost(instance, build string, panes int) {
 	d.tally.Health("holder", r.Kind)
 }
 
+// engineCrash writes the record of a Capcom engine crash, whose cause the supervisor gives as
+// a class (6.3). It raises no crash notice: the supervisor's own note and notice cover the engine.
+func (d *habDiag) engineCrash(r health.Record) {
+	if err := health.Append(filepath.Join(d.state, healthFile), r); err != nil {
+		d.logf("health record: %v", err)
+	}
+}
+
 // serveHooks runs the hook server; the caller marks the endpoint up first. When it stops with an
 // error, the hook endpoint is down for the rest of the run: the marker says so for gff-hab
 // status, and a line repeats every 10 minutes (4.6).
@@ -368,7 +383,7 @@ func (d *habDiag) sweep() {
 		}
 	}
 	capFile(filepath.Join(logs, habStderrFile), stderrMax, stderrKeep)
-	capFile(filepath.Join(d.state, "capcom", "engine", capcomengine.LogFile), capcomengine.LogMax, engineLogKeep)
+	capFile(filepath.Join(d.state, capcomFolders, capcomengine.LogFile), capcomengine.LogMax, engineLogKeep)
 	if _, err := logfile.RenameCap(filepath.Join(logs, hookLogFile), hookLogMax, hookLogKeep); err != nil {
 		d.logf("logs: %v", err)
 	}

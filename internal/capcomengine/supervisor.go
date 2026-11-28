@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/diaglog"
+	"github.com/noahkiss/flightdeck/internal/health"
 	"github.com/noahkiss/flightdeck/internal/logfile"
 )
 
@@ -27,6 +29,9 @@ const (
 	TokenVar = "GFF_HAB_CAPCOM_TOKEN"
 	// KindVar names the engine the job runs: claude or codex ([capcom] engine).
 	KindVar = "GFF_HAB_CAPCOM_KIND"
+	// LogVar names capcom.log's path, where the engine writes its structured lines
+	// (diagnostics.md 4.3, 4.9).
+	LogVar  = "GFF_HAB_CAPCOM_LOG"
 	PidFile = "engine.pid" // ProcessJob's pid
 	LogFile = "engine.log" // the engine's stdout and stderr
 	// LogMax caps engine.log: past it, gff-hab copies it to engine.log.1 and empties it
@@ -83,6 +88,10 @@ type SupervisorConfig struct {
 	Notice    func(title, body string) // an active notice
 	Logf      func(string, ...any)
 	Grace     time.Duration // SIGTERM to SIGKILL when the supervisor ends a job; 0: 10 s
+	// LogPath is capcom.log, the engine's structured log (diagnostics.md 4.9); empty: none.
+	LogPath string
+	// Health records each engine crash (diagnostics.md 6.3); nil: none.
+	Health func(health.Record)
 }
 
 // Supervisor starts, adopts, restarts and drains the engine job (3.2), with a new route token
@@ -102,6 +111,9 @@ type Supervisor struct {
 	retry     func() bool // a pending restart or token retry
 	drainNew  bool        // an adopted engine of another build: drain it once it is ready
 	lastStart time.Time
+	// startText is what the engine's start check reported, for the session row's reason only:
+	// never logged, since an engine's error text may quote an SDK's (diagnostics.md 1.5).
+	startText string
 }
 
 // NewSupervisor returns a supervisor; nothing starts until Ensure.
@@ -132,6 +144,9 @@ func NewSupervisor(cfg SupervisorConfig) *Supervisor {
 	}
 	if cfg.Build == nil {
 		cfg.Build = func() string { return "" }
+	}
+	if cfg.Health == nil {
+		cfg.Health = func(health.Record) {}
 	}
 	return &Supervisor{cfg: cfg, once: capcom.NewOnce(cfg.Logf), status: SupStatus{State: StateOff}}
 }
@@ -262,6 +277,9 @@ func (s *Supervisor) Ensure(ctx context.Context) {
 		}
 		s.mu.Lock()
 		s.proc, s.token, s.paneToken, s.cred, s.planned = p, token, paneToken, cred, planned
+		// An adopted engine's crash reason reads capcom.log from the adoption on: an earlier
+		// run's error line, such as yesterday's failed start, is not this one's.
+		s.lastStart = s.cfg.Now()
 		s.drainNew = rec.Build != "" && rec.Build != s.cfg.Build()
 		if why != "" {
 			s.cfg.Logf("capcom: adopted the running engine, but %s", why)
@@ -336,6 +354,9 @@ func (s *Supervisor) start(ctx context.Context) {
 	// The engine kind picks the engine in the one bundle (main.ts); its CLI's folders follow the
 	// user's own, so a plain terminal resumes the engine's sessions (11).
 	envs = append(envs, KindVar+"="+cfg.Engine)
+	if s.cfg.LogPath != "" {
+		envs = append(envs, LogVar+"="+s.cfg.LogPath)
+	}
 	for _, k := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
 		if v := s.cfg.Getenv(k); v != "" {
 			envs = append(envs, k+"="+v)
@@ -344,7 +365,7 @@ func (s *Supervisor) start(ctx context.Context) {
 	// The token is in place before the job runs, so its first connection is taken; the old one
 	// is refused from here on.
 	s.mu.Lock()
-	s.token, s.paneToken, s.cred, s.planned, s.drainNew = token, paneToken, cred, "", false
+	s.token, s.paneToken, s.cred, s.planned, s.drainNew, s.startText = token, paneToken, cred, "", false, ""
 	s.mu.Unlock()
 	if err := writeEnvFile(filepath.Join(s.cfg.Dir, EnvFile), envs); err != nil {
 		fail("engine environment file: " + err.Error())
@@ -396,6 +417,7 @@ func (s *Supervisor) exited(p Proc) {
 	s.proc = nil
 	planned := s.planned
 	s.planned = ""
+	startText, since := s.startText, s.lastStart
 	s.mu.Unlock()
 	s.cfg.Link.Drop()
 	switch planned {
@@ -422,8 +444,9 @@ func (s *Supervisor) exited(p Proc) {
 		return
 	case "start":
 		// The start check failed: a restart would fail the same way (5.1).
-		reason := "the engine's start check failed: " + LastLine(filepath.Join(s.cfg.Dir, LogFile))
+		reason := strings.TrimSuffix("the engine's start check failed: "+startText, ": ")
 		s.cfg.Record.Update(func(r *Record) { r.Stopped = reason })
+		s.crashRecord(CauseStartCheck)
 		s.mu.Lock()
 		s.setLocked(StateError, reason)
 		s.mu.Unlock()
@@ -464,32 +487,52 @@ func (s *Supervisor) exited(p Proc) {
 			r.Crashes = append(kept, now)
 			n = len(r.Crashes)
 		})
-		line := LastLine(filepath.Join(s.cfg.Dir, LogFile))
+		// The reason names the engine's last error line in capcom.log by its message and type,
+		// and the exit by its status: never a line of engine.log, which holds the SDK's raw
+		// stderr (diagnostics.md 4.9, 6.3).
+		status := exitStatus(p)
+		last := LastError(s.cfg.LogPath, since)
+		why := status
+		if last != "" {
+			why = last + ", " + status
+		}
 		if n >= cfg.Limits.CrashLimit {
-			reason := fmt.Sprintf("the engine crashed %d times in %s; gff-hab capcom resume starts it again", n, cfg.Limits.CrashWindow)
-			if line != "" {
-				reason = fmt.Sprintf("the engine crashed %d times in %s; last line: %s; gff-hab capcom resume starts it again", n, cfg.Limits.CrashWindow, line)
-			}
+			reason := fmt.Sprintf("the engine crashed %d times in %s; last: %s; gff-hab capcom resume starts it again", n, cfg.Limits.CrashWindow, why)
 			s.cfg.Record.Update(func(r *Record) { r.Stopped = reason })
 			s.mu.Lock()
 			s.setLocked(StateError, reason)
 			s.mu.Unlock()
+			s.crashRecord(CauseCrashLimit)
 			s.cfg.Note("Capcom stopped after repeated crashes")
-			s.cfg.Logf("capcom: %s", reason)
+			capcomLog.Error("engine crash limit reached", diaglog.Count("crashes", int64(n)), diaglog.Dur("window", cfg.Limits.CrashWindow))
 			break
 		}
+		s.crashRecord(status)
 		s.cfg.Logf("capcom: the engine exited unasked (%d in %s); restarting in %s", n, cfg.Limits.CrashWindow, cfg.Limits.RestartDelay)
 		s.cfg.Note("Capcom restarted")
 		s.mu.Lock()
-		s.setLocked(StateError, strings.TrimSuffix("the engine exited: "+line, ": "))
+		s.setLocked(StateError, "the engine exited: "+why)
 		s.retry = s.cfg.After(cfg.Limits.RestartDelay, func() { s.start(context.Background()) })
 		s.mu.Unlock()
 	}
 	s.report()
 }
 
-// capcomLog writes the engine lines whose values are free text (diagnostics.md 1.5).
+// capcomLog writes the supervisor's typed lines. An engine's error text goes in none of them:
+// it may quote an SDK's or a provider's (diagnostics.md 1.5, 4.9).
 var capcomLog = diaglog.For("capcom")
+
+// The causes of an engine crash's health record that are no exit status (diagnostics.md 6.3).
+const (
+	CauseStartCheck = "start_check"
+	CauseCrashLimit = "crash_limit"
+)
+
+// crashRecord writes the health record of an engine crash: proc capcom, kind crash, and a cause
+// that is a class, never a log line (6.3).
+func (s *Supervisor) crashRecord(cause string) {
+	s.cfg.Health(health.Record{T: s.cfg.Now().UTC(), Proc: "capcom", Kind: health.KindCrash, Cause: cause, Build: s.cfg.Record.Get().Build})
+}
 
 // EngineError takes an error the engine reported (4.4): a refused credential, or the start
 // check. Either way the exit that follows is no crash.
@@ -503,11 +546,10 @@ func (s *Supervisor) EngineError(kind, text string, exiting bool) {
 		s.cfg.Logf("capcom: the model provider refused the credential (%d)", s.authFails)
 	case ErrKindStart:
 		s.planned = "start"
-		capcomLog.Warn("engine start check failed", diaglog.Text(text))
+		s.startText = text
+		capcomLog.Warn("engine start check failed")
 	default:
-		if text != "" {
-			capcomLog.Info("engine reported", diaglog.Text(text))
-		}
+		capcomLog.Info("engine reported", diaglog.Word("exiting", strconv.FormatBool(exiting)))
 	}
 }
 

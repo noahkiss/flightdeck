@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/noahkiss/flightdeck/internal/diaglog"
 )
 
 // JobSpec is one start of the engine job: its argv, folder, environment and log file.
@@ -50,12 +52,37 @@ type ProcessJob struct {
 }
 
 type process struct {
-	pid  int
-	done chan struct{}
+	pid    int
+	done   chan struct{}
+	status string // how it ended, once done is closed: "exit 1", "signal 9"; empty: not known
 }
 
 func (p *process) Done() <-chan struct{} { return p.done }
 func (p *process) Pid() int              { return p.pid }
+
+// ExitStatus is how the process ended, once Done is closed; empty when not known, as for an
+// adopted process this gff-hab did not start.
+func (p *process) ExitStatus() string { return p.status }
+
+// exitStatus is how p ended, for a crash's health record and the session row (diagnostics.md
+// 6.3): "exit <code>", "signal <number>", or "unknown".
+func exitStatus(p Proc) string {
+	if e, ok := p.(interface{ ExitStatus() string }); ok && e.ExitStatus() != "" {
+		return e.ExitStatus()
+	}
+	return "unknown"
+}
+
+// statusOf reads a finished command's status.
+func statusOf(ps *os.ProcessState) string {
+	if ps == nil {
+		return ""
+	}
+	if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return "signal " + strconv.Itoa(int(ws.Signal()))
+	}
+	return "exit " + strconv.Itoa(ps.ExitCode())
+}
 
 func (p *process) Stop(grace time.Duration) error {
 	syscall.Kill(p.pid, syscall.SIGTERM)
@@ -92,6 +119,7 @@ func (j ProcessJob) Start(ctx context.Context, spec JobSpec) (Proc, error) {
 	p := &process{pid: cmd.Process.Pid, done: make(chan struct{})}
 	go func() {
 		cmd.Wait()
+		p.status = statusOf(cmd.ProcessState)
 		os.Remove(j.PidFile)
 		close(p.done)
 	}()
@@ -131,9 +159,14 @@ func alive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// LastLine returns the last non-empty line of the log, cut to 200 bytes, for the session row's
-// error (3.2). The engine never writes its credential there.
-func LastLine(log string) string {
+// LastError returns the engine's last error line in capcom.log written at or after since, as its
+// message and its error type: "uncaught exception (TypeError)". "" when there is none. Both are
+// constants of the engine's code, which its source check keeps free of content (diagnostics.md
+// 4.9, 10.2); the line's other values are not read.
+func LastError(log string, since time.Time) string {
+	if log == "" {
+		return ""
+	}
 	f, err := os.Open(log)
 	if err != nil {
 		return ""
@@ -143,19 +176,37 @@ func LastLine(log string) string {
 	if err != nil {
 		return ""
 	}
-	off := max(0, fi.Size()-4096)
+	off := max(0, fi.Size()-32<<10)
 	buf := make([]byte, fi.Size()-off)
 	f.ReadAt(buf, off)
-	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
+	lines := strings.Split(string(buf), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" {
-			if len(l) > 200 {
-				l = l[:200]
-			}
-			return l
+		l, ok := diaglog.Parse(lines[i])
+		if !ok || l.Lvl != "error" || l.Proc != "capcom" || l.T.Before(since.Add(-time.Second)) {
+			continue
 		}
+		out := cutWord(l.Msg, 80)
+		if t, ok := l.Get("err_type"); ok && t != "" {
+			out += " (" + cutWord(t, 64) + ")"
+		}
+		return out
 	}
 	return ""
+}
+
+// cutWord keeps the letters, digits, spaces and . _ - of s, at most n bytes: a line that is no
+// engine's cannot carry more into the session row.
+func cutWord(s string, n int) string {
+	var b strings.Builder
+	for _, r := range s {
+		if b.Len() >= n {
+			break
+		}
+		if r < 128 && (r == ' ' || r == '.' || r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // EngineDir is the engine's own folder under the Capcom folder (3.4).

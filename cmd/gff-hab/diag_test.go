@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/capcomengine"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/diaglog"
 	"github.com/noahkiss/flightdeck/internal/harness"
@@ -318,9 +319,9 @@ func TestHookServerDown(t *testing.T) {
 	<-done
 }
 
-// TestSweep: the sweep copy-truncates hab.stderr and a holder's file at their caps, removes a
-// gone holder's old files and a holder file idle past goneHolderAge, keeps the newest crash
-// files, and leaves hab.log, which its writer rotates (diagnostics.md 4.3, 11).
+// TestSweep: the sweep copy-truncates hab.stderr, engine.log and a holder's file at their caps,
+// removes a gone holder's old files and a holder file idle past goneHolderAge, keeps the newest
+// crash files, and leaves hab.log, which its writer rotates (diagnostics.md 4.3, 11).
 func TestSweep(t *testing.T) {
 	t.Parallel()
 	d, _ := testDiag(t)
@@ -335,6 +336,10 @@ func TestSweep(t *testing.T) {
 	holder := big("gff-hab-holder.aaaa0001.log", holderLogMax+1)
 	orphan := big("gff-hab-holder.aaaa0002.log.1", 10)
 	idle := big("gff-hab-holder.aaaa0003.log", 10)
+	// engine.log sits in the Capcom folder, where the engine job writes it.
+	os.MkdirAll(filepath.Join(d.state, capcomFolders), 0o700)
+	engineLog := filepath.Join(d.state, capcomFolders, capcomengine.LogFile)
+	os.WriteFile(engineLog, []byte(strings.Repeat("x", capcomengine.LogMax+1)), 0o600)
 	old := time.Now().Add(-goneHolderAge - time.Hour)
 	os.Chtimes(idle, old, old)
 	crash := filepath.Join(d.state, crashDir)
@@ -346,7 +351,7 @@ func TestSweep(t *testing.T) {
 	}
 	d.sweep()
 	for p, size := range map[string]int64{stderr: 0, logfile.Old(stderr, 1): stderrMax + 1, holder: 0,
-		logfile.Old(holder, 1): holderLogMax + 1} {
+		logfile.Old(holder, 1): holderLogMax + 1, engineLog: 0, logfile.Old(engineLog, 1): capcomengine.LogMax + 1} {
 		if st, err := os.Stat(p); err != nil || st.Size() != size {
 			t.Errorf("%s: %v", filepath.Base(p), err)
 		}

@@ -441,7 +441,7 @@ test('under the login a saved auth.json is moved aside, never deleted, and the l
       assert.equal(aside.length, 1);
       assert.equal(await fs.readFile(path.join(h, aside[0]!), 'utf8'), '{"refresh":"newest"}');
       assert.equal(await fs.readlink(path.join(h, 'auth.json')), path.join(r.home, 'auth.json'));
-      assert.ok(r.logs.some((l) => l.includes('moved auth.json aside')));
+      assert.ok(r.logs.some((l) => l.includes('"msg":"home entry moved aside"') && l.includes('"entry":"auth.json"')));
     },
   );
 });
@@ -756,5 +756,73 @@ test('an input sent again after its take was lost is taken again and runs no sec
     await until(() => r.hab.of('input.taken').filter((m) => m.item === 'it1').length === 2, 5000, 'taken again');
     await sleep(100);
     assert.equal(r.codex.turns.length, 1);
+  });
+});
+
+// Diagnostics test 11, the Codex engine's leg: a string in the input, a provider's item error and
+// its failed turn is in no capcom.log line; the lines carry the error classes (4.9).
+test('a provider error reaches capcom.log as its class, never its text', async () => {
+  const canary = 'cnry' + 'c0d3x5';
+  await withRig({}, async (r) => {
+    r.codex.script = async (ctx) => {
+      ctx.item({ id: 'e1', type: 'error', message: `upstream said ${canary}\nmore ${canary}` }, 'item.completed');
+      ctx.fail(`429 Too Many Requests: ${canary}`);
+    };
+    await codexStarted(r);
+    r.hab.input('it1', `hello ${canary}`);
+    await r.hab.wait('turn.ended');
+    const lines = r.logs.map((l) => JSON.parse(l));
+    assert.ok(!r.logs.join('').includes(canary), r.logs.join(''));
+    assert.ok(lines.some((o) => o.msg === 'item error' && o.class === 'other'), r.logs.join(''));
+    assert.ok(lines.some((o) => o.msg === 'turn failed' && o.class === 'rate_limit'), r.logs.join(''));
+  });
+});
+
+// 1.2 #12 through the Codex engine: input handling throws once after the item was queued; the
+// resend on the next connection is dropped as already held, so Codex runs one turn.
+// failInput returns the count of calls of the input handler.
+function failInput(r: CodexRig, times: number, after: boolean): () => number {
+  const eng = r.engine as any;
+  const real = eng.onInput.bind(eng);
+  let calls = 0;
+  eng.onInput = (item: unknown) => {
+    calls++;
+    if (after) real(item);
+    if (times-- > 0) throw new Error('input handling failed');
+    if (!after) real(item);
+  };
+  return () => calls;
+}
+
+test('an input whose handling throws once runs one Codex turn', async () => {
+  await withRig({}, async (r) => {
+    r.codex.script = async (ctx) => ctx.say('done');
+    await codexStarted(r);
+    const calls = failInput(r, 1, true);
+    const marker = 'once-' + 'c0dx';
+    r.hab.input('it1', marker);
+    await r.hab.wait('ready', (m) => m.conn === 2);
+    r.hab.input('it1', marker);
+    await until(() => calls() === 2, 5000, 'the resend handled');
+    await r.hab.wait('turn.ended');
+    await sleep(200);
+    assert.equal(r.codex.turns.filter((t) => t.text.includes(marker)).length, 1, 'one Codex turn');
+    assert.equal(new Set(r.hab.of('turn.started').map((m) => m.turn)).size, 1);
+    assert.equal(r.exitCode(), undefined);
+  });
+});
+
+test('an input whose handling throws 3 times makes the Codex engine exit 1', async () => {
+  await withRig({}, async (r) => {
+    await codexStarted(r);
+    failInput(r, 100, false);
+    for (let conn = 1; conn <= 3; conn++) {
+      await r.hab.wait('ready', (m) => m.conn === conn);
+      r.hab.input('it1', 'never handled');
+      if (conn < 3) await r.hab.wait('ready', (m) => m.conn === conn + 1);
+    }
+    await until(() => r.exitCode() !== undefined, 5000, 'the exit');
+    assert.equal(r.exitCode(), 1);
+    assert.equal(r.hab.of('turn.started').length, 0);
   });
 });

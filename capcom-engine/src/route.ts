@@ -2,7 +2,14 @@
 // one JSON object per line both ways, with seq numbers, acks and resend.
 import http from 'node:http';
 import type { Duplex } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { enginePath } from './addr.js';
+import { type ComponentLog, count, dur, errClass, errorClass, errType, word } from './log.js';
+
+// HANDLER_TRIES is how many times one message may fail its handler. Each failure drops the
+// connection unacknowledged, so gff-hab sends the message again on the next one (diagnostics.md
+// 1.2 #12); the last asks the engine to exit, so gff-hab's crash limit ends a loop.
+export const HANDLER_TRIES = 3;
 
 export const MAX_LINE = 4 * 1024 * 1024;
 
@@ -19,12 +26,21 @@ export interface RouteOptions {
   onHello: (m: Msg) => Record<string, unknown> | Promise<Record<string, unknown>>;
   // Runs after each ready and the resend of the outbox.
   afterReady?: () => void;
-  log: (line: string) => void;
+  log: ComponentLog;
+  // Called when one message failed its handler HANDLER_TRIES times: the engine exits.
+  onFatal?: () => void;
 }
 
 interface Out {
   body: Record<string, unknown>;
   seq?: number; // seq on the current connection, once sent
+}
+
+// digestOf names a message by its body: it leaves out seq, which each connection numbers anew,
+// wherever the key stands.
+function digestOf(m: Msg): string {
+  const { seq: _seq, ...body } = m;
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
 export class Route {
@@ -38,6 +54,8 @@ export class Route {
   private backoffMax: number;
   private inQueue: Promise<void> = Promise.resolve();
   private drainWaiters: (() => void)[] = [];
+  private failures = new Map<string, number>(); // a message's digest: its handler's failures
+  private failedSock?: Duplex; // the connection whose messages are left after a failure
   connects = 0;
 
   constructor(o: RouteOptions) {
@@ -106,28 +124,32 @@ export class Route {
       headers: { Host: 'gff-hab', Connection: 'Upgrade', Upgrade: 'gff-capcom/1', 'Content-Length': '0' },
     });
     let done = false;
-    const fail = (why: string) => {
+    const refused = (status: number | undefined) => {
       if (done) return;
       done = true;
-      this.o.log(`route: ${why}; retrying in ${this.backoff} ms`);
+      this.o.log.warn('route refused', count('status', status ?? 0), dur('retry', this.backoff));
       this.retry();
     };
     req.on('upgrade', (res, socket, head) => {
       if (done) return;
-      done = true;
       if (res.statusCode !== 101) {
         socket.destroy();
-        this.o.log(`route: status ${res.statusCode}; retrying in ${this.backoff} ms`);
-        this.retry();
+        refused(res.statusCode);
         return;
       }
+      done = true;
       this.attach(socket, head);
     });
     req.on('response', (res) => {
       res.resume();
-      fail(`status ${res.statusCode}`);
+      refused(res.statusCode);
     });
-    req.on('error', (e) => fail(`connect failed: ${(e as Error).message}`));
+    req.on('error', (e) => {
+      if (done) return;
+      done = true;
+      this.o.log.warn('route connect failed', errType(e), dur('retry', this.backoff));
+      this.retry();
+    });
     req.end();
   }
 
@@ -156,7 +178,7 @@ export class Route {
         if (line.trim()) this.onLine(line);
       }
       if (buf.length > MAX_LINE) {
-        this.o.log('route: line over 4 MiB; dropping the connection');
+        this.o.log.warn('route line too long', count('bytes', buf.length));
         socket.destroy();
       }
     };
@@ -167,7 +189,7 @@ export class Route {
       this.sock = undefined;
       this.greeted = false;
       if (this.closed) return;
-      this.o.log(`route: connection dropped; retrying in ${this.backoff} ms`);
+      this.o.log.warn('route dropped', dur('retry', this.backoff));
       this.retry();
     });
     if (head.length) onData(head);
@@ -178,7 +200,7 @@ export class Route {
     try {
       m = JSON.parse(line);
     } catch {
-      this.o.log('route: a line that is not JSON; ignored');
+      this.o.log.warn('route line not json');
       return;
     }
     if (!m || typeof m !== 'object') return;
@@ -187,8 +209,11 @@ export class Route {
       return;
     }
     const sock = this.sock;
-    // Messages are handled one at a time, in order, then acked.
+    // Messages are handled one at a time, in order, then acked. After a handler failed, the
+    // later inputs of that connection are left: gff-hab sends every input past the last take
+    // again, in order, on the next one. Other messages run: gff-hab sends them once.
     this.inQueue = this.inQueue.then(async () => {
+      if (sock && sock === this.failedSock && m.type === 'input') return;
       try {
         if (m.type === 'hello') {
           const ready = await this.o.onHello(m);
@@ -201,10 +226,34 @@ export class Route {
           await this.o.onMessage(m);
         }
       } catch (e) {
-        this.o.log(`route: handling ${String(m.type)} failed: ${(e as Error).message}`);
+        this.handlerFailed(m, sock, e);
+        return;
       }
+      // A message handled after it failed starts its count again: three unrelated failures of
+      // one repeated body (an interrupt, the same pace) days apart are no loop.
+      if (this.failures.size > 0) this.failures.delete(digestOf(m));
       if (this.sock === sock && typeof m.seq === 'number') this.raw({ type: 'ack', ack: m.seq });
     });
+  }
+
+  // handlerFailed logs the failure by class, never its text, and leaves the message
+  // unacknowledged: the connection drops, and gff-hab sends it again (diagnostics.md 1.2 #12,
+  // 4.9). After HANDLER_TRIES failures of one message, with no success between, the engine
+  // exits instead.
+  private handlerFailed(m: Msg, sock: Duplex | undefined, e: unknown): void {
+    const digest = digestOf(m);
+    const n = (this.failures.get(digest) ?? 0) + 1;
+    if (this.failures.size >= 64) this.failures.clear();
+    this.failures.set(digest, n);
+    const msg = e instanceof Error ? e.message : String(e);
+    this.o.log.error('route handler failed', word('type', String(m.type)), count('tries', n), errType(e), errClass(errorClass(msg)));
+    this.failedSock = sock;
+    if (n >= HANDLER_TRIES) {
+      this.o.log.error('route message failed every try', word('type', String(m.type)));
+      this.o.onFatal?.();
+      return;
+    }
+    sock?.destroy();
   }
 
   private onAck(n: number): void {

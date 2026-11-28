@@ -6,6 +6,8 @@
 // the tests check: its pid, a hash of the credential, whether its environment holds one.
 //
 // Inputs that steer it: "slow" waits for $STUB_DIR/release before its reply; "crash" exits 3;
+// "leak <s>" writes s to stderr and in an error message's text, writes one crash line to
+// $GFF_HAB_CAPCOM_LOG, and exits 3 (diagnostics test 11);
 // "route" calls channel.status on the pane route with its token and replies with the answer;
 // "lbwrite" files a Logbook task on the pane route and replies with the answer;
 // "approve" asks approval.request for a WebFetch and replies with the answer it got;
@@ -357,6 +359,26 @@ func turns(sock, token string) {
 				summarise(askContext("compact"))
 				send(map[string]any{"type": "compacted"})
 			}
+		case "leak":
+			// The engine's content paths for diagnostics test 11: arg on stderr (engine.log), in
+			// a provider error's text, and as the last stderr line; one structured crash line in
+			// capcom.log, as the real engine's crash handler writes it; then exit 3, once the
+			// take is acknowledged, so the item is not sent again.
+			waitHandled("input.taken")
+			fmt.Fprintf(os.Stderr, "sdk: the prompt was %s\n", arg)
+			send(map[string]any{"type": "error", "kind": "", "text": "the SDK stopped: 500 provider said " + arg, "exiting": true})
+			waitHandled("error")
+			if p := os.Getenv("GFF_HAB_CAPCOM_LOG"); p != "" {
+				line := fmt.Sprintf(`{"t":%q,"lvl":"error","msg":"uncaught exception","proc":"capcom","comp":"crash","err_type":"Error","frames":"stub"}`+"\n",
+					time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"))
+				if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+					f.WriteString(line)
+					f.Close()
+				}
+			}
+			fmt.Fprintf(os.Stderr, "last: %s\n", arg)
+			logf("leaking and crashing")
+			os.Exit(3)
 		}
 		switch text {
 		case "crash":

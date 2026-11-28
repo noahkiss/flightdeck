@@ -31,7 +31,7 @@ export interface CodexTurnCtx {
   say(text: string): void;
   mcp(tool: string, args: Record<string, unknown>, server?: string): void;
   search(query: string): void;
-  item(item: Partial<ThreadItem> & { type: string }): void;
+  item(item: Partial<ThreadItem> & { type: string }, phase?: 'item.started' | 'item.completed'): void;
   fail(message: string): void; // turn.failed, then the CLI exits 1
   context(used: number): Promise<void>; // a token_count at this share of the window
   // a token_count with rate limits, as CLI 0.167 writes it from a login's response headers
@@ -201,7 +201,7 @@ export class FakeThread implements CodexThreadLike {
         push({ type: 'item.started', item: { id: `w${++n}`, type: 'web_search', query: '' } });
         push({ type: 'item.completed', item: { id: `w${n}`, type: 'web_search', query } });
       },
-      item: (it) => push({ type: 'item.started', item: { id: `x${++n}`, ...it } as ThreadItem }),
+      item: (it, phase = 'item.started') => push({ type: phase, item: { id: `x${++n}`, ...it } as ThreadItem }),
       fail: (message) => {
         failed = message;
         push({ type: 'turn.failed', error: { message } });

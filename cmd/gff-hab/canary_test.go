@@ -29,8 +29,8 @@ import (
 // status are checked for it (8.3). A third, a session's name, is in a friction note's text,
 // which only the name rule scrubs: the bundle and the archive are checked for it.
 //
-// The Capcom leg (a turn on a test engine that echoes the string on stderr and in a provider
-// error) waits for the engine's capcom.log; see the spec's stage 5.
+// The Capcom leg is TestCanaryCapcom; the engine's own half, its SDK stderr and provider errors,
+// is in capcom-engine's tests.
 func TestCanary(t *testing.T) {
 	t.Parallel()
 	canary, label, sessName := "cnry"+randHex(6), "lbl"+randHex(6), "ses"+randHex(6)
@@ -161,6 +161,71 @@ exec cat`
 		for p, data := range untar(t, archive) {
 			check("archive "+p, data, s)
 		}
+	}
+}
+
+// TestCanaryCapcom is test 11's Capcom leg (diagnostics.md 4.9, 6.3, 10.1): a Capcom turn on a
+// test engine that echoes the string on stderr, in a provider error's text and as its last
+// stderr line, then crashes. The string stays in engine.log, which no bundle reads: no file under
+// <state>/logs, no health record, no gff-hab status output and no bundle file holds it. The
+// engine's capcom.log line reaches gff-hab logs and the bundle, the crash is a health record
+// whose cause is the exit status, and the session row names the crash line, not the stderr.
+func TestCanaryCapcom(t *testing.T) {
+	t.Parallel()
+	canary := "cnry" + randHex(6)
+	e := newServiceEnv(t, "")
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	connected := func() bool {
+		st, _ := callJSON[api.CapcomServiceStatus](t, c, "capcom.status", api.CapcomServiceParams{})
+		return st.Connected
+	}
+	waitUntil(t, "the engine connected", connected)
+	pid := e.enginePid()
+	run(t, "capcom", "say", "-socket", e.sock, "leak "+canary)
+	waitUntil(t, "a new engine", func() bool { p := e.enginePid(); return p != 0 && p != pid })
+	waitUntil(t, "the new engine connected", connected)
+
+	// Positive controls: the string is in engine.log, the crash line in capcom.log.
+	engineLog, _ := os.ReadFile(filepath.Join(e.state, "capcom", "engine.log"))
+	if !strings.Contains(string(engineLog), canary) {
+		t.Fatalf("engine.log lacks the string:\n%s", engineLog)
+	}
+	capcomLog, _ := os.ReadFile(filepath.Join(logsDir(e.state), capcomLogFile))
+	if !strings.Contains(string(capcomLog), `"msg":"uncaught exception"`) {
+		t.Fatalf("capcom.log: %q", capcomLog)
+	}
+	health, _ := os.ReadFile(filepath.Join(e.state, healthFile))
+	if !strings.Contains(string(health), `"proc":"capcom","kind":"crash","cause":"exit 3"`) {
+		t.Fatalf("health.jsonl: %s", health)
+	}
+	waitUntil(t, "gff-hab logs -proc capcom to show the crash line", func() bool {
+		return strings.Contains(run(t, "logs", "-state", e.state, "-proc", "capcom"), "uncaught exception")
+	})
+	waitUntil(t, "the engine's error line in hab.log", func() bool { return strings.Contains(habLog(t, e.state), "engine reported") })
+
+	d := shortDir(t)
+	status := runEnv(t, e.env, "status", "-socket", e.sock, "-state", e.state, "-holders", e.hdir)
+	bundleDir := filepath.Join(d, "bundle")
+	runEnv(t, e.env, "bundle", "-socket", e.sock, "-state", e.state, "-holders", e.hdir, "-config", e.config, "-dir", bundleDir)
+	bundle := filesUnder(t, bundleDir)
+	if !strings.Contains(bundle["logs/capcom.log"], "uncaught exception") {
+		t.Fatalf("the bundle's capcom.log: %q", bundle["logs/capcom.log"])
+	}
+	check := func(where, data string) {
+		t.Helper()
+		if strings.Contains(strings.ToLower(data), strings.ToLower(canary)) {
+			t.Errorf("%s holds the string:\n%s", where, data)
+		}
+	}
+	for p, data := range filesUnder(t, logsDir(e.state)) {
+		check(p, data)
+	}
+	check(healthFile, string(health))
+	check("gff-hab status", status)
+	for p, data := range bundle {
+		check("bundle "+p, data)
 	}
 }
 
