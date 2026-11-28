@@ -893,8 +893,10 @@ bundle command.
 | This machine's host name, user name and home path; every host, label and device id in `peers.toml` and `hab.toml`; the names of projects, sessions, rounds and groups gff-hab knows. Exact, any case | The `n:` token; the home path `~` |
 | The hygiene scan's built-in rules (`ci-release.md` 9.4): private IPv4, CGNAT IPv4, tailnet IPv6, `<label>.ts.net` names, home paths | `<ip>`, `<ip>`, `<ip>`, `<host>`, `~/<path>` |
 | Any other IPv4 or IPv6 address | `<ip>` |
+| A git remote's owner and repository: the scp form `user@host:owner/repo`, and the first two path components of an `ssh`, `git` or `git+ssh` URL, or of an `https` URL of a public forge or with a path that ends in `.git` | The `n:` token of each; `.git` stays |
 | A URL's user info, query and fragment | Removed |
 | Email addresses | `<email>` |
+| A host name under `.local`, `.lan`, `.home`, `.home.arpa`, `.internal` or `.localdomain` | `<host>` |
 | PEM blocks; `ssh-` and `ecdsa-` key lines; `SHA256:` fingerprints | `<key>` |
 | `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer`; the whole value of a structured line's attribute whose key is, or ends in, `token`, `secret`, `password`, `passwd`, `authorization`, `api_key` or `private_key` | `<secret>` |
 | Runs of 32 or more base64, base64url or hex characters | `<blob>` |
@@ -927,6 +929,17 @@ How each rule reads (the code is `internal/diagbundle`):
 - **Addresses.** An IPv6 address followed by `:`, as in `"%s: %w"`, is an address: the rule
   trims the colon, reads the address and writes the colon back after `<ip>`. A colon followed
   by a hex digit makes the run longer than an address, such as a time.
+- **IPv4 with leading zeros.** `192.000.002.010` is an address too: four numbers of 0 to 255,
+  any of them padded. A part over 255 makes it something else, and it stays.
+- **Git remotes before URLs and email.** `git@host:owner/repo` would otherwise read as an
+  address and keep its owner and repository. The public forges are `github.com`, `gitlab.com`,
+  `bitbucket.org`, `codeberg.org` and `git.sr.ht`; an `https` URL of another host keeps its path
+  unless the path ends in `.git`. A known name already written as its token stays that token.
+  Limit: a self-hosted forge's `https` URL with no `.git`, such as a link to a pull request,
+  keeps its path; its host is still a name or a LAN name where a rule knows it.
+- **LAN names after email.** `bob@printer.local` becomes `<email>`, user name included. A name
+  that a dot comes before (`.env.local`) or that an extension follows (`settings.local.json`)
+  is a file name, and stays; a lone file name such as `notes.local` reads as a host.
 - **Home paths.** Besides `/Users/<name>` and `/home/<name>`, the rule takes `/var/home/<name>`,
   `/root`, and a macOS user's temporary folder, `/private/var/folders/<a>/<b>` (also without
   `/private`).

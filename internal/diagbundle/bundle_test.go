@@ -54,6 +54,10 @@ const (
 	fxAlias    = "acme-work"
 	fxRound    = "check-acme-invoices"
 	fxLong     = "only-in-a-long-line-p0o9"
+	fxLANHost  = "printer-box.lan"
+	fxPadIP    = "192.000.002.077" // a documentation address with leading zeros
+	fxGitOwner = "acme-fixture"
+	fxGitRepo  = "hidden-orchard"
 	// A pane id is a UUID: the blob rule keeps it (an id Flightdeck minted).
 	fxPane = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
 )
@@ -65,7 +69,7 @@ func pemBegin(kind string) string { return "-----" + "BEGIN " + kind + " PRIVATE
 var leaks = []string{fxHome, fxHost, "build-box", fxUser, fxPeer, fxPeerHost, fxDevice, fxProject, fxDocIP, fxDocIP2,
 	fxPrivIP, fxCGNAT, fxTail6, fxDoc6, fxTailName, "/home/other", "secret-plans", fxEmail, fxURLUser, fxURLPass, fxQuery,
 	fxPEMBody, fxSSH, fxFinger, "op://", "Fixture Box", fxToken, fxBearer, fxBlob, fxStderr, fxEngine, fxOld, fxNudge,
-	"secret-repo", fxAlias, fxRound, fxLong}
+	"secret-repo", fxAlias, fxRound, fxLong, fxLANHost, fxPadIP, fxGitOwner, fxGitRepo}
 
 func fxIdentity(state string) Identity {
 	return Identity{Home: fxHome, State: state, Names: []string{fxHost, "build-box", fxUser, fxPeer, fxPeerHost, fxDevice, fxProject}}
@@ -89,6 +93,8 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 			`{"t":"` + ts(20*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"fetch https://` + fxURLUser + `:` + fxURLPass + `@git.example.com/repo?access=` + fxQuery + `#frag"}`,
 			`{"t":"` + ts(10*time.Minute) + `","lvl":"error","msg":"legacy","proc":"hab","comp":"legacy","text":"key ssh-ed25519 ` + fxSSH + ` fp ` + fxFinger + ` ref ` + fxOpRef + `"}`,
 			`{"t":"` + ts(5*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"token=` + fxToken + ` Authorization: Bearer ` + fxBearer + ` digest ` + fxBlob + `"}`,
+			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"clone git@github.com:` + fxGitOwner + `/` + fxGitRepo +
+				`.git and ssh://git@code.example.org/` + fxGitOwner + `/` + fxGitRepo + ` on ` + fxLANHost + ` at ` + fxPadIP + `"}`,
 			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"` + strings.Repeat("x", MaxLine) + fxLong + `"}`,
 			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"cut sh`, // a line a crash cut short
 		}, "\n") + "\n",
@@ -446,6 +452,7 @@ func TestArchive(t *testing.T) {
 func TestScrubRules(t *testing.T) {
 	r := newWithSalt(Identity{Home: fxHome, Names: []string{fxHost, "ab"}}, []byte("salt"))
 	tok := r.token(fxHost)
+	owner, repo := r.token("acme"), r.token("secret-repo")
 	for _, c := range []struct{ in, want string }{
 		{"on " + strings.ToUpper(fxHost) + ".", "on " + tok + "."},
 		{"xbuild-box.example.com", "xbuild-box.example.com"}, // not a word of its own
@@ -494,6 +501,24 @@ func TestScrubRules(t *testing.T) {
 		{"read /root/.ssh/id_fixture", "read ~/<path>"},
 		{"mount /rootfs/x", "mount /rootfs/x"},
 		{"tmp /private/var/folders/ab/cd0ef/T/x.sock", "tmp ~/<path>"},
+		// Local network names (review part 2 L1); a file name that ends like one stays.
+		{"dial nas.lan and server.home.arpa:80", "dial <host> and <host>:80"},
+		{"print to printer.local, then box.internal", "print to <host>, then <host>"},
+		{"at media-box.home and db.localdomain.", "at <host> and <host>."},
+		{"mail bob@printer.local", "mail <email>"},
+		{"read .env.local and settings.local.json", "read .env.local and settings.local.json"},
+		{"http://nas.lan:8080/x", "http://<host>:8080/x"},
+		// IPv4 with leading zeros (review part 2 L3): built from parts, so no scan reads it.
+		{"at " + strings.Join([]string{"10", "020", "030", "040"}, "."), "at <ip>"},
+		{"at " + strings.Join([]string{"192", "000", "002", "044"}, ".") + ":22", "at <ip>:22"},
+		{"at " + strings.Join([]string{"192", "000", "002", "256"}, "."), "at 192.000.002.256"},
+		// Git remotes (review part 2 L4).
+		{"clone git@github.com:acme/secret-repo.git", "clone <email>:" + owner + "/" + repo + ".git"},
+		{"push ssh://git@code.example.org/acme/secret-repo", "push ssh://code.example.org/" + owner + "/" + repo},
+		{"see https://github.com/acme/secret-repo/pull/12", "see https://github.com/" + owner + "/" + repo + "/pull/12"},
+		{"fetch https://code.example.org/acme/secret-repo.git", "fetch https://code.example.org/" + owner + "/" + repo + ".git"},
+		{"read https://example.com/docs/page", "read https://example.com/docs/page"},
+		{"clone git@github.com:" + fxHost + "/secret-repo", "clone <email>:" + tok + "/" + repo},
 	} {
 		if got := r.Scrub(c.in); got != c.want {
 			t.Errorf("Scrub(%q) = %q, want %q", c.in, got, c.want)
