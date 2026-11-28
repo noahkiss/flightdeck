@@ -418,6 +418,23 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestCopy: a warn line a writer makes itself with Format reaches stderr through Copy, and
+// never the file; a line below warn is not copied (4.2, review L6).
+func TestCopy(t *testing.T) {
+	f, e := setup(t, Config{Prefix: "gff-hab: "})
+	Copy(LevelInfo, "log", "lines dropped", Count("lines", 3))
+	if e.Len() != 0 {
+		t.Fatalf("an info line was copied: %q", e.String())
+	}
+	Copy(LevelWarn, "log", "lines dropped", Count("lines", 3))
+	if s := e.String(); !strings.HasPrefix(s, "gff-hab: ") || !strings.Contains(s, "lines dropped") || !strings.Contains(s, "lines=3") {
+		t.Errorf("stderr: %q", s)
+	}
+	if got := f.all(); len(got) != 0 {
+		t.Errorf("Copy wrote the file: %q", got)
+	}
+}
+
 // TestNoSink: before Setup, and on a nil Logger, nothing is written and nothing fails.
 func TestNoSink(t *testing.T) {
 	Reset()

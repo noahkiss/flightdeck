@@ -81,7 +81,9 @@ func newLogWriter(onFlush func()) *logfile.Writer {
 	return logfile.New(logfile.Config{Max: habLogMax, Keep: habLogKeep, OnFlush: onFlush,
 		Dropped: func(n int64) []byte {
 			return diaglog.Format(diaglog.LevelWarn, "log", "lines dropped", diaglog.Count("lines", n))
-		}})
+		},
+		// The count is a warn line, so it reaches stderr too (4.2), once it is in hab.log.
+		Reported: func(n int64) { diaglog.Copy(diaglog.LevelWarn, "log", "lines dropped", diaglog.Count("lines", n)) }})
 }
 
 // setupLog makes the writer gff-hab's line sink (4.2) and returns the legacy logger every Logf

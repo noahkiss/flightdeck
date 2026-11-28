@@ -327,7 +327,14 @@ func (s *sink) write(lvl Level, comp, msg, tr string, attrs []Attr, left int64) 
 	if s.cfg.File != nil {
 		s.cfg.File.Write(s.encode(t, lvl, comp, msg, tr, attrs, left))
 	}
-	if s.cfg.Stderr != nil && (lvl >= LevelWarn || (s.cfg.CopyAll != nil && s.cfg.CopyAll())) {
+	if lvl >= LevelWarn || (s.cfg.CopyAll != nil && s.cfg.CopyAll()) {
+		s.copy(t, lvl, comp, msg, tr, attrs, left)
+	}
+}
+
+// copy writes a line's text copy to Stderr (4.2).
+func (s *sink) copy(t time.Time, lvl Level, comp, msg, tr string, attrs []Attr, left int64) {
+	if s.cfg.Stderr != nil {
 		var b strings.Builder
 		b.WriteString(s.cfg.Prefix)
 		b.WriteString(t.UTC().Format(stderrLayout))
@@ -472,4 +479,14 @@ func Format(lvl Level, comp, msg constant, attrs ...Attr) []byte {
 		return nil
 	}
 	return s.encode(s.cfg.Now(), lvl, string(comp), string(msg), "", attrs, 0)
+}
+
+// Copy writes only the Stderr copy of a warn or error line that a writer made itself with
+// Format, so that line reaches stderr as Warn's would (4.2). A line below warn is not copied.
+func Copy(lvl Level, comp, msg constant, attrs ...Attr) {
+	s := current.Load()
+	if s == nil || lvl < LevelWarn {
+		return
+	}
+	s.copy(s.cfg.Now(), lvl, string(comp), string(msg), "", attrs, 0)
 }

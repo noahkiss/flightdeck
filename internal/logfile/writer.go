@@ -41,6 +41,9 @@ type Config struct {
 	// Dropped formats the line that reports n lines dropped (queue full, or a write that
 	// failed). It is written before the next line that reaches the file. Default: a plain line.
 	Dropped func(n int64) []byte
+	// Reported, if set, is called on the writer's goroutine once the Dropped line for n is in
+	// the file: once per report, so a full disk that fails every write calls it not at all.
+	Reported func(n int64)
 	// OnFlush is called on the writer's goroutine after it wrote lines to the file and the
 	// queue is empty.
 	OnFlush func()
@@ -234,6 +237,8 @@ func (w *Writer) put(f *file, b []byte) {
 	if n := w.dropped.Swap(0); n > 0 {
 		if f.write(w.cfg.Dropped(n)) != nil {
 			w.dropped.Add(n)
+		} else if w.cfg.Reported != nil {
+			w.cfg.Reported(n)
 		}
 	}
 	if f.write(b) != nil {

@@ -277,6 +277,12 @@ of our own, `internal/diaglog` (10.2). One line is one object:
 - A client's connection id, which gff-hab mints, goes under `client_id`, of class `safe` when it
   is lower-case hex. `client` holds a client kind only (4.6).
 - gff-hab writes these lines. The holder keeps its text lines until its next build (Q5).
+- The sink is the process's own: `diaglog.Setup` sets one per process, and every package's
+  typed lines go to it, not through a `logf` the package was given. Before `Setup` a typed line
+  goes nowhere. A test captures lines by calling `Setup` with its own file, so such tests do not
+  run in parallel.
+- A line a writer makes itself, such as the count of lines `hab.log`'s writer dropped (4.3),
+  is a `warn` line too: once it is in the file, its text copy goes to stderr.
 
 **Decision: JSON lines on disk, from stage 5.** JSON lets the bundle redact by key and lets
 `gff-hab logs` filter by trace and level. Every reference tool writes text (2), and text is

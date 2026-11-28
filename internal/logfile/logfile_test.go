@@ -108,7 +108,9 @@ func TestWriterReopens(t *testing.T) {
 // dropped; the count is written before the next line that reaches the file (spec 4.3, 11).
 func TestWriterNeverBlocks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hab.log")
-	w := New(Config{Queue: 10, Dropped: func(n int64) []byte { return fmt.Appendf(nil, "dropped %d\n", n) }})
+	var reported atomic.Int64
+	w := New(Config{Queue: 10, Dropped: func(n int64) []byte { return fmt.Appendf(nil, "dropped %d\n", n) },
+		Reported: func(n int64) { reported.Add(n) }})
 	defer w.Close()
 	done := make(chan struct{})
 	go func() {
@@ -132,6 +134,9 @@ func TestWriterNeverBlocks(t *testing.T) {
 	got := lines(t, path)
 	if len(got) != 11 || got[0] != "dropped 90" || got[1] != "line 0" || got[10] != "line 9" {
 		t.Fatalf("file: %q", got)
+	}
+	if n := reported.Load(); n != 90 {
+		t.Errorf("Reported %d lines, want 90 once", n)
 	}
 }
 
