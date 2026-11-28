@@ -2,9 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -70,6 +74,44 @@ func TestBundleNames(t *testing.T) {
 }
 
 // TestBundleSince: -since refuses a start in the future (diagnostics review L11).
+// TestBundleSignal: Ctrl-C or a TERM while the bundle writes removes its hidden work folder and
+// the archive's temporary file, and leaves no archive (diagnostics review L10).
+func TestBundleSignal(t *testing.T) {
+	t.Parallel()
+	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+		d := t.TempDir()
+		hold := filepath.Join(t.TempDir(), "hold")
+		cmd := exec.Command(bin, "bundle", "-state", filepath.Join(d, "state"), "-socket", filepath.Join(d, "none.sock"),
+			"-config", filepath.Join(d, "none.toml"), "-o", filepath.Join(d, "b.tar.gz"))
+		cmd.Env = append(os.Environ(), "GFF_TEST_BUNDLE_HOLD="+hold, noRaceExitSleep)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		var work string
+		waitUntil(t, "the work folder", func() bool {
+			b, _ := os.ReadFile(hold)
+			work = string(b)
+			return work != ""
+		})
+		if st, err := os.Stat(work); err != nil || !st.IsDir() || filepath.Dir(work) != d {
+			t.Fatalf("work folder %q: %v", work, err)
+		}
+		if err := cmd.Process.Signal(sig); err != nil {
+			t.Fatal(err)
+		}
+		var ee *exec.ExitError
+		if err := cmd.Wait(); !errors.As(err, &ee) || ee.ExitCode() != 130 {
+			t.Errorf("%v: exit %v, want 130", sig, err)
+		}
+		es, _ := os.ReadDir(d)
+		for _, e := range es {
+			if e.Name() != "state" {
+				t.Errorf("%v: %s left in the folder", sig, e.Name())
+			}
+		}
+	}
+}
+
 func TestBundleSince(t *testing.T) {
 	for _, since := range []string{"-48h", "2999-01-01T00:00:00Z"} {
 		out, err := runErr("bundle", "-state", t.TempDir(), "-socket", filepath.Join(t.TempDir(), "none.sock"), "-dir", filepath.Join(t.TempDir(), "b"), "-since", since)

@@ -24,6 +24,12 @@ func init() {
 			}()
 		}
 	}
+	if p := os.Getenv("GFF_TEST_BUNDLE_HOLD"); p != "" {
+		bundleHoldSeam = func(work string) {
+			os.WriteFile(p, []byte(work), 0o600)
+			time.Sleep(30 * time.Second)
+		}
+	}
 	every, _ := time.ParseDuration(os.Getenv("GFF_TEST_STALL_EVERY"))
 	after, _ := time.ParseDuration(os.Getenv("GFF_TEST_STALL_AFTER"))
 	stallTiming = func() (time.Duration, time.Duration) { return every, after }

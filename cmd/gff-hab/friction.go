@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"slices"
 	"time"
@@ -52,8 +53,8 @@ func (f *frictionNotes) Note(ctx context.Context, client api.ClientKind, p api.F
 }
 
 // logTail is the merged log (4.8) of the TailWindow before now, its last TailLines entries,
-// copied as the files hold them: a structured line as its JSON, so a bundle redacts it by key
-// (8.2), a text line as its text.
+// copied as the files hold them: a structured line as its JSON object, with its continuation
+// lines apart, so a bundle redacts it by key (8.2); a text line as its text.
 func logTail(state string, now time.Time) []friction.Line {
 	ring := make([]friction.Line, 0, friction.TailLines)
 	start := 0
@@ -62,11 +63,10 @@ func logTail(state string, now time.Time) []friction.Line {
 			if e.T.IsZero() {
 				return // before the first time stamp in its file: its time is unknown
 			}
-			text := e.Text
+			l := friction.Line{T: e.T.UTC(), Proc: e.Name, Text: e.Text}
 			if e.JSON != "" {
-				text = e.JSON
+				l.Line, l.Text = json.RawMessage(e.JSON), e.More
 			}
-			l := friction.Line{T: e.T.UTC(), Proc: e.Name, Text: text}
 			if len(ring) < friction.TailLines {
 				ring = append(ring, l)
 				return

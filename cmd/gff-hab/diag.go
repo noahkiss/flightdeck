@@ -81,7 +81,9 @@ func newLogWriter(onFlush func()) *logfile.Writer {
 	return logfile.New(logfile.Config{Max: habLogMax, Keep: habLogKeep, OnFlush: onFlush,
 		Dropped: func(n int64) []byte {
 			return diaglog.Format(diaglog.LevelWarn, "log", "lines dropped", diaglog.Count("lines", n))
-		}})
+		},
+		// The count is a warn line, so it reaches stderr too (4.2), once it is in hab.log.
+		Reported: func(n int64) { diaglog.Copy(diaglog.LevelWarn, "log", "lines dropped", diaglog.Count("lines", n)) }})
 }
 
 // setupLog makes the writer gff-hab's line sink (4.2) and returns the legacy logger every Logf
@@ -285,11 +287,13 @@ func (d *habDiag) holderLost(instance, build string, panes int) {
 }
 
 // engineCrash writes the record of a Capcom engine crash, whose cause the supervisor gives as
-// a class (6.3). It raises no crash notice: the supervisor's own note and notice cover the engine.
+// a class (6.3), and counts it in the tallies as a holder loss is (7.1). It raises no crash
+// notice: the supervisor's own note and notice cover the engine.
 func (d *habDiag) engineCrash(r health.Record) {
 	if err := health.Append(filepath.Join(d.state, healthFile), r); err != nil {
 		d.logf("health record: %v", err)
 	}
+	d.tally.Health(r.Proc, r.Kind)
 }
 
 // serveHooks runs the hook server; the caller marks the endpoint up first. When it stops with an

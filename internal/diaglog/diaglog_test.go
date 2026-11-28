@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -211,8 +211,8 @@ func TestRepeatIdentity(t *testing.T) {
 	now = now.Add(time.Second)
 	l.Info("peer pinned", Label("b"), Device("dev-2"))
 	l.Info("peer pinned", Label("b"), Device("dev-2"))
-	For("trust").Info("trust prompt answered", Pane("p1"), Path("/x"), Word("choice", "trust"))
-	For("trust").Info("trust prompt answered", Pane("p2"), Path("/y"), Word("choice", "trust"))
+	For("trust").Info("trust prompt answered", Pane("00000000-0000-4000-8000-000000000001"), Path("/x"), Word("choice", "trust"))
+	For("trust").Info("trust prompt answered", Pane("00000000-0000-4000-8000-000000000002"), Path("/y"), Word("choice", "trust"))
 	got := f.all()
 	if len(got) != 4 {
 		t.Fatalf("lines %q", got)
@@ -239,10 +239,10 @@ func TestRepeatBound(t *testing.T) {
 	now := time.Unix(1000, 0)
 	f, _ := setup(t, Config{Now: func() time.Time { return now }})
 	l := For("x")
-	l.Info("each", Session("s-first"))
-	l.Info("each", Session("s-first"))
+	l.Info("each", Session("s-ffffffffffffffffffffffff"))
+	l.Info("each", Session("s-ffffffffffffffffffffffff"))
 	for i := range maxRepeat {
-		l.Info("each", Session("s-"+strconv.Itoa(i)))
+		l.Info("each", Session(fmt.Sprintf("s-%024x", i)))
 	}
 	s := current.Load()
 	s.mu.Lock()
@@ -255,7 +255,7 @@ func TestRepeatBound(t *testing.T) {
 	if len(got) != maxRepeat+2 {
 		t.Fatalf("%d lines, want %d", len(got), maxRepeat+2)
 	}
-	if c := decode(t, got[len(got)-2]); c["suppressed"] != 1.0 || c["session"] != "s-first" {
+	if c := decode(t, got[len(got)-2]); c["suppressed"] != 1.0 || c["session"] != "s-ffffffffffffffffffffffff" {
 		t.Errorf("the evicted window's count %v", c)
 	}
 }
@@ -337,11 +337,14 @@ func TestSafeForms(t *testing.T) {
 		cl   Class
 		text bool
 	}{
-		{Session("s-1"), "session", ClassSafe, false},
-		{Pane("p:2"), "pane", ClassSafe, false},
+		{Session("s-0123456789abcdef01234567"), "session", ClassSafe, false},
+		{Pane("0a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"), "pane", ClassSafe, false},
 		{Method("session.send"), "method", ClassSafe, false},
 		{Method("rm -rf"), "method_text", ClassText, true},
 		{Kind("not_found"), "kind", ClassSafe, false},
+		{Event("session.updated"), "event", ClassSafe, false},
+		{Harness("claude"), "harness", ClassSafe, false},
+		{ClientKind("app"), "client", ClassSafe, false},
 		{Trace("gK3V9QX2M7TA"), "trace", ClassSafe, false},
 		{Trace("gk3v9qx2m7ta"), "trace_text", ClassText, true},
 		{Event("PostToolUse"), "event", ClassSafe, false},
@@ -363,6 +366,16 @@ func TestSafeForms(t *testing.T) {
 		}
 		if c.text && KeyClass(c.a.key) != ClassText {
 			t.Errorf("KeyClass(%s) = %v", c.a.key, KeyClass(c.a.key))
+		}
+	}
+	// The safe forms are the minted id grammars and the API's word sets: a path, user@host or a
+	// host name passes none of them (review L3).
+	for _, v := range []string{"/srv/work/notes.txt", "jdoe@box.example.org", "printer.local", "box.example.org",
+		"p:2", "s-1", "S-0123456789ABCDEF01234567", "0A1B2C3D-4E5F-4A6B-8C7D-0E1F2A3B4C5D", ""} {
+		for _, a := range []Attr{Session(v), Pane(v), Method(v), Kind(v), Event(v), Harness(v), ClientKind(v)} {
+			if a.class != ClassText || !strings.HasSuffix(a.key, textSuffix) {
+				t.Errorf("%q passed as safe under %s", v, a.key)
+			}
 		}
 	}
 	if KeyClass("msg") != ClassSafe || KeyClass("anything") != ClassText {
@@ -402,6 +415,23 @@ func TestParse(t *testing.T) {
 		if _, ok := Parse(s); ok {
 			t.Errorf("Parse(%q) ok", s)
 		}
+	}
+}
+
+// TestCopy: a warn line a writer makes itself with Format reaches stderr through Copy, and
+// never the file; a line below warn is not copied (4.2, review L6).
+func TestCopy(t *testing.T) {
+	f, e := setup(t, Config{Prefix: "gff-hab: "})
+	Copy(LevelInfo, "log", "lines dropped", Count("lines", 3))
+	if e.Len() != 0 {
+		t.Fatalf("an info line was copied: %q", e.String())
+	}
+	Copy(LevelWarn, "log", "lines dropped", Count("lines", 3))
+	if s := e.String(); !strings.HasPrefix(s, "gff-hab: ") || !strings.Contains(s, "lines dropped") || !strings.Contains(s, "lines=3") {
+		t.Errorf("stderr: %q", s)
+	}
+	if got := f.all(); len(got) != 0 {
+		t.Errorf("Copy wrote the file: %q", got)
 	}
 }
 

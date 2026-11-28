@@ -12,10 +12,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -32,7 +34,9 @@ const (
 	RuleCGNATIPv4   = "cgnat-ipv4"
 	RuleTailnetIPv6 = "tailnet-ipv6"
 	RuleTailnetName = "tailnet-name"
+	RuleLANName     = "lan-name"
 	RuleHomePath    = "home-path"
+	RuleGitRemote   = "git-remote"
 	RuleIP          = "ip"
 	RuleEmail       = "email"
 	RuleURL         = "url"
@@ -46,8 +50,8 @@ const (
 
 // Rules lists every rule, in the order the manifest prints them.
 var Rules = []string{RuleName, RulePath, RuleKnownName, RulePrivateIPv4, RuleCGNATIPv4, RuleTailnetIPv6,
-	RuleTailnetName, RuleHomePath, RuleIP, RuleEmail, RuleURL, RulePEM, RuleSSHKey, RuleFingerprint, RuleOpRef,
-	RuleSecret, RuleBlob}
+	RuleTailnetName, RuleLANName, RuleHomePath, RuleIP, RuleGitRemote, RuleEmail, RuleURL, RulePEM, RuleSSHKey,
+	RuleFingerprint, RuleOpRef, RuleSecret, RuleBlob}
 
 // Identity is what pass 2's first rule knows of this machine (8.3).
 type Identity struct {
@@ -336,10 +340,15 @@ func (r *Redactor) Scrub(s string) string {
 	s = r.ipv6(s)
 	s = r.replace(s, RuleTailnetName, tailnetNameRE, func(string) string { return "<host>" })
 	s = r.homePaths(s)
+	// The git remote rule runs before the URL and email rules: git@host:owner/repo would
+	// otherwise read as an address, and keep its owner and repository.
+	s = r.gitRemotes(s)
 	// The URL rule runs before the email rule: user info such as user:pw@host would otherwise
 	// read as an address, and leave the user name.
 	s = r.urls(s)
 	s = r.replace(s, RuleEmail, emailRE, func(string) string { return "<email>" })
+	// The LAN name rule runs after the email rule, so user@nas.lan loses its user name too.
+	s = r.lanNames(s)
 	s = r.replace(s, RulePEM, pemRE, func(string) string { return "<key>" })
 	s = r.replace(s, RuleSSHKey, sshKeyRE, func(string) string { return "<key>" })
 	s = r.replace(s, RuleFingerprint, fingerprintRE, func(string) string { return "<key>" })
@@ -430,7 +439,11 @@ func (r *Redactor) ipv4(s string) string {
 		}
 		a, err := netip.ParseAddr(s[i:j])
 		if err != nil {
-			return "", ""
+			// netip refuses a part written with leading zeros, such as 010; it is still four
+			// numbers of 0 to 255.
+			if a, err = paddedIPv4(s[i:j]); err != nil {
+				return "", ""
+			}
 		}
 		switch {
 		case a.IsPrivate():
@@ -533,6 +546,87 @@ func (r *Redactor) urls(s string) string {
 	})
 	r.count(RuleURL, n)
 	return out
+}
+
+// paddedIPv4 reads four dot-separated numbers of 0 to 255, any of them with leading zeros.
+func paddedIPv4(s string) (netip.Addr, error) {
+	var b [4]byte
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return netip.Addr{}, errNotIP
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
+			return netip.Addr{}, errNotIP
+		}
+		b[i] = byte(n)
+	}
+	return netip.AddrFrom4(b), nil
+}
+
+var errNotIP = errors.New("not an IPv4 address")
+
+// lanNameRE matches a host name under a suffix that only a local network resolves. home.arpa
+// stands before home and localdomain before local, so the longer suffix wins.
+var lanNameRE = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:home\.arpa|localdomain|local|lan|home|internal)\b`)
+
+// lanNames replaces a host name under .local, .lan, .home, .home.arpa, .internal or
+// .localdomain with <host>. A name that a dot comes before (.env.local) or that an extension
+// follows (settings.local.json) is a file name, and stays.
+func (r *Redactor) lanNames(s string) string {
+	return r.each(s, lanNameRE, func(s string, i, j int) (string, string) {
+		if i > 0 && s[i-1] == '.' {
+			return "", ""
+		}
+		if j+1 < len(s) && s[j] == '.' && isAlnum(s[j+1]) {
+			return "", ""
+		}
+		return RuleLANName, "<host>"
+	})
+}
+
+// forgeHosts are the public git forges whose https URLs name an owner and a repository first.
+var forgeHosts = map[string]bool{"github.com": true, "gitlab.com": true, "bitbucket.org": true, "codeberg.org": true,
+	"git.sr.ht": true}
+
+var (
+	// gitSCPRE is a remote in scp form: user@host:owner/repo, with an optional .git.
+	gitSCPRE = regexp.MustCompile(`\b([A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)(n:[0-9a-f]{8}|[A-Za-z0-9._~-]+)/(n:[0-9a-f]{8}|[A-Za-z0-9._~-]+)`)
+	// gitURLRE is a URL's scheme, user info and host, then the first two components of its path.
+	gitURLRE = regexp.MustCompile(`\b((ssh|git|git\+ssh|https?)://(?:[^\s/?#@"'<>]*@)?([A-Za-z0-9.-]+)(?::[0-9]+)?/)(n:[0-9a-f]{8}|[A-Za-z0-9._~-]+)/(n:[0-9a-f]{8}|[A-Za-z0-9._~-]+)`)
+)
+
+// gitRemotes replaces the owner and the repository of a git remote with their tokens: the scp
+// form (git@host:owner/repo.git), and a URL of the ssh, git or git+ssh scheme, or an https URL
+// of a public forge or with a path that ends in .git. A token a rule already wrote stays.
+func (r *Redactor) gitRemotes(s string) string {
+	part := func(v string) string {
+		if strings.HasPrefix(v, "n:") {
+			return v
+		}
+		if base, ok := strings.CutSuffix(v, ".git"); ok && base != "" {
+			return r.token(base) + ".git"
+		}
+		return r.token(v)
+	}
+	n := 0
+	s = gitSCPRE.ReplaceAllStringFunc(s, func(m string) string {
+		p := gitSCPRE.FindStringSubmatch(m)
+		n++
+		return p[1] + part(p[2]) + "/" + part(p[3])
+	})
+	s = gitURLRE.ReplaceAllStringFunc(s, func(m string) string {
+		p := gitURLRE.FindStringSubmatch(m)
+		scheme, host := strings.ToLower(p[2]), strings.ToLower(p[3])
+		if (scheme == "http" || scheme == "https") && !forgeHosts[host] && !strings.HasSuffix(p[5], ".git") {
+			return m
+		}
+		n++
+		return p[1] + part(p[4]) + "/" + part(p[5])
+	})
+	r.count(RuleGitRemote, n)
+	return s
 }
 
 // secrets replaces the value after a bearer; after token, key, secret, password or

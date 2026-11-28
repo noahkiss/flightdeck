@@ -3,6 +3,7 @@ package hook
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/noahkiss/flightdeck/internal/detect"
@@ -13,6 +14,12 @@ var (
 	ClaudeEvents = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "PreCompact", "Stop", "StopFailure", "SessionEnd"}
 	CodexEvents  = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"}
 )
+
+// KnownEvent reports whether e is an event a harness's hook config posts, or the status line's.
+// The payload names its event in its own text, so hook.log keeps it only when it is one of these.
+func KnownEvent(e string) bool {
+	return e == StatusLineEvent || slices.Contains(ClaudeEvents, e) || slices.Contains(CodexEvents, e)
+}
 
 type hookCmd struct {
 	Type    string `json:"type"`

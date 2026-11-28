@@ -42,6 +42,8 @@ type Entry struct {
 	// Trace is the trace of a structured line; a text line names its trace in Text.
 	Trace string
 	JSON  string // the structured line as the file holds it
+	// More is the continuation lines alone, joined by newlines: also in Text, after a newline.
+	More string
 }
 
 // Level is the entry's level: a text line counts as info.
@@ -242,6 +244,10 @@ func (r *reader) entry() *Entry {
 				r.next = &Entry{T: r.last, Name: r.src.Name, Kind: r.src.Kind, Text: s}
 			} else {
 				r.next.Text += "\n" + s
+				if r.next.More != "" {
+					r.next.More += "\n"
+				}
+				r.next.More += s
 			}
 			continue
 		}

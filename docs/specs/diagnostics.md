@@ -277,6 +277,12 @@ of our own, `internal/diaglog` (10.2). One line is one object:
 - A client's connection id, which gff-hab mints, goes under `client_id`, of class `safe` when it
   is lower-case hex. `client` holds a client kind only (4.6).
 - gff-hab writes these lines. The holder keeps its text lines until its next build (Q5).
+- The sink is the process's own: `diaglog.Setup` sets one per process, and every package's
+  typed lines go to it, not through a `logf` the package was given. Before `Setup` a typed line
+  goes nowhere. A test captures lines by calling `Setup` with its own file, so such tests do not
+  run in parallel.
+- A line a writer makes itself, such as the count of lines `hab.log`'s writer dropped (4.3),
+  is a `warn` line too: once it is in the file, its text copy goes to stderr.
 
 **Decision: JSON lines on disk, from stage 5.** JSON lets the bundle redact by key and lets
 `gff-hab logs` filter by trace and level. Every reference tool writes text (2), and text is
@@ -342,6 +348,10 @@ nothing when it works.
   `harness`, `event`, `failure` and `took_ms`. `failure` is `no_hab` (nothing answers on the hook
   socket), `timeout` (the run reached its budget), `status` (gff-hab answered an error status),
   `payload` (the payload is not JSON or names no event) or `other`.
+- `event` is the command's argument. With none, it is the payload's `hook_event_name` once the
+  run has read it, and only when it is an event a hook config posts (`internal/hook/config.go`,
+  and `StatusLine`): the payload's other words are its own text. Otherwise the line has no
+  `event`.
 - A run outside any pane gff-hab owns (no `GFF_HAB`) and a nested Claude Code run send nothing by
   design, and write no line. The hard cap at the budget plus 50 ms ends the process from a timer;
   that timer writes the `timeout` line before the exit.
@@ -512,7 +522,10 @@ with the line before it. Until the holder's next build, its lines carry local ti
   and the re-seed or the compaction goes on without a new summary, as when no answer comes in
   time. Its line records the failure.
 - gff-hab logs an engine's `error` message by its kind only, never its `text`, which can quote
-  an SDK's or a provider's. The start check's text is the session row's reason.
+  an SDK's or a provider's. The start check's text is the session row's reason. On the Codex engine
+  a start check that cannot read `.mcp.json`, and a Codex home that cannot be made, give a fixed
+  phrase and the error's class (its Node code such as `ENOENT`, else its kind such as
+  `SyntaxError`), never the error's message, which can name a path or quote the file.
 - **The source check.** `capcom-engine/test/logcheck.test.ts` is the engine's half of 10.2. The
   types in `log.ts` refuse a message, component or key that is not a string literal (a template
   with a value, a variable), a reserved key, and a value that is no constructor's, an object of
@@ -727,7 +740,7 @@ crashes a signal handler cannot catch.
 | Hook envelopes | harness, event | count, refused count (unknown token, bad envelope, over the size cap) |
 | Features | a fixed word list (7.2) | count |
 | Settings | setting id from the settings registry (`internal/settings/registry.go`) | `set` count (rows `settings.set` wrote), and `in_config` (the hab's config or a flag locks the id at a flush) |
-| Health | process kind: `hab`, `holder` | starts, crashes, unclean ends: gff-hab counts its own start, the previous run's end at the next start, and a lost holder (6.3) |
+| Health | process kind: `hab`, `holder`, `capcom` | starts, crashes, unclean ends: gff-hab counts its own start, the previous run's end at the next start, a lost holder, and a Capcom engine crash (6.3) |
 
 - A call on the pane route (`POST /channel/<token>`, `mesh.md` 6.5) has no hello. It counts
   under client kind `route`, by its method, with the error kind when it failed.
@@ -808,6 +821,9 @@ rule, each item it left out and why, and one line: "Review the files before you 
 - The archive's files sit under one folder, `flightdeck-diagnostics-<yyyymmdd-hhmm>/`, with no
   user or group name in its headers. The command builds the folder beside the archive, writes
   the archive to a temporary file, renames it, and removes the folder.
+- An interrupt, a TERM or a HUP while the command runs removes the hidden folder and the
+  temporary file, and the command exits 130. A folder given with `-dir` is the user's, and
+  stays as far as it was written.
 - The window has a start only: a line written while the bundle is made is kept. A start in the
   future (a negative duration or a later time) is refused.
 
@@ -887,8 +903,10 @@ bundle command.
 | This machine's host name, user name and home path; every host, label and device id in `peers.toml` and `hab.toml`; the names of projects, sessions, rounds and groups gff-hab knows. Exact, any case | The `n:` token; the home path `~` |
 | The hygiene scan's built-in rules (`ci-release.md` 9.4): private IPv4, CGNAT IPv4, tailnet IPv6, `<label>.ts.net` names, home paths | `<ip>`, `<ip>`, `<ip>`, `<host>`, `~/<path>` |
 | Any other IPv4 or IPv6 address | `<ip>` |
+| A git remote's owner and repository: the scp form `user@host:owner/repo`, and the first two path components of an `ssh`, `git` or `git+ssh` URL, or of an `https` URL of a public forge or with a path that ends in `.git` | The `n:` token of each; `.git` stays |
 | A URL's user info, query and fragment | Removed |
 | Email addresses | `<email>` |
+| A host name under `.local`, `.lan`, `.home`, `.home.arpa`, `.internal` or `.localdomain` | `<host>` |
 | PEM blocks; `ssh-` and `ecdsa-` key lines; `SHA256:` fingerprints | `<key>` |
 | `op://` references; the value after `token`, `key`, `secret`, `password`, `authorization` or `bearer`; the whole value of a structured line's attribute whose key is, or ends in, `token`, `secret`, `password`, `passwd`, `authorization`, `api_key` or `private_key` | `<secret>` |
 | Runs of 32 or more base64, base64url or hex characters | `<blob>` |
@@ -921,6 +939,17 @@ How each rule reads (the code is `internal/diagbundle`):
 - **Addresses.** An IPv6 address followed by `:`, as in `"%s: %w"`, is an address: the rule
   trims the colon, reads the address and writes the colon back after `<ip>`. A colon followed
   by a hex digit makes the run longer than an address, such as a time.
+- **IPv4 with leading zeros.** `192.000.002.010` is an address too: four numbers of 0 to 255,
+  any of them padded. A part over 255 makes it something else, and it stays.
+- **Git remotes before URLs and email.** `git@host:owner/repo` would otherwise read as an
+  address and keep its owner and repository. The public forges are `github.com`, `gitlab.com`,
+  `bitbucket.org`, `codeberg.org` and `git.sr.ht`; an `https` URL of another host keeps its path
+  unless the path ends in `.git`. A known name already written as its token stays that token.
+  Limit: a self-hosted forge's `https` URL with no `.git`, such as a link to a pull request,
+  keeps its path; its host is still a name or a LAN name where a rule knows it.
+- **LAN names after email.** `bob@printer.local` becomes `<email>`, user name included. A name
+  that a dot comes before (`.env.local`) or that an extension follows (`settings.local.json`)
+  is a file name, and stays; a lone file name such as `notes.local` reads as a host.
 - **Home paths.** Besides `/Users/<name>` and `/home/<name>`, the rule takes `/var/home/<name>`,
   `/root`, and a macOS user's temporary folder, `/private/var/folders/<a>/<b>` (also without
   `/private`).
@@ -1024,7 +1053,7 @@ user one line of text.
 | `blocker` | `true` for a blocker (9.1); absent for a preference |
 | `text` | The user's own text, at most 2,000 characters |
 | `build`, `version` | gff-hab's |
-| `log` | The merged log tail (4.8) of the last 10 minutes, at most 500 entries: each with its time, its process (`hab`, `holder <instance>`, `hook`) and its text as the file holds it |
+| `log` | The merged log tail (4.8) of the last 10 minutes, at most 500 entries: each with its time and its process (`hab`, `holder <instance>`, `hook`). A structured line (4.2) is under `line`, as the JSON object the file holds, and its continuation lines (such as a partial line) under `text`; a text line is under `text` with its continuation lines. Each entry is one compact line of the file, so more of the tail fits in 256 KiB. A note written before `line` existed holds a structured line's JSON in `text`, and readers take both |
 | `log_cut` | Older tail entries dropped so the file stays within 256 KiB (11) |
 
 - gff-hab answers with the note's trace. The client shows it.
@@ -1074,8 +1103,23 @@ From stage 5, every Go log line goes through `internal/diaglog`:
   function can still convert a string to the type through a type parameter; the source check
   bans that (below).
 - Safe constructors take typed values where the type exists (`time.Duration`, `int`, the API's
-  kind words). Those that take a string check its form: an id shape, a method from the table, a
-  known word. A value of the wrong form is logged as `text` class instead.
+  kind words). Those that take a string check its form against the grammar gff-hab mints or the
+  API's closed set. A value of the wrong form is logged as `text` class instead:
+
+  | Constructor | Form |
+  |---|---|
+  | `Session` | A kind of 1 to 8 lower-case letters, `-`, then 16 to 64 lower-case hex digits (`s-` and 24 today) |
+  | `Pane` | A lower-case UUID, 8-4-4-4-12 |
+  | `Method` | A method of the API table |
+  | `Kind` | A value of one of the API's enums |
+  | `Event` | An upper-case letter then letters only (`PostToolUse`), or an API event type |
+  | `Harness` | Lower-case letters, digits and `_` |
+  | `ClientKind` | A client kind of the API |
+  | `ClientID` | Lower-case hex, at most 64 digits |
+  | `Trace` | The trace form (5.1) |
+
+  None of these takes a `/`, a `@`, a `:` or, outside the API's own words, a `.`, so a path,
+  `user@host` or a host name never passes as `safe`.
 - The `legacy` shim takes the old `Logf` text under `Text`, class `text`.
 
 A source check (in the style of `make check-pure`) walks every Go file outside `internal/diaglog`

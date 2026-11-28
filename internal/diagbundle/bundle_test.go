@@ -2,6 +2,7 @@ package diagbundle
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"io"
@@ -53,6 +54,10 @@ const (
 	fxAlias    = "acme-work"
 	fxRound    = "check-acme-invoices"
 	fxLong     = "only-in-a-long-line-p0o9"
+	fxLANHost  = "printer-box.lan"
+	fxPadIP    = "192.000.002.077" // a documentation address with leading zeros
+	fxGitOwner = "acme-fixture"
+	fxGitRepo  = "hidden-orchard"
 	// A pane id is a UUID: the blob rule keeps it (an id Flightdeck minted).
 	fxPane = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
 )
@@ -64,7 +69,7 @@ func pemBegin(kind string) string { return "-----" + "BEGIN " + kind + " PRIVATE
 var leaks = []string{fxHome, fxHost, "build-box", fxUser, fxPeer, fxPeerHost, fxDevice, fxProject, fxDocIP, fxDocIP2,
 	fxPrivIP, fxCGNAT, fxTail6, fxDoc6, fxTailName, "/home/other", "secret-plans", fxEmail, fxURLUser, fxURLPass, fxQuery,
 	fxPEMBody, fxSSH, fxFinger, "op://", "Fixture Box", fxToken, fxBearer, fxBlob, fxStderr, fxEngine, fxOld, fxNudge,
-	"secret-repo", fxAlias, fxRound, fxLong}
+	"secret-repo", fxAlias, fxRound, fxLong, fxLANHost, fxPadIP, fxGitOwner, fxGitRepo}
 
 func fxIdentity(state string) Identity {
 	return Identity{Home: fxHome, State: state, Names: []string{fxHost, "build-box", fxUser, fxPeer, fxPeerHost, fxDevice, fxProject}}
@@ -88,6 +93,8 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 			`{"t":"` + ts(20*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"fetch https://` + fxURLUser + `:` + fxURLPass + `@git.example.com/repo?access=` + fxQuery + `#frag"}`,
 			`{"t":"` + ts(10*time.Minute) + `","lvl":"error","msg":"legacy","proc":"hab","comp":"legacy","text":"key ssh-ed25519 ` + fxSSH + ` fp ` + fxFinger + ` ref ` + fxOpRef + `"}`,
 			`{"t":"` + ts(5*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"token=` + fxToken + ` Authorization: Bearer ` + fxBearer + ` digest ` + fxBlob + `"}`,
+			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"clone git@github.com:` + fxGitOwner + `/` + fxGitRepo +
+				`.git and ssh://git@code.example.org/` + fxGitOwner + `/` + fxGitRepo + ` on ` + fxLANHost + ` at ` + fxPadIP + `"}`,
 			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"legacy","proc":"hab","comp":"legacy","text":"` + strings.Repeat("x", MaxLine) + fxLong + `"}`,
 			`{"t":"` + ts(4*time.Minute) + `","lvl":"info","msg":"cut sh`, // a line a crash cut short
 		}, "\n") + "\n",
@@ -104,6 +111,9 @@ func seedState(t *testing.T, now time.Time) (state, habToml, peersToml string) {
 		"tallies/seen.json": `{"since":"2026-11-01"}` + "\n",
 		"friction/20261127T120000.000Z-hABCDEFGHJKM.json": `{"t":"` + ts(15*time.Minute) + `","trace":"hABCDEFGHJKM","client":"app","text":"went back: mail ` + fxEmail + ` about ` + fxProject + `","log":[` +
 			`{"t":"` + ts(16*time.Minute) + `","proc":"hab","text":"{\"t\":\"` + ts(16*time.Minute) + `\",\"lvl\":\"info\",\"msg\":\"peer pinned\",\"proc\":\"hab\",\"comp\":\"peers\",\"label\":\"` + fxPeer + `\"}"},` +
+			// A structured line as its own object, with continuation lines: one a path, one that
+			// starts as JSON and cannot parse (review L7).
+			`{"t":"` + ts(16*time.Minute) + `","proc":"hab","line":{"t":"` + ts(16*time.Minute) + `","lvl":"warn","msg":"pin failed","proc":"hab","comp":"peers","label":"` + fxPeer + `"},"text":"at ` + fxHome + `/develop\n{\"half\":"},` +
 			`{"t":"` + ts(16*time.Minute) + `","proc":"holder one","text":"pane spawned in ` + fxHome + `/develop"}]}`,
 		// A note whose trace is not in its form must not name a file outside the bundle (L9).
 		"friction/20261127T120001.000Z-hABCDEFGHJKN.json": `{"t":"` + ts(14*time.Minute) + `","trace":"../../../../escape","client":"app","text":"x"}`,
@@ -216,8 +226,8 @@ func TestBundleRedaction(t *testing.T) {
 			t.Errorf("rule %s: no replacement counted: %v", rule, m.Replacements)
 		}
 	}
-	if m.Unparsed != 2 { // the cut hab.log line and the health line that is not JSON
-		t.Errorf("unparsed %d, want 2", m.Unparsed)
+	if m.Unparsed != 3 { // the cut hab.log line, the health line that is not JSON, the tail's half line
+		t.Errorf("unparsed %d, want 3", m.Unparsed)
 	}
 	if m.Long != 2 { // the long hab.log line and the long health line (review L8)
 		t.Errorf("long lines %d, want 2", m.Long)
@@ -302,6 +312,23 @@ func TestBundleRedaction(t *testing.T) {
 	if !strings.Contains(fric, labelTok[0][1]) {
 		t.Errorf("the friction tail's label is not the same token %s:\n%s", labelTok[0][1], fric)
 	}
+	// The tail's structured line kept its form and got pass 1; its continuation got pass 2, and
+	// the half line went (review L7).
+	var note struct {
+		Log []struct {
+			Line json.RawMessage `json:"line"`
+			Text string          `json:"text"`
+		} `json:"log"`
+	}
+	if err := json.Unmarshal([]byte(fric), &note); err != nil || len(note.Log) != 3 {
+		t.Fatalf("the friction note: %v\n%s", err, fric)
+	}
+	var line bytes.Buffer
+	json.Compact(&line, note.Log[1].Line)
+	if l := note.Log[1]; !strings.Contains(line.String(), `"msg":"pin failed"`) || !strings.Contains(line.String(), `"label":"`+labelTok[0][1]+`"`) ||
+		l.Text != "at ~/develop" {
+		t.Errorf("the tail's structured line: %s %q", l.Line, l.Text)
+	}
 	dir2, _ := build(t, New(fxIdentity(state)), state, habToml, peersToml, now)
 	hab2 := readAll(t, dir2)["logs/hab.log"]
 	if strings.Contains(hab2, labelTok[0][1]) || len(tokenRE.FindAllString(hab2, -1)) == 0 {
@@ -380,7 +407,7 @@ func TestArchive(t *testing.T) {
 	state, habToml, peersToml := seedState(t, now)
 	dir, _ := build(t, New(fxIdentity(state)), state, habToml, peersToml, now)
 	dst := filepath.Join(t.TempDir(), "b.tar.gz")
-	if err := Archive(dst, dir, "flightdeck-diagnostics-x"); err != nil {
+	if err := Archive(dst, dir, "flightdeck-diagnostics-x", ""); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(dst)
@@ -425,6 +452,7 @@ func TestArchive(t *testing.T) {
 func TestScrubRules(t *testing.T) {
 	r := newWithSalt(Identity{Home: fxHome, Names: []string{fxHost, "ab"}}, []byte("salt"))
 	tok := r.token(fxHost)
+	owner, repo := r.token("acme"), r.token("secret-repo")
 	for _, c := range []struct{ in, want string }{
 		{"on " + strings.ToUpper(fxHost) + ".", "on " + tok + "."},
 		{"xbuild-box.example.com", "xbuild-box.example.com"}, // not a word of its own
@@ -473,6 +501,24 @@ func TestScrubRules(t *testing.T) {
 		{"read /root/.ssh/id_fixture", "read ~/<path>"},
 		{"mount /rootfs/x", "mount /rootfs/x"},
 		{"tmp /private/var/folders/ab/cd0ef/T/x.sock", "tmp ~/<path>"},
+		// Local network names (review part 2 L1); a file name that ends like one stays.
+		{"dial nas.lan and server.home.arpa:80", "dial <host> and <host>:80"},
+		{"print to printer.local, then box.internal", "print to <host>, then <host>"},
+		{"at media-box.home and db.localdomain.", "at <host> and <host>."},
+		{"mail bob@printer.local", "mail <email>"},
+		{"read .env.local and settings.local.json", "read .env.local and settings.local.json"},
+		{"http://nas.lan:8080/x", "http://<host>:8080/x"},
+		// IPv4 with leading zeros (review part 2 L3): built from parts, so no scan reads it.
+		{"at " + strings.Join([]string{"10", "020", "030", "040"}, "."), "at <ip>"},
+		{"at " + strings.Join([]string{"192", "000", "002", "044"}, ".") + ":22", "at <ip>:22"},
+		{"at " + strings.Join([]string{"192", "000", "002", "256"}, "."), "at 192.000.002.256"},
+		// Git remotes (review part 2 L4).
+		{"clone git@github.com:acme/secret-repo.git", "clone <email>:" + owner + "/" + repo + ".git"},
+		{"push ssh://git@code.example.org/acme/secret-repo", "push ssh://code.example.org/" + owner + "/" + repo},
+		{"see https://github.com/acme/secret-repo/pull/12", "see https://github.com/" + owner + "/" + repo + "/pull/12"},
+		{"fetch https://code.example.org/acme/secret-repo.git", "fetch https://code.example.org/" + owner + "/" + repo + ".git"},
+		{"read https://example.com/docs/page", "read https://example.com/docs/page"},
+		{"clone git@github.com:" + fxHost + "/secret-repo", "clone <email>:" + tok + "/" + repo},
 	} {
 		if got := r.Scrub(c.in); got != c.want {
 			t.Errorf("Scrub(%q) = %q, want %q", c.in, got, c.want)

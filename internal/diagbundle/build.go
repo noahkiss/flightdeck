@@ -479,7 +479,16 @@ func (b *builder) friction() error {
 		for i := range n.Log {
 			l := &n.Log[i]
 			l.Proc = s(l.Proc)
-			if out, ok := b.r.Line(l.Text); ok {
+			if len(l.Line) > 0 {
+				// A structured line gets both passes; its continuation lines are text.
+				if out, ok := b.r.Line(string(l.Line)); ok {
+					l.Line = json.RawMessage(out)
+				} else {
+					l.Line = nil
+					b.unparsed++
+				}
+				l.Text = b.continuation(l.Text)
+			} else if out, ok := b.r.Line(l.Text); ok { // a note written before Line held it
 				l.Text = out
 			} else if strings.HasPrefix(strings.TrimSpace(l.Text), "{") {
 				l.Text = ""
@@ -498,6 +507,23 @@ func (b *builder) friction() error {
 		}
 	}
 	return nil
+}
+
+// continuation scrubs a structured line's continuation lines, one at a time: a line that starts
+// as JSON cannot parse (it has no time), so it is left out and counted (12).
+func (b *builder) continuation(text string) string {
+	if text == "" {
+		return ""
+	}
+	var keep []string
+	for l := range strings.SplitSeq(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "{") {
+			b.unparsed++
+			continue
+		}
+		keep = append(keep, b.r.Scrub(l))
+	}
+	return strings.Join(keep, "\n")
 }
 
 // config copies the config files with their keys and no values, except a [settings] entry whose
@@ -567,9 +593,17 @@ func writeFile(p string, data []byte) error {
 }
 
 // Archive writes the bundle folder dir as a .tar.gz at dst, its files under the folder top. It
-// writes a temporary file beside dst and renames it, so dst is never half written.
-func Archive(dst, dir, top string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".flightdeck-diagnostics-*.tar.gz")
+// writes a temporary file and renames it, so dst is never half written. The temporary file is
+// tmpPath, a new file in dst's folder that the caller named so it can remove it on a signal;
+// an empty tmpPath makes a new temporary file beside dst.
+func Archive(dst, dir, top, tmpPath string) error {
+	var tmp *os.File
+	var err error
+	if tmpPath == "" {
+		tmp, err = os.CreateTemp(filepath.Dir(dst), ".flightdeck-diagnostics-*.tar.gz")
+	} else {
+		tmp, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
 	if err != nil {
 		return err
 	}

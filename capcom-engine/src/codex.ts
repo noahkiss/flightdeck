@@ -153,6 +153,16 @@ interface Turn {
   tools: Set<string>; // the item ids already shown as a tool line
 }
 
+// failKind is an error's class for a reason gff-hab shows (the session row, capcom status): its
+// Node code, such as ENOENT, else its constructor's name, such as SyntaxError. Never its message,
+// which can name a path in the home folder or quote a file.
+export function failKind(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(code)) return code;
+  const name = e instanceof Error ? e.constructor?.name || e.name : typeof e;
+  return /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(name) ? name : 'unknown';
+}
+
 function isAuthFailure(text: string): boolean {
   return /\b401\b|unauthori[sz]ed|invalid_api_key|not logged in|log ?in again/i.test(text);
 }
@@ -442,7 +452,7 @@ export class CodexEngine {
     if (this.mcp) return;
     const raw = await fs.readFile(path.join(this.d.cwd, '.mcp.json'), 'utf8');
     const f = JSON.parse(raw)?.mcpServers?.flightdeck;
-    if (!f || typeof f.command !== 'string' || !f.command) throw new Error('.mcp.json names no flightdeck server');
+    if (!f || typeof f.command !== 'string' || !f.command) throw Object.assign(new Error('.mcp.json names no flightdeck server'), { code: 'NO_FLIGHTDECK_SERVER' });
     this.mcp = { command: f.command, args: Array.isArray(f.args) ? f.args.map(String) : [] };
   }
 
@@ -514,7 +524,8 @@ export class CodexEngine {
     try {
       await this.loadMcp();
     } catch (e) {
-      return fail((e as Error).message);
+      // A class, never the message: it can name a path or quote the file (diagnostics.md 4.9).
+      return fail(`the engine's .mcp.json does not load (${failKind(e)})`);
     }
     const probe = await startProbe();
     const home = path.join(this.d.cwd, '.start-check');
@@ -558,7 +569,7 @@ export class CodexEngine {
     try {
       await this.prepareHome();
     } catch (e) {
-      this.sendError(`the engine's Codex home: ${(e as Error).message}`, 'start', true);
+      this.sendError(`the engine's Codex home cannot be made (${failKind(e)})`, 'start', true);
       await this.exit(1);
       return;
     }
