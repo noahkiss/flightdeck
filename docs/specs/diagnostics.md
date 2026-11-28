@@ -1074,8 +1074,23 @@ From stage 5, every Go log line goes through `internal/diaglog`:
   function can still convert a string to the type through a type parameter; the source check
   bans that (below).
 - Safe constructors take typed values where the type exists (`time.Duration`, `int`, the API's
-  kind words). Those that take a string check its form: an id shape, a method from the table, a
-  known word. A value of the wrong form is logged as `text` class instead.
+  kind words). Those that take a string check its form against the grammar gff-hab mints or the
+  API's closed set. A value of the wrong form is logged as `text` class instead:
+
+  | Constructor | Form |
+  |---|---|
+  | `Session` | A kind of 1 to 8 lower-case letters, `-`, then 16 to 64 lower-case hex digits (`s-` and 24 today) |
+  | `Pane` | A lower-case UUID, 8-4-4-4-12 |
+  | `Method` | A method of the API table |
+  | `Kind` | A value of one of the API's enums |
+  | `Event` | An upper-case letter then letters only (`PostToolUse`), or an API event type |
+  | `Harness` | Lower-case letters, digits and `_` |
+  | `ClientKind` | A client kind of the API |
+  | `ClientID` | Lower-case hex, at most 64 digits |
+  | `Trace` | The trace form (5.1) |
+
+  None of these takes a `/`, a `@`, a `:` or, outside the API's own words, a `.`, so a path,
+  `user@host` or a host name never passes as `safe`.
 - The `legacy` shim takes the old `Logf` text under `Text`, class `text`.
 
 A source check (in the style of `make check-pure`) walks every Go file outside `internal/diaglog`

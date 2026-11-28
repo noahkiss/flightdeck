@@ -8,8 +8,10 @@
 package diaglog
 
 import (
+	"strings"
 	"time"
 
+	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/trace"
 )
 
@@ -141,28 +143,103 @@ func callerKey(key string) string {
 	return key
 }
 
-// maxID bounds an id a safe constructor keeps (diagnostics.md 9.2 refuses longer ones too).
-const maxID = 128
+// sessionForm reports whether s has the form of a session id gff-hab mints: a kind of one to
+// eight lower-case letters, "-", then 16 to 64 lower-case hex digits ("s-" and 24 digits today,
+// internal/structure). No dot, slash, colon or @, so a path, user@host or a host name is refused.
+func sessionForm(s string) bool {
+	kind, digits, ok := strings.Cut(s, "-")
+	if !ok || len(kind) < 1 || len(kind) > 8 || len(digits) < 16 {
+		return false
+	}
+	for i := 0; i < len(kind); i++ {
+		if kind[i] < 'a' || kind[i] > 'z' {
+			return false
+		}
+	}
+	return hexForm(digits)
+}
 
-// idForm reports whether s has the form of an id Flightdeck mints or a known word: printable
-// ASCII letters, digits and . _ - / : @ only, at most maxID bytes. No space, so no prose.
-func idForm(s string) bool {
-	if s == "" || len(s) > maxID {
+// paneForm reports whether s is a pane id: a UUID in lower-case hex, 8-4-4-4-12, as the holder
+// protocol writes it.
+func paneForm(s string) bool {
+	if len(s) != 36 {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case c == '.', c == '_', c == '-', c == '/', c == ':', c == '@':
+		switch i {
+		case 8, 13, 18, 23:
+			if s[i] != '-' {
+				return false
+			}
 		default:
+			if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// The API's closed word sets: the method table, its event types, its client kinds and the values
+// of its enums.
+var (
+	apiMethods = map[string]bool{}
+	apiEvents  = map[string]bool{}
+	apiKinds   = map[string]bool{}
+	apiClients = map[string]bool{}
+)
+
+func init() {
+	for _, m := range api.Methods {
+		apiMethods[m.Name] = true
+	}
+	for _, e := range api.Events {
+		apiEvents[string(e.Type)] = true
+	}
+	for _, vs := range api.Enums {
+		for _, v := range vs {
+			apiKinds[v] = true
+		}
+	}
+	for _, v := range api.Enums["ClientKind"] {
+		apiClients[v] = true
+	}
+}
+
+// eventForm reports whether s is a harness's hook event name, an upper-case letter then letters
+// only (PostToolUse), or an event type of the API. Outside the API's set it takes no dot, digit
+// or hyphen, so a host name is refused.
+func eventForm(s string) bool {
+	if apiEvents[s] {
+		return true
+	}
+	if s == "" || len(s) > 64 || s[0] < 'A' || s[0] > 'Z' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if c := s[i]; (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 			return false
 		}
 	}
 	return true
 }
 
-// wordForm reports whether s is a lower-case word: a method, a kind or an event name.
+// harnessForm reports whether s is a harness id: lower-case letters, digits and _ only, at most
+// 32 bytes, so no dot (claude, codex, opencode).
+func harnessForm(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// wordForm reports whether s is a word for Word: a state, a choice, a mode. Word's key has no
+// fixed class, so a bundle scrubs its value all the same.
 func wordForm(s string) bool {
 	if s == "" || len(s) > 64 {
 		return false
@@ -171,7 +248,7 @@ func wordForm(s string) bool {
 		c := s[i]
 		switch {
 		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
-		case c >= 'A' && c <= 'Z': // harness event names such as PostToolUse
+		case c >= 'A' && c <= 'Z':
 		default:
 			return false
 		}
@@ -188,28 +265,28 @@ func checked(key, v string, ok bool) Attr {
 }
 
 // Session is a session id.
-func Session(id string) Attr { return checked(KeySession, id, idForm(id)) }
+func Session(id string) Attr { return checked(KeySession, id, sessionForm(id)) }
 
 // Pane is a pane id.
-func Pane(id string) Attr { return checked(KeyPane, id, idForm(id)) }
+func Pane(id string) Attr { return checked(KeyPane, id, paneForm(id)) }
 
-// Method is an API method name.
-func Method(m string) Attr { return checked(KeyMethod, m, wordForm(m)) }
+// Method is a method of the API table (api.Methods).
+func Method(m string) Attr { return checked(KeyMethod, m, apiMethods[m]) }
 
-// Kind is an error kind or another kind word of the API.
-func Kind(k string) Attr { return checked(KeyKind, k, wordForm(k)) }
+// Kind is an error kind or another kind word of the API: a value of one of its enums.
+func Kind(k string) Attr { return checked(KeyKind, k, apiKinds[k]) }
 
 // Trace is a trace id (diagnostics.md 5.1).
 func Trace(t string) Attr { return checked(KeyTrace, t, trace.Valid(t)) }
 
 // Harness is a harness name: claude, codex, opencode.
-func Harness(h string) Attr { return checked(KeyHarness, h, wordForm(h)) }
+func Harness(h string) Attr { return checked(KeyHarness, h, harnessForm(h)) }
 
 // Event is an event or hook event name.
-func Event(e string) Attr { return checked(KeyEvent, e, wordForm(e)) }
+func Event(e string) Attr { return checked(KeyEvent, e, eventForm(e)) }
 
 // ClientKind is a client kind from a hello: app, terminal, cli, script, hab.
-func ClientKind(k string) Attr { return checked(KeyClient, k, wordForm(k)) }
+func ClientKind(k string) Attr { return checked(KeyClient, k, apiClients[k]) }
 
 // ClientID is the id gff-hab minted for a client's connection: lower-case hex.
 func ClientID(id string) Attr { return checked(KeyClientID, id, hexForm(id)) }
