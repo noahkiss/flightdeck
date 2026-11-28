@@ -580,7 +580,7 @@ export class CodexEngine {
       if (gen !== this.gen || this.exiting) return;
       if (!file) {
         // The thread will not resume: a re-seed replaces it (3.4).
-        this.sendError(`resume of ${resume} failed: no rollout file under ${path.join(codexHome(this.d.env), 'sessions')}`, '', false);
+        this.sendError(`resume of ${resume} failed: no rollout file in the engine's Codex home`, '', false);
         this.reseedPending = 'restart_failed';
         this.maybeReseed();
         return;
